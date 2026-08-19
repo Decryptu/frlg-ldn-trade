@@ -24,73 +24,30 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from frlgsim import crypto as cryptomod, mon as monmod, linkplayer, trade, sim as simmod  # noqa
+from frlgsim import crypto as cryptomod, linkplayer, trade, sim as simmod  # noqa
 from frlgsim import transport as tmod, linkstate as lsmod  # noqa: E402
 from frlgsim import barrier as lsmod_barrier, pia_connect  # noqa: E402
-
-
-_START = time.monotonic()   # session origin for the elapsed-time stamp on every log line
-
-
-class _Log:
-    """Two-level console logger. Calling it prints a DETAIL line (only with --verbose); .info()
-    prints a clean, identifier-free MILESTONE line (only WITHOUT --verbose). So a default run
-    narrates the session's state changes with no personal data, while --verbose gives the full
-    wire-level trace. `prefix` is prepended to detail lines (the trade engine uses "  [trade]").
-    Every line is stamped with seconds since session start, so a pause between milestones (e.g. the
-    host taking its time to walk into the trade room) is visible as the gap between two stamps."""
-
-    def __init__(self, verbose, prefix=""):
-        self.verbose = verbose
-        self.prefix = prefix
-
-    def _ts(self):
-        return f"[{time.monotonic() - _START:7.1f}s]"
-
-    def __call__(self, *a):
-        if self.verbose:
-            print(self._ts(), self.prefix, *a) if self.prefix else print(self._ts(), *a)
-
-    def info(self, *a):
-        if not self.verbose:
-            print(self._ts(), *a)
-
-
-def parse_slots(spec, trades, party_len):
-    """--slots "a,b,c" -> a validated list of 0-based party indices (len==trades, distinct, in-range).
-    Returns None when spec is empty (the engine then derives the default from --slot)."""
-    if not spec:
-        return None
-    try:
-        slots = [int(s) for s in spec.split(",") if s != ""]
-    except ValueError:
-        raise SystemExit(f"--slots must be a comma list of integers, got {spec!r}")
-    if len(slots) != trades:
-        raise SystemExit(f"--slots must have {trades} entries (== --trades), got {len(slots)}")
-    if len(set(slots)) != len(slots):
-        raise SystemExit(f"--slots must be distinct (a slot can't be offered twice): {slots}")
-    if any(not 0 <= s < party_len for s in slots):
-        raise SystemExit(f"--slots must each be 0..{party_len - 1} (party size): {slots}")
-    return slots
+from frlgsim import trade_runtime as runtime  # noqa: E402
 
 
 def make_engine(args, lg):
-    party = [monmod.Mon.from_file(p) for p in args.party]
-    for i, m in enumerate(party):
-        lg(f"  party slot {i}: {m.describe()}")
+    party = runtime.load_party(args.party, lg)
     lg.info(f"Loaded {len(party)} party Pokémon (offering slot {args.slot + 1}).")
     # Validate the trade count against the party: N distinct slots need N mons; a
     # full-party swap (N=6) needs a full 6-mon party.
     if args.trades > len(party):
         raise SystemExit(f"--trades {args.trades} needs at least {args.trades} party mons "
                          f"(distinct slot per round); supplied {len(party)}")
-    offered_slots = parse_slots(args.slots, args.trades, len(party))
+    try:
+        offered_slots = runtime.parse_slots(args.slots, args.trades, len(party))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     lp = linkplayer.LinkPlayer(
         name=args.ot,
         version=linkplayer.VERSION_FIRE_RED if args.version == "firered"
         else linkplayer.VERSION_LEAF_GREEN,
     )
-    elog = _Log(lg.verbose, "  [trade]")   # engine detail lines get the "  [trade]" tag
+    elog = runtime.ConsoleLog(lg.verbose, "  [trade]", start=lg.start)
     # anim_delay None -> the engine uses DEFAULT_ANIM_FRAMES (the wire-measured wireless DoTradeAnim
     # duration); --anim-delay overrides it (mainly for fast offline replays).
     eng = trade.TradeEngine(party, trade_slot=args.slot, link_player=lp, mpid=args.self_id,
@@ -320,7 +277,7 @@ def run_replay(args, lg):
     return engine
 
 
-def main():
+def build_parser():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("party", nargs="+", metavar="MON",
@@ -384,7 +341,12 @@ def main():
     ap.add_argument("--capture", metavar="FILE", help="(live) record EVERY Pia datagram both "
                     "directions to a .jsonl (incl. the SSID), so a live attempt can be "
                     "decrypted/analysed offline")
-    args = ap.parse_args()
+    return ap
+
+
+def main(argv=None):
+    ap = build_parser()
+    args = ap.parse_args(argv)
     if not 1 <= len(args.party) <= 6:
         ap.error(f"supply 1..6 party mons (gPlayerParty slots 0..5); got {len(args.party)}")
     # The host's Pia messages are zstd-compressed; without zstandard in THIS interpreter every
@@ -395,7 +357,7 @@ def main():
                  f"message and will never reply. Install it into THIS interpreter:\n"
                  f"    {sys.executable} -m pip install zstandard")
 
-    lg = _Log(args.verbose)
+    lg = runtime.ConsoleLog(args.verbose)
     engine = run_live(args, lg) if args.live else run_replay(args, lg)
 
     saved = save_received(engine, args, lg)
@@ -411,29 +373,9 @@ def save_received(engine, args, lg):
     behavior (named by --out). trades>1 saves each as <stem>_trade<k>_<species>.pk3. Returns the
     number of mons saved."""
     mons = engine.received_mons or ([engine.received_mon] if engine.received_mon else [])
-    if not mons:
-        return 0
-    ext = args.out_format
-    if args.trades == 1:
-        m = mons[0]
-        saver = m.save_ek3 if ext == "ek3" else m.save_pk3
-        saver(args.out, size=args.out_size)
-        lg(f"\nReceived: {m.describe()}")
-        lg.info(f"Received: {m.species_name} (#{m.species})")
-        print(f"Saved -> {args.out} ({ext}, {args.out_size}B)")
-        return 1
-    stem, _ = os.path.splitext(args.out)
-    lg(f"\nReceived {len(mons)} mon(s) over {args.trades} trade(s):")
-    lg.info(f"Received {len(mons)} mon(s) over {args.trades} trade(s):")
-    for k, m in enumerate(mons, start=1):
-        sp = "".join(c for c in m.species_name if c.isalnum()) or f"sp{m.species}"
-        path = f"{stem}_trade{k}_{sp}.{ext}"
-        saver = m.save_ek3 if ext == "ek3" else m.save_pk3
-        saver(path, size=args.out_size)
-        lg(f"  trade {k}: {m.describe()}")
-        lg.info(f"  trade {k}: {m.species_name} (#{m.species})")
-        print(f"    saved -> {path} ({ext}, {args.out_size}B)")
-    return len(mons)
+    return runtime.save_received_mons(
+        mons, output_path=args.out, output_size=args.out_size,
+        output_format=args.out_format, trades=args.trades, log=lg)
 
 
 if __name__ == "__main__":
