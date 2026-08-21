@@ -140,7 +140,44 @@ regressions; a completed Switch Friend-path run is the hardware evidence for the
 The complete legendary-beast behavior and tool commands are documented in
 [docs/legendary_beast_gift.md](docs/legendary_beast_gift.md).
 
-## 6. Not built
+## 6. Hardware validation record
+
+All three consolidation checkpoints were tested manually against Switch hardware. The JSONL trace
+filenames below are local diagnostic artifacts and are intentionally not committed.
+
+| Gate | Tested commit | Result | Trace |
+|---|---|---|---|
+| Direct compatibility port | `3e958a1` | Friend-path advertisement, join, Wonder Card transfer, Celebi delivery, and shutdown succeeded | `mg-port-hardware.jsonl` |
+| Shared configuration cleanup | `7d1d551` | Overridden `MGHOST` profile, `12345:34567` identity, flag 1004, Celebi delivery, and shutdown succeeded | `mg-cleanup-hardware.jsonl` |
+| Legendary-beast rebuild | `2f44a12` | Beast Wonder Card transfer and the starter-dependent deliveryman cutscene succeeded | `mystery-stamps-hardware.jsonl` |
+
+Commands used:
+
+```bash
+# Gate 1
+sudo -E ./.venv/bin/python -u frlgmg_host.py \
+  --live \
+  --flag-id 1003 \
+  --capture mg-port-hardware.jsonl
+
+# Gate 2
+sudo -E ./.venv/bin/python -u frlgmg_host.py \
+  --live \
+  --ot MGHOST \
+  --version firered \
+  --id=12345:34567 \
+  --flag-id 1004 \
+  --capture mg-cleanup-hardware.jsonl
+
+# Gate 3
+sudo -E ./.venv/bin/python -u frlgmg_host.py \
+  --live \
+  --gift beast-cutscene \
+  --flag-id 1005 \
+  --capture mystery-stamps-hardware.jsonl
+```
+
+## 7. Not built
 
 * **Stamp relay.** `CLI_SAVE_STAMP` writes only `cardMetadata.stampData` [mystery_gift.c:307] and
   never touches the card, so a stamp-only client script adds stamps without the card wipe that
