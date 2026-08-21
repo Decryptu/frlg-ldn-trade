@@ -32,10 +32,8 @@ BUNDLED_LDN = os.path.join(PROJECT_ROOT, "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
-from frlgsim import config as configmod, trade_runtime  # noqa: E402
-from frlgsim.host_mg_app import (  # noqa: E402
-    MysteryGiftHostApplication, MysteryGiftRunConfig,
-)
+from frlgsim import config as configmod, host_cli, trade_runtime  # noqa: E402
+from frlgsim.host_mg_app import MysteryGiftHostApplication  # noqa: E402
 from frlgsim.wonder_card import (  # noqa: E402
     DEFAULT_GIFT_ITEM, DEFAULT_GIFT_SUBTITLE, DEFAULT_GIFT_TITLE,
 )
@@ -44,6 +42,7 @@ from frlgsim.wonder_card import (  # noqa: E402
 def build_parser():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    defaults = configmod.MysteryGiftRunConfig()
     parser.add_argument("--item", type=int, default=DEFAULT_GIFT_ITEM, metavar="ID",
                         help="optional item id the delivery script gives on every visit "
                              "(default: no item)")
@@ -54,60 +53,26 @@ def build_parser():
                         help="Wonder Card title line (<=39 characters)")
     parser.add_argument("--subtitle", default=DEFAULT_GIFT_SUBTITLE,
                         help="Wonder Card subtitle line (<=39 characters)")
-    configmod.add_identity_arguments(parser)
-    parser.add_argument(
-        "--trust-pia", action=argparse.BooleanOptionalAction, default=True,
-        help="use Pia-backed send-once block delivery (recommended); "
-             "--no-trust-pia enables diagnostic RFU retransmits")
-    parser.add_argument("--verbose", action="store_true",
-                        help="show detailed protocol logging instead of milestones")
-    parser.add_argument("--live", action="store_true", required=True,
-                        help="host for a real Switch")
-    parser.add_argument("--password", default="",
-                        help="LDN passphrase hex; default uses the FRLG emulator value")
-    parser.add_argument("--phy", default="auto",
-                        help="Wi-Fi phy; default selects an AP-capable phy")
-    parser.add_argument("--keys", default="~/.switch/prod.keys")
-    parser.add_argument("--comm-id",
-                        help="LDN local_communication_id in hexadecimal")
-    parser.add_argument("--capture", metavar="FILE",
-                        help="record an optional JSONL protocol diagnostic")
-    parser.add_argument("--channel", type=int, default=1,
-                        choices=range(1, 15), metavar="1-14")
-    parser.add_argument("--scene", type=int, default=None,
-                        help="LDN scene; default is the known FRLG scene")
-    parser.add_argument("--max-participants", type=int, default=6,
-                        choices=range(2, 9), metavar="2-8")
-    parser.add_argument("--skip-preflight", action="store_true")
-    parser.add_argument("--skip-encryption", "--skip_encryption",
-                        action=argparse.BooleanOptionalAction, default=True,
-                        help="delegate CCMP encryption to mac80211/hardware (default); "
-                             "--no-skip-encryption enables Python CCMP")
-    parser.add_argument("--native-nonce-sequence", "--native_nonce_sequence",
-                        action=argparse.BooleanOptionalAction, default=True,
-                        help="use FireRed's session-wide incrementing Pia nonce (default)")
-    parser.add_argument("--session-response-first", action=argparse.BooleanOptionalAction,
-                        default=True,
-                        help="send Session type 2 unicast before type 5 broadcast (default)")
+    host_cli.add_host_arguments(
+        parser,
+        option_defaults=defaults.role,
+        ldn_defaults=defaults.ldn,
+        scene_help="LDN scene; default is the known FRLG scene",
+    )
     return parser
 
 
-def _hex_bytes(parser, option, value):
-    if not value:
-        return None
+def build_run_config(parser, args):
+    profile, ldn, role = host_cli.build_host_config(parser, args)
     try:
-        return bytes.fromhex(value)
-    except ValueError:
-        parser.error(f"{option} must contain hexadecimal bytes")
-
-
-def _hex_int(parser, option, value):
-    if value is None:
-        return None
-    try:
-        return int(value, 16)
-    except ValueError:
-        parser.error(f"{option} must be a hexadecimal integer")
+        payload = configmod.MysteryGiftPayload(
+            item=args.item, flag_id=args.flag_id,
+            title=args.title, subtitle=args.subtitle)
+        return configmod.MysteryGiftRunConfig(
+            profile=profile, ldn=ldn, role=role,
+            payload=payload, trust_pia=args.trust_pia)
+    except ValueError as exc:
+        parser.error(str(exc))
 
 
 def main(argv=None):
@@ -115,33 +80,7 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if os.geteuid() != 0:
         parser.error("live LDN hosting requires root; run with sudo -E")
-
-    try:
-        profile = configmod.profile_from_overrides(
-            ot=args.ot, version=args.version, trainer_id=args.id)
-        ldn = configmod.LdnConfig(
-            password=_hex_bytes(parser, "--password", args.password),
-            phy=args.phy, keys_path=args.keys,
-            local_comm_id=_hex_int(parser, "--comm-id", args.comm_id),
-            capture_path=args.capture)
-        role = configmod.HostOptions(
-            channel=args.channel, scene_id=args.scene,
-            max_participants=args.max_participants,
-            skip_preflight=args.skip_preflight,
-            skip_encryption=args.skip_encryption,
-            native_nonce_sequence=args.native_nonce_sequence,
-            session_response_first=args.session_response_first)
-        config = MysteryGiftRunConfig(
-            profile=profile, ldn=ldn, role=role,
-            item=args.item,
-            flag_id=args.flag_id,
-            card_title=args.title,
-            card_subtitle=args.subtitle,
-            trust_pia=args.trust_pia,
-        )
-    except ValueError as exc:
-        parser.error(str(exc))
-
+    config = build_run_config(parser, args)
     joined = MysteryGiftHostApplication(
         config, log=trade_runtime.ConsoleLog(args.verbose)).run()
     return 0 if joined else 130

@@ -28,7 +28,8 @@ flowchart TD
   `LdnConfig`, and role-specific `HostOptions` or `JoinerOptions` rather than mixing unrelated
   settings in an argument namespace.
 - `HostApplication` owns resource ordering: input validation, transport startup, beacon injection,
-  the event loop, received-Pokémon persistence, interruption handling, and cleanup.
+  the event loop, interruption handling, and cleanup. Narrow activity hooks supply startup/progress/
+  close messages and role-specific persistence; the trade and Mystery Gift hosts share the loop.
 - `HostTransport` owns the LDN AP/network, virtual interfaces, participant events, and UDP sockets.
   It neither parses Pia nor advances the game state machine.
 - `HostPeerProtocol` owns one Switch peer's Pia state: Net negotiation and property updates, Session
@@ -145,7 +146,7 @@ cleanup; saving a received Pokémon is independent of capture logging.
 
 ## Trainer profile propagation
 
-`frlgsim.config.DEFAULT_TRAINER` supplies the shared default identity. Both CLIs may derive an
+`frlgsim.config.DEFAULT_TRAINER` supplies the shared default identity. All three CLIs may derive an
 immutable per-run `TrainerProfile` with `--ot`, `--version`, and decimal `--id TID[:SID]` overrides.
 The profile validates Gen III names and numeric ranges, then derives every protocol view:
 
@@ -180,7 +181,7 @@ live-proven redundant `0xFF` padding.
 ## Extending the host
 
 Add protocol behavior at the lowest layer that understands it. Shared settings belong in
-`TradeRunConfig` and its nested configuration values; OS/network behavior belongs in the application or transport; Pia messages belong
+the immutable run configuration and its nested values; OS/network behavior belongs in the application or transport; Pia messages belong
 in `HostPeerProtocol`; RFU behavior belongs in `RFULeader`; and Direct Corner decisions belong in
 `HostTradeEngine`. Keep encoders pure where possible and test each boundary using emitted datagrams,
 Reliable payloads, RFU frames, or command rows. Do not duplicate trainer fields—derive new identity
@@ -195,8 +196,9 @@ game-level RFU policy; increasing the LDN participant limit alone is insufficien
 | Source | Responsibility |
 |---|---|
 | `frlgtrade_host.py` | CLI parsing, configuration construction, application entry point |
+| `frlgsim/host_cli.py` | shared host identity, LDN, Pia, and lifecycle CLI options |
 | `frlgsim/host_app.py` | runtime lifecycle, event loop, output and cleanup |
-| `frlgsim/config.py` | shared trainer, trade-plan, LDN, and role configuration |
+| `frlgsim/config.py` | shared trainer, trade-plan, Mystery Gift payload, LDN, role, and run configuration |
 | `frlgsim/trade_runtime.py` | shared CLI logging, party loading, slot parsing, and output saving |
 | `frlgsim/host_beacon.py` | captured trade beacon, discovery mutation, raw beacon injection |
 | `frlgsim/host_support.py` | OS-facing support such as sudo-aware key-path resolution |

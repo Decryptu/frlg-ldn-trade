@@ -1,9 +1,9 @@
 """Shared immutable configuration for FRLG joiner and host roles."""
 
 import argparse
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 
-from . import charmap, linkplayer
+from . import charmap, linkplayer, ni, wonder_card
 
 
 VERSIONS = {
@@ -85,6 +85,13 @@ class TrainerProfile:
     def build_trainer_card(self, mon_species=None, *, name_pad=0x00):
         return linkplayer.build_trainer_card(
             self.to_link_player(), mon_species=mon_species, name_pad=name_pad)
+
+    def build_rfu_game_data(self, activity, *, started=True):
+        """Build profile-consistent child RFU NI game data when a role needs it."""
+        return ni.build_game_data(
+            VERSIONS[self.version], self.tid, self.name,
+            language=LANGUAGES[self.language], activity=activity,
+            started=started)
 
 
 DEFAULT_TRAINER = TrainerProfile(
@@ -191,6 +198,63 @@ class TradeRunConfig:
     plan: TradePlan
     ldn: LdnConfig
     role: JoinerOptions | HostOptions
+
+
+@dataclass(frozen=True)
+class MysteryGiftPayload:
+    """Immutable description of the Wonder Card and delivery script."""
+
+    item: int | None = wonder_card.DEFAULT_GIFT_ITEM
+    flag_id: int = 1003
+    title: str = wonder_card.DEFAULT_GIFT_TITLE
+    subtitle: str = wonder_card.DEFAULT_GIFT_SUBTITLE
+
+    def __post_init__(self):
+        if self.item is not None and (
+                type(self.item) is not int or not 0 < self.item <= 0xFFFF):
+            raise ValueError("item must be a positive 16-bit item id or None")
+        wonder_card.flag_for_flag_id(self.flag_id)
+
+    @property
+    def receipt_flag(self):
+        return wonder_card.flag_for_flag_id(self.flag_id)
+
+    def build(self):
+        return wonder_card.build_default_gift(
+            item=self.item, flag_id=self.flag_id,
+            title=self.title, subtitle=self.subtitle)
+
+
+def _mystery_gift_host_defaults():
+    """Hardware-proven transport defaults for the Friend-path distributor."""
+    return HostOptions(
+        skip_encryption=True,
+        native_nonce_sequence=True,
+        session_response_first=True,
+    )
+
+
+@dataclass(frozen=True)
+class MysteryGiftRunConfig:
+    """Complete immutable configuration for one Mystery Gift host run."""
+
+    profile: TrainerProfile = DEFAULT_TRAINER
+    payload: MysteryGiftPayload = field(default_factory=MysteryGiftPayload)
+    ldn: LdnConfig = field(default_factory=lambda: LdnConfig(phy="auto"))
+    role: HostOptions = field(default_factory=_mystery_gift_host_defaults)
+    trust_pia: bool = True
+
+    def __post_init__(self):
+        if not isinstance(self.profile, TrainerProfile):
+            raise ValueError("profile must be a TrainerProfile")
+        if not isinstance(self.payload, MysteryGiftPayload):
+            raise ValueError("payload must be a MysteryGiftPayload")
+        if not isinstance(self.ldn, LdnConfig):
+            raise ValueError("ldn must be an LdnConfig")
+        if not isinstance(self.role, HostOptions):
+            raise ValueError("role must be HostOptions")
+        if type(self.trust_pia) is not bool:
+            raise ValueError("trust_pia must be a bool")
 
 
 def parse_trainer_id(value):

@@ -210,7 +210,7 @@ class _RuntimeApplication(HostApplication):
         self.network = self._test_network
         self.session = self._test_session
         self.peer = self._test_peer
-        self._last_trade_state = self.session.trade.state
+        self._last_trade_state = self._activity().state
         return DEFAULT_TRAINER.to_link_player()
 
     def _log_identity(self, link_player):
@@ -232,6 +232,34 @@ def test_runtime_starts_joins_and_cleans_up_after_normal_leave():
     assert session.leave_calls == 1
     assert (network.started, network.stopped) == (1, 1)
     assert (injector.started, injector.stopped) == (1, 1)
+
+
+def test_runtime_lifecycle_accepts_an_activity_without_a_trade_attribute():
+    network = _Network([("switch",)])
+    injector = _Injector()
+    activity = SimpleNamespace(
+        state="activity", close_confirmed=False, done=False)
+    session = SimpleNamespace(
+        activity=activity,
+        rfu=SimpleNamespace(host_session_id=b"\x12\x34", ni_complete=False),
+        leave_calls=0,
+    )
+    session.on_ldn_leave = lambda: setattr(
+        session, "leave_calls", session.leave_calls + 1)
+
+    def leave_after_first_tick(peer):
+        peer.network.participants.clear()
+
+    peer = _Peer(session, network, leave_after_first_tick)
+
+    class ActivityApplication(_RuntimeApplication):
+        def _log_activity_progress(self):
+            pass
+
+    app = ActivityApplication(network, injector, session, peer)
+    assert app.run() is True
+    assert session.leave_calls == 1
+    assert network.stopped == injector.stopped == 1
 
 
 def test_runtime_keeps_ticking_without_participant_through_close_grace():

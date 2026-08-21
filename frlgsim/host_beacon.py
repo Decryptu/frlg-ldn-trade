@@ -37,6 +37,19 @@ def read_interface_mac(interface):
         return parse_mac(stream.read().strip())
 
 
+def _apply_profile_to_search_word(record, profile):
+    """Apply only documented version/language fields to an RFU search record."""
+    offset = beacon.SEARCH_WORD_OFFSET
+    word = int.from_bytes(record[offset:offset + 2], "little")
+    player = profile.to_link_player()
+    word &= ~(beacon.SEARCH_VERSION_MASK | beacon.SEARCH_LANGUAGE_MASK)
+    word |= ((player.version << beacon.SEARCH_VERSION_SHIFT)
+             & beacon.SEARCH_VERSION_MASK)
+    word |= ((player.language << beacon.SEARCH_LANGUAGE_SHIFT)
+             & beacon.SEARCH_LANGUAGE_MASK)
+    record[offset:offset + 2] = word.to_bytes(2, "little")
+
+
 def _element(element_id, data):
     if len(data) > 255:
         raise ValueError("information element is too long")
@@ -74,6 +87,7 @@ def build_trade_app_data(profile, host_session_id):
         app_data[beacon.PIA_HDR:])[:beacon.RECORD_SIZE]).ljust(
             beacon.RECORD_SIZE, b"\x00")
     record[10:12] = bytes(host_session_id)[:2].ljust(2, b"\x00")
+    _apply_profile_to_search_word(record, profile)
     inactive = bytes(app_data[:beacon.PIA_HDR]) + beacon.b85_encode(bytes(record))
     return inactive, activate_trade_app_data(inactive, host_session_id)
 
@@ -98,6 +112,7 @@ def build_wonder_card_app_data(profile, host_session_id):
         app_data[beacon.PIA_HDR:])[:beacon.RECORD_SIZE]).ljust(
             beacon.RECORD_SIZE, b"\x00")
     record[10:12] = bytes(host_session_id)[:2].ljust(2, b"\x00")
+    _apply_profile_to_search_word(record, profile)
     offset = beacon.SEARCH_WORD_OFFSET
     search_word = int.from_bytes(record[offset:offset + 2], "little")
     search_word &= ~(beacon.SEARCH_ACTIVITY_MASK | beacon.SEARCH_HAS_CARD

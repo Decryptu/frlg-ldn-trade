@@ -117,8 +117,27 @@ class HostApplication:
         if "child_ni_complete" in events:
             self.info("Received the Switch RFU identity; sending join-status NI.")
 
-    def _log_trade_progress(self):
-        state = self.session.trade.state
+    def _activity(self):
+        """Return the configured activity through the shared session seam."""
+        activity = getattr(self.session, "activity", None)
+        return activity if activity is not None else self.session.trade
+
+    def _hosting_instructions(self):
+        return "Hosting Direct Corner. On the Switch choose Join Group."
+
+    def _rfu_ready_message(self):
+        return "RFU NI handshake complete; parent UNI and trade-room startup are active."
+
+    def _close_grace_message(self):
+        return ("The console left LDN after confirming room exit; "
+                "finishing the 15-second host grace period.")
+
+    def _completion_message(self):
+        return "Room-exit grace period complete; host peer traffic stopped cleanly."
+
+    def _log_activity_progress(self):
+        activity = self._activity()
+        state = activity.state
         if state != self._last_trade_state:
             self._last_trade_state = state
             message = {
@@ -129,8 +148,8 @@ class HostApplication:
             }.get(state)
             if message:
                 self.info(message)
-        if self.session.trade.commits > self._saved_commits:
-            self._saved_commits = self.session.trade.commits
+        if activity.commits > self._saved_commits:
+            self._saved_commits = activity.commits
             self._save_received()
 
     def _save_received(self):
@@ -151,7 +170,7 @@ class HostApplication:
             self.injector = self.injector_factory(
                 channel=self.options.channel, log=self.log)
             self.injector.start()
-            self.info("Hosting Direct Corner. On the Switch choose Join Group.")
+            self.info(self._hosting_instructions())
             while True:
                 if self.injector.error is not None:
                     raise RuntimeError(f"802.11 beacon injector stopped: {self.injector.error}")
@@ -160,11 +179,11 @@ class HostApplication:
                     self.peer.on_participant_joined()
                     self.info("Switch joined the Linux LDN host successfully.")
                 if joined_once and not self.network.participants:
-                    if self.session.trade.close_confirmed and not self.session.trade.done:
+                    activity = self._activity()
+                    if activity.close_confirmed and not activity.done:
                         if not self._absence_logged:
                             self._absence_logged = True
-                            self.info("The console left LDN after confirming room exit; "
-                                      "finishing the 15-second host grace period.")
+                            self.info(self._close_grace_message())
                     else:
                         self.session.on_ldn_leave()
                         self.info("The console left the LDN network; stopping host peer traffic.")
@@ -177,12 +196,12 @@ class HostApplication:
 
                 now = time.monotonic()
                 self._send_pending(self.peer.tick(now))
-                self._log_trade_progress()
+                self._log_activity_progress()
                 if self.session.rfu.ni_complete and not rfu_ni_logged:
                     rfu_ni_logged = True
-                    self.info("RFU NI handshake complete; parent UNI and trade-room startup are active.")
-                if self.session.trade.done and not self.network.participants:
-                    self.info("Room-exit grace period complete; host peer traffic stopped cleanly.")
+                    self.info(self._rfu_ready_message())
+                if self._activity().done and not self.network.participants:
+                    self.info(self._completion_message())
                     break
                 timeout = self.peer.next_deadline(now, HOST_CONTROL_POLL_SECONDS)
                 self.network.wait_readable(timeout)

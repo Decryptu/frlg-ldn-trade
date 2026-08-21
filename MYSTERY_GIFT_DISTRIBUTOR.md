@@ -91,8 +91,10 @@ Switch's valid block, then sends its own block and waits for the standby barrier
 | `frlgsim/mg_script.py` | client-script assembler, the decomp's canned scripts, `MysteryGiftLinkGameData` reader |
 | `frlgsim/mg_server.py` | server-script interpreter (`SVR_*`), transcribing `gMysteryGiftServerScript_SendWonderCard` |
 | `frlgsim/host_mystery_gift.py` | the leader activity engine: `tick()` → parent gSendCmd, `feed_child_slot()` ← child row |
-| `frlgsim/host_mg_app.py` | run configuration + application, subclassing the trade host's proven runtime |
-| `frlgmg_host.py` | CLI |
+| `frlgsim/config.py` | immutable `MysteryGiftPayload` and `MysteryGiftRunConfig`, composed with the shared trainer/LDN/host models |
+| `frlgsim/host_cli.py` | shared identity, LDN, and Pia CLI parsing used by both host applications |
+| `frlgsim/host_mg_app.py` | Mystery Gift application hooks over the activity-neutral host runtime |
+| `frlgmg_host.py` | thin Mystery Gift CLI and run-config construction |
 | `frlgsim/wonder_card.py` | the payload: 332-byte card + Celebi `givemon`/`setmonmove`/`setflag`/`end` delivery script; `giveitem` is optional |
 
 `HostSession` now takes an `engine=` keyword, so the LDN/Pia/Reliable/RFU stack is shared verbatim
@@ -123,6 +125,7 @@ that was dropped without an error.
 ./.venv/bin/python tests/test_mystery_gift_flow.py          # framing, scripts, server, engine
 ./.venv/bin/python tests/test_mystery_gift_host_wiring.py   # advertisement, config, session seam
 ./.venv/bin/python tests/test_mystery_gift_offline.py       # payload + CRC foundations
+./.venv/bin/python tests/test_mystery_gift_config.py        # shared CLI/profile + Gate 1 fixtures
 ```
 
 `tests/test_mystery_gift_flow.py` models the RFU block-receive gate, `MGL_Receive`, and

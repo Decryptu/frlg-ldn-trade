@@ -20,7 +20,9 @@ from frlgsim.host_mg_app import (  # noqa: E402
     MysteryGiftHostApplication, MysteryGiftRunConfig,
 )
 from frlgsim.host_mystery_gift import HostMysteryGiftEngine  # noqa: E402
-from frlgsim.config import DEFAULT_TRAINER, HostOptions  # noqa: E402
+from frlgsim.config import (  # noqa: E402
+    DEFAULT_TRAINER, HostOptions, MysteryGiftPayload,
+)
 from frlgsim.host_session import HostSession  # noqa: E402
 
 SESSION_ID = b"\x7b\xf1"
@@ -86,13 +88,13 @@ def test_trade_advertisement_is_unchanged_by_the_gift_host():
 # --- run configuration ---------------------------------------------------------------------------
 def test_default_config_is_the_no_item_celebi_gift():
     config = MysteryGiftRunConfig()
-    assert config.item is None
-    assert config.card_title == wonder_card.DEFAULT_GIFT_TITLE == "CELEBI GIFT"
-    assert config.flag_id == 1003
+    assert config.payload.item is None
+    assert config.payload.title == wonder_card.DEFAULT_GIFT_TITLE == "CELEBI GIFT"
+    assert config.payload.flag_id == 1003
     assert config.role.skip_encryption is True
     assert config.role.native_nonce_sequence is True
     assert config.role.session_response_first is True
-    assert wonder_card.flag_for_flag_id(config.flag_id) == 0x2AA
+    assert config.payload.receipt_flag == 0x2AA
     # The card and script the app actually builds must retain the no-item default.
     app = MysteryGiftHostApplication.__new__(MysteryGiftHostApplication)
     app.config = config
@@ -133,13 +135,13 @@ def test_config_rejects_a_flag_id_outside_the_receipt_flag_table():
     range the console's card would have no receipt flag to set."""
     for bad in (999, 1020, 0):
         try:
-            MysteryGiftRunConfig(flag_id=bad)
+            MysteryGiftPayload(flag_id=bad)
         except ValueError:
             continue
         raise AssertionError(f"flag_id {bad} should be rejected")
     for bad_item in (0, 0x10000):
         try:
-            MysteryGiftRunConfig(item=bad_item)
+            MysteryGiftPayload(item=bad_item)
         except ValueError:
             continue
         raise AssertionError(f"item {bad_item} should be rejected")

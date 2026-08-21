@@ -7,9 +7,7 @@ trade-specific seams: what gets built, what gets logged at startup, and what
 counts as progress.
 """
 
-from dataclasses import dataclass, field
-
-from . import config as configmod, host_session, ldntrace, wonder_card
+from . import config as configmod, host_session, ldntrace
 from .host_app import HostApplication
 from .host_beacon import build_wonder_card_app_data
 from .host_mystery_gift import (
@@ -19,31 +17,9 @@ from .host_pia import HostPeerProtocol
 from .linkplayer import HOST_NAME_PAD
 from .mg_server import SERVER_RESULT_NAMES, SVR_MSG_CARD_SENT
 
-
-@dataclass(frozen=True)
-class MysteryGiftRunConfig:
-    """Options for one Wonder Card distribution session."""
-
-    profile: configmod.TrainerProfile = configmod.DEFAULT_TRAINER
-    ldn: configmod.LdnConfig = field(default_factory=lambda: configmod.LdnConfig(phy="auto"))
-    role: configmod.HostOptions = field(default_factory=lambda: configmod.HostOptions(
-        skip_encryption=True, native_nonce_sequence=True, session_response_first=True))
-    item: int | None = wonder_card.DEFAULT_GIFT_ITEM
-    flag_id: int = 1003
-    card_title: str = wonder_card.DEFAULT_GIFT_TITLE
-    card_subtitle: str = wonder_card.DEFAULT_GIFT_SUBTITLE
-    trust_pia: bool = True
-    def __post_init__(self):
-        if self.item is not None and (type(self.item) is not int or not 0 < self.item <= 0xFFFF):
-            raise ValueError("item must be a positive 16-bit item id or None")
-        # Raises with the accepted range if flag_id is outside sReceivedGiftFlags.
-        wonder_card.flag_for_flag_id(self.flag_id)
-        if not isinstance(self.profile, configmod.TrainerProfile):
-            raise ValueError("profile must be a TrainerProfile")
-        if not isinstance(self.ldn, configmod.LdnConfig):
-            raise ValueError("ldn must be an LdnConfig")
-        if not isinstance(self.role, configmod.HostOptions):
-            raise ValueError("role must be HostOptions")
+# Retain the original import location while keeping the models centralized.
+MysteryGiftPayload = configmod.MysteryGiftPayload
+MysteryGiftRunConfig = configmod.MysteryGiftRunConfig
 
 
 class MysteryGiftHostApplication(HostApplication):
@@ -63,11 +39,7 @@ class MysteryGiftHostApplication(HostApplication):
         icon, signature, and hidden ID number. The CLI may add an item or
         override the receipt flag, title, and subtitle.
         """
-        return wonder_card.build_default_gift(
-            item=self.config.item,
-            flag_id=self.config.flag_id,
-            title=self.config.card_title,
-            subtitle=self.config.card_subtitle)
+        return self.config.payload.build()
 
     def _build_components(self):
         phy, keys = self._resolve_phy_and_keys()
@@ -100,7 +72,7 @@ class MysteryGiftHostApplication(HostApplication):
 
     def _log_identity(self, link_player):
         wire = link_player.pack(name_pad=HOST_NAME_PAD)
-        flag = wonder_card.flag_for_flag_id(self.config.flag_id)
+        payload = self.config.payload
         self.info(f"Host identity: OT={self.profile.name!r}, "
                   f"TID=0x{self.profile.tid:04x}, SID=0x{self.profile.sid:04x}")
         self.info("Host LinkPlayer display identity: "
@@ -108,15 +80,30 @@ class MysteryGiftHostApplication(HostApplication):
                   f"language={int.from_bytes(wire[26:28], 'little')}")
         self.info(f"RFU parent identity: raw={self.session.rfu.host_session_id.hex()} "
                   f"u16=0x{int.from_bytes(self.session.rfu.host_session_id, 'little'):04x}")
-        self.info(f"Gift: {self.config.card_title!r} - Wonder Card flagId "
-                  f"{self.config.flag_id} (receipt flag 0x{flag:03x}), "
-                  f"item {self.config.item if self.config.item is not None else 'none'}, "
+        self.info(f"Gift: {payload.title!r} - Wonder Card flagId "
+                  f"{payload.flag_id} (receipt flag 0x{payload.receipt_flag:03x}), "
+                  f"item {payload.item if payload.item is not None else 'none'}, "
                   f"card {len(self.card)}B + RAM script {len(self.ram_script)}B")
         self.info("Advertising ACTIVITY_WONDER_CARD. On the Switch choose "
                   "Mystery Gift -> Wonder Cards -> Friend.")
 
-    def _log_trade_progress(self):
-        """Report Mystery Gift milestones (the base class calls this every tick)."""
+    def _hosting_instructions(self):
+        return ("Hosting Mystery Gift. On the Switch choose "
+                "Mystery Gift -> Wonder Cards -> Friend.")
+
+    def _rfu_ready_message(self):
+        return ("RFU NI handshake complete; parent UNI and Mystery Gift "
+                "LinkPlayer startup are active.")
+
+    def _close_grace_message(self):
+        return ("The console left LDN after confirming Mystery Gift close; "
+                "finishing the host grace period.")
+
+    def _completion_message(self):
+        return "Mystery Gift close grace completed; host peer traffic stopped cleanly."
+
+    def _log_activity_progress(self):
+        """Report Mystery Gift milestones through the activity-neutral runtime hook."""
         engine = self.session.activity
         state = engine.state
         if state != self._last_state:
