@@ -703,6 +703,7 @@ class HostTransport:
         self.broadcast = None
         self.iface = None
         self.participants = []              # [(index, ip, mac, name)] as children join
+        self.join_events = 0                # monotonic history; survives a quick join/leave
         self._network = None
         self._tx = None
         self._rx = None
@@ -816,6 +817,7 @@ class HostTransport:
         name = type(event).__name__
         if name == "JoinEvent":
             p = event.participant
+            self.join_events += 1
             self.participants.append((event.index, p.ip_address, bytes(p.mac_address), bytes(p.name)))
             self.log(f"[host] *** CONSOLE JOINED *** idx={event.index} ip={p.ip_address} "
                      f"mac={bytes(p.mac_address).hex()} name={bytes(p.name)!r}")

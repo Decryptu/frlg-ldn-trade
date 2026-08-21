@@ -17,6 +17,7 @@ This demo was recorded using the **ALFA AWUS036ACHM**. The RZ616 is half as fast
 
 - End-to-end trading with a real game running on a real Switch
 - .pk3/.ek3 input and output
+- Mystery Gift distribution with a Wonder Card and scripted deliveryman gift
 
 ## Requirements
 - Linux
@@ -94,7 +95,7 @@ list of supported options for each entry point.
 
 ### Trainer identity
 
-Both entry points start from `DEFAULT_TRAINER` in
+All three entry points start from `DEFAULT_TRAINER` in
 [`frlgsim/config.py`](frlgsim/config.py). Use `--ot`, `--version`, and `--id` for per-run overrides.
 The ID format is decimal `TID[:SID]`:
 
@@ -111,12 +112,31 @@ Each component must be between 0 and 65535. The resulting 32-bit LinkPlayer ID i
 data, LinkPlayer, and trainer-card identity. Edit `DEFAULT_TRAINER` for gender, language, National
 Dex, or game-completion defaults that do not have CLI flags.
 
+### Distribute a Mystery Gift
+
+`frlgmg_host.py` advertises on the hardware-compatible Friend path and sends a Wonder Card plus a
+delivery RAM script. The default payload gives one level-50 Celebi and no item.
+
+```bash
+sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
+  --flag-id 1003 --capture mg-port-hardware.jsonl
+```
+
+On the Switch choose **Mystery Gift → Wonder Cards → Friend**, then select the Linux host. The save
+must already have Mystery Gift unlocked. The host accepts the same `--ot`, `--version`, and decimal
+`--id TID[:SID]` identity overrides as the trade programs; run `frlgmg_host.py --help` for all gift
+and transport options.
+
+See [the Mystery Gift distributor guide](MYSTERY_GIFT_DISTRIBUTOR.md) for the protocol flow, payload,
+test commands, and why the Switch requires the Friend path rather than Wireless Communication.
+
 ### Hosting diagnostics
 
 - `ldn_scan.py` prints discoverable LDN networks and decoded FRLG application data.
 - `sniff.py` captures advertisement and management traffic from a monitor-capable radio.
 - `ldn_debug_report.sh` records local radio, interface, route, and NetworkManager state for debugging.
 - `frlgtrade_host.py --capture FILE` writes the host protocol trace as JSONL.
+- `frlgmg_host.py --capture FILE` writes the Mystery Gift host trace as JSONL.
 
 See [the host design document](docs/frlgtrade_host_design.md) for the component boundaries, protocol
 flow, timing ownership, trainer propagation, and shutdown sequence.

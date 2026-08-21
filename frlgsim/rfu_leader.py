@@ -58,6 +58,14 @@ def _parent_ni_fields(slot):
             (value >> rfu.PARENT_LLSF_PHASE_SHIFT) & 3)
 
 
+def _normalize_child_cmd(slot):
+    """Return the native parent's tag-free child command representation."""
+    cmd = bytearray(bytes(slot)[:rfu.COMM_SLOT_LENGTH].ljust(
+        rfu.COMM_SLOT_LENGTH, b"\x00"))
+    cmd[0] &= rfu.FRAG_INDEX_MASK
+    return bytes(cmd)
+
+
 class RFULeader:
     """One-child RFU leader state machine.
 
@@ -80,6 +88,13 @@ class RFULeader:
         self.state = WAIT_CONNECT
         self.connect_id = None
         self.child_cmd = rfu.idle_slot()
+        # Pia may deliver several child commands between parent VBlank polls.
+        # Native RFU reflects every command into row one; retaining only the
+        # newest command loses block fragments and makes the console retry until
+        # it disconnects. Queue each normalized command for one-at-a-time echo.
+        self._echo_queue = deque()
+        self._echo_cmd = rfu.idle_slot()
+        self.echo_backlog_peak = 0
         self.child_game_data = None
         self.k_acks = 0
         self.uni_in = 0
@@ -198,11 +213,14 @@ class RFULeader:
                 return "child_ni_complete"
             return "child_ni"
 
-        # UNI is accepted only once both halves of NI have completed.  Save the
-        # child's gSendCmd so every parent UNI table can reflect it in row 1.
+        # Native RfuMain2_Parent removes childSendCmdId bits before publishing
+        # the command through gRecvCmds. Both the activity and row-one echo must
+        # observe that normalized representation.
         if self.state != UNI or rec.get("cmd") is None:
             return "uni_early"
-        self.child_cmd = bytes(rec["cmd"][:rfu.COMM_SLOT_LENGTH]).ljust(rfu.COMM_SLOT_LENGTH, b"\x00")
+        self.child_cmd = _normalize_child_cmd(rec["cmd"])
+        self._echo_queue.append(self.child_cmd)
+        self.echo_backlog_peak = max(self.echo_backlog_peak, len(self._echo_queue))
         self.uni_in += 1
         return "uni"
 
@@ -245,7 +263,9 @@ class RFULeader:
                     rfu.COMM_SLOT_LENGTH, b"\x00")
             else:
                 parent_cmd = rfu.serialize(parent_words)
-            table = rfu.pack_recv_cmds([parent_cmd, self.child_cmd])
+            if self._echo_queue:
+                self._echo_cmd = self._echo_queue.popleft()
+            table = rfu.pack_recv_cmds([parent_cmd, self._echo_cmd])
             self.uni_out += 1
             return self._wrap_parent_t(rfu.parent_uni_slot(table, self.bm_slot))
         return None

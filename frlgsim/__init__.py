@@ -32,6 +32,8 @@ re-fires on trades 2..6) [src/union_room.c:1753-1933; src/cable_club.c:827-942].
 
 __all__ = [
     "barrier", "charmap", "config", "crypto", "gbaframe", "host_app", "host_beacon",
-    "host_pia", "host_session", "host_support", "host_trade", "linkstate", "mon",
-    "reliable", "rfu", "rfu_leader", "trade_runtime",
+    "host_mg_app", "host_mystery_gift", "host_pia", "host_session", "host_support",
+    "host_trade", "joyspot_discovery", "joyspot_probe", "linkstate", "mg_link",
+    "mg_script", "mg_server", "mon", "mystery_gift", "reliable", "rfu",
+    "rfu_leader", "trade_runtime", "wonder_card",
 ]

@@ -99,6 +99,22 @@ def test_33_uni_continuously_reflects_child_and_carries_parent_row():
     assert leader.uni_in == 1 and leader.uni_out == 2
 
 
+def test_tagged_child_command_is_normalized_for_activity_and_echo():
+    """The parent clears the child's rolling tag before publishing it."""
+    leader = _complete_ni_handshake()
+    builder = rfu.SlotBuilder()
+    builder.build(rfu.held_keys_words(0x0001))
+    tagged = builder.build(rfu.held_keys_words(0x1234))
+    expected = rfu.serialize(rfu.held_keys_words(0x1234))
+    assert tagged != expected and tagged[0] & ~rfu.FRAG_INDEX_MASK
+
+    assert leader.receive(_child_t(rfu.uni_slot(tagged), 100)) == "uni"
+    assert leader.child_cmd == expected
+
+    frame = gbaframe.parse_in(leader.tick())
+    assert dict(frame["slots"])[1] == expected
+
+
 def test_duplicate_child_ni_is_reacked_without_corrupting_reassembly():
     leader = RFULeader()
     leader.receive(gbaframe.build_connect(b"\x67\x79"))
@@ -140,6 +156,31 @@ def _complete_ni_handshake():
             leader.receive(_child_t(ack, ts))
             ts += 1
     return leader
+
+
+def test_every_child_command_is_echoed_even_when_they_arrive_in_a_burst():
+    """Row 1 reflects every child command rather than only the newest one."""
+    leader = _complete_ni_handshake()
+    builder = rfu.SlotBuilder()
+    expected = [rfu.serialize(rfu.send_block_words(i, bytes([i]) * 12))
+                for i in range(17)]
+    sent = [builder.build(rfu.send_block_words(i, bytes([i]) * 12))
+            for i in range(17)]
+    assert any(raw != normalized for raw, normalized in zip(sent, expected))
+    for ts, slot in enumerate(sent, 100):
+        leader.receive(_child_t(rfu.uni_slot(slot), ts))
+
+    echoed = []
+    for _ in range(len(sent) + 4):
+        record = gbaframe.parse_in(leader.tick(rfu.idle_slot()))
+        row1 = dict(record["slots"]).get(1)
+        if row1 is not None and row1 != rfu.idle_slot():
+            echoed.append(row1)
+
+    for slot in expected:
+        assert slot in echoed, (
+            f"fragment {rfu.parse_slot(slot)['index']} was never echoed back")
+    assert echoed[-1] == expected[-1]
 
 
 if __name__ == "__main__":

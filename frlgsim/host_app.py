@@ -28,7 +28,7 @@ class HostApplication:
             raise ValueError("HostApplication requires HostOptions")
         self.config = config
         self.profile = config.profile
-        self.plan = config.plan
+        self.plan = getattr(config, "plan", None)
         self.ldn = config.ldn
         self.options = config.role
         self.log = log

@@ -78,6 +78,37 @@ def build_trade_app_data(profile, host_session_id):
     return inactive, activate_trade_app_data(inactive, host_session_id)
 
 
+def build_wonder_card_app_data(profile, host_session_id):
+    """Build the hardware-proven Friend-path Wonder Card advertisement.
+
+    The inactive record advertises activity 21 with both wonder flags and the
+    started-activity bit clear. The active record changes only the normal
+    post-connect fields.
+    """
+    app_data = bytearray(beacon.mutate_beacon(
+        CAPTURED_TRADE_BEACON, name=profile.discovery_name,
+        trainer_id=profile.discovery_trainer_id))
+    pia_name = profile.session_name.encode("utf-8")[:64]
+    app_data[0x17:0x1B] = len(pia_name).to_bytes(4, "big")
+    app_data[0x1B] = beacon.PIA_NAME_UTF8
+    app_data[0x1C:beacon.PIA_HDR] = b"\x00" * 64
+    app_data[0x1C:0x1C + len(pia_name)] = pia_name
+
+    record = bytearray(transport._b85_decode(
+        app_data[beacon.PIA_HDR:])[:beacon.RECORD_SIZE]).ljust(
+            beacon.RECORD_SIZE, b"\x00")
+    record[10:12] = bytes(host_session_id)[:2].ljust(2, b"\x00")
+    offset = beacon.SEARCH_WORD_OFFSET
+    search_word = int.from_bytes(record[offset:offset + 2], "little")
+    search_word &= ~(beacon.SEARCH_ACTIVITY_MASK | beacon.SEARCH_HAS_CARD
+                     | beacon.SEARCH_STARTED_ACTIVITY)
+    search_word |= beacon.ACTIVITY_WONDER_CARD
+    record[offset:offset + 2] = search_word.to_bytes(2, "little")
+
+    inactive = bytes(app_data[:beacon.PIA_HDR]) + beacon.b85_encode(bytes(record))
+    return inactive, activate_trade_app_data(inactive, host_session_id)
+
+
 def activate_trade_app_data(app_data, host_session_id):
     """Apply only the native post-connect activity and RFU-session changes."""
     app_data = bytearray(app_data)

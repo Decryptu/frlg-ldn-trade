@@ -36,6 +36,14 @@ LANGUAGE_ENGLISH = 2               # compatibility.language
 VERSION_FIRE_RED = 4               # gGameVersion FireRed (5 = LeafGreen)
 HASCARD_BIT = 0x20                 # gname[0] |= 0x20 marks "has a Wonder Card to give" [plan/union_room]
 
+# Packed search word in the 24-byte LDN bridge record. These positions are
+# hardware-proven by the Friend-path Mystery Gift discovery sweep.
+SEARCH_WORD_OFFSET = 16
+SEARCH_ACTIVITY_MASK = 0x007F
+SEARCH_UNKNOWN_BIT7 = 0x0080
+SEARCH_HAS_CARD = 0x4000
+SEARCH_STARTED_ACTIVITY = 1 << 15
+
 
 # --- Pia 6.16-6.41 system header (sysCommVer 21-22), BIG-ENDIAN -----------------------------------
 # [NintendoClients wiki: LDN-Application-Data-(Pia); see LDN/wiki/]. This 0x5C-byte header precedes
