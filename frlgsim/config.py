@@ -204,15 +204,13 @@ class TradeRunConfig:
 class MysteryGiftPayload:
     """Immutable description of the Wonder Card and delivery script."""
 
-    item: int | None = wonder_card.DEFAULT_GIFT_ITEM
+    gift: str = wonder_card.GIFT_CELEBI
     flag_id: int = 1003
-    title: str = wonder_card.DEFAULT_GIFT_TITLE
-    subtitle: str = wonder_card.DEFAULT_GIFT_SUBTITLE
 
     def __post_init__(self):
-        if self.item is not None and (
-                type(self.item) is not int or not 0 < self.item <= 0xFFFF):
-            raise ValueError("item must be a positive 16-bit item id or None")
+        if self.gift not in wonder_card.GIFT_CHOICES:
+            raise ValueError(
+                f"gift must be one of {', '.join(wonder_card.GIFT_CHOICES)}")
         wonder_card.flag_for_flag_id(self.flag_id)
 
     @property
@@ -220,9 +218,7 @@ class MysteryGiftPayload:
         return wonder_card.flag_for_flag_id(self.flag_id)
 
     def build(self):
-        return wonder_card.build_default_gift(
-            item=self.item, flag_id=self.flag_id,
-            title=self.title, subtitle=self.subtitle)
+        return wonder_card.build_gift(self.gift, flag_id=self.flag_id)
 
 
 def _mystery_gift_host_defaults():

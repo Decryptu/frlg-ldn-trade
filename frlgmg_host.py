@@ -35,7 +35,7 @@ if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
 from frlgsim import config as configmod, host_cli, trade_runtime  # noqa: E402
 from frlgsim.host_mg_app import MysteryGiftHostApplication  # noqa: E402
 from frlgsim.wonder_card import (  # noqa: E402
-    DEFAULT_GIFT_ITEM, DEFAULT_GIFT_SUBTITLE, DEFAULT_GIFT_TITLE,
+    GIFT_BEAST_CUTSCENE, GIFT_CHOICES,
 )
 
 
@@ -43,16 +43,12 @@ def build_parser():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     defaults = configmod.MysteryGiftRunConfig()
-    parser.add_argument("--item", type=int, default=DEFAULT_GIFT_ITEM, metavar="ID",
-                        help="optional item id the delivery script gives on every visit "
-                             "(default: no item)")
+    parser.add_argument("--gift", choices=GIFT_CHOICES,
+                        default=GIFT_BEAST_CUTSCENE,
+                        help="gift payload to distribute (default: beast-cutscene)")
     parser.add_argument("--flag-id", type=int, default=1003, metavar="ID",
                         help="Wonder Card flagId, 1000..1019; 1003 is the first "
                              "unused receipt-flag slot (default: 1003)")
-    parser.add_argument("--title", default=DEFAULT_GIFT_TITLE,
-                        help="Wonder Card title line (<=39 characters)")
-    parser.add_argument("--subtitle", default=DEFAULT_GIFT_SUBTITLE,
-                        help="Wonder Card subtitle line (<=39 characters)")
     host_cli.add_host_arguments(
         parser,
         option_defaults=defaults.role,
@@ -66,8 +62,7 @@ def build_run_config(parser, args):
     profile, ldn, role = host_cli.build_host_config(parser, args)
     try:
         payload = configmod.MysteryGiftPayload(
-            item=args.item, flag_id=args.flag_id,
-            title=args.title, subtitle=args.subtitle)
+            gift=args.gift, flag_id=args.flag_id)
         return configmod.MysteryGiftRunConfig(
             profile=profile, ldn=ldn, role=role,
             payload=payload, trust_pia=args.trust_pia)

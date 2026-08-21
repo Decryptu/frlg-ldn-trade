@@ -321,10 +321,11 @@ class _Run:
     elapsed: int
 
 
-def _run_full_stack(*, console=None, timing=None, radio=None, max_ms=6000,
-                    require_completion=True):
+def _run_full_stack(*, console=None, timing=None, radio=None, payload=None,
+                    max_ms=6000, require_completion=True):
     """Drive the whole leader stack against the console model over the radio."""
-    card, ram_script = wonder_card.build_default_gift()
+    card, ram_script = (wonder_card.build_default_gift()
+                        if payload is None else payload)
     if console is None:
         console = ConsoleClientModel(flag_id=0)
     if timing is None:
@@ -446,6 +447,17 @@ def test_wonder_card_reaches_the_console_through_loss_duplication_and_reordering
         mg.MG_LINKID_CARD,
         mg.MG_LINKID_RAM_SCRIPT,
     ]
+
+
+def test_legendary_beast_cutscene_reaches_the_console_over_the_impaired_stack():
+    """The stamp-branch payload survives the complete lossy host path."""
+    payload = wonder_card.build_legendary_beast_cutscene_gift(
+        level=65, flag_id=1005)
+    run = _run_full_stack(payload=payload)
+    assert run.console.result == mg_script.CLI_MSG_CARD_RECEIVED
+    assert run.engine.result == mg_server.SVR_MSG_CARD_SENT
+    assert run.console.saved_card == payload[0]
+    assert run.console.saved_ram_script[:len(payload[1])] == payload[1]
 
 
 def test_the_shared_link_bring_up_completes_below_the_gift():

@@ -86,10 +86,9 @@ def test_trade_advertisement_is_unchanged_by_the_gift_host():
 
 
 # --- run configuration ---------------------------------------------------------------------------
-def test_default_config_is_the_no_item_celebi_gift():
+def test_default_config_selects_the_self_contained_celebi_gift():
     config = MysteryGiftRunConfig()
-    assert config.payload.item is None
-    assert config.payload.title == wonder_card.DEFAULT_GIFT_TITLE == "CELEBI GIFT"
+    assert config.payload.gift == wonder_card.GIFT_CELEBI
     assert config.payload.flag_id == 1003
     assert config.role.skip_encryption is True
     assert config.role.native_nonce_sequence is True
@@ -139,12 +138,6 @@ def test_config_rejects_a_flag_id_outside_the_receipt_flag_table():
         except ValueError:
             continue
         raise AssertionError(f"flag_id {bad} should be rejected")
-    for bad_item in (0, 0x10000):
-        try:
-            MysteryGiftPayload(item=bad_item)
-        except ValueError:
-            continue
-        raise AssertionError(f"item {bad_item} should be rejected")
 
 
 # --- the HostSession activity seam ------------------------------------------------------------------

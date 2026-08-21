@@ -1,6 +1,6 @@
 """Wonder Card + delivery RAM-script authoring (the Mystery Gift payload).
 
-Two byte-exact builders for the gift we hand the console:
+Byte-exact builders for the gifts we hand the console:
 
   build_wonder_card(...)  -> 332-byte `struct WonderCard` [include/global.h:655], the object the
                              console saves and shows in the Mystery Gift menu. Must pass
@@ -15,6 +15,10 @@ Two byte-exact builders for the gift we hand the console:
                              flag, then
                              `end` (keeps the RAM script available for later deliveryman
                              interactions).
+
+  build_legendary_beast_cutscene_gift(level, flag_id)
+                          -> the preserved starter-dependent event: two berries,
+                             a Master Ball, and a terminal legendary-beast battle.
 
 The console wraps our RAM-script bytes in `struct RamScriptData` and computes the checksum itself
 (CLI_SAVE_RAM_SCRIPT -> InitRamScript_NoObjectEvent, mystery_gift_client.c:230); we only supply the
@@ -43,11 +47,30 @@ ITEM_APICOT_BERRY = 172
 ITEM_LANSAT_BERRY = 173
 ITEM_STARF_BERRY = 174
 ITEM_ENIGMA_BERRY = 175          # LAST_BERRY_INDEX
+ITEM_MASTER_BALL = 1
+ITEM_NONE = 0
 
 # [include/constants/species.h:328]. ``iconSpecies`` controls the Pokémon icon
 # shown on a Wonder Card; it does not affect the delivered item.
 SPECIES_CLAYDOL = 319
 SPECIES_CELEBI = 251
+SPECIES_RAIKOU = 243
+SPECIES_ENTEI = 244
+SPECIES_SUICUNE = 245
+
+# Overworld graphics used by the preserved cutscene payload.
+OBJ_EVENT_GFX_ENTEI = 141
+OBJ_EVENT_GFX_SUICUNE = 142
+OBJ_EVENT_GFX_RAIKOU = 143
+DIR_WEST = 3
+
+# VAR_STARTER_MON is 0:Bulbasaur, 1:Squirtle, 2:Charmander. This intentionally
+# preserves the hardware-tested event mapping from the authoritative stamp branch.
+STARTER_BEASTS = {
+    0: (SPECIES_SUICUNE, OBJ_EVENT_GFX_SUICUNE),
+    1: (SPECIES_ENTEI, OBJ_EVENT_GFX_ENTEI),
+    2: (SPECIES_RAIKOU, OBJ_EVENT_GFX_RAIKOU),
+}
 
 # [include/constants/moves.h]. The delivery script overwrites Celebi's four
 # move slots in this exact order after ``givemon`` adds it to the party.
@@ -79,13 +102,22 @@ DEFAULT_GIFT_ICON_SPECIES = SPECIES_CELEBI
 # a repeatable ``giveitem`` reward in addition to Celebi.
 DEFAULT_GIFT_ITEM = None
 
+GIFT_BEAST_CUTSCENE = "beast-cutscene"
+GIFT_CELEBI = "celebi"
+GIFT_CHOICES = (GIFT_BEAST_CUTSCENE, GIFT_CELEBI)
+LEGENDARY_BEAST_LEVEL = 65
+
 
 # --- event-script opcodes used by the delivery script [asm/macros/event.inc] ------------------
 _OP_END = 0x02
 _OP_CALLSTD = 0x09              # callstd <function:u8>
+_OP_ADDVAR = 0x17
 _OP_SETVAR_OR_COPY = 0x1A      # setorcopyvar <dest:u16> <src:u16>
 _OP_SETFLAG = 0x29             # setflag <flag:u16>
+_OP_DELAY = 0x28
+_OP_GETPLAYERXY = 0x42
 _OP_FACEPLAYER = 0x5A
+_OP_CLOSEMESSAGE = 0x68
 _OP_LOCK = 0x6A
 _OP_RELEASE = 0x6C
 _OP_GIVEMON = 0x79
@@ -98,9 +130,15 @@ _OP_VGOTO_IF = 0xBB
 _OP_VMESSAGE = 0xBD
 _OP_WAITMESSAGE = 0x66
 _OP_WAITBUTTONPRESS = 0x6D
+_OP_CREATEVOBJECT = 0xAA
+_OP_SETWILDBATTLE = 0xB6
+_OP_DOWILDBATTLE = 0xB7
 
 _VAR_0x8000 = 0x8000           # giveitem: item id
 _VAR_0x8001 = 0x8001           # giveitem: amount
+_VAR_STARTER_MON = 0x4031
+_VAR_PLAYER_X = 0x8004
+_VAR_PLAYER_Y = 0x8005
 _VAR_RESULT = 0x800D            # getpartysize / givemon result
 _STD_OBTAIN_ITEM = 0           # gStdScripts index [event_scripts.s:78] - "obtained the {ITEM}!" + fanfare
 _COMPARE_EQ = 1
@@ -312,6 +350,159 @@ def build_berry_gift(item=DEFAULT_GIFT_ITEM, title=DEFAULT_GIFT_TITLE,
 def build_default_gift(**overrides):
     """The shipped payload: one level-50 Celebi per card and no item."""
     return build_berry_gift(**overrides)
+
+
+_CUTSCENE_MESSAGE_TOKENS = {
+    "PLAYER": b"\xFD\x01",
+    "NL": b"\xFE",
+    "P": b"\xFB",
+    "SCROLL": b"\xFA",
+}
+
+
+def _encode_cutscene_message(text):
+    """Encode text plus the control tokens used by the legendary-beast scene."""
+    out = bytearray()
+    index = 0
+    while index < len(text):
+        if text[index] == "{":
+            end = text.index("}", index)
+            token = text[index + 1:end]
+            if token not in _CUTSCENE_MESSAGE_TOKENS:
+                raise ValueError(f"unknown message token {{{token}}}")
+            out += _CUTSCENE_MESSAGE_TOKENS[token]
+            index = end + 1
+        else:
+            out += charmap.encode(text[index])
+            index += 1
+    return bytes(out) + b"\xFF"
+
+
+def build_legendary_beast_cutscene_script(
+        level=LEGENDARY_BEAST_LEVEL, delay_frames=30):
+    """Build the repeatable starter-dependent legendary-beast delivery scene.
+
+    The deliveryman gives a Lansat Berry and Liechi Berry, branches on
+    ``VAR_STARTER_MON``, shows the matching overworld beast, gives a Master
+    Ball, releases the player, and starts the terminal wild battle. Every
+    branch ends with ``end`` so the saved RAM script remains available.
+    """
+    if type(level) is not int or not 1 <= level <= 100:
+        raise ValueError("level must be between 1 and 100")
+    if type(delay_frames) is not int or not 0 <= delay_frames <= 0xFFFF:
+        raise ValueError("delay_frames must fit in 16 bits")
+
+    messages = (
+        _encode_cutscene_message(
+            "Thank you for using the{NL}MYSTERY GIFT system."),
+        _encode_cutscene_message(
+            "You must be {PLAYER}!{P}There is something here{NL}for you."),
+        _encode_cutscene_message(
+            "What is that? It looks{NL}like a Legendary Beast!{P}Here, take this."),
+    )
+
+    def give_item(item):
+        return (_setorcopyvar(_VAR_0x8000, item)
+                + _setorcopyvar(_VAR_0x8001, 1)
+                + bytes([_OP_CALLSTD, _STD_OBTAIN_ITEM]))
+
+    code = bytearray()
+    message_fixups = []
+    branch_fixups = []
+    labels = {}
+
+    def vmessage(message_index):
+        code.append(_OP_VMESSAGE)
+        message_fixups.append((len(code), message_index))
+        code.extend(b"\x00\x00\x00\x00")
+        code.extend(bytes([
+            _OP_WAITMESSAGE, _OP_WAITBUTTONPRESS, _OP_CLOSEMESSAGE]))
+
+    def vgoto_if_starter(value, label):
+        code.extend(
+            bytes([_OP_COMPARE_VAR_TO_VALUE])
+            + _u16(_VAR_STARTER_MON) + _u16(value)
+            + bytes([_OP_VGOTO_IF, _COMPARE_EQ]))
+        branch_fixups.append((len(code), label))
+        code.extend(b"\x00\x00\x00\x00")
+
+    def beast_block(species, graphics):
+        code.extend(
+            bytes([_OP_CREATEVOBJECT, graphics & 0xFF, 0])
+            + _u16(_VAR_PLAYER_X) + _u16(_VAR_PLAYER_Y)
+            + bytes([3, DIR_WEST]))
+        code.extend(bytes([_OP_DELAY]) + _u16(delay_frames))
+        vmessage(2)
+        code.extend(give_item(ITEM_MASTER_BALL))
+        code.append(_OP_RELEASE)
+        code.extend(
+            bytes([_OP_SETWILDBATTLE]) + _u16(species)
+            + bytes([level]) + _u16(ITEM_NONE)
+            + bytes([_OP_DOWILDBATTLE, _OP_END]))
+
+    code += bytes([_OP_SETVADDRESS]) + b"\x00\x00\x00\x00"
+    code += bytes([_OP_LOCK, _OP_FACEPLAYER])
+    vmessage(0)
+    vmessage(1)
+    code += give_item(ITEM_LANSAT_BERRY)
+    code += give_item(ITEM_LIECHI_BERRY)
+    code += bytes([_OP_GETPLAYERXY]) + _u16(_VAR_PLAYER_X) + _u16(_VAR_PLAYER_Y)
+    code += bytes([_OP_ADDVAR]) + _u16(_VAR_PLAYER_X) + _u16(1)
+
+    vgoto_if_starter(0, "suicune")
+    vgoto_if_starter(1, "entei")
+    beast_block(*STARTER_BEASTS[2])
+    labels["suicune"] = len(code)
+    beast_block(*STARTER_BEASTS[0])
+    labels["entei"] = len(code)
+    beast_block(*STARTER_BEASTS[1])
+
+    code_size = len(code)
+    message_offsets = []
+    offset = code_size
+    for message in messages:
+        message_offsets.append(offset)
+        offset += len(message)
+    for position, message_index in message_fixups:
+        code[position:position + 4] = message_offsets[message_index].to_bytes(4, "little")
+    for position, label in branch_fixups:
+        code[position:position + 4] = labels[label].to_bytes(4, "little")
+    return bytes(code) + b"".join(messages)
+
+
+def build_legendary_beast_cutscene_gift(
+        level=LEGENDARY_BEAST_LEVEL, flag_id=1003):
+    """Build the preserved legendary-beast Wonder Card and cutscene payload."""
+    flag_for_flag_id(flag_id)
+    card = build_wonder_card(
+        flag_id=flag_id,
+        icon_species=SPECIES_CLAYDOL,
+        id_number=0x42454153,
+        title="LEGENDARY BEAST",
+        subtitle="A shocking encounter!",
+        body=("Meet the delivery man for", "berries and a beastly battle!"),
+        footer1="frlg-ldn-trade",
+    )
+    return card, build_legendary_beast_cutscene_script(level=level)
+
+
+def build_gift(gift, *, flag_id=1003):
+    """Build one of the supported Mystery Gift payloads.
+
+    This is the shared selection point used by the live host, binary exporter,
+    and save injector. Each gift builder owns its complete card presentation,
+    rewards, script, and encounter parameters.
+    """
+    if gift == GIFT_BEAST_CUTSCENE:
+        return build_legendary_beast_cutscene_gift(flag_id=flag_id)
+    if gift == GIFT_CELEBI:
+        return build_default_gift(flag_id=flag_id)
+    raise ValueError(f"unknown gift: {gift}")
+
+
+# Compatibility names retained for callers of the authoritative stamp branch.
+build_raikou_cutscene_script = build_legendary_beast_cutscene_script
+build_raikou_cutscene_gift = build_legendary_beast_cutscene_gift
 
 
 def _selftest():

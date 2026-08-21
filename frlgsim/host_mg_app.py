@@ -7,7 +7,7 @@ trade-specific seams: what gets built, what gets logged at startup, and what
 counts as progress.
 """
 
-from . import config as configmod, host_session, ldntrace
+from . import charmap, config as configmod, host_session, ldntrace, wonder_card
 from .host_app import HostApplication
 from .host_beacon import build_wonder_card_app_data
 from .host_mystery_gift import (
@@ -33,12 +33,7 @@ class MysteryGiftHostApplication(HostApplication):
         self._result_logged = False
 
     def _build_payload(self):
-        """Build the live payload from the shared Wonder Card defaults.
-
-        ``build_default_gift`` is the sole source of the card's body, Celebi
-        icon, signature, and hidden ID number. The CLI may add an item or
-        override the receipt flag, title, and subtitle.
-        """
+        """Build the selected payload through the shared immutable config."""
         return self.config.payload.build()
 
     def _build_components(self):
@@ -80,9 +75,15 @@ class MysteryGiftHostApplication(HostApplication):
                   f"language={int.from_bytes(wire[26:28], 'little')}")
         self.info(f"RFU parent identity: raw={self.session.rfu.host_session_id.hex()} "
                   f"u16=0x{int.from_bytes(self.session.rfu.host_session_id, 'little'):04x}")
-        self.info(f"Gift: {payload.title!r} - Wonder Card flagId "
-                  f"{payload.flag_id} (receipt flag 0x{payload.receipt_flag:03x}), "
-                  f"item {payload.item if payload.item is not None else 'none'}, "
+        if payload.gift == wonder_card.GIFT_BEAST_CUTSCENE:
+            details = (f"level {wonder_card.LEGENDARY_BEAST_LEVEL}; "
+                       "Lansat Berry, Liechi Berry, and Master Ball")
+        else:
+            details = "level-50 Celebi; no item"
+        card_title = charmap.decode(self.card[10:50])
+        self.info(f"Gift: {payload.gift!r}; {details}; card title {card_title!r}; "
+                  f"Wonder Card flagId {payload.flag_id} "
+                  f"(receipt flag 0x{payload.receipt_flag:03x}), "
                   f"card {len(self.card)}B + RAM script {len(self.ram_script)}B")
         self.info("Advertising ACTIVITY_WONDER_CARD. On the Switch choose "
                   "Mystery Gift -> Wonder Cards -> Friend.")

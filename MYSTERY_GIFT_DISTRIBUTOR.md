@@ -1,8 +1,9 @@
 # FireRed Mystery Gift Distributor
 
-Hand a real Switch FireRed/LeafGreen save a Wonder Card + delivery RAM script over LDN. The default
-card awards one level-50 Celebi from the deliveryman on the second floor of any Pokémon Center. It
-does not include an item unless the host is started with `--item ID`.
+Hand a real Switch FireRed/LeafGreen save a Wonder Card + delivery RAM script over LDN. On the
+`mystery_stamps` branch, the default card runs the repeatable legendary-beast cutscene. Select
+`--gift celebi` for the original level-50 Celebi payload. Each gift owns its card text, icon,
+rewards, and delivery script; the live CLI selects the gift rather than editing its contents.
 
 **Status: hardware-proven end to end.** The Friend-path distributor has completed discovery,
 connection, LinkPlayer exchange, card transfer, save/reboot persistence, and deliveryman execution
@@ -95,7 +96,9 @@ Switch's valid block, then sends its own block and waits for the standby barrier
 | `frlgsim/host_cli.py` | shared identity, LDN, and Pia CLI parsing used by both host applications |
 | `frlgsim/host_mg_app.py` | Mystery Gift application hooks over the activity-neutral host runtime |
 | `frlgmg_host.py` | thin Mystery Gift CLI and run-config construction |
-| `frlgsim/wonder_card.py` | the payload: 332-byte card + Celebi `givemon`/`setmonmove`/`setflag`/`end` delivery script; `giveitem` is optional |
+| `frlgsim/wonder_card.py` | shared Celebi and legendary-beast Wonder Card/RAM-script builders |
+| `frlgsim/gift_to_bin.py` | paired `.bin` exporter for external Gen-3 Mystery Gift tools |
+| `frlgsim/save_inject.py` | validated FRLG save injection with card, RAM-script, and sector checksums |
 
 `HostSession` now takes an `engine=` keyword, so the LDN/Pia/Reliable/RFU stack is shared verbatim
 with the trade host and only the activity above it differs.
@@ -126,12 +129,16 @@ that was dropped without an error.
 ./.venv/bin/python tests/test_mystery_gift_host_wiring.py   # advertisement, config, session seam
 ./.venv/bin/python tests/test_mystery_gift_offline.py       # payload + CRC foundations
 ./.venv/bin/python tests/test_mystery_gift_config.py        # shared CLI/profile + Gate 1 fixtures
+./.venv/bin/python tests/test_mystery_stamps.py             # cutscene, export, and save checksums
 ```
 
 `tests/test_mystery_gift_flow.py` models the RFU block-receive gate, `MGL_Receive`, and
 one-command-per-frame client-script execution. `tests/test_mystery_gift_end_to_end.py` adds an
 impaired Reliable/RFU path and a native-shaped ID16/ID17 framing fixture. These remain offline
 regressions; a completed Switch Friend-path run is the hardware evidence for the shipping flow.
+
+The complete legendary-beast behavior and tool commands are documented in
+[docs/legendary_beast_gift.md](docs/legendary_beast_gift.md).
 
 ## 6. Not built
 

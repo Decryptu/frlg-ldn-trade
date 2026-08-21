@@ -115,17 +115,23 @@ Dex, or game-completion defaults that do not have CLI flags.
 ### Distribute a Mystery Gift
 
 `frlgmg_host.py` advertises on the hardware-compatible Friend path and sends a Wonder Card plus a
-delivery RAM script. The default payload gives one level-50 Celebi and no item.
+delivery RAM script. On `mystery_stamps`, the default payload is the repeatable legendary-beast
+cutscene; use `--gift celebi` for the original level-50 Celebi card.
 
 ```bash
 sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
-  --flag-id 1003 --capture mg-port-hardware.jsonl
+  --gift beast-cutscene --flag-id 1005 \
+  --capture mystery-stamps-hardware.jsonl
 ```
 
 On the Switch choose **Mystery Gift → Wonder Cards → Friend**, then select the Linux host. The save
 must already have Mystery Gift unlocked. The host accepts the same `--ot`, `--version`, and decimal
 `--id TID[:SID]` identity overrides as the trade programs; run `frlgmg_host.py --help` for all gift
 and transport options.
+
+The beast depends on the receiving save's starter: Bulbasaur gives Suicune, Squirtle gives Entei,
+and Charmander gives Raikou. See [the legendary-beast gift guide](docs/legendary_beast_gift.md) for
+the reward sequence, binary export, and save-injection tools.
 
 See [the Mystery Gift distributor guide](MYSTERY_GIFT_DISTRIBUTOR.md) for the protocol flow, payload,
 test commands, and why the Switch requires the Friend path rather than Wireless Communication.
