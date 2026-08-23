@@ -33,7 +33,7 @@ from collections import Counter, deque
 from dataclasses import dataclass
 
 from . import block, linkplayer, mg_link, rfu, trade
-from .mg_server import SVR_MSG_CARD_SENT, MysteryGiftServer
+from .mg_server import SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT, MysteryGiftServer
 
 MG_LINK_PLAYER = "MG_LINK_PLAYER"
 MG_START = "MG_START"
@@ -94,15 +94,30 @@ DEFAULT_MYSTERY_GIFT_TIMING = MysteryGiftTiming()
 class HostMysteryGiftEngine:
     """Transport-independent, single-child FRLG Mystery Gift distributor."""
 
-    def __init__(self, card, ram_script, *, link_player=None, trust_pia=True,
-                 timing=None, log=lambda *a: None):
+    def __init__(self, card=None, ram_script=None, *, distribution=None,
+                 link_player=None, trust_pia=True, timing=None,
+                 log=lambda *a: None):
         self.lp = link_player or linkplayer.LinkPlayer(
             name="EMU", version=linkplayer.VERSION_FIRE_RED)
         self.trust_pia = trust_pia
         self.timing = timing if timing is not None else DEFAULT_MYSTERY_GIFT_TIMING
         self.log = log
         self.info = getattr(log, "info", log)
-        self.server = MysteryGiftServer(card, ram_script, log=log)
+        if distribution is not None:
+            if card is not None or ram_script is not None:
+                raise ValueError("pass either distribution or card/ram_script")
+            card, ram_script = distribution.card, distribution.ram_script
+            server_extras = {
+                "stamp": distribution.stamp,
+                "activation_script": distribution.activation_script,
+                "install_activation_script": distribution.install_activation_script,
+            }
+        else:
+            if card is None or ram_script is None:
+                raise ValueError("card and ram_script are required")
+            server_extras = {}
+        self.server = MysteryGiftServer(
+            card, ram_script, log=log, **server_extras)
 
         self.state = MG_LINK_PLAYER
         self.state_history = [self.state]
@@ -270,7 +285,7 @@ class HostMysteryGiftEngine:
         return False
 
     def _finish_gift(self, message_id):
-        self.gift_sent = self.server.result == SVR_MSG_CARD_SENT
+        self.gift_sent = self.server.result in (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT)
         self.trace.append(("gift_complete", message_id))
         self._begin_close()
 

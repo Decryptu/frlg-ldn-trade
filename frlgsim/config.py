@@ -3,7 +3,7 @@
 import argparse
 from dataclasses import dataclass, field, replace
 
-from . import charmap, linkplayer, ni, wonder_card
+from . import charmap, gift_registry, linkplayer, ni, stamp_rally, wonder_card
 
 
 VERSIONS = {
@@ -11,6 +11,10 @@ VERSIONS = {
     "leafgreen": linkplayer.VERSION_LEAF_GREEN,
 }
 LANGUAGES = {"english": linkplayer.LANGUAGE_ENGLISH}
+
+# Public alongside the other immutable run models while its implementation
+# lives with the stamp/static distribution builders.
+MysteryGiftDistribution = stamp_rally.MysteryGiftDistribution
 
 
 @dataclass(frozen=True)
@@ -205,12 +209,16 @@ class MysteryGiftPayload:
     """Immutable description of the Wonder Card and delivery script."""
 
     gift: str = wonder_card.GIFT_CELEBI
-    flag_id: int = 1003
+    flag_id: int | None = None
 
     def __post_init__(self):
-        if self.gift not in wonder_card.GIFT_CHOICES:
+        choices = gift_registry.GIFT_REGISTRY.live_choices
+        if self.gift not in choices:
             raise ValueError(
-                f"gift must be one of {', '.join(wonder_card.GIFT_CHOICES)}")
+                f"gift must be one of {', '.join(choices)}")
+        if self.flag_id is None:
+            object.__setattr__(self, "flag_id",
+                               gift_registry.GIFT_REGISTRY.default_flag_id(self.gift))
         wonder_card.flag_for_flag_id(self.flag_id)
 
     @property
@@ -218,7 +226,14 @@ class MysteryGiftPayload:
         return wonder_card.flag_for_flag_id(self.flag_id)
 
     def build(self):
-        return wonder_card.build_gift(self.gift, flag_id=self.flag_id)
+        """Return the traditional static ``(card, delivery_script)`` pair."""
+        distribution = self.build_distribution()
+        return distribution.card, distribution.ram_script
+
+    def build_distribution(self):
+        """Build the complete live-host conversation for this payload."""
+        return gift_registry.GIFT_REGISTRY.build_distribution(
+            self.gift, flag_id=self.flag_id)
 
 
 def _mystery_gift_host_defaults():

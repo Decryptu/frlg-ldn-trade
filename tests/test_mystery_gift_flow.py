@@ -149,7 +149,9 @@ def test_every_client_script_terminates_execution():
         assert last in stoppers, f"{name} ends with instruction {last}"
 
 
-def _game_data(flag_id=0, version_code=mg.VERSION_CODE_FIRERED, magic=mg.GAME_DATA_VALID_VAR):
+def _game_data(flag_id=0, version_code=mg.VERSION_CODE_FIRERED,
+               magic=mg.GAME_DATA_VALID_VAR, *, max_stamps=0,
+               metadata_icon=0, stamps=()):
     """Build what MysteryGift_LoadLinkGameData [mystery_gift.c:337] would produce."""
     data = bytearray(mg_script.GAME_DATA_SIZE)
     data[0x00:0x04] = magic.to_bytes(4, "little")
@@ -158,8 +160,18 @@ def _game_data(flag_id=0, version_code=mg.VERSION_CODE_FIRERED, magic=mg.GAME_DA
     data[0x0C:0x0E] = (1).to_bytes(2, "little")
     data[0x10:0x14] = version_code.to_bytes(4, "little")
     data[0x14:0x16] = flag_id.to_bytes(2, "little")
-    data[0x43:0x4A] = b"\xbf\xc7\xcf\xff\xff\xff\xff"        # "EMU" + terminator
-    data[0x4A:0x4E] = (0x47ED8822).to_bytes(4, "little")
+    data[mg_script.GD_OFF_METADATA_ICON:mg_script.GD_OFF_METADATA_ICON + 2] = \
+        metadata_icon.to_bytes(2, "little")
+    for index, (species, stamp_id) in enumerate(stamps):
+        data[mg_script.GD_OFF_STAMP_SPECIES + 2 * index:
+             mg_script.GD_OFF_STAMP_SPECIES + 2 * index + 2] = species.to_bytes(2, "little")
+        data[mg_script.GD_OFF_STAMP_IDS + 2 * index:
+             mg_script.GD_OFF_STAMP_IDS + 2 * index + 2] = stamp_id.to_bytes(2, "little")
+    data[mg_script.GD_OFF_MAX_STAMPS] = max_stamps
+    data[mg_script.GD_OFF_PLAYER_NAME:
+         mg_script.GD_OFF_PLAYER_NAME + 7] = b"\xbf\xc7\xcf\xff\xff\xff\xff"
+    data[mg_script.GD_OFF_TRAINER_ID:
+         mg_script.GD_OFF_TRAINER_ID + 4] = (0x47ED8822).to_bytes(4, "little")
     return bytes(data)
 
 
@@ -254,7 +266,8 @@ class ConsoleClientModel:
 
     RECV_READY, RECV_RECEIVING, RECV_FINISHED = 0, 1, 2
 
-    def __init__(self, *, flag_id=0, toss_answer=0, echo_delay=4, consume_latency=2):
+    def __init__(self, *, flag_id=0, max_stamps=0, metadata_icon=0,
+                 stamps=(), toss_answer=0, echo_delay=4, consume_latency=2):
         self.lp = linkplayer.LinkPlayer(name="ASH", version=linkplayer.VERSION_FIRE_RED,
                                         player_id=1)
         self.toss_answer = toss_answer
@@ -266,7 +279,15 @@ class ConsoleClientModel:
         # model charges a small latency instead of assuming the best case.
         self.consume_latency = consume_latency
         self._received_age = 0
-        self.game_data = _game_data(flag_id=flag_id)
+        self.metadata_icon = metadata_icon
+        self.stamps = list(stamps)
+        self.max_stamps = max_stamps
+        self.game_data = _game_data(
+            flag_id=flag_id, max_stamps=max_stamps,
+            metadata_icon=metadata_icon, stamps=stamps)
+        self.vars = {0x40B6: 0, 0x40B7: 0}
+        self.flags = set()
+        self.activation_scripts = []
 
         # RFU receive slot for the parent (player 0).
         self.recv_state = self.RECV_READY
@@ -441,9 +462,42 @@ class ConsoleClientModel:
             self._begin_send(*self._pending_send)
         elif instr == mg_script.CLI_SAVE_CARD:
             self.saved_card = bytes(self.recv_buffer[:332])
+            self.max_stamps = self.saved_card[9]
+            self.metadata_icon = int.from_bytes(self.saved_card[2:4], "little")
+            self.stamps = []
+            self.vars[0x40B6] = self.vars[0x40B7] = 0
+            self.flags.discard(0x3D8)
         elif instr == mg_script.CLI_SAVE_RAM_SCRIPT:
             # InitRamScript_NoObjectEvent clamps to script[995] [src/script.c:577].
             self.saved_ram_script = bytes(self.recv_buffer[:995])
+        elif instr == mg_script.CLI_SAVE_STAMP:
+            stamp = (int.from_bytes(self.recv_buffer[0:2], "little"),
+                     int.from_bytes(self.recv_buffer[2:4], "little"))
+            if (stamp[0] and stamp[1]
+                    and all(stamp[0] != old[0] and stamp[1] != old[1]
+                            for old in self.stamps)
+                    and len(self.stamps) < self.max_stamps):
+                self.stamps.append(stamp)
+        elif instr == mg_script.CLI_RUN_MEVENT_SCRIPT:
+            payload = bytes(self.recv_buffer)
+            self.activation_scripts.append(payload)
+            assert payload[0] == 5 and payload[5] == 2
+            embedded = int.from_bytes(payload[1:5], "little")
+            while True:
+                opcode = payload[embedded]
+                embedded += 1
+                if opcode == 0x02:
+                    break
+                if opcode == 0x2A:
+                    self.flags.discard(int.from_bytes(payload[embedded:embedded + 2], "little"))
+                    embedded += 2
+                elif opcode == 0x16:
+                    variable = int.from_bytes(payload[embedded:embedded + 2], "little")
+                    value = int.from_bytes(payload[embedded + 2:embedded + 4], "little")
+                    self.vars[variable] = value
+                    embedded += 4
+                else:
+                    raise AssertionError(f"unsupported activation opcode {opcode:#x}")
         elif instr == mg_script.CLI_COPY_MSG:
             # memcpy(client->msg, client->recvBuffer, CLIENT_MAX_MSG_SIZE)
             # [mystery_gift_client.c] - a fixed 64 bytes regardless of the
@@ -463,17 +517,23 @@ class ConsoleClientModel:
             raise AssertionError(f"console model has no case for instruction {instr}")
 
 
-def _drive(console, *, max_frames=4000, card=None, ram_script=None, timing=None,
-           require_completion=True):
+def _drive(console, *, max_frames=4000, card=None, ram_script=None,
+           distribution=None, timing=None, require_completion=True):
     """Run the engine against the console model until both sides are finished."""
-    if card is None:
+    if distribution is not None:
+        card, ram_script = distribution.card, distribution.ram_script
+    elif card is None:
         card, ram_script = wonder_card.build_default_gift()
     if timing is None:
         timing = host_mystery_gift.MysteryGiftTiming(client_ready_idle_frames=10)
-    engine = host_mystery_gift.HostMysteryGiftEngine(
-        card, ram_script,
-        link_player=linkplayer.LinkPlayer(name="EMU", version=linkplayer.VERSION_FIRE_RED),
+    kwargs = dict(
+        link_player=linkplayer.LinkPlayer(
+            name="EMU", version=linkplayer.VERSION_FIRE_RED),
         timing=timing)
+    engine = (host_mystery_gift.HostMysteryGiftEngine(
+                  distribution=distribution, **kwargs)
+              if distribution is not None else
+              host_mystery_gift.HostMysteryGiftEngine(card, ram_script, **kwargs))
     close_rows = 0
     for frame in range(max_frames):
         parent_row = rfu.serialize(engine.tick())

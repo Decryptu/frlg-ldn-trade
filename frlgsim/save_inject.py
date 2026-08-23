@@ -45,10 +45,11 @@ present on Pokemon Center 2F). Injection makes the card/script valid; it does no
 itself unlock the feature on a save that never enabled it.
 """
 
+from .gift_registry import GIFT_REGISTRY, add_flag_id_argument, resolve_flag_id
 from .mystery_gift import crc16, CARD_TYPE_COUNT, NUM_WONDER_BGS, SEND_TYPE_DISALLOWED, \
     SEND_TYPE_ALLOWED, SEND_TYPE_ALLOWED_ALWAYS
 from .wonder_card import (
-    GIFT_BEAST_CUTSCENE, GIFT_CHOICES, WONDER_CARD_SIZE, build_gift,
+    GIFT_BEAST_CUTSCENE, WONDER_CARD_SIZE,
 )
 
 # --- flash sector geometry [include/save.h] -------------------------------------------------
@@ -187,7 +188,7 @@ def inject_gift(sav_bytes, card, script):
 
 def inject_selected_gift(sav_bytes, gift=GIFT_BEAST_CUTSCENE, *, flag_id=1003):
     """Build and inject a supported gift. Returns ``(save_bytes, metadata)``."""
-    card, script = build_gift(gift, flag_id=flag_id)
+    card, script = GIFT_REGISTRY.build_static(gift, flag_id=flag_id)
     return inject_gift(sav_bytes, card, script)
 
 
@@ -246,10 +247,10 @@ def build_parser():
     ap = argparse.ArgumentParser(
         description="Inject a Mystery Gift payload into a FireRed/LeafGreen .sav")
     ap.add_argument("sav", help="path to a FireRed/LeafGreen .sav (128 KiB flash save)")
-    ap.add_argument("-g", "--gift", choices=GIFT_CHOICES,
+    ap.add_argument("-g", "--gift", choices=GIFT_REGISTRY.static_choices,
                     default=GIFT_BEAST_CUTSCENE,
                     help="gift payload to inject (default: beast-cutscene)")
-    ap.add_argument("--flag-id", type=int, default=1003, metavar="1000-1019")
+    add_flag_id_argument(ap)
     ap.add_argument("-o", "--out", help="output path (default: <sav>.gift.sav)")
     ap.add_argument("--in-place", action="store_true", help="overwrite the input save")
     return ap
@@ -263,7 +264,7 @@ def main(argv=None):
         original = fh.read()
     try:
         injected, info = inject_selected_gift(
-            original, args.gift, flag_id=args.flag_id)
+            original, args.gift, flag_id=resolve_flag_id(args))
     except ValueError as exc:
         ap.error(str(exc))
 

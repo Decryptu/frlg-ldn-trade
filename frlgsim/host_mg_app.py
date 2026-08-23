@@ -7,7 +7,8 @@ trade-specific seams: what gets built, what gets logged at startup, and what
 counts as progress.
 """
 
-from . import charmap, config as configmod, host_session, ldntrace, wonder_card
+from . import (charmap, config as configmod, gift_registry, host_session,
+               ldntrace)
 from .host_app import HostApplication
 from .host_beacon import build_wonder_card_app_data
 from .host_mystery_gift import (
@@ -15,10 +16,11 @@ from .host_mystery_gift import (
 )
 from .host_pia import HostPeerProtocol
 from .linkplayer import HOST_NAME_PAD
-from .mg_server import SERVER_RESULT_NAMES, SVR_MSG_CARD_SENT
+from .mg_server import SERVER_RESULT_NAMES, SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT
 
 # Retain the original import location while keeping the models centralized.
 MysteryGiftPayload = configmod.MysteryGiftPayload
+MysteryGiftDistribution = configmod.MysteryGiftDistribution
 MysteryGiftRunConfig = configmod.MysteryGiftRunConfig
 
 
@@ -29,19 +31,26 @@ class MysteryGiftHostApplication(HostApplication):
         super().__init__(config, **kwargs)
         self.card = None
         self.ram_script = None
+        self.distribution = None
         self._last_state = None
         self._result_logged = False
 
     def _build_payload(self):
-        """Build the selected payload through the shared immutable config."""
+        """Preserve the original static ``(card, script)`` application seam."""
         return self.config.payload.build()
+
+    def _build_distribution(self):
+        """Build the complete selected live-host conversation."""
+        return self.config.payload.build_distribution()
 
     def _build_components(self):
         phy, keys = self._resolve_phy_and_keys()
         link_player = self.profile.to_link_player()
-        self.card, self.ram_script = self._build_payload()
+        self.distribution = self._build_distribution()
+        self.card = self.distribution.card
+        self.ram_script = self.distribution.ram_script
         engine = HostMysteryGiftEngine(
-            self.card, self.ram_script, link_player=link_player,
+            distribution=self.distribution, link_player=link_player,
             trust_pia=self.config.trust_pia, log=self.log)
         self.session = host_session.HostSession(engine=engine, log=self.log)
         inactive, active = build_wonder_card_app_data(
@@ -75,11 +84,7 @@ class MysteryGiftHostApplication(HostApplication):
                   f"language={int.from_bytes(wire[26:28], 'little')}")
         self.info(f"RFU parent identity: raw={self.session.rfu.host_session_id.hex()} "
                   f"u16=0x{int.from_bytes(self.session.rfu.host_session_id, 'little'):04x}")
-        if payload.gift == wonder_card.GIFT_BEAST_CUTSCENE:
-            details = (f"level {wonder_card.LEGENDARY_BEAST_LEVEL}; "
-                       "Lansat Berry, Liechi Berry, and Master Ball")
-        else:
-            details = "level-50 Celebi; no item"
+        details = gift_registry.GIFT_REGISTRY.describe(payload.gift)
         card_title = charmap.decode(self.card[10:50])
         self.info(f"Gift: {payload.gift!r}; {details}; card title {card_title!r}; "
                   f"Wonder Card flagId {payload.flag_id} "
@@ -128,8 +133,9 @@ class MysteryGiftHostApplication(HostApplication):
     def run(self):
         joined = super().run()
         engine = self.session.activity if self.session is not None else None
-        if engine is not None and engine.result == SVR_MSG_CARD_SENT:
-            print("Wonder Card delivered. On the Switch, talk to the delivery man "
+        if engine is not None and engine.result in (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT):
+            noun = "Stamp" if engine.result == SVR_MSG_STAMP_SENT else "Wonder Card"
+            print(f"{noun} delivered. On the Switch, talk to the delivery man "
                   "on the second floor of any Pokemon Center to receive the gift.")
         elif engine is not None and engine.result is not None:
             print("Session finished without delivering a card: "

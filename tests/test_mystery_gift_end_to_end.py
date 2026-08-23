@@ -324,8 +324,11 @@ class _Run:
 def _run_full_stack(*, console=None, timing=None, radio=None, payload=None,
                     max_ms=6000, require_completion=True):
     """Drive the whole leader stack against the console model over the radio."""
+    distribution = payload if hasattr(payload, "card") else None
     card, ram_script = (wonder_card.build_default_gift()
-                        if payload is None else payload)
+                        if payload is None else
+                        (payload.card, payload.ram_script)
+                        if distribution is not None else payload)
     if console is None:
         console = ConsoleClientModel(flag_id=0)
     if timing is None:
@@ -333,11 +336,14 @@ def _run_full_stack(*, console=None, timing=None, radio=None, payload=None,
         # duration.  inter_block_gap_frames keeps its shipped value: it is the
         # thing under test.
         timing = host_mystery_gift.MysteryGiftTiming(client_ready_idle_frames=10)
-    engine = host_mystery_gift.HostMysteryGiftEngine(
-        card, ram_script,
+    kwargs = dict(
         link_player=linkplayer.LinkPlayer(name=HOST_NAME,
                                           version=linkplayer.VERSION_FIRE_RED),
         timing=timing)
+    engine = (host_mystery_gift.HostMysteryGiftEngine(
+                  distribution=distribution, **kwargs)
+              if distribution is not None else
+              host_mystery_gift.HostMysteryGiftEngine(card, ram_script, **kwargs))
     host = LeaderStack(engine)
     child = ScriptedMysteryGiftConsole(console)
     radio = radio if radio is not None else ImpairedRadio()
@@ -409,7 +415,7 @@ def test_native_shaped_mgl_fixture_covers_the_stage_5_id16_id17_handoff():
         (mg.MG_LINKID_READY_END, b"", 0),
     )
     assert len(mg_script.CLIENT_SCRIPT_SEND_GAME_DATA) == 32
-    assert len(game_data) == mg_script.GAME_DATA_SIZE == 96
+    assert len(game_data) == mg_script.GAME_DATA_SIZE == 100
 
     for ident, payload, size in cases:
         native = _native_mgl_blocks(ident, payload, size)

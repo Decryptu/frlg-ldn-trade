@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from . import charmap
 from .mystery_gift import (
     GAME_DATA_VALID_VAR, MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT,
-    MG_LINKID_DYNAMIC_MSG, MG_LINKID_RAM_SCRIPT, VERSION_CODE_FIRERED,
+    MG_LINKID_DYNAMIC_MSG, MG_LINKID_RAM_SCRIPT, MG_LINKID_STAMP, VERSION_CODE_FIRERED,
     VERSION_CODE_LEAFGREEN,
 )
 
@@ -121,6 +121,42 @@ CLIENT_SCRIPT_SAVE_CARD = client_script(
     (CLI_RETURN, CLI_MSG_CARD_RECEIVED),
 )
 
+# Stamp-rally extension scripts.  The activation Mystery Event is deliberately
+# received and run only after CLI_SAVE_STAMP.  The server has already checked
+# that the stamp is new and that a slot is available, so duplicate/full-card
+# exits never touch the reward variables.
+CLIENT_SCRIPT_INSTALL_CARD_AND_STAMP = client_script(
+    (CLI_RECV, MG_LINKID_CARD),
+    CLI_SAVE_CARD,
+    (CLI_RECV, MG_LINKID_RAM_SCRIPT),
+    CLI_SAVE_RAM_SCRIPT,
+    (CLI_RECV, MG_LINKID_STAMP),
+    CLI_SAVE_STAMP,
+    (CLI_RECV, MG_LINKID_RAM_SCRIPT),
+    CLI_RUN_MEVENT_SCRIPT,
+    CLI_SEND_READY_END,
+    (CLI_RETURN, CLI_MSG_STAMP_RECEIVED),
+)
+
+CLIENT_SCRIPT_SAVE_STAMP = client_script(
+    (CLI_RECV, MG_LINKID_STAMP),
+    CLI_SAVE_STAMP,
+    (CLI_RECV, MG_LINKID_RAM_SCRIPT),
+    CLI_RUN_MEVENT_SCRIPT,
+    CLI_SEND_READY_END,
+    (CLI_RETURN, CLI_MSG_STAMP_RECEIVED),
+)
+
+CLIENT_SCRIPT_HAD_STAMP = client_script(
+    CLI_SEND_READY_END,
+    (CLI_RETURN, CLI_MSG_HAD_STAMP),
+)
+
+CLIENT_SCRIPT_NO_ROOM_STAMPS = client_script(
+    CLI_SEND_READY_END,
+    (CLI_RETURN, CLI_MSG_NO_ROOM_STAMPS),
+)
+
 # sClientScript_HadCard [:82] - the console already holds this exact card.
 CLIENT_SCRIPT_HAD_CARD = client_script(
     CLI_SEND_READY_END,
@@ -166,9 +202,11 @@ CLIENT_SCRIPT_CANT_ACCEPT = client_script(
 
 
 # --- struct MysteryGiftLinkGameData [include/mystery_gift.h:22] -------------------------------
-# Offsets follow GBA natural alignment: u16 fields at 0x04/0x0C are each
-# followed by two padding bytes so the next u32 stays 4-aligned.
-GAME_DATA_SIZE = 0x60
+# Offsets follow agbcc's four-byte aggregate alignment.  In addition to the
+# padding after the u16 fields at 0x04/0x0C, the nested WonderCardMetadata is
+# aligned from 0x1E up to 0x20.  A hardware payload is therefore 0x64 bytes,
+# not the tempting packed-layout size of 0x60.
+GAME_DATA_SIZE = 0x64
 GD_OFF_UNK_00 = 0x00            # magic, must be GAME_DATA_VALID_VAR
 GD_OFF_UNK_04 = 0x04
 GD_OFF_UNK_08 = 0x08
@@ -176,14 +214,17 @@ GD_OFF_UNK_0C = 0x0C
 GD_OFF_UNK_10 = 0x10            # low nibble = VERSION_CODE (1 FireRed, 2 LeafGreen)
 GD_OFF_FLAG_ID = 0x14           # 0 = console holds no Wonder Card
 GD_OFF_QUESTIONNAIRE = 0x16     # u16[NUM_QUESTIONNAIRE_WORDS]
-GD_OFF_CARD_METADATA = 0x1E     # struct WonderCardMetadata (36 bytes)
-GD_OFF_MAX_STAMPS = 0x42
-GD_OFF_PLAYER_NAME = 0x43       # u8[PLAYER_NAME_LENGTH] = 7, with NO terminator slot
-GD_OFF_TRAINER_ID = 0x4A        # u8[TRAINER_ID_LENGTH]
+GD_OFF_CARD_METADATA = 0x20     # struct WonderCardMetadata (36 bytes)
+GD_OFF_METADATA_ICON = GD_OFF_CARD_METADATA + 6
+GD_OFF_STAMP_SPECIES = GD_OFF_CARD_METADATA + 8
+GD_OFF_STAMP_IDS = GD_OFF_STAMP_SPECIES + 14
+GD_OFF_MAX_STAMPS = 0x44
+GD_OFF_PLAYER_NAME = 0x45       # u8[PLAYER_NAME_LENGTH] = 7, with NO terminator slot
+GD_OFF_TRAINER_ID = 0x4C        # u8[TRAINER_ID_LENGTH]
 PLAYER_NAME_FIELD_SIZE = 7
-GD_OFF_EASY_CHAT = 0x4E         # u16[EASY_CHAT_BATTLE_WORDS_COUNT]
-GD_OFF_GAME_CODE = 0x5A         # u8[GAME_CODE_LENGTH]
-GD_OFF_VERSION = 0x5E           # RomHeaderSoftwareVersion
+GD_OFF_EASY_CHAT = 0x50         # u16[EASY_CHAT_BATTLE_WORDS_COUNT]
+GD_OFF_GAME_CODE = 0x5C         # u8[GAME_CODE_LENGTH]
+GD_OFF_VERSION = 0x60           # RomHeaderSoftwareVersion
 
 # MysteryGift_CompareCardFlags [src/mystery_gift.c:388]
 HAS_NO_CARD = 0
@@ -204,6 +245,9 @@ class LinkGameData:
     unk_0c: int
     version_code: int
     flag_id: int
+    metadata_icon_species: int
+    stamp_species: tuple
+    stamp_ids: tuple
     max_stamps: int
     player_name: str
     trainer_id: int
@@ -218,6 +262,13 @@ class LinkGameData:
     @property
     def has_card(self):
         return self.flag_id != 0
+
+    @property
+    def stamps(self):
+        """The populated ``(species, id)`` pairs from the saved card metadata."""
+        return tuple((species, stamp_id)
+                     for species, stamp_id in zip(self.stamp_species, self.stamp_ids)
+                     if species and stamp_id)
 
     @property
     def trainer_id_is_reliable(self):
@@ -261,6 +312,9 @@ def parse_link_game_data(payload):
         unk_0c=u16(GD_OFF_UNK_0C),
         version_code=u32(GD_OFF_UNK_10),
         flag_id=u16(GD_OFF_FLAG_ID),
+        metadata_icon_species=u16(GD_OFF_METADATA_ICON),
+        stamp_species=tuple(u16(GD_OFF_STAMP_SPECIES + 2 * i) for i in range(7)),
+        stamp_ids=tuple(u16(GD_OFF_STAMP_IDS + 2 * i) for i in range(7)),
         max_stamps=payload[GD_OFF_MAX_STAMPS],
         player_name=charmap.decode(payload[GD_OFF_PLAYER_NAME:GD_OFF_PLAYER_NAME + 7]),
         trainer_id=u32(GD_OFF_TRAINER_ID),

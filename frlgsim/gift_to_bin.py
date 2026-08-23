@@ -29,10 +29,10 @@ Byte layouts (verified against the repo's official AURORA/MYSTIC tickets):
 
 import os
 
+from .gift_registry import GIFT_REGISTRY, add_flag_id_argument, resolve_flag_id
 from .mystery_gift import crc16
 from .wonder_card import (
-    GIFT_BEAST_CUTSCENE, GIFT_CELEBI, GIFT_CHOICES,
-    WONDER_CARD_SIZE, build_gift,
+    GIFT_BEAST_CUTSCENE, GIFT_CELEBI, WONDER_CARD_SIZE,
 )
 from .save_inject import build_ram_script_struct, RAM_SCRIPT_DATA_SIZE
 
@@ -90,10 +90,10 @@ def build_parser():
     ap = argparse.ArgumentParser(
         description="Export the Mystery Gift payload as the WonderCard/Script .bin pair for "
                     "comradesean's pokemon-gen3-mysterygift-tool")
-    ap.add_argument("-g", "--gift", choices=GIFT_CHOICES,
+    ap.add_argument("-g", "--gift", choices=GIFT_REGISTRY.static_choices,
                     default=GIFT_BEAST_CUTSCENE,
                     help="which gift payload to export (default: beast-cutscene)")
-    ap.add_argument("--flag-id", type=int, default=1003, metavar="1000-1019")
+    add_flag_id_argument(ap)
     ap.add_argument("-o", "--out-dir", default=".",
                     help="directory to write the .bin pair into (default: cwd)")
     ap.add_argument("-n", "--name", default=None,
@@ -107,10 +107,12 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     try:
-        card, script = build_gift(args.gift, flag_id=args.flag_id)
+        card, script = GIFT_REGISTRY.build_static(
+            args.gift, flag_id=resolve_flag_id(args))
     except ValueError as exc:
         ap.error(str(exc))
-    name = args.name or GIFT_NAMES[args.gift]
+    name = args.name or GIFT_NAMES.get(
+        args.gift, args.gift.replace("-", "_").upper() + "_FRLG")
     wc_path, sc_path = write_gift_bins(args.out_dir, name, card, script)
     print(f"wrote {wc_path} ({WONDER_CARD_BIN_SIZE} B: cardCrc=0x{crc16(card):04X})")
     _, ram_crc = build_ram_script_struct(script)

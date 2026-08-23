@@ -4,6 +4,8 @@ Hand a real Switch FireRed/LeafGreen save a Wonder Card + delivery RAM script ov
 `mystery_stamps` branch, the default card runs the repeatable legendary-beast cutscene. Select
 `--gift celebi` for the original level-50 Celebi payload. Each gift owns its card text, icon,
 rewards, and delivery script; the live CLI selects the gift rather than editing its contents.
+The composed `--gift porygon-tm-gift` event distributes TM29 Psychic and TM46 Thief with a Porygon
+card and Clefairy delivery scene.
 
 **Status: hardware-proven end to end.** The Friend-path distributor has completed discovery,
 connection, LinkPlayer exchange, card transfer, save/reboot persistence, and deliveryman execution
@@ -27,6 +29,12 @@ Then on the Switch: **Mystery Gift → Wonder Cards → Friend**, pick the host 
 Companion docs: [docs/joyspot_discovery_findings.md](docs/joyspot_discovery_findings.md) (why the
 Wireless Communication path is not reachable) and
 [docs/frlgtrade_host_design.md](docs/frlgtrade_host_design.md).
+The live-host-only Solrock/Lunatone event is documented in
+[docs/stamp_rally.md](docs/stamp_rally.md).
+Future event authoring through validated, checkpointed action plans is documented in
+[docs/mystery_gift_composer.md](docs/mystery_gift_composer.md).
+The composed TM event is documented in
+[docs/porygon_tm_gift.md](docs/porygon_tm_gift.md).
 
 ---
 
@@ -97,6 +105,9 @@ Switch's valid block, then sends its own block and waits for the standby barrier
 | `frlgsim/host_mg_app.py` | Mystery Gift application hooks over the activity-neutral host runtime |
 | `frlgmg_host.py` | thin Mystery Gift CLI and run-config construction |
 | `frlgsim/wonder_card.py` | shared Celebi and legendary-beast Wonder Card/RAM-script builders |
+| `frlgsim/stamp_rally.py` | shared Stamp Rally card, stamps, activation wrappers, and delivery script |
+| `frlgsim/gift_composer.py` | immutable action definitions, cursor-state validation, and RAM-script compiler |
+| `frlgsim/gift_registry.py` | capability-aware catalog for legacy and composed gifts |
 | `frlgsim/gift_to_bin.py` | paired `.bin` exporter for external Gen-3 Mystery Gift tools |
 | `frlgsim/save_inject.py` | validated FRLG save injection with card, RAM-script, and sector checksums |
 
@@ -130,6 +141,8 @@ that was dropped without an error.
 ./.venv/bin/python tests/test_mystery_gift_offline.py       # payload + CRC foundations
 ./.venv/bin/python tests/test_mystery_gift_config.py        # shared CLI/profile + Gate 1 fixtures
 ./.venv/bin/python tests/test_mystery_stamps.py             # cutscene, export, and save checksums
+./.venv/bin/python tests/test_gift_composer.py              # composed actions, cursors, rallies, validation
+./.venv/bin/python tests/test_porygon_tm_gift.py            # Porygon card, Clefairy scene, TM checkpoints
 ```
 
 `tests/test_mystery_gift_flow.py` models the RFU block-receive gate, `MGL_Receive`, and

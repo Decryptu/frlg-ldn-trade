@@ -133,8 +133,21 @@ The beast depends on the receiving save's starter: Bulbasaur gives Suicune, Squi
 and Charmander gives Raikou. See [the legendary-beast gift guide](docs/legendary_beast_gift.md) for
 the reward sequence, binary export, and save-injection tools.
 
+The live host also distributes the two halves of a shared Stamp Rally card. Run it once with
+`--gift solrock-stamp` and later with `--gift lunatone-stamp` (in either order). Stamp events
+default to card flag ID `1006`; after each stamp, the deliveryman gives its level-30 Pokémon, then
+gives level-50 Celebi when both rewards have been collected. See the
+[Stamp Rally guide](docs/stamp_rally.md) for state, protocol pseudocode, and hardware checks. These
+dynamic events are intentionally unavailable in the static `.bin` exporter and save injector.
+
+The composed `--gift porygon-tm-gift` event displays a Porygon card, makes Clefairy appear three
+tiles to the player's right, and delivers TM29 Psychic followed by TM46 Thief. See the
+[Porygon TM Gift guide](docs/porygon_tm_gift.md) for live, export, injection, and test commands.
+
 See [the Mystery Gift distributor guide](MYSTERY_GIFT_DISTRIBUTOR.md) for the protocol flow, payload,
 test commands, and why the Switch requires the Friend path rather than Wireless Communication.
+New events can be assembled from validated delivery stages, rewards, messages, sprites, battles,
+and up to six stamp slots; see the [composable gift authoring guide](docs/mystery_gift_composer.md).
 
 ### Hosting diagnostics
 

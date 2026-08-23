@@ -7,7 +7,8 @@ The engine is a small interpreter over the same ``SVR_*`` opcodes the decomp
 uses, so a flow written here can be read side by side with
 ``src/mystery_gift_scripts.c``.  :data:`SCRIPT_SEND_WONDER_CARD` is a faithful
 transcription of ``gMysteryGiftServerScript_SendWonderCard``
-[mystery_gift_scripts.c:185] including its three-way existing-card branch.
+[mystery_gift_scripts.c:185] including its three-way existing-card branch;
+the Stamp Rally adds the native stamp operations and activation payloads.
 
 Transport independence: the interpreter never touches blocks or RFU.  It runs
 until it blocks on an action and publishes it as :attr:`action`::
@@ -25,7 +26,7 @@ from . import mg_script
 from .mystery_gift import (
     MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT, MG_LINKID_DYNAMIC_MSG,
     MG_LINKID_GAME_DATA, MG_LINKID_RAM_SCRIPT, MG_LINKID_READY_END,
-    MG_LINKID_RESPONSE,
+    MG_LINKID_RESPONSE, MG_LINKID_STAMP,
 )
 from .wonder_card import WONDER_CARD_SIZE
 
@@ -43,6 +44,10 @@ SVR_LOAD_CARD = "SVR_LOAD_CARD"
 SVR_LOAD_RAM_SCRIPT = "SVR_LOAD_RAM_SCRIPT"
 SVR_LOAD_CLIENT_SCRIPT = "SVR_LOAD_CLIENT_SCRIPT"
 SVR_LOAD_MSG = "SVR_LOAD_MSG"
+SVR_CHECK_RALLY_CARD = "SVR_CHECK_RALLY_CARD"
+SVR_CHECK_EXISTING_STAMPS = "SVR_CHECK_EXISTING_STAMPS"
+SVR_LOAD_STAMP = "SVR_LOAD_STAMP"
+SVR_LOAD_ACTIVATION = "SVR_LOAD_ACTIVATION"
 
 # --- server result message ids [include/mystery_gift_server.h:56] -----------------------------
 SVR_MSG_NOTHING_SENT = 0
@@ -61,7 +66,10 @@ SVR_MSG_COMM_ERROR = 11
 SERVER_RESULT_NAMES = {
     SVR_MSG_NOTHING_SENT: "nothing sent",
     SVR_MSG_CARD_SENT: "Wonder Card sent",
+    SVR_MSG_STAMP_SENT: "stamp sent",
     SVR_MSG_HAS_CARD: "the console already had this card",
+    SVR_MSG_HAS_STAMP: "the console already had this stamp",
+    SVR_MSG_NO_ROOM_STAMPS: "the console's stamp card is full",
     SVR_MSG_CLIENT_CANCELED: "the player kept their existing card",
     SVR_MSG_CANT_SEND_GIFT_1: "the console's game data was rejected",
     SVR_MSG_COMM_ERROR: "communication error",
@@ -119,6 +127,79 @@ _SCRIPT_SEND_CARD = (
     (SVR_RETURN, SVR_MSG_CARD_SENT),
 )
 
+_SCRIPT_HAS_STAMP = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_HAD_STAMP),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_HAS_STAMP),
+)
+
+_SCRIPT_NO_ROOM_STAMPS = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_NO_ROOM_STAMPS),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_NO_ROOM_STAMPS),
+)
+
+_SCRIPT_SEND_STAMP_ONLY = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SAVE_STAMP),
+    (SVR_SEND,),
+    (SVR_LOAD_STAMP,),
+    (SVR_SEND,),
+    (SVR_LOAD_ACTIVATION, False),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_STAMP_SENT),
+)
+
+_SCRIPT_INSTALL_CARD_AND_STAMP = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_INSTALL_CARD_AND_STAMP),
+    (SVR_SEND,),
+    (SVR_LOAD_CARD,),
+    (SVR_SEND,),
+    (SVR_LOAD_RAM_SCRIPT,),
+    (SVR_SEND,),
+    (SVR_LOAD_STAMP,),
+    (SVR_SEND,),
+    (SVR_LOAD_ACTIVATION, True),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_STAMP_SENT),
+)
+
+_SCRIPT_STAMP_TOSS_PROMPT = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_ASK_TOSS),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_RESPONSE),
+    (SVR_READ_RESPONSE,),
+    (SVR_GOTO_IF_EQ, False, _SCRIPT_INSTALL_CARD_AND_STAMP),
+    (SVR_GOTO, _SCRIPT_CLIENT_CANCELED),
+)
+
+# Python names for MysteryGift_CheckStamps' native result values.  The native
+# function checks full before duplicate; this host intentionally checks
+# duplicate first so a previously collected stamp is reported accurately even
+# on a completed two-slot card.
+STAMPS_FULL = 1
+STAMP_NEW = 2
+STAMP_ALREADY_PRESENT = 3
+
+SCRIPT_SEND_STAMP_EVENT = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_GAME_DATA),
+    (SVR_COPY_GAME_DATA,),
+    (SVR_CHECK_GAME_DATA,),
+    (SVR_GOTO_IF_EQ, False, _SCRIPT_CANT_SEND),
+    (SVR_CHECK_RALLY_CARD,),
+    (SVR_GOTO_IF_EQ, mg_script.HAS_DIFF_CARD, _SCRIPT_STAMP_TOSS_PROMPT),
+    (SVR_GOTO_IF_EQ, mg_script.HAS_NO_CARD, _SCRIPT_INSTALL_CARD_AND_STAMP),
+    (SVR_CHECK_EXISTING_STAMPS,),
+    (SVR_GOTO_IF_EQ, STAMP_ALREADY_PRESENT, _SCRIPT_HAS_STAMP),
+    (SVR_GOTO_IF_EQ, STAMPS_FULL, _SCRIPT_NO_ROOM_STAMPS),
+    (SVR_GOTO, _SCRIPT_SEND_STAMP_ONLY),
+)
+
 # sServerScript_TossPrompt [:151] - console holds a different card.
 _SCRIPT_TOSS_PROMPT = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_ASK_TOSS),
@@ -167,8 +248,8 @@ class MysteryGiftServer:
     # longer delivery script would be truncated mid-bytecode on the console.
     MAX_RAM_SCRIPT_SIZE = 995
 
-    def __init__(self, card, ram_script, *, script=SCRIPT_SEND_WONDER_CARD,
-                 log=lambda *a: None):
+    def __init__(self, card, ram_script, *, stamp=None, activation_script=None,
+                 install_activation_script=None, script=None, log=lambda *a: None):
         self.card = bytes(card)
         self.ram_script = bytes(ram_script)
         if len(self.ram_script) > self.MAX_RAM_SCRIPT_SIZE:
@@ -178,9 +259,24 @@ class MysteryGiftServer:
         if len(self.card) != WONDER_CARD_SIZE:
             raise MysteryGiftServerError(
                 f"Wonder Card must be exactly {WONDER_CARD_SIZE} bytes, got {len(self.card)}")
+        self.stamp = None if stamp is None else bytes(stamp)
+        self.activation_script = (None if activation_script is None
+                                  else bytes(activation_script))
+        self.install_activation_script = (
+            None if install_activation_script is None
+            else bytes(install_activation_script))
+        extras = (self.stamp, self.activation_script, self.install_activation_script)
+        if any(value is not None for value in extras):
+            if any(value is None for value in extras):
+                raise MysteryGiftServerError(
+                    "stamp flow requires a stamp and both activation scripts")
+            if len(self.stamp) != 4:
+                raise MysteryGiftServerError("stamp must be exactly four bytes")
+        self.is_stamp_distribution = self.stamp is not None
         self.log = log
         self.info = getattr(log, "info", log)
-        self.script = script
+        self.script = (SCRIPT_SEND_STAMP_EVENT if script is None and self.is_stamp_distribution
+                       else SCRIPT_SEND_WONDER_CARD if script is None else script)
         self.cmdidx = 0
         self.param = None
         self.action = None
@@ -281,6 +377,44 @@ class MysteryGiftServer:
         self.param = mg_script.compare_card_flags(self.card_flag_id, self.game_data)
         self.trace.append(("existing_card", self.param))
 
+    def _do_svr_check_rally_card(self):
+        expected_icon = int.from_bytes(self.card[2:4], "little")
+        if not self.game_data.has_card:
+            self.param = mg_script.HAS_NO_CARD
+        elif (self.game_data.flag_id == self.card_flag_id
+              and self.game_data.max_stamps == self.card[9]
+              and self.game_data.metadata_icon_species
+              == expected_icon):
+            self.param = mg_script.HAS_SAME_CARD
+        else:
+            self.param = mg_script.HAS_DIFF_CARD
+        self.trace.append(("rally_card", self.param))
+        result = {
+            mg_script.HAS_NO_CARD: "no card",
+            mg_script.HAS_SAME_CARD: "matching rally",
+            mg_script.HAS_DIFF_CARD: "different card",
+        }[self.param]
+        self.info(
+            "Rally card check: console "
+            f"flagId={self.game_data.flag_id}, maxStamps={self.game_data.max_stamps}, "
+            f"metadataIcon={self.game_data.metadata_icon_species}, "
+            f"stamps={self.game_data.stamps}; expected flagId={self.card_flag_id}, "
+            f"maxStamps={self.card[9]}, metadataIcon={expected_icon} -> {result}.")
+
+    def _do_svr_check_existing_stamps(self):
+        species = int.from_bytes(self.stamp[0:2], "little")
+        stamp_id = int.from_bytes(self.stamp[2:4], "little")
+        slots = range(min(self.game_data.max_stamps, len(self.game_data.stamp_ids)))
+        if any(self.game_data.stamp_species[i] == species
+               or self.game_data.stamp_ids[i] == stamp_id for i in slots):
+            self.param = STAMP_ALREADY_PRESENT
+        elif not any(self.game_data.stamp_species[i] == 0
+                     and self.game_data.stamp_ids[i] == 0 for i in slots):
+            self.param = STAMPS_FULL
+        else:
+            self.param = STAMP_NEW
+        self.trace.append(("existing_stamps", self.param))
+
     def _do_svr_read_response(self):
         # svr->param = *(u32 *)svr->recvBuffer [mystery_gift_server.c:193] - the
         # raw word, not a coerced bool. CLI_LOAD_TOSS_RESPONSE sends TRUE when
@@ -295,6 +429,14 @@ class MysteryGiftServer:
 
     def _do_svr_load_ram_script(self):
         self._loaded = (MG_LINKID_RAM_SCRIPT, self.ram_script, FULL_BUFFER)
+
+    def _do_svr_load_stamp(self):
+        self._loaded = (MG_LINKID_STAMP, self.stamp, len(self.stamp))
+
+    def _do_svr_load_activation(self, install):
+        payload = (self.install_activation_script if install
+                   else self.activation_script)
+        self._loaded = (MG_LINKID_RAM_SCRIPT, payload, len(payload))
 
     def _do_svr_load_msg(self, text):
         self._loaded = (MG_LINKID_DYNAMIC_MSG, text, len(text))

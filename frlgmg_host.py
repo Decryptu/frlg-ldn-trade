@@ -32,23 +32,24 @@ BUNDLED_LDN = os.path.join(PROJECT_ROOT, "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
-from frlgsim import config as configmod, host_cli, trade_runtime  # noqa: E402
+from frlgsim import config as configmod, gift_registry, host_cli, trade_runtime  # noqa: E402
 from frlgsim.host_mg_app import MysteryGiftHostApplication  # noqa: E402
-from frlgsim.wonder_card import (  # noqa: E402
-    GIFT_BEAST_CUTSCENE, GIFT_CHOICES,
-)
+from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
+
+# Compatibility snapshot for callers that imported the old constant. Parser
+# construction reads the registry dynamically so newly registered definitions
+# appear without re-importing this module.
+HOST_GIFT_CHOICES = gift_registry.GIFT_REGISTRY.live_choices
 
 
 def build_parser():
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     defaults = configmod.MysteryGiftRunConfig()
-    parser.add_argument("--gift", choices=GIFT_CHOICES,
+    parser.add_argument("--gift", choices=gift_registry.GIFT_REGISTRY.live_choices,
                         default=GIFT_BEAST_CUTSCENE,
                         help="gift payload to distribute (default: beast-cutscene)")
-    parser.add_argument("--flag-id", type=int, default=1003, metavar="ID",
-                        help="Wonder Card flagId, 1000..1019; 1003 is the first "
-                             "unused receipt-flag slot (default: 1003)")
+    gift_registry.add_flag_id_argument(parser)
     host_cli.add_host_arguments(
         parser,
         option_defaults=defaults.role,
@@ -61,8 +62,9 @@ def build_parser():
 def build_run_config(parser, args):
     profile, ldn, role = host_cli.build_host_config(parser, args)
     try:
+        flag_id = gift_registry.resolve_flag_id(args)
         payload = configmod.MysteryGiftPayload(
-            gift=args.gift, flag_id=args.flag_id)
+            gift=args.gift, flag_id=flag_id)
         return configmod.MysteryGiftRunConfig(
             profile=profile, ldn=ldn, role=role,
             payload=payload, trust_pia=args.trust_pia)
