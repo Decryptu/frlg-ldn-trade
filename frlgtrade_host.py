@@ -18,10 +18,10 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Prefer the bundled LDN checkout. It contains the host-side compatibility
-# modes used by the proven mt76x0u and rtw88_8822bu adapters without requiring
-# a system installation.
-BUNDLED_LDN = os.path.join(PROJECT_ROOT, "LDN")
+# Prefer the tracked vendored LDN package. It contains the host-side
+# compatibility modes used by the proven mt76x0u and rtw88_8822bu adapters
+# without requiring an untracked checkout or a system installation.
+BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
@@ -29,10 +29,12 @@ from frlgsim import config as configmod, host_cli, trade_runtime  # noqa: E402
 from frlgsim.host_app import HostApplication  # noqa: E402
 
 
-def build_parser():
+def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("party", nargs="+", metavar="MON",
+    if file_config is None:
+        file_config = configmod.load_project_host_file_config()
+    parser.add_argument("party", nargs="*", metavar="MON",
                         help="1..6 host party .pk3/.ek3 files")
     parser.add_argument("-o", "--out", default="received.pk3",
                         help="received-mon output path")
@@ -45,10 +47,14 @@ def build_parser():
     parser.add_argument("--trades", type=int, default=1, choices=range(1, 7), metavar="N")
     parser.add_argument("--anim-delay", type=int, default=None,
                         help="override the proven trade-animation frame delay")
+    host_cli.add_host_config_arguments(
+        parser, shared_path=shared_path, local_path=local_path)
     host_cli.add_host_arguments(
         parser,
-        option_defaults=configmod.HostOptions(),
-        ldn_defaults=configmod.LdnConfig(phy="auto"),
+        option_defaults=file_config.to_host_options(),
+        ldn_defaults=file_config.to_ldn_config(),
+        trust_pia_default=file_config.trust_pia,
+        live_default=file_config.live,
         scene_help="LDN scene; default is the known Direct Corner scene",
     )
     return parser
@@ -84,8 +90,25 @@ def build_run_config(parser, args):
 
 
 def main(argv=None):
-    parser = build_parser()
+    try:
+        file_config, shared_path, local_path = \
+            host_cli.load_host_file_config_from_argv(argv)
+    except (ValueError, SystemExit) as exc:
+        print(f"frlgtrade_host.py: error: {exc}", file=sys.stderr)
+        return 2
+    parser = build_parser(
+        file_config, shared_path=shared_path, local_path=local_path)
     args = parser.parse_args(argv)
+    if args.print_effective_config:
+        # Validate transport values without requiring party files, root, or
+        # Wi-Fi hardware so this is a trustworthy preflight inspection path.
+        host_cli.build_host_config(parser, args)
+        print(host_cli.format_effective_config(args), end="")
+        return 0
+    if not args.party:
+        parser.error("the following arguments are required: MON")
+    if not args.live:
+        parser.error("hosting only supports live mode; omit --no-live")
     if os.geteuid() != 0:
         parser.error("live LDN hosting requires root; run with sudo -E")
     run_config = build_run_config(parser, args)

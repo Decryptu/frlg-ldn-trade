@@ -7,11 +7,17 @@ from types import SimpleNamespace
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
-sys.path.insert(0, os.path.join(ROOT, "LDN"))
+VENDORED_LDN = os.path.join(ROOT, "vendor", "LDN")
+sys.path.insert(0, VENDORED_LDN)
 
 import ldn
 from ldn import wlan
 from frlgsim.transport import HostTransport
+
+
+def test_ldn_import_resolves_to_the_tracked_vendored_package():
+    module_path = os.path.abspath(ldn.__file__)
+    assert os.path.commonpath((module_path, VENDORED_LDN)) == VENDORED_LDN
 
 
 class _StopTransmit(Exception):

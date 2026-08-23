@@ -28,8 +28,9 @@ import time
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Prefer the bundled, host-capable LDN checkout just like frlgtrade_host.py.
-BUNDLED_LDN = os.path.join(PROJECT_ROOT, "LDN")
+# Prefer the tracked vendored, host-capable LDN package just like
+# frlgtrade_host.py.
+BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 

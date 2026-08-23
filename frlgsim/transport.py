@@ -21,6 +21,7 @@ import subprocess
 import threading
 import time
 import traceback
+from pathlib import Path
 
 ETH_P_IP = 0x0800
 PROTO_UDP = 17
@@ -618,6 +619,17 @@ HOST_WIFI_PROFILES = {
     "rtw88_8822bu": ("TP-Link Archer T3U (USB 2357:012d)", True, True),
 }
 
+# Names accepted by the checked-in Pi profile.  We identify the USB device as
+# well as its driver so the Raspberry Pi's internal radio (and a second USB
+# dongle) cannot be selected merely because it happened to become ``phy0``.
+HOST_ADAPTER_PROFILES = {
+    "tplink-archer-t3u": {
+        "label": "TP-Link Archer T3U / AC1300",
+        "driver": "rtw88_8822bu",
+        "usb_id": "2357:012d",
+    },
+}
+
 
 def _phy_driver(phyname):
     """Return the selected PHY's kernel driver name, or ``?`` if unavailable."""
@@ -626,6 +638,66 @@ def _phy_driver(phyname):
             f"/sys/class/ieee80211/{phyname}/device/driver")) or "?"
     except OSError:
         return "?"
+
+
+def _phy_usb_id(phyname):
+    """Return ``vvvv:pppp`` for a phy's ancestor USB device, if any."""
+    try:
+        node = Path(f"/sys/class/ieee80211/{phyname}/device").resolve()
+    except OSError:
+        return None
+    for candidate in (node, *node.parents):
+        try:
+            vendor = (candidate / "idVendor").read_text(encoding="ascii").strip()
+            product = (candidate / "idProduct").read_text(encoding="ascii").strip()
+        except OSError:
+            continue
+        if vendor and product:
+            return f"{vendor.lower()}:{product.lower()}"
+    return None
+
+
+def describe_phys():
+    """Return deterministic diagnostics for currently visible WLAN PHYs."""
+    return [
+        (phy, _phy_driver(phy), _phy_usb_id(phy))
+        for phy in list_phys()
+    ]
+
+
+def find_adapter_phy(adapter, log=print):
+    """Resolve one named, physically identified host adapter to a PHY.
+
+    Unlike ``find_ap_phy``, this deliberately refuses to guess: a missing or
+    duplicated TP-Link is actionable deployment feedback, while selecting the
+    Pi's built-in radio would be surprising and unsafe.  A literal ``phyN``
+    passed through ``--phy`` is handled by the caller and always wins.
+    """
+    profile = HOST_ADAPTER_PROFILES.get(adapter)
+    if profile is None:
+        choices = ", ".join(sorted(HOST_ADAPTER_PROFILES))
+        raise RuntimeError(
+            f"unknown Wi-Fi adapter profile {adapter!r}; choose one of: {choices}")
+    matches = [
+        phy for phy, driver, usb_id in describe_phys()
+        if driver == profile["driver"] and usb_id == profile["usb_id"]
+    ]
+    if len(matches) == 1:
+        phy = matches[0]
+        log(f"[host] adapter {adapter} -> {phy} "
+            f"({profile['driver']}, USB {profile['usb_id']})")
+        return phy
+    visible = ", ".join(
+        f"{phy} ({driver}, USB {usb_id or '?'})"
+        for phy, driver, usb_id in describe_phys()) or "none"
+    if not matches:
+        raise RuntimeError(
+            f"adapter {profile['label']} was not found "
+            f"(need {profile['driver']}, USB {profile['usb_id']}); "
+            f"visible PHYs: {visible}. Pass --phy phyN to select a PHY explicitly.")
+    raise RuntimeError(
+        f"adapter {profile['label']} is ambiguous ({', '.join(matches)}); "
+        "unplug one matching adapter or pass --phy phyN explicitly.")
 
 
 def wifi_profile_messages(driver, skip_encryption, accept_decrypted_ccmp):

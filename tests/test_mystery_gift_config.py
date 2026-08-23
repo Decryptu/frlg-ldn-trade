@@ -88,7 +88,7 @@ def test_both_host_clis_use_the_same_explicit_transport_parsing():
     assert gift.profile.trainer_id == (34567 << 16) | 12345
 
 
-def test_role_defaults_preserve_both_hardware_checkpoints():
+def test_role_defaults_use_the_checked_in_tp_link_profile():
     gift = _build_mg(["--live"])
     trade = _build_trade(["--live", "one.pk3", "two.pk3"])
     assert (gift.role.skip_encryption,
@@ -96,9 +96,9 @@ def test_role_defaults_preserve_both_hardware_checkpoints():
             gift.role.session_response_first) == (True, True, True)
     assert (trade.role.skip_encryption,
             trade.role.native_nonce_sequence,
-            trade.role.session_response_first) == (False, False, False)
-    assert gift.role.accept_decrypted_ccmp is False
-    assert trade.role.accept_decrypted_ccmp is False
+            trade.role.session_response_first) == (True, True, True)
+    assert gift.role.accept_decrypted_ccmp is True
+    assert trade.role.accept_decrypted_ccmp is True
     assert gift.ldn.phy == trade.ldn.phy == "auto"
 
 

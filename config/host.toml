@@ -1,0 +1,26 @@
+# Shared Mystery Gift host defaults.
+#
+# This file is safe to commit and is loaded before the optional ignored
+# config/host.local.toml.  Command-line options supplied explicitly take final
+# precedence.  See docs/raspberry_pi.md for the normal Pi workflow.
+
+[host]
+# The proven TP-Link Archer T3U / AC1300 (rtw88_8822bu) profile.
+live = true
+adapter = "tplink-archer-t3u"
+trust_pia = true
+channel = 1
+max_participants = 6
+skip_preflight = false
+# Delegate outgoing CCMP to mac80211/hardware; over-air traffic remains encrypted.
+skip_encryption = true
+# Normalize this driver's decrypted monitor RX frames that retain CCMP metadata.
+accept_decrypted_ccmp = true
+native_nonce_sequence = true
+session_response_first = true
+
+[ldn]
+# "auto" selects the AP-capable USB adapter; do not rely on the Pi's phy number.
+phy = "auto"
+# Store the real Pi-specific key path in config/host.local.toml if it differs.
+keys_path = "~/.switch/prod.keys"

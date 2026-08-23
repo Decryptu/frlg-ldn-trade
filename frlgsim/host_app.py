@@ -53,10 +53,16 @@ class HostApplication:
     def _resolve_phy_and_keys(self):
         phy = self.ldn.phy
         if phy == "auto":
-            phy = transport.find_ap_phy(log=self.log)
-            if phy is None:
-                raise SystemExit("no AP-capable phy found; present phys: "
-                                 f"{', '.join(transport.list_phys()) or 'none'}")
+            if self.ldn.adapter:
+                try:
+                    phy = transport.find_adapter_phy(self.ldn.adapter, log=self.log)
+                except RuntimeError as exc:
+                    raise SystemExit(str(exc)) from exc
+            else:
+                phy = transport.find_ap_phy(log=self.log)
+                if phy is None:
+                    raise SystemExit("no AP-capable phy found; present phys: "
+                                     f"{', '.join(transport.list_phys()) or 'none'}")
         keys = resolve_keys(self.ldn.keys_path)
         if not os.path.exists(keys):
             raise SystemExit(f"prod.keys not found at {keys!r}; pass --keys with an absolute path")

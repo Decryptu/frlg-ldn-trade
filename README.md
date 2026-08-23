@@ -21,11 +21,16 @@ This demo was recorded using the **ALFA AWUS036ACHM**. The RZ616 is half as fast
 
 ## Requirements
 - Linux
-- Python 3.12+, and a venv with requirements installed (see requirements.txt)
+- Python 3.11+, and a venv with requirements installed (see requirements.txt)
 - a compatible WiFi card (see below)
 - A Switch or Switch 2 with FRLG, played to the point where the Direct Corner has been unlocked (~20-40 minutes)
 - At least 2 .pk3 files to serve as simulated party members/trade fodder
 - Switch prod.keys (the default location is ``~/.switch/prod.keys``)
+
+The required LDN implementation is included in [`vendor/LDN`](vendor/LDN).
+It is installed automatically by `pip install -r requirements.txt`; do not
+replace it with the similarly versioned PyPI `ldn` package, which does not
+contain this project's adapter compatibility fixes.
 
 ### Tested WiFi Cards
 
@@ -58,14 +63,16 @@ sudo -E ./.venv/bin/python frlgtrade.py --live -o output.pk3 PARTY1.pk3 PARTY2.p
 Start a Direct Corner host with:
 
 ```bash
-sudo -E ./.venv/bin/python frlgtrade_host.py --live \
-  --skip-encryption --no-accept-decrypted-ccmp \
+sudo -E ./.venv/bin/python frlgtrade_host.py \
   -o output.pk3 PARTY1.pk3 PARTY2.pk3
 ```
 
 Linux advertises the group and acts as the trade leader. With the default settings it offers the
 second supplied party member (`PARTY2.pk3`) and writes the Pokémon received from the Switch to
-`output.pk3`. Run `frlgtrade_host.py --help` for the complete operational CLI.
+`output.pk3`. Host defaults are loaded from `config/host.toml`, then optional ignored
+`config/host.local.toml`; command-line flags override both. Run
+`frlgtrade_host.py --print-effective-config` to inspect the safe effective profile without root
+or Wi-Fi hardware.
 
 **Optional Flags (not comprehensive):**
 
@@ -76,6 +83,9 @@ second supplied party member (`PARTY2.pk3`) and writes the Pokémon received fro
 | `--keys` | `/path/to/prod.keys` | Non-default prod.keys location |
 | `--slot` | zero-based party index | Host party member offered in the trade |
 | `--capture` | output path | Optional JSONL diagnostic capture |
+| `--config` | TOML path | Replace the tracked shared host profile |
+| `--local-config` / `--no-local-config` | TOML path / N/A | Select or disable the machine-local layer |
+| `--print-effective-config` | N/A | Print the redacted resolved profile and exit |
 | `--skip-encryption` | N/A | Delegate transmit CCMP to mac80211/hardware; traffic remains encrypted over the air |
 | `--accept-decrypted-ccmp` | N/A | Accept driver-decrypted RX plaintext with retained CCMP metadata |
 | `--ot` | Gen III trainer name | Override `DEFAULT_TRAINER.name` for this run |
@@ -90,16 +100,20 @@ options for each entry point.
 These profiles apply when Linux is hosting with `frlgtrade_host.py` or `frlgmg_host.py`; they do not
 change the Switch-hosted `frlgtrade.py` joiner.
 
-| Adapter | Linux identity | Required host flags |
+| Adapter | Linux identity | Normal host configuration |
 |---|---|---|
-| ALFA AWUS036ACHM | `mt76x0u` | `--skip-encryption --no-accept-decrypted-ccmp` |
-| TP-Link Archer T3U | USB `2357:012d`, `rtw88_8822bu` | `--skip-encryption --accept-decrypted-ccmp` |
+| ALFA AWUS036ACHM | `mt76x0u` | Pass its explicit `--phy phyN`, plus `--skip-encryption --no-accept-decrypted-ccmp` |
+| TP-Link Archer T3U | USB `2357:012d`, `rtw88_8822bu` | The checked-in `config/host.toml` profile; no Wi-Fi flags required |
 
-For the ALFA, run the Direct Corner command shown above. For the TP-Link, use:
+For the TP-Link, use the Direct Corner command shown above. With `phy = "auto"`, its named
+adapter profile resolves only the matching `rtw88_8822bu` USB `2357:012d` device; it fails clearly
+if the adapter is missing or more than one matches. An explicit `--phy phyN` always wins.
+
+For the ALFA, select its actual PHY explicitly and override the receive compatibility mode:
 
 ```bash
-sudo -E ./.venv/bin/python frlgtrade_host.py --live \
-  --skip-encryption --accept-decrypted-ccmp \
+sudo -E ./.venv/bin/python frlgtrade_host.py --phy phyN \
+  --skip-encryption --no-accept-decrypted-ccmp \
   -o output.pk3 PARTY1.pk3 PARTY2.pk3
 ```
 
@@ -110,9 +124,9 @@ Protected frame with its CCMP header and MIC retained around already-decrypted r
 also needs `--accept-decrypted-ccmp`. That opt-in path trusts the driver's completed decryption and
 removes the retained MIC before forwarding the plaintext to `ldn-tap`; keep it disabled for the ALFA.
 
-`--phy auto` selects an AP-capable PHY. If both adapters are attached, pass the intended PHY
-explicitly (for example, `--phy phy0`) after checking `iw dev`. Startup now prints the detected known
-adapter profile, the active TX/RX modes, and a warning if its flags do not match the proven profile.
+For an unusual adapter, pass its explicit PHY (for example, `--phy phy0`) after checking `iw dev`.
+Startup prints the detected known adapter profile, the active TX/RX modes, and a warning if its flags
+do not match the proven profile.
 
 **Setup**
 1. Create a Python venv and install all requirements in ``requirements.txt``
@@ -153,13 +167,14 @@ delivery RAM script. On `mystery_stamps`, the default payload is the repeatable 
 cutscene; use `--gift celebi` for the original level-50 Celebi card.
 
 ```bash
-sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
+sudo -E ./.venv/bin/python -u frlgmg_host.py \
   --gift beast-cutscene --flag-id 1005 \
   --capture mystery-stamps-hardware.jsonl
 ```
 
-That command uses Mystery Gift's ALFA-compatible defaults. With the TP-Link Archer T3U, add
-`--accept-decrypted-ccmp`; the adapter-profile section above gives both complete flag sets.
+That command uses the checked-in TP-Link Archer T3U profile: live hosting, delegated transmit CCMP,
+and retained-CCMP receive normalization are already enabled. For the ALFA, provide its explicit
+`--phy phyN --skip-encryption --no-accept-decrypted-ccmp` overrides instead.
 
 On the Switch choose **Mystery Gift → Wonder Cards → Friend**, then select the Linux host. The save
 must already have Mystery Gift unlocked. The host accepts the same `--ot`, `--version`, and decimal

@@ -7,11 +7,26 @@
 !/frlgsim/
 !/tests/
 !/docs/
+!/scripts/
+!/config/
+!/config/host.toml
+
+# Machine-specific host settings can name local key locations and capture
+# directories.  Keep them out of the deployable repository.
+/config/host.local.toml
+!/vendor/
+!/vendor/**
 
 # Never publish Pokemon data files (live-trade outputs can carry trainer/account
 # identifiers); covers any stray .pk3/.ek3 at the root or inside frlgsim/ too.
 *.pk3
 *.ek3
+
+# Nintendo Switch key material is machine-local.  This includes the normal
+# ~/.switch/prod.keys location when it is copied into the project by mistake.
+prod.keys
+*.keys
+.switch/
 
 # Python bytecode (applies inside frlgsim/ as well)
 __pycache__/

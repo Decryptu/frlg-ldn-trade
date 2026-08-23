@@ -27,8 +27,9 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Prefer the bundled, host-capable LDN checkout just like frlgtrade_host.py.
-BUNDLED_LDN = os.path.join(PROJECT_ROOT, "LDN")
+# Prefer the tracked vendored, host-capable LDN package just like
+# frlgtrade_host.py.
+BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
@@ -42,18 +43,23 @@ from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
 HOST_GIFT_CHOICES = gift_registry.GIFT_REGISTRY.live_choices
 
 
-def build_parser():
+def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    defaults = configmod.MysteryGiftRunConfig()
+    if file_config is None:
+        file_config = configmod.load_project_host_file_config()
     parser.add_argument("--gift", choices=gift_registry.GIFT_REGISTRY.live_choices,
                         default=GIFT_BEAST_CUTSCENE,
                         help="gift payload to distribute (default: beast-cutscene)")
     gift_registry.add_flag_id_argument(parser)
+    host_cli.add_host_config_arguments(
+        parser, shared_path=shared_path, local_path=local_path)
     host_cli.add_host_arguments(
         parser,
-        option_defaults=defaults.role,
-        ldn_defaults=defaults.ldn,
+        option_defaults=file_config.to_host_options(),
+        ldn_defaults=file_config.to_ldn_config(),
+        trust_pia_default=file_config.trust_pia,
+        live_default=file_config.live,
         scene_help="LDN scene; default is the known FRLG scene",
     )
     return parser
@@ -73,8 +79,23 @@ def build_run_config(parser, args):
 
 
 def main(argv=None):
-    parser = build_parser()
+    try:
+        file_config, shared_path, local_path = \
+            host_cli.load_host_file_config_from_argv(argv)
+    except (ValueError, SystemExit) as exc:
+        print(f"frlgmg_host.py: error: {exc}", file=sys.stderr)
+        return 2
+    parser = build_parser(
+        file_config, shared_path=shared_path, local_path=local_path)
     args = parser.parse_args(argv)
+    if args.print_effective_config:
+        # Keep the no-hardware inspection path honest: it should reject the
+        # same malformed transport values a real host run would reject.
+        host_cli.build_host_config(parser, args)
+        print(host_cli.format_effective_config(args), end="")
+        return 0
+    if not args.live:
+        parser.error("hosting only supports live mode; omit --no-live")
     if os.geteuid() != 0:
         parser.error("live LDN hosting requires root; run with sudo -E")
     config = build_run_config(parser, args)

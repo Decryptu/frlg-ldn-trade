@@ -1,5 +1,8 @@
 # frlg-ldn-trade runtime dependencies (tested versions; install into a venv)
-ldn==0.0.17
+# The LDN implementation is vendored because it contains the host-side
+# compatibility fixes required by our tested Wi-Fi adapters.  Keep this before
+# packages that also appear in vendor/LDN/setup.py so pip resolves one source.
+-e ./vendor/LDN
 pycryptodome==3.23.0
 trio==0.33.0
 zstandard==0.25.0
