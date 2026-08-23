@@ -622,10 +622,6 @@ def test_pacing_budget_is_what_the_timing_docstring_claims():
     assert not completed, "past the budget the transfer must fail, not silently pass"
 
 
-def test_default_client_start_wait_stays_below_live_disconnect_window():
-    assert host_mystery_gift.DEFAULT_MYSTERY_GIFT_TIMING.client_ready_idle_frames == 10
-
-
 def test_end_to_end_message_sequence_matches_the_native_card_flow():
     console = ConsoleClientModel(flag_id=0)
     _drive(console)

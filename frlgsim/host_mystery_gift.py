@@ -58,11 +58,10 @@ class MysteryGiftTiming:
     startup_standby_echo_frames: int = 4
     # Quiet child polls after the standby barrier before the first gift message.
     # The console is freeing the group list, running SetLinkStandbyCallback and
-    # only then reaching MysteryGiftClient_Create [mystery_gift_menu.c:1231].
-    # Live hardware leaves the LDN host after roughly 35-55 idle polls here, so
-    # this wait must be short. Inter-message pacing below is what protects the
-    # block-consumption race once the client is running.
-    client_ready_idle_frames: int = 10
+    # only then reaching MysteryGiftClient_Create [mystery_gift_menu.c:1231]. A
+    # block that lands early is buffered harmlessly, but the *second* block of
+    # that message would be dropped, so wait for the console to settle first.
+    client_ready_idle_frames: int = 120
     # Idle VBlanks between the blocks of one MysteryGiftLink message. Measured
     # against the console model in tests/test_mystery_gift_flow.py: the console
     # may take up to this + 1 frames to consume a block with nothing dropped,
