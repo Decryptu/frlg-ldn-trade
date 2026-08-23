@@ -27,6 +27,37 @@ DIR_WEST = 3
 GIFT_PORYGON_TMS = "porygon-tm-gift"
 PORYGON_TM_GIFT_FLAG_ID = 1007
 
+CELEBI_GIFT = WonderGift(
+    slug=wonder_card.GIFT_CELEBI,
+    card=WonderCardSpec(
+        icon_species=wonder_card.DEFAULT_GIFT_ICON_SPECIES,
+        title=wonder_card.DEFAULT_GIFT_TITLE,
+        subtitle=wonder_card.DEFAULT_GIFT_SUBTITLE,
+        body=wonder_card.DEFAULT_GIFT_BODY,
+        footer1=wonder_card.DEFAULT_GIFT_SIGNATURE,
+        default_flag_id=1003,
+    ),
+    intro_message="A special CELEBI delivery has arrived!",
+    event=GiftSpec(),
+    delivery=DeliveryPlan(delivery=(DeliveryStage(
+        GivePokemon(
+            wonder_card.SPECIES_CELEBI,
+            level=50,
+            moves=(
+                wonder_card.MOVE_LEECH_SEED,
+                wonder_card.MOVE_RECOVER,
+                wonder_card.MOVE_HEAL_BELL,
+                wonder_card.MOVE_SAFEGUARD,
+            ),
+            failure_message=(
+                "Oh, your party appears to be full.\n"
+                "Please make room and come back!"),
+        ),
+        Message("{PLAYER} received a CELEBI\nfrom the deliveryman!"),
+    ),)),
+    completed_message="Please look forward to future\nMYSTERY GIFTS!",
+)
+
 SUN_MOON_RALLY = WonderGift(
     slug="sun-moon-rally",
     card=WonderCardSpec(
@@ -138,7 +169,7 @@ PORYGON_TM_GIFT = WonderGift(
 
 
 __all__ = [
-    "DIR_WEST", "GIFT_PORYGON_TMS", "ITEM_TM29_PSYCHIC",
+    "CELEBI_GIFT", "DIR_WEST", "GIFT_PORYGON_TMS", "ITEM_TM29_PSYCHIC",
     "ITEM_TM46_THIEF", "OBJ_EVENT_GFX_CLEFAIRY", "PORYGON_TM_GIFT",
     "PORYGON_TM_GIFT_FLAG_ID", "SPECIES_PORYGON", "SUN_MOON_RALLY",
 ]

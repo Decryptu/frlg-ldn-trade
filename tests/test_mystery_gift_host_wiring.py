@@ -95,15 +95,17 @@ def test_default_config_selects_the_self_contained_celebi_gift():
     assert config.role.native_nonce_sequence is True
     assert config.role.session_response_first is True
     assert config.payload.receipt_flag == 0x2AA
-    # The card and script the app actually builds must retain the no-item default.
+    # The card keeps the original Celebi presentation while the registry uses
+    # the composed delivery setup.
     app = MysteryGiftHostApplication.__new__(MysteryGiftHostApplication)
     app.config = config
     card, script = app._build_payload()
-    assert script == wonder_card.build_delivery_ram_script(item=None, flag_id=1003)
     assert charmap.decode(card[10:50]).startswith("CELEBI GIFT")
     assert int.from_bytes(card[2:4], "little") == wonder_card.SPECIES_CELEBI
     assert int.from_bytes(card[4:8], "little") == 3
     assert charmap.decode(card[250:290]).endswith("MercuryEnigma")
+    assert len(script) == 352
+    assert script != wonder_card.build_delivery_ram_script(item=None, flag_id=1003)
 
 
 def test_client_ready_idle_frame_override_reaches_the_engine():

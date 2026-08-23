@@ -1,9 +1,10 @@
 # Composable Mystery Gift Authoring
 
 `frlgsim.gift_composer` builds Wonder Cards and deliveryman scripts from immutable Python
-definitions. It does not replace the byte-exact legacy Celebi or legendary-beast builders. Those
-remain registered through compatibility adapters. The Sun/Moon Stamp Rally is registered as a
-composed rally.
+definitions. The live `celebi`, `porygon-tm-gift`, and Sun/Moon Stamp Rally entries are registered
+as composed gifts. The byte-exact legacy Celebi and legendary-beast builders remain in
+`frlgsim.wonder_card` for compatibility; the legendary-beast cutscene is still registered through
+its legacy adapter because it needs starter-dependent branching outside the normal delivery model.
 
 ## One top-level gift type
 

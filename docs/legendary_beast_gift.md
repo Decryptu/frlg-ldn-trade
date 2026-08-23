@@ -33,7 +33,7 @@ last action. It finishes with `end`, not `endram`, so the saved script remains a
 deliveryman event can be triggered again. Back up the save before testing a repeat run.
 
 The encounter is fixed at level 65. `--flag-id` uses the shared Wonder Card range 1000 through
-1019. The original Celebi payload remains available with `--gift celebi`.
+1019. The composed level-50 Celebi payload remains available with `--gift celebi`.
 
 ## Export the paired `.bin` files
 

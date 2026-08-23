@@ -12,7 +12,10 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import frlgmg_host
 import frlgtrade_host
-from frlgsim import beacon, charmap, config, gift_registry, linkplayer, mg_script, transport
+from frlgsim import (
+    beacon, charmap, config, gift_registry, linkplayer, mg_script, transport,
+    wonder_card,
+)
 from frlgsim.host_beacon import build_wonder_card_app_data
 from frlgsim.host_mg_app import MysteryGiftHostApplication
 from frlgsim.host_mystery_gift import HostMysteryGiftEngine
@@ -217,8 +220,8 @@ def test_overridden_profile_reaches_every_host_identity_surface():
     assert any("flagId 1004" in line for line in logs)
 
 
-def test_gate_1_serialized_fixtures_are_byte_identical():
-    card, script = config.MysteryGiftPayload().build()
+def test_gate_1_legacy_serialized_fixtures_are_byte_identical():
+    card, script = wonder_card.build_default_gift()
     inactive, active = build_wonder_card_app_data(config.DEFAULT_TRAINER, SESSION_ID)
     assert (len(card), _sha256(card)) == (
         332, "1afdef737ebf3be077e6cf19d9f85a90d6bdba97e434c0784cdad967a8550025")

@@ -164,7 +164,7 @@ Dex, or game-completion defaults that do not have CLI flags.
 
 `frlgmg_host.py` advertises on the hardware-compatible Friend path and sends a Wonder Card plus a
 delivery RAM script. On `mystery_stamps`, the default payload is the repeatable legendary-beast
-cutscene; use `--gift celebi` for the original level-50 Celebi card.
+cutscene; use `--gift celebi` for the composed level-50 Celebi card.
 
 ```bash
 sudo -E ./.venv/bin/python -u frlgmg_host.py \
@@ -192,9 +192,10 @@ gives level-50 Celebi when both rewards have been collected. See the
 [Stamp Rally guide](docs/stamp_rally.md) for state, protocol pseudocode, and hardware checks. These
 dynamic events are intentionally unavailable in the static `.bin` exporter and save injector.
 
-The composed `--gift porygon-tm-gift` event displays a Porygon card, makes Clefairy appear three
-tiles to the player's right, and delivers TM29 Psychic followed by TM46 Thief. See the
-[Porygon TM Gift guide](docs/porygon_tm_gift.md) for live, export, injection, and test commands.
+The composed `--gift celebi` and `--gift porygon-tm-gift` events use the shared delivery-stage
+compiler. Porygon displays a Porygon card, makes Clefairy appear three tiles to the player's right,
+and delivers TM29 Psychic followed by TM46 Thief. See the [Porygon TM Gift
+guide](docs/porygon_tm_gift.md) for live, export, injection, and test commands.
 
 See [the Mystery Gift distributor guide](MYSTERY_GIFT_DISTRIBUTOR.md) for the protocol flow, payload,
 test commands, and why the Switch requires the Friend path rather than Wireless Communication.
