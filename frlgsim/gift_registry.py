@@ -97,7 +97,7 @@ class GiftRegistry:
                     slug=slot.slug,
                     default_flag_id=definition.card.default_flag_id,
                     live=True, static=False,
-                    description=(f"{slot.stamp_species} stamp for "
+                    description=(f"{slot.slug} for "
                                  f"{definition.card.title!r}"),
                     builder=lambda flag_id, definition=definition, slug=slot.slug:
                         compile_definition(definition, flag_id=flag_id)[slug])
@@ -175,20 +175,7 @@ def build_default_registry():
     registry.register_legacy(
         wonder_card.GIFT_CELEBI, wonder_card.build_default_gift,
         description="level-50 Celebi; no item")
-    registry.register_legacy(
-        stamp_rally.GIFT_SOLROCK_STAMP,
-        stamp_rally.build_solrock_stamp_event,
-        default_flag_id=stamp_rally.STAMP_RALLY_FLAG_ID,
-        static=False,
-        description=("Solrock stamp; shared two-slot Claydol card; level-30 stamp "
-                     "rewards and level-50 Celebi grand prize"))
-    registry.register_legacy(
-        stamp_rally.GIFT_LUNATONE_STAMP,
-        stamp_rally.build_lunatone_stamp_event,
-        default_flag_id=stamp_rally.STAMP_RALLY_FLAG_ID,
-        static=False,
-        description=("Lunatone stamp; shared two-slot Claydol card; level-30 stamp "
-                     "rewards and level-50 Celebi grand prize"))
+    registry.register_definition(wonder_card_events.SUN_MOON_RALLY)
     registry.register_definition(wonder_card_events.PORYGON_TM_GIFT)
     return registry
 

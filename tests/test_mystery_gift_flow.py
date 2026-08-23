@@ -285,7 +285,7 @@ class ConsoleClientModel:
         self.game_data = _game_data(
             flag_id=flag_id, max_stamps=max_stamps,
             metadata_icon=metadata_icon, stamps=stamps)
-        self.vars = {0x40B6: 0, 0x40B7: 0}
+        self.vars = {var: 0 for var in range(0x40B6, 0x40BD)}
         self.flags = set()
         self.activation_scripts = []
 
@@ -465,7 +465,8 @@ class ConsoleClientModel:
             self.max_stamps = self.saved_card[9]
             self.metadata_icon = int.from_bytes(self.saved_card[2:4], "little")
             self.stamps = []
-            self.vars[0x40B6] = self.vars[0x40B7] = 0
+            for var in range(0x40B6, 0x40BD):
+                self.vars[var] = 0
             self.flags.discard(0x3D8)
         elif instr == mg_script.CLI_SAVE_RAM_SCRIPT:
             # InitRamScript_NoObjectEvent clamps to script[995] [src/script.c:577].

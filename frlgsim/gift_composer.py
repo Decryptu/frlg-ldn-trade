@@ -1,8 +1,8 @@
 """Declarative, validated authoring for future FRLG Mystery Gifts.
 
 The hardware-proven legacy payloads remain in :mod:`wonder_card` and
-:mod:`stamp_rally`.  This module is the authoring surface for new gifts: an
-immutable description is validated and compiled into the same Wonder Card,
+:mod:`stamp_rally`.  This module is the authoring surface for composed gifts:
+an immutable description is validated and compiled into the same Wonder Card,
 delivery RAM script, and optional stamp activation payloads consumed by the
 existing host.
 

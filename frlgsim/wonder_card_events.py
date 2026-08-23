@@ -5,12 +5,16 @@ from .gift_composer import (
     DeliveryStage,
     GiftSpec,
     GiveItem,
+    GivePokemon,
     Message,
     RelativeToPlayer,
     ShowSprite,
+    StampRallySpec,
+    StampSlot,
     WonderCardSpec,
     WonderGift,
 )
+from . import stamp_rally, wonder_card
 
 
 # pokefirered/include/constants/{items,species,event_objects}.h
@@ -22,6 +26,76 @@ DIR_WEST = 3
 
 GIFT_PORYGON_TMS = "porygon-tm-gift"
 PORYGON_TM_GIFT_FLAG_ID = 1007
+
+SUN_MOON_RALLY = WonderGift(
+    slug="sun-moon-rally",
+    card=WonderCardSpec(
+        icon_species=wonder_card.SPECIES_CLAYDOL,
+        title="SUN AND MOON RALLY",
+        subtitle="Collect both stamps!",
+        body=(
+            "Collect SOLROCK and LUNATONE",
+            "stamps from event hosts.",
+            "Claim each Pokemon, then",
+            "receive a special grand prize!",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=stamp_rally.STAMP_RALLY_FLAG_ID,
+    ),
+    intro_message="Let me inspect your STAMP RALLY card!",
+    event=StampRallySpec(
+        slots=(
+            StampSlot(
+                slug=stamp_rally.GIFT_SOLROCK_STAMP,
+                stamp_species=stamp_rally.SPECIES_SOLROCK,
+                stamp_id=stamp_rally.SOLROCK_STAMP_ID,
+                delivery=DeliveryPlan(
+                    pre_stages=(DeliveryStage(
+                        Message(
+                            "Your SOLROCK STAMP checks out!\n"
+                            "Please accept this SOLROCK."),
+                        GivePokemon(
+                            stamp_rally.SPECIES_SOLROCK,
+                            level=stamp_rally.SOLROCK_LEVEL),
+                    ),),
+                ),
+            ),
+            StampSlot(
+                slug=stamp_rally.GIFT_LUNATONE_STAMP,
+                stamp_species=stamp_rally.SPECIES_LUNATONE,
+                stamp_id=stamp_rally.LUNATONE_STAMP_ID,
+                delivery=DeliveryPlan(
+                    pre_stages=(DeliveryStage(
+                        Message(
+                            "Your LUNATONE STAMP checks out!\n"
+                            "Please accept this LUNATONE."),
+                        GivePokemon(
+                            stamp_rally.SPECIES_LUNATONE,
+                            level=stamp_rally.LUNATONE_LEVEL),
+                    ),),
+                ),
+            ),
+        ),
+        completion=DeliveryPlan(
+            pre_stages=(DeliveryStage(
+                Message(
+                    "Both STAMP rewards are yours!\n"
+                    "Please accept the grand prize."),
+                GivePokemon(wonder_card.SPECIES_CELEBI,
+                            level=stamp_rally.CELEBI_LEVEL),
+            ),),
+            post_stages=(DeliveryStage(
+                Message(
+                    "Congratulations! CELEBI is yours!\n"
+                    "The STAMP RALLY is complete."),
+            ),),
+        ),
+    ),
+    delivery=DeliveryPlan(),
+    completed_message=(
+        "You completed the STAMP RALLY!\n"
+        "Thank you for participating."),
+)
 
 
 PORYGON_TM_GIFT = WonderGift(
@@ -66,5 +140,5 @@ PORYGON_TM_GIFT = WonderGift(
 __all__ = [
     "DIR_WEST", "GIFT_PORYGON_TMS", "ITEM_TM29_PSYCHIC",
     "ITEM_TM46_THIEF", "OBJ_EVENT_GFX_CLEFAIRY", "PORYGON_TM_GIFT",
-    "PORYGON_TM_GIFT_FLAG_ID", "SPECIES_PORYGON",
+    "PORYGON_TM_GIFT_FLAG_ID", "SPECIES_PORYGON", "SUN_MOON_RALLY",
 ]

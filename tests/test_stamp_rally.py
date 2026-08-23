@@ -9,9 +9,26 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 import frlgmg_host  # noqa: E402
-from frlgsim import charmap, config, mg_script, mg_server, mystery_gift, stamp_rally, wonder_card  # noqa: E402
+from frlgsim import (  # noqa: E402
+    charmap, config, gift_registry, mg_script, mg_server, mystery_gift,
+    stamp_rally, wonder_card,
+)
+from frlgsim import gift_composer as gc  # noqa: E402
+from test_gift_composer import ScriptVM  # noqa: E402
 from test_mystery_gift_flow import ConsoleClientModel, _drive, _game_data  # noqa: E402
 from test_mystery_gift_end_to_end import _run_full_stack  # noqa: E402
+
+
+def _distribution(slug):
+    return gift_registry.GIFT_REGISTRY.build_distribution(slug)
+
+
+def _solrock():
+    return _distribution(stamp_rally.GIFT_SOLROCK_STAMP)
+
+
+def _lunatone():
+    return _distribution(stamp_rally.GIFT_LUNATONE_STAMP)
 
 
 def _metadata(stamps=(), *, icon=stamp_rally.SPECIES_CLAYDOL, max_stamps=2,
@@ -45,8 +62,8 @@ def _run_server(distribution, game_data, *, toss_response=0):
 
 
 def test_shared_card_layout_and_stamp_encodings_are_exact():
-    solrock = stamp_rally.build_solrock_stamp_event()
-    lunatone = stamp_rally.build_lunatone_stamp_event()
+    solrock = _solrock()
+    lunatone = _lunatone()
     assert solrock.card == lunatone.card
     card = solrock.card
     assert len(card) == wonder_card.WONDER_CARD_SIZE
@@ -87,7 +104,7 @@ def test_hardware_one_solrock_stamp_payload_matches_without_tossing_card():
     assert parsed.stamps == ((stamp_rally.SPECIES_SOLROCK, 1),)
     assert parsed.player_name == "GREEN"
 
-    distribution = stamp_rally.build_lunatone_stamp_event()
+    distribution = _lunatone()
     server, sent, result = _run_server(distribution, raw)
     assert result == mg_server.SVR_MSG_STAMP_SENT
     assert ("rally_card", mg_script.HAS_SAME_CARD) in server.trace
@@ -136,23 +153,21 @@ def test_live_cli_adds_stamp_choices_and_dynamic_flag_default_only():
 
 def test_activation_wrappers_modify_only_the_intended_state():
     receipt = wonder_card.flag_for_flag_id(1006)
-    ordinary = stamp_rally.build_stamp_activation_script(
-        stamp_rally.VAR_MYSTERY_GIFT_1, flag_id=1006)
-    install = stamp_rally.build_stamp_activation_script(
-        stamp_rally.VAR_MYSTERY_GIFT_2, flag_id=1006, install=True)
+    ordinary = _solrock().activation_script
+    install = _lunatone().install_activation_script
     assert ordinary == (bytes.fromhex("05060000000216")
-                        + stamp_rally.VAR_MYSTERY_GIFT_1.to_bytes(2, "little")
+                        + gc.VAR_MYSTERY_GIFT_2.to_bytes(2, "little")
                         + bytes.fromhex("010002"))
     assert install == (bytes.fromhex("0506000000022a")
                        + receipt.to_bytes(2, "little")
                        + bytes.fromhex("16")
-                       + stamp_rally.VAR_MYSTERY_GIFT_2.to_bytes(2, "little")
+                       + (gc.VAR_MYSTERY_GIFT_2 + 1).to_bytes(2, "little")
                        + bytes.fromhex("010002"))
     assert receipt.to_bytes(2, "little") not in ordinary
 
 
 def test_server_installs_card_script_stamp_then_activation_when_no_card():
-    distribution = stamp_rally.build_solrock_stamp_event()
+    distribution = _solrock()
     _server, sent, result = _run_server(distribution, _game_data())
     assert result == mg_server.SVR_MSG_STAMP_SENT
     assert [ident for ident, _payload in sent] == [
@@ -169,9 +184,9 @@ def test_server_installs_card_script_stamp_then_activation_when_no_card():
 
 def test_server_appends_stamp_to_matching_claydol_card_in_either_order():
     cases = (
-        (stamp_rally.build_solrock_stamp_event(),
+        (_solrock(),
          ((stamp_rally.SPECIES_LUNATONE, stamp_rally.LUNATONE_STAMP_ID),)),
-        (stamp_rally.build_lunatone_stamp_event(),
+        (_lunatone(),
          ((stamp_rally.SPECIES_SOLROCK, stamp_rally.SOLROCK_STAMP_ID),)),
     )
     for distribution, existing in cases:
@@ -187,7 +202,7 @@ def test_server_appends_stamp_to_matching_claydol_card_in_either_order():
 
 
 def test_server_treats_same_flag_with_wrong_identity_as_a_different_card():
-    distribution = stamp_rally.build_solrock_stamp_event()
+    distribution = _solrock()
     for data in (
             _metadata(flag_id=1005),
             _metadata(icon=stamp_rally.SPECIES_SOLROCK),
@@ -204,7 +219,7 @@ def test_server_treats_same_flag_with_wrong_identity_as_a_different_card():
 
 
 def test_server_duplicate_and_full_branches_never_send_activation():
-    solrock = stamp_rally.build_solrock_stamp_event()
+    solrock = _solrock()
     duplicate_cases = (
         ((stamp_rally.SPECIES_SOLROCK, 77),),
         ((10, stamp_rally.SOLROCK_STAMP_ID),),
@@ -221,54 +236,55 @@ def test_server_duplicate_and_full_branches_never_send_activation():
 
 
 def test_console_model_installs_card_stamp_and_immediate_eligibility():
-    distribution = stamp_rally.build_solrock_stamp_event()
+    distribution = _solrock()
     console = ConsoleClientModel(flag_id=0)
     receipt = wonder_card.flag_for_flag_id(1006)
     console.flags.add(receipt)
-    console.flags.add(stamp_rally.FLAG_MYSTERY_GIFT_DONE)
-    console.vars[stamp_rally.VAR_MYSTERY_GIFT_1] = stamp_rally.STAMP_RECEIVED
-    console.vars[stamp_rally.VAR_MYSTERY_GIFT_2] = stamp_rally.STAMP_RECEIVED
+    console.flags.add(gc.FLAG_MYSTERY_GIFT_DONE)
+    console.vars[gc.VAR_MYSTERY_GIFT_1] = 2
+    console.vars[gc.VAR_MYSTERY_GIFT_2] = 2
+    console.vars[gc.VAR_MYSTERY_GIFT_2 + 1] = 2
     engine, _frames = _drive(console, distribution=distribution, max_frames=7000)
     assert engine.result == mg_server.SVR_MSG_STAMP_SENT
     assert console.saved_card == distribution.card
     assert console.metadata_icon == stamp_rally.SPECIES_CLAYDOL
     assert console.saved_ram_script.startswith(distribution.ram_script)
     assert console.stamps == [(stamp_rally.SPECIES_SOLROCK, 1)]
-    assert console.vars == {
-        stamp_rally.VAR_MYSTERY_GIFT_1: stamp_rally.STAMP_ELIGIBLE,
-        stamp_rally.VAR_MYSTERY_GIFT_2: stamp_rally.STAMP_ABSENT,
-    }
-    assert stamp_rally.FLAG_MYSTERY_GIFT_DONE not in console.flags
+    assert console.vars[gc.VAR_MYSTERY_GIFT_1] == 0
+    assert console.vars[gc.VAR_MYSTERY_GIFT_2] == 1
+    assert console.vars[gc.VAR_MYSTERY_GIFT_2 + 1] == 0
+    assert gc.FLAG_MYSTERY_GIFT_DONE not in console.flags
     assert receipt not in console.flags
 
 
 def test_console_model_existing_card_preserves_first_reward_and_activates_second():
-    distribution = stamp_rally.build_lunatone_stamp_event()
+    distribution = _lunatone()
     console = ConsoleClientModel(
         flag_id=1006, max_stamps=2, metadata_icon=stamp_rally.SPECIES_CLAYDOL,
         stamps=((stamp_rally.SPECIES_SOLROCK, 1),))
-    console.vars[stamp_rally.VAR_MYSTERY_GIFT_1] = stamp_rally.STAMP_RECEIVED
+    console.vars[gc.VAR_MYSTERY_GIFT_2] = 2
     engine, _frames = _drive(console, distribution=distribution, max_frames=7000)
     assert engine.result == mg_server.SVR_MSG_STAMP_SENT
     assert console.saved_card is None
     assert console.stamps[-1] == (stamp_rally.SPECIES_LUNATONE, 2)
-    assert console.vars[stamp_rally.VAR_MYSTERY_GIFT_1] == stamp_rally.STAMP_RECEIVED
-    assert console.vars[stamp_rally.VAR_MYSTERY_GIFT_2] == stamp_rally.STAMP_ELIGIBLE
+    assert console.vars[gc.VAR_MYSTERY_GIFT_2] == 2
+    assert console.vars[gc.VAR_MYSTERY_GIFT_2 + 1] == 1
 
 
 def test_both_stamp_events_survive_the_impaired_reliable_rfu_stack():
-    solrock = stamp_rally.build_solrock_stamp_event()
+    solrock = _solrock()
     sol_run = _run_full_stack(payload=solrock, max_ms=9000)
     assert sol_run.engine.result == mg_server.SVR_MSG_STAMP_SENT
     assert sol_run.console.result == mg_script.CLI_MSG_STAMP_RECEIVED
     assert sol_run.console.stamps == [(stamp_rally.SPECIES_SOLROCK, 1)]
-    assert sol_run.console.vars[stamp_rally.VAR_MYSTERY_GIFT_1] == 1
+    assert sol_run.console.vars[gc.VAR_MYSTERY_GIFT_2] == 1
 
     luna_console = ConsoleClientModel(
         flag_id=1006, max_stamps=2, metadata_icon=stamp_rally.SPECIES_CLAYDOL,
         stamps=((stamp_rally.SPECIES_SOLROCK, 1),))
+    luna_console.vars[gc.VAR_MYSTERY_GIFT_2] = 2
     luna_run = _run_full_stack(
-        payload=stamp_rally.build_lunatone_stamp_event(),
+        payload=_lunatone(),
         console=luna_console, max_ms=9000)
     assert luna_run.engine.result == mg_server.SVR_MSG_STAMP_SENT
     assert luna_run.console.result == mg_script.CLI_MSG_STAMP_RECEIVED
@@ -276,96 +292,21 @@ def test_both_stamp_events_survive_the_impaired_reliable_rfu_stack():
         (stamp_rally.SPECIES_SOLROCK, 1),
         (stamp_rally.SPECIES_LUNATONE, 2),
     ]
+    assert luna_run.console.vars[gc.VAR_MYSTERY_GIFT_2] == 2
+    assert luna_run.console.vars[gc.VAR_MYSTERY_GIFT_2 + 1] == 1
     assert luna_run.console.dropped_inits == luna_run.console.dropped_fragments == 0
     assert luna_run.radio.dropped and luna_run.radio.duplicated
 
 
-class _DeliveryModel:
-    CONDITIONS = {
-        0: lambda result: result < 0,
-        1: lambda result: result == 0,
-        2: lambda result: result > 0,
-        3: lambda result: result <= 0,
-        4: lambda result: result >= 0,
-        5: lambda result: result != 0,
-    }
-
-    def __init__(self, script, *, solrock=0, lunatone=0, done=False,
-                 outcomes=()):
-        self.script = script
-        self.vars = {
-            stamp_rally.VAR_MYSTERY_GIFT_1: solrock,
-            stamp_rally.VAR_MYSTERY_GIFT_2: lunatone,
-            0x800D: 0,
-        }
-        self.flags = ({stamp_rally.FLAG_MYSTERY_GIFT_DONE} if done else set())
-        self.outcomes = list(outcomes)
-        self.given = []
-        self.messages = []
-        self.comparison = 0
-        self.pc = 0
-
-    def u16(self):
-        value = int.from_bytes(self.script[self.pc:self.pc + 2], "little")
-        self.pc += 2
-        return value
-
-    def u32(self):
-        value = int.from_bytes(self.script[self.pc:self.pc + 4], "little")
-        self.pc += 4
-        return value
-
-    def jump(self, address):
-        self.pc = address - 0x08000000
-
-    def run(self):
-        for _ in range(500):
-            opcode = self.script[self.pc]
-            self.pc += 1
-            if opcode in (0x6A, 0x5A, 0x66, 0x6D, 0x6C):
-                continue
-            if opcode == 0xB8:
-                assert self.u32() == 0x08000000
-            elif opcode == 0x2B:
-                self.comparison = 0 if self.u16() in self.flags else -1
-            elif opcode == 0x21:
-                actual, expected = self.vars.get(self.u16(), 0), self.u16()
-                self.comparison = (actual > expected) - (actual < expected)
-            elif opcode == 0xBB:
-                condition, address = self.script[self.pc], int.from_bytes(
-                    self.script[self.pc + 1:self.pc + 5], "little")
-                self.pc += 5
-                if self.CONDITIONS[condition](self.comparison):
-                    self.jump(address)
-            elif opcode == 0xB9:
-                self.jump(self.u32())
-            elif opcode == 0xBD:
-                self.messages.append(self.u32() - 0x08000000)
-            elif opcode == 0x79:
-                species = self.u16()
-                level = self.script[self.pc]
-                self.pc += 1 + 2 + 9
-                result = self.outcomes.pop(0) if self.outcomes else 0
-                self.vars[0x800D] = result
-                if result != stamp_rally.MON_CANT_GIVE:
-                    self.given.append((species, level))
-            elif opcode == 0x16:
-                variable, value = self.u16(), self.u16()
-                self.vars[variable] = value
-            elif opcode == 0x29:
-                self.flags.add(self.u16())
-            elif opcode == 0x02:
-                return self
-            else:
-                raise AssertionError(f"unhandled delivery opcode {opcode:#x} at {self.pc - 1}")
-        raise AssertionError("delivery script did not terminate")
-
-
 def _delivery(*, solrock=0, lunatone=0, done=False, outcomes=()):
-    return _DeliveryModel(
-        stamp_rally.build_stamp_rally_delivery_script(),
-        solrock=solrock, lunatone=lunatone, done=done,
-        outcomes=outcomes).run()
+    return ScriptVM(
+        _solrock().ram_script,
+        variables={
+            gc.VAR_MYSTERY_GIFT_2: solrock,
+            gc.VAR_MYSTERY_GIFT_2 + 1: lunatone,
+        },
+        flags=({gc.FLAG_MYSTERY_GIFT_DONE} if done else set()),
+        mon_results=outcomes).run()
 
 
 def test_delivery_script_handles_every_saved_state_without_duplicate_rewards():
@@ -373,81 +314,79 @@ def test_delivery_script_handles_every_saved_state_without_duplicate_rewards():
     for solrock in range(3):
         for lunatone in range(3):
             completed = _delivery(solrock=solrock, lunatone=lunatone, done=True)
-            assert completed.given == []
-            assert receipt in completed.flags
+            assert completed.mons == []
 
     expected = {
         (0, 0): [],
-        (0, 1): [(stamp_rally.SPECIES_LUNATONE, 30)],
+        (0, 1): [(stamp_rally.SPECIES_LUNATONE, 30, 0)],
         (0, 2): [],
-        (1, 0): [(stamp_rally.SPECIES_SOLROCK, 30)],
-        (1, 1): [(stamp_rally.SPECIES_SOLROCK, 30),
-                 (stamp_rally.SPECIES_LUNATONE, 30),
-                 (wonder_card.SPECIES_CELEBI, 50)],
-        (1, 2): [(stamp_rally.SPECIES_SOLROCK, 30),
-                 (wonder_card.SPECIES_CELEBI, 50)],
+        (1, 0): [(stamp_rally.SPECIES_SOLROCK, 30, 0)],
+        (1, 1): [(stamp_rally.SPECIES_SOLROCK, 30, 0),
+                 (stamp_rally.SPECIES_LUNATONE, 30, 0),
+                 (wonder_card.SPECIES_CELEBI, 50, 0)],
+        (1, 2): [(stamp_rally.SPECIES_SOLROCK, 30, 0),
+                 (wonder_card.SPECIES_CELEBI, 50, 0)],
         (2, 0): [],
-        (2, 1): [(stamp_rally.SPECIES_LUNATONE, 30),
-                 (wonder_card.SPECIES_CELEBI, 50)],
-        (2, 2): [(wonder_card.SPECIES_CELEBI, 50)],
+        (2, 1): [(stamp_rally.SPECIES_LUNATONE, 30, 0),
+                 (wonder_card.SPECIES_CELEBI, 50, 0)],
+        (2, 2): [(wonder_card.SPECIES_CELEBI, 50, 0)],
     }
     for states, rewards in expected.items():
-        assert _delivery(solrock=states[0], lunatone=states[1]).given == rewards
+        assert _delivery(solrock=states[0], lunatone=states[1]).mons == rewards
 
     both = _delivery(solrock=1, lunatone=1)
-    assert both.given == [
-        (stamp_rally.SPECIES_SOLROCK, 30),
-        (stamp_rally.SPECIES_LUNATONE, 30),
-        (wonder_card.SPECIES_CELEBI, 50),
+    assert both.mons == [
+        (stamp_rally.SPECIES_SOLROCK, 30, 0),
+        (stamp_rally.SPECIES_LUNATONE, 30, 0),
+        (wonder_card.SPECIES_CELEBI, 50, 0),
     ]
-    assert both.vars[stamp_rally.VAR_MYSTERY_GIFT_1] == 2
-    assert both.vars[stamp_rally.VAR_MYSTERY_GIFT_2] == 2
-    assert stamp_rally.FLAG_MYSTERY_GIFT_DONE in both.flags
+    assert both.vars[gc.VAR_MYSTERY_GIFT_1] == 2
+    assert both.vars[gc.VAR_MYSTERY_GIFT_2] == 2
+    assert both.vars[gc.VAR_MYSTERY_GIFT_2 + 1] == 2
+    assert gc.FLAG_MYSTERY_GIFT_DONE in both.flags
     assert receipt in both.flags
 
     sol_only = _delivery(solrock=1)
     luna_only = _delivery(lunatone=1)
-    assert sol_only.given == [(stamp_rally.SPECIES_SOLROCK, 30)]
-    assert luna_only.given == [(stamp_rally.SPECIES_LUNATONE, 30)]
-    assert stamp_rally.FLAG_MYSTERY_GIFT_DONE not in sol_only.flags | luna_only.flags
+    assert sol_only.mons == [(stamp_rally.SPECIES_SOLROCK, 30, 0)]
+    assert luna_only.mons == [(stamp_rally.SPECIES_LUNATONE, 30, 0)]
+    assert gc.FLAG_MYSTERY_GIFT_DONE not in sol_only.flags | luna_only.flags
 
     grand_prize = _delivery(solrock=2, lunatone=2)
-    assert grand_prize.given == [(wonder_card.SPECIES_CELEBI, 50)]
+    assert grand_prize.mons == [(wonder_card.SPECIES_CELEBI, 50, 0)]
 
 
 def test_delivery_script_preserves_retry_state_at_each_storage_failure():
     sol_fail = _delivery(solrock=1, lunatone=1, outcomes=(2,))
-    assert sol_fail.given == []
-    assert sol_fail.vars[stamp_rally.VAR_MYSTERY_GIFT_1] == 1
-    assert sol_fail.vars[stamp_rally.VAR_MYSTERY_GIFT_2] == 1
+    assert sol_fail.mons == []
+    assert sol_fail.vars[gc.VAR_MYSTERY_GIFT_2] == 1
+    assert sol_fail.vars[gc.VAR_MYSTERY_GIFT_2 + 1] == 1
 
     luna_fail = _delivery(solrock=1, lunatone=1, outcomes=(0, 2))
-    assert luna_fail.given == [(stamp_rally.SPECIES_SOLROCK, 30)]
-    assert luna_fail.vars[stamp_rally.VAR_MYSTERY_GIFT_1] == 2
-    assert luna_fail.vars[stamp_rally.VAR_MYSTERY_GIFT_2] == 1
+    assert luna_fail.mons == [(stamp_rally.SPECIES_SOLROCK, 30, 0)]
+    assert luna_fail.vars[gc.VAR_MYSTERY_GIFT_2] == 2
+    assert luna_fail.vars[gc.VAR_MYSTERY_GIFT_2 + 1] == 1
 
     celebi_fail = _delivery(solrock=1, lunatone=1, outcomes=(0, 1, 2))
-    assert celebi_fail.given == [
-        (stamp_rally.SPECIES_SOLROCK, 30),
-        (stamp_rally.SPECIES_LUNATONE, 30),
+    assert celebi_fail.mons == [
+        (stamp_rally.SPECIES_SOLROCK, 30, 0),
+        (stamp_rally.SPECIES_LUNATONE, 30, 0),
     ]
-    assert celebi_fail.vars[stamp_rally.VAR_MYSTERY_GIFT_1] == 2
-    assert celebi_fail.vars[stamp_rally.VAR_MYSTERY_GIFT_2] == 2
-    assert stamp_rally.FLAG_MYSTERY_GIFT_DONE not in celebi_fail.flags
+    assert celebi_fail.vars.get(gc.VAR_MYSTERY_GIFT_1, 0) == 0
+    assert celebi_fail.vars[gc.VAR_MYSTERY_GIFT_2] == 2
+    assert celebi_fail.vars[gc.VAR_MYSTERY_GIFT_2 + 1] == 2
+    assert gc.FLAG_MYSTERY_GIFT_DONE not in celebi_fail.flags
     assert wonder_card.flag_for_flag_id(1006) not in celebi_fail.flags
 
 
 def test_delivery_script_contains_dialogue_for_every_outcome_and_fits_the_save():
-    script = stamp_rally.build_stamp_rally_delivery_script()
-    assert len(script) == 820 and len(script) <= mg_server.MysteryGiftServer.MAX_RAM_SCRIPT_SIZE
+    script = _solrock().ram_script
+    assert len(script) == 914 and len(script) <= mg_server.MysteryGiftServer.MAX_RAM_SCRIPT_SIZE
     for text in (
             "Your SOLROCK STAMP checks out!",
             "Your LUNATONE STAMP checks out!",
             "Both STAMP rewards are yours!",
             "Congratulations! CELEBI is yours!",
-            "SOLROCK is yours!",
-            "LUNATONE is yours!",
-            "Welcome to the STAMP RALLY!",
             "You completed the STAMP RALLY!",
             "Your party and PC BOXES are full."):
         assert charmap.encode(text) in script

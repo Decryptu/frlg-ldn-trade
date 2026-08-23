@@ -16,23 +16,22 @@ default for both events. Receive the events in either order. The host installs t
 there is no card, offers FRLG's normal toss prompt for a different card, or appends a new stamp to
 a matching rally card.
 
-The rally events are live-host-only. `gift_to_bin.py` and `save_inject.py` continue to support only
-`beast-cutscene` and `celebi`, because an individual stamp is a stateful protocol exchange rather
+The rally events are live-host-only. `gift_to_bin.py` and `save_inject.py` expose ordinary static
+gifts, but exclude individual stamp slots because a stamp is a stateful protocol exchange rather
 than a static card/script pair.
 
 ## Saved state and rewards
 
 | State | Meaning |
 |---|---|
-| `VAR_MYSTERY_GIFT_1 = 0/1/2` | Solrock absent / eligible / received |
-| `VAR_MYSTERY_GIFT_2 = 0/1/2` | Lunatone absent / eligible / received |
-| `FLAG_MYSTERY_GIFT_DONE` | Celebi received |
+| `VAR_MYSTERY_GIFT_1` | Celebi completion cursor |
+| `VAR_MYSTERY_GIFT_2 = 0/1/2` | Solrock absent / active / received |
+| `VAR_MYSTERY_GIFT_3 = 0/1/2` | Lunatone absent / active / received |
+| `FLAG_MYSTERY_GIFT_DONE` | rally completion |
 | card receipt flag | synchronized when Celebi succeeds |
 
-This hardware-proven legacy rally intentionally retains its original two-variable layout. New
-rallies authored with the [composable gift system](mystery_gift_composer.md) reserve
-`VAR_MYSTERY_GIFT_1` for completion stages and assign stamp slots to
-`VAR_MYSTERY_GIFT_2..7`.
+The live rally is authored with the [composable gift system](mystery_gift_composer.md). It reserves
+`VAR_MYSTERY_GIFT_1` for completion stages and assigns stamp slots to `VAR_MYSTERY_GIFT_2..7`.
 
 The deliveryman gives Solrock at level 30 for its stamp and Lunatone at level 30 for its stamp.
 Once both are received, he gives Celebi at level 50. All use standard `givemon`, so they receive the
@@ -40,9 +39,9 @@ player's OT/TID, default level-up moves, no held item, and a normal random perso
 sent to either the party or PC counts as success. If both are full, no state advances and the player
 can make room and retry. If both stamps are pending, all three Pokémon are delivered in one visit.
 
-Installing a new rally card uses FRLG's normal card-save cleanup to clear the two state variables
-and `FLAG_MYSTERY_GIFT_DONE`. Its installation activation also clears the receipt flag selected by
-the card's flag ID, so a deliberate reinstall starts a fresh rally.
+Installing a new rally card uses FRLG's normal card-save cleanup to clear the card-scoped Mystery
+Gift variables and `FLAG_MYSTERY_GIFT_DONE`. Its installation activation also clears the receipt
+flag selected by the card's flag ID, so a deliberate reinstall starts a fresh rally.
 
 ## Host distribution pseudocode
 
@@ -86,26 +85,27 @@ if DONE:
     explain that the rally is complete
     release; end
 
-if SOLROCK_STATE == ELIGIBLE:
+if SOLROCK_CURSOR == ACTIVE:
     explain the Solrock reward
     givemon SOLROCK, 30
     if party and PC are full: explain, then release; end
-    SOLROCK_STATE = RECEIVED
+    SOLROCK_CURSOR = RECEIVED
 
-if LUNATONE_STATE == ELIGIBLE:
+if LUNATONE_CURSOR == ACTIVE:
     explain the Lunatone reward
     givemon LUNATONE, 30
     if party and PC are full: explain, then release; end
-    LUNATONE_STATE = RECEIVED
+    LUNATONE_CURSOR = RECEIVED
 
-if both states == RECEIVED:
+if both slot cursors == RECEIVED:
     announce the grand prize
     givemon CELEBI, 50
     if party and PC are full: explain, then release; end
-    set DONE and the card receipt flag
+    advance completion cursor
     announce completion
+    set DONE and the card receipt flag
 else:
-    explain which stamp is still needed (or welcome the player)
+    wait for another stamp
 
 release; end
 ```
