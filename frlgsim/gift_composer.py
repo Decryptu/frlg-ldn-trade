@@ -45,6 +45,12 @@ MAX_ICON_SPECIES = 412
 MAX_ITEM = 374                  # ITEMS_COUNT - 1
 MAX_MOVE = 354                  # MOVES_COUNT - 1
 MAX_OBJECT_GRAPHICS = 151       # NUM_OBJ_EVENT_GFX - 1
+MIN_SAVED_VAR = 0x4000
+MAX_SAVED_VAR = 0x40FF
+MIN_SPECIAL_VAR = 0x8000
+MAX_SPECIAL_VAR = 0x8011
+MIN_FLAG = 0x0001
+MAX_FLAG = 0x08FF
 
 MON_CANT_GIVE = 2
 PARTY_SIZE = 6
@@ -147,6 +153,39 @@ class BattlePokemon:
     held_item: int = 0
 
 
+@dataclass(frozen=True)
+class VarEquals:
+    variable: int
+    value: int
+
+
+@dataclass(frozen=True)
+class FlagSet:
+    flag: int
+
+
+@dataclass(frozen=True)
+class Not:
+    condition: "Condition"
+
+
+@dataclass(frozen=True)
+class AllOf:
+    conditions: tuple["Condition", ...]
+
+    def __post_init__(self):
+        object.__setattr__(self, "conditions", tuple(self.conditions))
+
+
+@dataclass(frozen=True)
+class AnyOf:
+    conditions: tuple["Condition", ...]
+
+    def __post_init__(self):
+        object.__setattr__(self, "conditions", tuple(self.conditions))
+
+
+Condition: TypeAlias = VarEquals | FlagSet | Not | AllOf | AnyOf
 GiftAction: TypeAlias = (
     Message | GiveItem | GivePokemon | GiveEgg | ShowSprite | BattlePokemon)
 _FALLIBLE_REWARD_TYPES = (GiveItem, GivePokemon, GiveEgg)
@@ -155,8 +194,9 @@ _FALLIBLE_REWARD_TYPES = (GiveItem, GivePokemon, GiveEgg)
 @dataclass(frozen=True, init=False)
 class DeliveryStage:
     actions: tuple[GiftAction, ...]
+    condition: Condition | None
 
-    def __init__(self, *positional_actions, actions=None):
+    def __init__(self, *positional_actions, actions=None, condition=None):
         if actions is not None and positional_actions:
             raise TypeError("pass DeliveryStage actions positionally or by keyword, not both")
         selected = actions if actions is not None else positional_actions
@@ -165,6 +205,7 @@ class DeliveryStage:
                 and isinstance(selected[0], (tuple, list))):
             selected = selected[0]
         object.__setattr__(self, "actions", tuple(selected))
+        object.__setattr__(self, "condition", condition)
 
 
 @dataclass(frozen=True)
@@ -334,6 +375,31 @@ def _validate_action(action, path):
         _fail(path, f"unsupported action type {type(action).__name__}")
 
 
+def _validate_variable_id(variable, path):
+    if (type(variable) is not int
+            or not (MIN_SAVED_VAR <= variable <= MAX_SAVED_VAR
+                    or MIN_SPECIAL_VAR <= variable <= MAX_SPECIAL_VAR)):
+        _fail(path, "variable must be a saved variable 0x4000..0x40FF "
+              "or special variable 0x8000..0x8011")
+
+
+def _validate_condition(condition, path):
+    if isinstance(condition, VarEquals):
+        _validate_variable_id(condition.variable, f"{path}.variable")
+        _validate_int(condition.value, 0, 0xFFFF, f"{path}.value", "value")
+    elif isinstance(condition, FlagSet):
+        _validate_int(condition.flag, MIN_FLAG, MAX_FLAG, f"{path}.flag", "flag")
+    elif isinstance(condition, Not):
+        _validate_condition(condition.condition, f"{path}.condition")
+    elif isinstance(condition, (AllOf, AnyOf)):
+        if not condition.conditions:
+            _fail(f"{path}.conditions", "boolean condition group must not be empty")
+        for index, child in enumerate(condition.conditions):
+            _validate_condition(child, f"{path}.conditions[{index}]")
+    else:
+        _fail(path, f"unsupported condition type {type(condition).__name__}")
+
+
 def _plan_parts(plan):
     return (
         ("pre_stages", plan.pre_stages),
@@ -359,6 +425,8 @@ def _validate_plan_shape(plan, path):
                 _fail(stage_path, "stage must be a DeliveryStage")
             if not stage.actions:
                 _fail(stage_path, "delivery stage must contain at least one action")
+            if stage.condition is not None:
+                _validate_condition(stage.condition, f"{stage_path}.condition")
             fallible = sum(isinstance(action, _FALLIBLE_REWARD_TYPES)
                            for action in stage.actions)
             if fallible > 1:
@@ -379,16 +447,21 @@ def _validate_effective_plan(stages, path, *, allow_battle):
         for action_index, action in enumerate(stage.actions):
             action_path = f"{stage_path}.actions[{action_index}]"
             if isinstance(action, BattlePokemon):
-                battle_paths.append((stage_index, action_index, action_path))
+                battle_paths.append((stage_index, action_index, action_path, stage))
     if battle_paths and not allow_battle:
         _fail(battle_paths[0][2], "battles are not allowed in stamp-slot delivery plans")
-    if len(battle_paths) > 1:
-        _fail(battle_paths[1][2], "a delivery plan may contain at most one battle")
-    if battle_paths:
-        stage_index, action_index, action_path = battle_paths[0]
-        if (stage_index != len(stages) - 1
-                or action_index != len(stages[stage_index][0].actions) - 1):
-            _fail(action_path, "battle must be the last action of the final stage")
+    unconditional_battles = [
+        (stage_index, action_path) for stage_index, _action_index, action_path, stage
+        in battle_paths if stage.condition is None]
+    if len(unconditional_battles) > 1:
+        _fail(unconditional_battles[1][1],
+              "a delivery plan may contain at most one unconditional battle")
+    if unconditional_battles and unconditional_battles[0][0] != len(stages) - 1:
+        _fail(unconditional_battles[0][1],
+              "an unconditional battle must be in the final stage")
+    for stage_index, action_index, action_path, _stage in battle_paths:
+        if action_index != len(stages[stage_index][0].actions) - 1:
+            _fail(action_path, "battle must be the last action of its stage")
     return bool(battle_paths)
 
 
@@ -629,9 +702,48 @@ def _emit_cursor_dispatch(builder, cursor, stages, prefix, finished_label):
 def _emit_battle_checkpoint(builder, cursor, final_cursor, *, receipt_flag,
                             overall_completion):
     builder.emit(_setvar(cursor, final_cursor))
+    builder.emit(_setflag(receipt_flag))
     if overall_completion:
         builder.emit(_setflag(FLAG_MYSTERY_GIFT_DONE))
-        builder.emit(_setflag(receipt_flag))
+
+
+def _emit_condition_branch(builder, condition, true_label, false_label, prefix):
+    if isinstance(condition, VarEquals):
+        builder.emit(_compare(condition.variable, condition.value))
+        builder.vgoto_if(_COMPARE_EQ, true_label)
+        builder.vgoto(false_label)
+    elif isinstance(condition, FlagSet):
+        builder.emit(bytes([_OP_CHECKFLAG]) + _u16(condition.flag))
+        builder.vgoto_if(_COMPARE_EQ, true_label)
+        builder.vgoto(false_label)
+    elif isinstance(condition, Not):
+        _emit_condition_branch(
+            builder, condition.condition, false_label, true_label,
+            f"{prefix}_not")
+    elif isinstance(condition, AllOf):
+        children = condition.conditions
+        for index, child in enumerate(children[:-1]):
+            next_label = f"{prefix}_all_{index}"
+            _emit_condition_branch(
+                builder, child, next_label, false_label,
+                f"{prefix}_all_{index}")
+            builder.label(next_label)
+        _emit_condition_branch(
+            builder, children[-1], true_label, false_label,
+            f"{prefix}_all_{len(children) - 1}")
+    elif isinstance(condition, AnyOf):
+        children = condition.conditions
+        for index, child in enumerate(children[:-1]):
+            next_label = f"{prefix}_any_{index}"
+            _emit_condition_branch(
+                builder, child, true_label, next_label,
+                f"{prefix}_any_{index}")
+            builder.label(next_label)
+        _emit_condition_branch(
+            builder, children[-1], true_label, false_label,
+            f"{prefix}_any_{len(children) - 1}")
+    else:  # pragma: no cover - validation prevents this path.
+        raise AssertionError(type(condition))
 
 
 def _emit_action(builder, action, *, sprite_id, failure_label):
@@ -701,6 +813,15 @@ def _emit_plan(builder, stages, cursor, prefix, finished_label, failures,
     for stage_index, (stage, source_path) in enumerate(stages):
         builder.label(_stage_label(prefix, stage_index))
         stage_start = len(builder.code)
+        checkpoint_label = f"{prefix}_stage_{stage_index}_checkpoint"
+        if stage.condition is not None:
+            run_label = f"{prefix}_stage_{stage_index}_condition_true"
+            _emit_condition_branch(
+                builder, stage.condition, run_label, checkpoint_label,
+                f"{prefix}_stage_{stage_index}_condition")
+            builder.label(run_label)
+        has_battle = any(isinstance(action, BattlePokemon)
+                         for action in stage.actions)
         for action_index, action in enumerate(stage.actions):
             failure_label = f"{prefix}_failure_{stage_index}_{action_index}"
             message = _failure_message(action)
@@ -716,7 +837,11 @@ def _emit_plan(builder, stages, cursor, prefix, finished_label, failures,
             if isinstance(action, ShowSprite):
                 sprite_counter += 1
         # Battle is validated as the final action. If it returns normally these
-        # writes are harmless; the pre-battle checkpoint handles interruption.
+        # writes would otherwise let a conditional battle fall through to later
+        # alternatives, so route it directly to the plan finish.
+        if has_battle:
+            builder.vgoto(finished_label)
+        builder.label(checkpoint_label)
         builder.emit(_setvar(cursor, stage_index + 1))
         if stage_index + 1 == len(stages):
             builder.vgoto(finished_label)
@@ -950,10 +1075,11 @@ def compile_definition(definition, *, flag_id=None):
 
 
 __all__ = [
-    "BattlePokemon", "DeliveryPlan", "DeliveryStage", "GiftSpec",
-    "GiftValidationError", "GiveEgg", "GiveItem", "GivePokemon",
+    "AllOf", "AnyOf", "BattlePokemon", "DeliveryPlan", "DeliveryStage",
+    "FlagSet", "GiftSpec", "GiftValidationError", "GiveEgg", "GiveItem", "GivePokemon",
     "MapPosition", "Message", "RelativeToPlayer", "ShowSprite",
-    "StampRallySpec", "StampSlot", "WonderCardSpec", "WonderGift",
+    "Not", "StampRallySpec", "StampSlot", "VarEquals",
+    "WonderCardSpec", "WonderGift",
     "FLAG_MYSTERY_GIFT_DONE", "MAX_RAM_SCRIPT_SIZE", "MAX_STAMP_SLOTS",
     "VAR_MYSTERY_GIFT_1", "VAR_MYSTERY_GIFT_2", "VAR_MYSTERY_GIFT_7",
     "compile_definition", "validate_definition",

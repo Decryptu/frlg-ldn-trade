@@ -4,7 +4,9 @@ The `mystery_stamps` branch adds one focused payload to the hardware-proven Myst
 deliveryman cutscene that gives two rare berries and a Master Ball, then starts a wild legendary
 beast battle. The host, binary exporter, and save injector all select this payload by default.
 Their only gift-specific controls are `--gift` and `--flag-id`; each named gift owns all of its
-card text, graphics, rewards, encounter parameters, and delivery-script behavior.
+card text, graphics, rewards, encounter parameters, and delivery-script behavior. The live event is
+authored with the composable delivery system; the older byte-exact builder remains available in
+`frlgsim.wonder_card` for compatibility checks.
 
 ## Live Switch distribution
 
@@ -27,10 +29,10 @@ The receiving save's starter determines the encounter:
 | Squirtle | Entei |
 | Charmander | Raikou |
 
-The script gives the Lansat Berry and Liechi Berry before choosing the starter branch. Each branch
-shows the matching beast, gives a Master Ball, releases the player, and starts the battle as its
-last action. It finishes with `end`, not `endram`, so the saved script remains available and the
-deliveryman event can be triggered again. Back up the save before testing a repeat run.
+The script gives the Lansat Berry and Liechi Berry before choosing the starter branch. Conditional
+stages show the matching beast, then a shared stage gives a Master Ball, and a conditional terminal
+battle stage starts the selected encounter. The saved script remains available and the deliveryman
+event can be triggered again. Back up the save before testing a repeat run.
 
 The encounter is fixed at level 65. `--flag-id` uses the shared Wonder Card range 1000 through
 1019. The composed level-50 Celebi payload remains available with `--gift celebi`.

@@ -1,16 +1,20 @@
 """Composable Wonder Gift definitions shipped by the shared gift registry."""
 
 from .gift_composer import (
+    AnyOf,
+    BattlePokemon,
     DeliveryPlan,
     DeliveryStage,
     GiftSpec,
     GiveItem,
     GivePokemon,
     Message,
+    Not,
     RelativeToPlayer,
     ShowSprite,
     StampRallySpec,
     StampSlot,
+    VarEquals,
     WonderCardSpec,
     WonderGift,
 )
@@ -26,6 +30,7 @@ DIR_WEST = 3
 
 GIFT_PORYGON_TMS = "porygon-tm-gift"
 PORYGON_TM_GIFT_FLAG_ID = 1007
+VAR_STARTER_MON = 0x4031
 
 CELEBI_GIFT = WonderGift(
     slug=wonder_card.GIFT_CELEBI,
@@ -56,6 +61,89 @@ CELEBI_GIFT = WonderGift(
         Message("{PLAYER} received a CELEBI\nfrom the deliveryman!"),
     ),)),
     completed_message="Please look forward to future\nMYSTERY GIFTS!",
+)
+
+LEGENDARY_BEAST_GIFT = WonderGift(
+    slug=wonder_card.GIFT_BEAST_CUTSCENE,
+    card=WonderCardSpec(
+        icon_species=wonder_card.SPECIES_CLAYDOL,
+        title="LEGENDARY BEAST",
+        subtitle="A shocking encounter!",
+        body=("Meet the delivery man for", "berries and a beastly battle!"),
+        footer1="frlg-ldn-trade",
+        default_flag_id=1003,
+    ),
+    intro_message=(
+        "Thank you for using the\n"
+        "MYSTERY GIFT system."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "You must be {PLAYER}!\n"
+                "Something is here for you."),
+        ),
+        DeliveryStage(GiveItem(wonder_card.ITEM_LANSAT_BERRY)),
+        DeliveryStage(GiveItem(wonder_card.ITEM_LIECHI_BERRY)),
+        DeliveryStage(
+            ShowSprite(
+                wonder_card.OBJ_EVENT_GFX_SUICUNE,
+                RelativeToPlayer(dx=1),
+                direction=wonder_card.DIR_WEST,
+                delay_frames=30,
+            ),
+            condition=VarEquals(VAR_STARTER_MON, 0),
+        ),
+        DeliveryStage(
+            ShowSprite(
+                wonder_card.OBJ_EVENT_GFX_ENTEI,
+                RelativeToPlayer(dx=1),
+                direction=wonder_card.DIR_WEST,
+                delay_frames=30,
+            ),
+            condition=VarEquals(VAR_STARTER_MON, 1),
+        ),
+        DeliveryStage(
+            ShowSprite(
+                wonder_card.OBJ_EVENT_GFX_RAIKOU,
+                RelativeToPlayer(dx=1),
+                direction=wonder_card.DIR_WEST,
+                delay_frames=30,
+            ),
+            condition=Not(AnyOf((
+                VarEquals(VAR_STARTER_MON, 0),
+                VarEquals(VAR_STARTER_MON, 1),
+            ))),
+        ),
+        DeliveryStage(
+            Message(
+                "A Legendary Beast appeared!\n"
+                "Here, take this."),
+        ),
+        DeliveryStage(GiveItem(wonder_card.ITEM_MASTER_BALL)),
+        DeliveryStage(
+            BattlePokemon(
+                wonder_card.SPECIES_SUICUNE,
+                level=wonder_card.LEGENDARY_BEAST_LEVEL),
+            condition=VarEquals(VAR_STARTER_MON, 0),
+        ),
+        DeliveryStage(
+            BattlePokemon(
+                wonder_card.SPECIES_ENTEI,
+                level=wonder_card.LEGENDARY_BEAST_LEVEL),
+            condition=VarEquals(VAR_STARTER_MON, 1),
+        ),
+        DeliveryStage(
+            BattlePokemon(
+                wonder_card.SPECIES_RAIKOU,
+                level=wonder_card.LEGENDARY_BEAST_LEVEL),
+            condition=Not(AnyOf((
+                VarEquals(VAR_STARTER_MON, 0),
+                VarEquals(VAR_STARTER_MON, 1),
+            ))),
+        ),
+    )),
+    completed_message="Please enjoy another encounter!",
 )
 
 SUN_MOON_RALLY = WonderGift(
@@ -170,6 +258,7 @@ PORYGON_TM_GIFT = WonderGift(
 
 __all__ = [
     "CELEBI_GIFT", "DIR_WEST", "GIFT_PORYGON_TMS", "ITEM_TM29_PSYCHIC",
-    "ITEM_TM46_THIEF", "OBJ_EVENT_GFX_CLEFAIRY", "PORYGON_TM_GIFT",
-    "PORYGON_TM_GIFT_FLAG_ID", "SPECIES_PORYGON", "SUN_MOON_RALLY",
+    "ITEM_TM46_THIEF", "LEGENDARY_BEAST_GIFT", "OBJ_EVENT_GFX_CLEFAIRY",
+    "PORYGON_TM_GIFT", "PORYGON_TM_GIFT_FLAG_ID", "SPECIES_PORYGON",
+    "SUN_MOON_RALLY", "VAR_STARTER_MON",
 ]

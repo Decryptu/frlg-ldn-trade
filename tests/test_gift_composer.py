@@ -283,6 +283,55 @@ def test_egg_sprite_and_terminal_battle_execute_in_order_and_checkpoint_first():
     assert gc.FLAG_MYSTERY_GIFT_DONE in run.flags
 
 
+def test_stage_conditions_skip_actions_but_advance_the_cursor():
+    definition = _gift(
+        "condition-gift", _plan(
+            gc.DeliveryStage(
+                gc.GiveItem(1),
+                condition=gc.FlagSet(0x500)),
+            gc.DeliveryStage(
+                gc.GiveItem(2),
+                condition=gc.AllOf((
+                    gc.Not(gc.FlagSet(0x501)),
+                    gc.VarEquals(0x4031, 1),
+                ))),
+        ))
+    script = gc.compile_definition(definition).ram_script
+
+    skipped = ScriptVM(script, variables={0x4031: 0}).run()
+    assert skipped.items == []
+    assert skipped.vars[gc.VAR_MYSTERY_GIFT_1] == 2
+    assert gc.FLAG_MYSTERY_GIFT_DONE in skipped.flags
+
+    run = ScriptVM(script, variables={0x4031: 1}, flags={0x500}).run()
+    assert run.items == [(1, 1), (2, 1)]
+    assert run.vars[gc.VAR_MYSTERY_GIFT_1] == 2
+
+
+def test_conditional_terminal_battle_alternatives_do_not_fall_through():
+    definition = _gift(
+        "conditional-battle", _plan(
+            gc.DeliveryStage(
+                gc.BattlePokemon(245, 65),
+                condition=gc.VarEquals(0x4031, 0)),
+            gc.DeliveryStage(
+                gc.BattlePokemon(244, 65),
+                condition=gc.VarEquals(0x4031, 1)),
+            gc.DeliveryStage(
+                gc.BattlePokemon(243, 65),
+                condition=gc.Not(gc.AnyOf((
+                    gc.VarEquals(0x4031, 0),
+                    gc.VarEquals(0x4031, 1),
+                )))),
+        ))
+    script = gc.compile_definition(definition).ram_script
+    for starter, expected in ((0, 245), (1, 244), (2, 243), (9, 243)):
+        run = ScriptVM(script, variables={0x4031: starter}).run()
+        assert run.battles == [(expected, 65, 0)]
+        assert run.vars[gc.VAR_MYSTERY_GIFT_1] == 3
+        assert gc.FLAG_MYSTERY_GIFT_DONE in run.flags
+
+
 def test_repeatable_plan_resets_its_cursor_after_each_complete_run():
     definition = _gift(
         "repeat-gift", _plan(gc.DeliveryStage(gc.GiveItem(1))), repeatable=True)
@@ -432,7 +481,7 @@ def test_validation_reports_precise_paths_and_execution_hazards():
         "bad-battle", _plan(
             gc.DeliveryStage(gc.BattlePokemon(1, 5)),
             gc.DeliveryStage(gc.Message("Too late")))),
-        "battle must be the last action")
+        "unconditional battle must be in the final stage")
     _assert_invalid(_gift(
         "bad-moves", _plan(gc.DeliveryStage(
             gc.GivePokemon(1, 5, moves=(1, 2, 3, 4, 5))))),
@@ -440,6 +489,10 @@ def test_validation_reports_precise_paths_and_execution_hazards():
     _assert_invalid(_gift(
         "bad-empty", gc.DeliveryPlan()),
         "composed delivery path must contain at least one stage")
+    _assert_invalid(_gift(
+        "bad-condition", _plan(gc.DeliveryStage(
+            gc.Message("Bad"), condition=gc.AllOf(())))),
+        "boolean condition group must not be empty")
 
     _assert_invalid(gc.WonderGift(
         slug="bad-top-hooks", card=_card(), intro_message="Intro",

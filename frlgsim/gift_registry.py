@@ -167,11 +167,7 @@ class GiftRegistry:
 
 def build_default_registry():
     registry = GiftRegistry()
-    registry.register_legacy(
-        wonder_card.GIFT_BEAST_CUTSCENE,
-        wonder_card.build_legendary_beast_cutscene_gift,
-        description=(f"level-{wonder_card.LEGENDARY_BEAST_LEVEL} starter-dependent "
-                     "legendary-beast encounter; Lansat Berry, Liechi Berry, and Master Ball"))
+    registry.register_definition(wonder_card_events.LEGENDARY_BEAST_GIFT)
     registry.register_definition(wonder_card_events.CELEBI_GIFT)
     registry.register_definition(wonder_card_events.SUN_MOON_RALLY)
     registry.register_definition(wonder_card_events.PORYGON_TM_GIFT)

@@ -9,11 +9,21 @@ from dataclasses import fields
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import frlgmg_host  # noqa: E402
-from frlgsim import gift_to_bin, mystery_gift, save_inject, wonder_card  # noqa: E402
+from frlgsim import (  # noqa: E402
+    gift_composer as gc,
+    gift_registry,
+    gift_to_bin,
+    mystery_gift,
+    save_inject,
+    wonder_card,
+    wonder_card_events,
+)
+from test_gift_composer import ScriptVM  # noqa: E402
 
 
 CARD_SHA256 = "288a9780be48923c4b1b4898ca0f20fc75aa5c42f3cd6550886b4bf3762be959"
 SCRIPT_SHA256 = "23108fe1f4a28045d19fa9a2a68679fe81286371af4a681b28c4ccddd99f031c"
+COMPOSED_SCRIPT_SHA256 = "5b54f62332de2742cef008deb34d17efb5049f7ac2e1ed1c3ab49945c1593806"
 
 
 def _giveitem(item):
@@ -136,8 +146,9 @@ def test_save_injection_is_valid_checksums_are_rebuilt_and_other_sectors_untouch
     after, info = save_inject.inject_selected_gift(before, flag_id=1005)
     assert info["slot"] == 0 and info["phys_sector"] == 13
     card, crc_ok = save_inject.read_saved_wonder_card(after)
-    expected_card, expected_script = wonder_card.build_legendary_beast_cutscene_gift(
-        level=65, flag_id=1005)
+    expected = gift_registry.GIFT_REGISTRY.build_distribution(
+        wonder_card.GIFT_BEAST_CUTSCENE, flag_id=1005)
+    expected_card, expected_script = expected.card, expected.ram_script
     assert crc_ok and card == expected_card and save_inject.validate_wonder_card(card)
     saved_script = save_inject.get_saved_ram_script_if_valid(after)
     assert saved_script[:len(expected_script)] == expected_script
@@ -155,7 +166,42 @@ def test_save_injection_is_valid_checksums_are_rebuilt_and_other_sectors_untouch
         assert after[lo:hi] == before[lo:hi]
 
 
-def test_all_three_clis_default_to_the_fixed_level_65_cutscene():
+def test_composed_cutscene_registry_uses_conditions_for_starter_branch():
+    distribution = gift_registry.GIFT_REGISTRY.build_distribution(
+        wonder_card.GIFT_BEAST_CUTSCENE)
+    legacy_card, legacy_script = wonder_card.build_legendary_beast_cutscene_gift()
+    assert distribution.card == legacy_card
+    assert distribution.ram_script != legacy_script
+    assert len(distribution.ram_script) == 931
+    assert hashlib.sha256(distribution.ram_script).hexdigest() == COMPOSED_SCRIPT_SHA256
+    assert gift_registry.GIFT_REGISTRY.describe(wonder_card.GIFT_BEAST_CUTSCENE) == \
+        "composed gift 'LEGENDARY BEAST'"
+
+    cases = (
+        (0, wonder_card.SPECIES_SUICUNE, wonder_card.OBJ_EVENT_GFX_SUICUNE),
+        (1, wonder_card.SPECIES_ENTEI, wonder_card.OBJ_EVENT_GFX_ENTEI),
+        (2, wonder_card.SPECIES_RAIKOU, wonder_card.OBJ_EVENT_GFX_RAIKOU),
+        (9, wonder_card.SPECIES_RAIKOU, wonder_card.OBJ_EVENT_GFX_RAIKOU),
+    )
+    for starter, species, graphics in cases:
+        run = ScriptVM(
+            distribution.ram_script,
+            variables={wonder_card_events.VAR_STARTER_MON: starter}).run()
+        assert run.items == [
+            (wonder_card.ITEM_LANSAT_BERRY, 1),
+            (wonder_card.ITEM_LIECHI_BERRY, 1),
+            (wonder_card.ITEM_MASTER_BALL, 1),
+        ]
+        assert len(run.sprites) == 1
+        assert run.sprites[0][0] == graphics
+        assert run.sprites[0][2:] == (11, 20, 3, wonder_card.DIR_WEST)
+        assert run.battles == [(species, wonder_card.LEGENDARY_BEAST_LEVEL, 0)]
+        assert run.vars[gc.VAR_MYSTERY_GIFT_1] == 0
+        assert gc.FLAG_MYSTERY_GIFT_DONE not in run.flags
+        assert wonder_card.flag_for_flag_id(1003) in run.flags
+
+
+def test_all_three_clis_default_to_the_composed_fixed_level_65_cutscene():
     host_args = frlgmg_host.build_parser().parse_args(["--live"])
     export_args = gift_to_bin.build_parser().parse_args([])
     inject_args = save_inject.build_parser().parse_args(["game.sav"])
@@ -176,8 +222,11 @@ def test_all_three_clis_default_to_the_fixed_level_65_cutscene():
     host_config = frlgmg_host.build_run_config(
         frlgmg_host.build_parser(), host_args)
     assert [field.name for field in fields(host_config.payload)] == ["gift", "flag_id"]
-    assert host_config.payload.build() == \
-        wonder_card.build_legendary_beast_cutscene_gift()
+    card, script = host_config.payload.build()
+    legacy_card, legacy_script = wonder_card.build_legendary_beast_cutscene_gift()
+    assert card == legacy_card
+    assert script != legacy_script
+    assert hashlib.sha256(script).hexdigest() == COMPOSED_SCRIPT_SHA256
 
 
 if __name__ == "__main__":

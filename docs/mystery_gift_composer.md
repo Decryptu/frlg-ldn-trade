@@ -1,10 +1,9 @@
 # Composable Mystery Gift Authoring
 
 `frlgsim.gift_composer` builds Wonder Cards and deliveryman scripts from immutable Python
-definitions. The live `celebi`, `porygon-tm-gift`, and Sun/Moon Stamp Rally entries are registered
-as composed gifts. The byte-exact legacy Celebi and legendary-beast builders remain in
-`frlgsim.wonder_card` for compatibility; the legendary-beast cutscene is still registered through
-its legacy adapter because it needs starter-dependent branching outside the normal delivery model.
+definitions. The live `beast-cutscene`, `celebi`, `porygon-tm-gift`, and Sun/Moon Stamp Rally
+entries are registered as composed gifts. The byte-exact legacy Celebi and legendary-beast builders
+remain in `frlgsim.wonder_card` for compatibility tests and older callers.
 
 ## One top-level gift type
 
@@ -49,8 +48,9 @@ An ordinary gift selects `GiftSpec` and puts its stages in the shared middle:
 
 ```python
 from frlgsim.gift_composer import (
-    BattlePokemon, DeliveryPlan, DeliveryStage, GiftSpec, GiveItem,
-    Message, RelativeToPlayer, ShowSprite, WonderCardSpec, WonderGift,
+    AnyOf, BattlePokemon, DeliveryPlan, DeliveryStage, GiftSpec, GiveItem,
+    Message, Not, RelativeToPlayer, ShowSprite, VarEquals, WonderCardSpec,
+    WonderGift,
 )
 
 MEWTWO_GIFT = WonderGift(
@@ -87,6 +87,22 @@ sets `FLAG_MYSTERY_GIFT_DONE` plus the card receipt flag on success. A later vis
 Each `DeliveryStage` is one checkpoint. If its fallible reward fails, that stage is offered again;
 successful earlier stages are skipped. Do not put two fallible rewards (`GiveItem`, `GivePokemon`,
 or `GiveEgg`) in one stage.
+
+A stage may have `condition=...`. When the condition is false, the compiler skips that stage's
+actions but still advances the cursor by one. This is useful for mutually exclusive branches that
+must not be re-tested after a later stage fails. Supported condition expressions are `VarEquals`,
+`FlagSet`, `Not`, `AllOf`, and `AnyOf`:
+
+```python
+DeliveryStage(
+    ShowSprite(142, RelativeToPlayer(dx=1)),
+    condition=VarEquals(0x4031, 0),  # VAR_STARTER_MON == Bulbasaur
+)
+DeliveryStage(
+    BattlePokemon(243, level=65),
+    condition=Not(AnyOf((VarEquals(0x4031, 0), VarEquals(0x4031, 1)))),
+)
+```
 
 ## Stamp rallies
 
@@ -186,9 +202,10 @@ A slot cursor is `0` before activation, `1` when activated, and advances once af
 its fully concatenated path. Each slot becomes a separate live-host catalog choice but shares its
 card and delivery script with the other slots.
 
-Battles are prohibited in a slot path, including the shared middle used by a rally. A rally battle
-must be the final action of the final `completion.post_stages` stage. This lets a rally combine
-stamps with one terminal encounter without allowing any action after the battle.
+Battles are prohibited in a slot path, including the shared middle used by a rally. An
+unconditional battle must be in the final stage. Conditional battle stages are allowed as terminal
+alternatives; a matching battle checkpoints completion before starting and then routes directly to
+the plan finish if control returns.
 
 ## Registration and validation
 
