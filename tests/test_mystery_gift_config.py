@@ -42,11 +42,13 @@ def _sha256(data):
 
 def test_mystery_gift_models_are_immutable_and_composed():
     payload = config.MysteryGiftPayload()
-    run = config.MysteryGiftRunConfig(payload=payload)
+    run = config.MysteryGiftRunConfig(
+        payload=payload, client_ready_idle_frames=45)
     assert run.profile is config.DEFAULT_TRAINER
     assert run.payload is payload
     assert isinstance(run.ldn, config.LdnConfig)
     assert isinstance(run.role, config.HostOptions)
+    assert run.client_ready_idle_frames == 45
     for obj, attribute, value in (
             (payload, "flag_id", 1004),
             (run, "trust_pia", False)):
@@ -90,6 +92,29 @@ def test_gift_help_and_implicit_flag_ids_match_the_registered_catalog():
     card = gift_registry.GIFT_REGISTRY.build_distribution(
         "porygon-tm-gift", flag_id=1012).card
     assert int.from_bytes(card[4:8], "little") == 12
+
+
+def test_mystery_gift_client_ready_idle_frame_override_is_diagnostic_only():
+    run = _build_mg(["--live", "--client-ready-idle-frames", "45"])
+    assert run.client_ready_idle_frames == 45
+
+    for bad_value in (-1, 601, True, "45"):
+        try:
+            config.MysteryGiftRunConfig(client_ready_idle_frames=bad_value)
+        except ValueError as exc:
+            assert "client_ready_idle_frames" in str(exc)
+        else:
+            raise AssertionError(f"invalid timing override accepted: {bad_value!r}")
+
+    for bad in ("-1", "601", "soon"):
+        parser = frlgmg_host.build_parser()
+        with redirect_stderr(io.StringIO()):
+            try:
+                parser.parse_args(["--live", "--client-ready-idle-frames", bad])
+            except SystemExit as exc:
+                assert exc.code == 2
+            else:
+                raise AssertionError(f"invalid timing override accepted: {bad}")
 
 
 def test_both_host_clis_use_the_same_explicit_transport_parsing():

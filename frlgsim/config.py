@@ -479,6 +479,7 @@ class MysteryGiftRunConfig:
     ldn: LdnConfig = field(default_factory=lambda: LdnConfig(phy="auto"))
     role: HostOptions = field(default_factory=_mystery_gift_host_defaults)
     trust_pia: bool = True
+    client_ready_idle_frames: int | None = None
 
     def __post_init__(self):
         if not isinstance(self.profile, TrainerProfile):
@@ -491,6 +492,10 @@ class MysteryGiftRunConfig:
             raise ValueError("role must be HostOptions")
         if type(self.trust_pia) is not bool:
             raise ValueError("trust_pia must be a bool")
+        if (self.client_ready_idle_frames is not None
+                and (type(self.client_ready_idle_frames) is not int
+                     or not 0 <= self.client_ready_idle_frames <= 600)):
+            raise ValueError("client_ready_idle_frames must be between 0 and 600")
 
 
 def parse_trainer_id(value):

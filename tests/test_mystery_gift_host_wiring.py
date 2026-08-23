@@ -21,7 +21,7 @@ from frlgsim.host_mg_app import (  # noqa: E402
 )
 from frlgsim.host_mystery_gift import HostMysteryGiftEngine  # noqa: E402
 from frlgsim.config import (  # noqa: E402
-    DEFAULT_TRAINER, HostOptions, MysteryGiftPayload,
+    DEFAULT_TRAINER, HostOptions, LdnConfig, MysteryGiftPayload,
 )
 from frlgsim.host_session import HostSession  # noqa: E402
 
@@ -104,6 +104,26 @@ def test_default_config_selects_the_self_contained_celebi_gift():
     assert int.from_bytes(card[2:4], "little") == wonder_card.SPECIES_CELEBI
     assert int.from_bytes(card[4:8], "little") == 3
     assert charmap.decode(card[250:290]).endswith("MercuryEnigma")
+
+
+def test_client_ready_idle_frame_override_reaches_the_engine():
+    seen = {}
+
+    class FakeTransport:
+        def __init__(self, **kwargs):
+            seen["transport"] = kwargs
+
+    run = MysteryGiftRunConfig(
+        ldn=LdnConfig(phy="phy7", keys_path=__file__),
+        client_ready_idle_frames=45)
+    app = MysteryGiftHostApplication(
+        run, transport_factory=FakeTransport, log=lambda *_args: None)
+    app._build_components()
+
+    engine = app.session.activity
+    assert engine.timing.client_ready_idle_frames == 45
+    assert engine.timing.inter_block_gap_frames == 12
+    assert seen["transport"]["phyname"] == "phy7"
 
 
 def test_max_participants_matches_the_trade_host():

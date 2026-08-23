@@ -13,6 +13,7 @@ from .host_app import HostApplication
 from .host_beacon import build_wonder_card_app_data
 from .host_mystery_gift import (
     MG_CLOSE, MG_DONE, MG_GIFT, MG_START, HostMysteryGiftEngine,
+    MysteryGiftTiming,
 )
 from .host_pia import HostPeerProtocol
 from .linkplayer import HOST_NAME_PAD
@@ -49,9 +50,13 @@ class MysteryGiftHostApplication(HostApplication):
         self.distribution = self._build_distribution()
         self.card = self.distribution.card
         self.ram_script = self.distribution.ram_script
+        timing = None
+        if self.config.client_ready_idle_frames is not None:
+            timing = MysteryGiftTiming(
+                client_ready_idle_frames=self.config.client_ready_idle_frames)
         engine = HostMysteryGiftEngine(
             distribution=self.distribution, link_player=link_player,
-            trust_pia=self.config.trust_pia, log=self.log)
+            trust_pia=self.config.trust_pia, timing=timing, log=self.log)
         self.session = host_session.HostSession(engine=engine, log=self.log)
         inactive, active = build_wonder_card_app_data(
             self.profile, self.session.rfu.host_session_id)
@@ -91,6 +96,9 @@ class MysteryGiftHostApplication(HostApplication):
                   f"Wonder Card flagId {payload.flag_id} "
                   f"(receipt flag 0x{payload.receipt_flag:03x}), "
                   f"card {len(self.card)}B + RAM script {len(self.ram_script)}B")
+        if self.config.client_ready_idle_frames is not None:
+            self.info("Mystery Gift timing override: "
+                      f"client_ready_idle_frames={self.config.client_ready_idle_frames}")
         self.info("Advertising ACTIVITY_WONDER_CARD. On the Switch choose "
                   "Mystery Gift -> Wonder Cards -> Friend.")
 

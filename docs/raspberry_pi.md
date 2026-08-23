@@ -125,10 +125,14 @@ authoritative list without running preflight or using root:
 ```
 
 The normal event controls are `--gift`, `--flag-id`, `--verbose`, `--capture`,
-`--ot`, `--version`, and `--id`. For example:
+`--ot`, `--version`, and `--id`. `--client-ready-idle-frames N` is a Mystery
+Gift timing diagnostic for hardware tests; leave it unset for normal use. For
+example:
 
 ```bash
 ./scripts/run_mystery_gift.sh --gift celebi --verbose
+./scripts/run_mystery_gift.sh --gift solrock-stamp \
+  --client-ready-idle-frames 45 --capture /tmp/solrock-45.jsonl
 ```
 
 Leave `--phy`, `--adapter`, `--skip-encryption`, and

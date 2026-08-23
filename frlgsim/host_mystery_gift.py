@@ -529,7 +529,9 @@ class HostMysteryGiftEngine:
             f"Waiting in {self.state}: our block sent {self._our_blocks_sent}x, "
             f"console block {'received' if self._link_player_seen else 'NOT received'}, "
             f"console mpId {self._child_mp_id}, "
-            f"child frames {self._child_frames} ({self._child_idles} idle) "
+            f"child frames {self._child_frames} ({self._child_idles} idle, "
+            f"current idle run {self._idle_run}/"
+            f"{self.timing.client_ready_idle_frames}) "
             f"vs parent polls {self._parent_polls}, "
             f"opcodes seen: {ops}")
 

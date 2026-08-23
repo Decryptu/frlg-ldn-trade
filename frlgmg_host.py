@@ -43,6 +43,16 @@ from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
 HOST_GIFT_CHOICES = gift_registry.GIFT_REGISTRY.live_choices
 
 
+def _client_ready_idle_frames(value):
+    try:
+        frames = int(value, 10)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a decimal frame count") from exc
+    if not 0 <= frames <= 600:
+        raise argparse.ArgumentTypeError("must be between 0 and 600")
+    return frames
+
+
 def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
@@ -52,6 +62,11 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
                         default=GIFT_BEAST_CUTSCENE,
                         help=gift_registry.GIFT_REGISTRY.format_live_gift_help())
     gift_registry.add_flag_id_argument(parser)
+    parser.add_argument(
+        "--client-ready-idle-frames", type=_client_ready_idle_frames,
+        default=None, metavar="N",
+        help=("diagnostic: quiet child polls after LinkPlayer standby before "
+              "the first Mystery Gift message; default is the built-in timing"))
     host_cli.add_host_config_arguments(
         parser, shared_path=shared_path, local_path=local_path)
     host_cli.add_host_arguments(
@@ -73,7 +88,8 @@ def build_run_config(parser, args):
             gift=args.gift, flag_id=flag_id)
         return configmod.MysteryGiftRunConfig(
             profile=profile, ldn=ldn, role=role,
-            payload=payload, trust_pia=args.trust_pia)
+            payload=payload, trust_pia=args.trust_pia,
+            client_ready_idle_frames=args.client_ready_idle_frames)
     except ValueError as exc:
         parser.error(str(exc))
 
