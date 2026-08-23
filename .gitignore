@@ -43,3 +43,12 @@ __pycache__/
 *.pcap
 *.pcapng
 host-tap-*.txt
+# Nested standalone clone (kinnay/LDN) — reference source for the LDN hosting
+# stack (@ 39d0b20 = v0.0.17, identical to the installed venv package).
+LDN/
+
+# Saves and ROM for testing wonder cards on emulation.
+frlgsim/POKEMON_FIRE_BPRE01.gba
+frlgsim/POKEMON_FIRE_BPRE01.sav.gift.sav
+frlgsim/POKEMON_FIRE_BPRE01.sav
+
