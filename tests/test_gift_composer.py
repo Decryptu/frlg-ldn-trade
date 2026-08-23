@@ -221,6 +221,25 @@ def test_models_are_immutable_and_compile_to_the_existing_distribution_interface
         (gc.Message("Keyword"),)
 
 
+def test_gift_spec_shareable_controls_wonder_card_send_type():
+    cases = (
+        (gc.SHARE_NEVER, 0),
+        (gc.SHARE_ONCE, 1),
+        (gc.SHARE_ALWAYS, 2),
+    )
+    for state, send_type in cases:
+        definition = _gift(
+            f"share-{state}", _plan(gc.DeliveryStage(gc.Message("Gift"))))
+        definition = gc.WonderGift(
+            slug=definition.slug, card=definition.card,
+            intro_message=definition.intro_message,
+            event=gc.GiftSpec(shareable=state),
+            delivery=definition.delivery,
+            completed_message=definition.completed_message)
+        card = gc.compile_definition(definition).card
+        assert (card[8] >> 6) & 0x3 == send_type
+
+
 def test_ordinary_cursor_resumes_failed_stage_without_repeating_prior_reward():
     definition = _gift(
         "resume-gift", _plan(
@@ -493,6 +512,12 @@ def test_validation_reports_precise_paths_and_execution_hazards():
         "bad-condition", _plan(gc.DeliveryStage(
             gc.Message("Bad"), condition=gc.AllOf(())))),
         "boolean condition group must not be empty")
+    _assert_invalid(gc.WonderGift(
+        slug="bad-shareable", card=_card(), intro_message="Intro",
+        event=gc.GiftSpec(shareable="many"),
+        delivery=_plan(gc.DeliveryStage(gc.Message("Gift"))),
+        completed_message="Done"),
+        "shareable must be one of never, once, always")
 
     _assert_invalid(gc.WonderGift(
         slug="bad-top-hooks", card=_card(), intro_message="Intro",

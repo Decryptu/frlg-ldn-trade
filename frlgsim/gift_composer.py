@@ -26,7 +26,13 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from . import charmap
-from .mystery_gift import CARD_TYPE_GIFT, CARD_TYPE_STAMP, SEND_TYPE_DISALLOWED
+from .mystery_gift import (
+    CARD_TYPE_GIFT,
+    CARD_TYPE_STAMP,
+    SEND_TYPE_ALLOWED,
+    SEND_TYPE_ALLOWED_ALWAYS,
+    SEND_TYPE_DISALLOWED,
+)
 from .stamp_rally import MysteryGiftDistribution
 from .wonder_card import WONDER_CARD_SIZE, build_wonder_card, flag_for_flag_id
 
@@ -51,6 +57,16 @@ MIN_SPECIAL_VAR = 0x8000
 MAX_SPECIAL_VAR = 0x8011
 MIN_FLAG = 0x0001
 MAX_FLAG = 0x08FF
+
+SHARE_NEVER = "never"
+SHARE_ONCE = "once"
+SHARE_ALWAYS = "always"
+SHAREABLE_STATES = (SHARE_NEVER, SHARE_ONCE, SHARE_ALWAYS)
+_SHAREABLE_SEND_TYPES = {
+    SHARE_NEVER: SEND_TYPE_DISALLOWED,
+    SHARE_ONCE: SEND_TYPE_ALLOWED,
+    SHARE_ALWAYS: SEND_TYPE_ALLOWED_ALWAYS,
+}
 
 MON_CANT_GIVE = 2
 PARTY_SIZE = 6
@@ -225,6 +241,7 @@ class GiftSpec:
     """Ordinary-gift behavior not shared by stamp rallies."""
 
     repeatable: bool = False
+    shareable: str = SHARE_NEVER
 
 
 @dataclass(frozen=True)
@@ -490,6 +507,9 @@ def validate_definition(definition, *, flag_id=None):
     if isinstance(definition.event, GiftSpec):
         if type(definition.event.repeatable) is not bool:
             _fail(f"{path}.event.repeatable", "repeatable must be a bool")
+        if definition.event.shareable not in SHAREABLE_STATES:
+            _fail(f"{path}.event.shareable",
+                  f"shareable must be one of {', '.join(SHAREABLE_STATES)}")
         _validate_effective_plan(shared, f"{path}.delivery", allow_battle=True)
         sprite_count = sum(
             isinstance(action, ShowSprite)
@@ -850,11 +870,12 @@ def _emit_plan(builder, stages, cursor, prefix, finished_label, failures,
     return sprite_counter
 
 
-def _build_card(card, *, flag_id, card_type, max_stamps):
+def _build_card(card, *, flag_id, card_type, max_stamps, send_type=None):
+    selected_send_type = card.send_type if send_type is None else send_type
     return build_wonder_card(
         flag_id=flag_id, icon_species=card.icon_species,
         card_type=card_type,
-        bg_type=card.bg_type, send_type=card.send_type,
+        bg_type=card.bg_type, send_type=selected_send_type,
         max_stamps=max_stamps, title=card.title, subtitle=card.subtitle,
         body=card.body, footer1=card.footer1, footer2=card.footer2)
 
@@ -937,7 +958,8 @@ def _compile_gift(definition, flag_id):
     _check_script_size(script, builder, definition.slug)
     card = _build_card(
         definition.card, flag_id=flag_id,
-        card_type=CARD_TYPE_GIFT, max_stamps=0)
+        card_type=CARD_TYPE_GIFT, max_stamps=0,
+        send_type=_SHAREABLE_SEND_TYPES[definition.event.shareable])
     return MysteryGiftDistribution(card, script)
 
 
@@ -1078,7 +1100,8 @@ __all__ = [
     "AllOf", "AnyOf", "BattlePokemon", "DeliveryPlan", "DeliveryStage",
     "FlagSet", "GiftSpec", "GiftValidationError", "GiveEgg", "GiveItem", "GivePokemon",
     "MapPosition", "Message", "RelativeToPlayer", "ShowSprite",
-    "Not", "StampRallySpec", "StampSlot", "VarEquals",
+    "Not", "SHARE_ALWAYS", "SHARE_NEVER", "SHARE_ONCE",
+    "SHAREABLE_STATES", "StampRallySpec", "StampSlot", "VarEquals",
     "WonderCardSpec", "WonderGift",
     "FLAG_MYSTERY_GIFT_DONE", "MAX_RAM_SCRIPT_SIZE", "MAX_STAMP_SLOTS",
     "VAR_MYSTERY_GIFT_1", "VAR_MYSTERY_GIFT_2", "VAR_MYSTERY_GIFT_7",

@@ -20,9 +20,10 @@ WonderGift(
 )
 ```
 
-`GiftSpec` contains only behavior exclusive to an ordinary gift: whether it is repeatable. Card
-presentation, dialogue, and reward stages belong to `WonderGift`. `StampRallySpec` contains only
-rally orchestration: slots and completion hooks.
+`GiftSpec` contains only behavior exclusive to an ordinary gift: whether it is repeatable and
+whether the received Wonder Card may be shared onward. Card presentation, dialogue, and reward
+stages belong to `WonderGift`. `StampRallySpec` contains only rally orchestration: slots and
+completion hooks.
 
 `DeliveryPlan` always has three immutable stage sequences:
 
@@ -64,7 +65,7 @@ MEWTWO_GIFT = WonderGift(
         default_flag_id=1008,
     ),
     intro_message="A powerful presence is waiting!",
-    event=GiftSpec(),
+    event=GiftSpec(shareable="once"),
     delivery=DeliveryPlan(delivery=(
         DeliveryStage(
             Message("Take this before you go."),
@@ -83,6 +84,14 @@ MEWTWO_GIFT = WonderGift(
 The compiler shows `intro_message`, resumes the top-level stages using `VAR_MYSTERY_GIFT_1`, and
 sets `FLAG_MYSTERY_GIFT_DONE` plus the card receipt flag on success. A later visit shows only
 `completed_message`. `GiftSpec(repeatable=True)` resets the cursor instead.
+
+`GiftSpec.shareable` maps to the Wonder Card `sendType` bits:
+
+| Value | Game behavior |
+|---|---|
+| `"never"` | Cannot be shared onward. |
+| `"once"` | Can be shared once; the receiving game flips the card to not shareable. |
+| `"always"` | Can continue to be shared after receipt. |
 
 Each `DeliveryStage` is one checkpoint. If its fallible reward fails, that stage is offered again;
 successful earlier stages are skipped. Do not put two fallible rewards (`GiveItem`, `GivePokemon`,
