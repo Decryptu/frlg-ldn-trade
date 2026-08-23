@@ -32,6 +32,10 @@ prod.keys
 __pycache__/
 *.pyc
 
+# Editable installs of the vendored LDN package create local packaging
+# metadata beside setup.py. It is reproducible and must not block Pi updates.
+*.egg-info/
+
 # Runtime logs, protocol traces, and packet captures may contain console,
 # trainer, or network identifiers and should stay local.
 *.log

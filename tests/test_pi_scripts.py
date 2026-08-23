@@ -36,6 +36,9 @@ def test_setup_uses_vendored_requirements_and_unmanaged_ldn_interfaces():
     assert "scp " not in text
     assert " rsync" not in text
 
+    ignore = _text(".gitignore")
+    assert "*.egg-info/" in ignore
+
 
 def test_preflight_validates_tplink_driver_modes_and_key_permissions():
     text = _text("scripts/preflight_pi.sh")
