@@ -107,7 +107,9 @@ TP-Link USB ID and `rtw88_8822bu` driver, checks AP and monitor support, checks
 the NetworkManager exclusion, and verifies that the configured key file is
 mode `0600`. It also rejects an effective TP-Link invocation that disables
 either `skip_encryption` or `accept_decrypted_ccmp`; arguments passed through
-`run_mystery_gift.sh` are included in that check.
+`run_mystery_gift.sh` are included in that check. The script supplies Debian's
+standard `sbin` command paths itself, so it behaves the same in an interactive
+shell and through a one-line SSH command.
 
 The normal run command has no Wi-Fi flags because those safe, tested defaults
 come from TOML. `run_mystery_gift.sh` runs preflight first and then starts the

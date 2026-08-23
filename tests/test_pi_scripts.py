@@ -39,6 +39,8 @@ def test_setup_uses_vendored_requirements_and_unmanaged_ldn_interfaces():
 
 def test_preflight_validates_tplink_driver_modes_and_key_permissions():
     text = _text("scripts/preflight_pi.sh")
+    assert "/usr/sbin" in text
+    assert "/sbin" in text
     assert "2357:012d" in text
     assert "rtw88_8822bu" in text
     assert "AP mode" in text
