@@ -45,12 +45,12 @@ HOST_GIFT_CHOICES = gift_registry.GIFT_REGISTRY.live_choices
 
 def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+        description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     if file_config is None:
         file_config = configmod.load_project_host_file_config()
     parser.add_argument("--gift", choices=gift_registry.GIFT_REGISTRY.live_choices,
                         default=GIFT_BEAST_CUTSCENE,
-                        help="gift payload to distribute (default: beast-cutscene)")
+                        help=gift_registry.GIFT_REGISTRY.format_live_gift_help())
     gift_registry.add_flag_id_argument(parser)
     host_cli.add_host_config_arguments(
         parser, shared_path=shared_path, local_path=local_path)

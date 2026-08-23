@@ -35,8 +35,8 @@ def add_flag_id_argument(parser):
     parser.add_argument(
         "--flag-id", type=int, action=_FlagIdAction,
         default=1003, metavar="ID",
-        help=("Wonder Card flagId, 1000..1019; defaults to the "
-              "selected gift's registered flag ID"))
+        help=("Wonder Card flagId, 1000..1019; without this option, the "
+              "selected gift's registered default shown below is used"))
 
 
 def resolve_flag_id(args, registry=None):
@@ -149,6 +149,20 @@ class GiftRegistry:
 
     def describe(self, slug):
         return self.entry(slug).description
+
+    def format_live_gift_help(self):
+        """Return the live catalog in a formatter-friendly CLI help block."""
+        entries = tuple(entry for entry in self._entries.values() if entry.live)
+        width = max(len(entry.slug) for entry in entries)
+        lines = [
+            "gift payload to distribute; without --flag-id, uses the registered default.",
+            "Available gifts:",
+        ]
+        lines.extend(
+            f"  {entry.slug:<{width}}  flag ID {entry.default_flag_id}: "
+            f"{entry.description}"
+            for entry in entries)
+        return "\n".join(lines)
 
 
 def build_default_registry():

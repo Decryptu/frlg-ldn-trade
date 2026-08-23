@@ -38,7 +38,7 @@ def test_definition_compiles_to_the_expected_porygon_card_and_cli_entry():
     assert len(card) == wonder_card.WONDER_CARD_SIZE
     assert int.from_bytes(card[0:2], "little") == event.PORYGON_TM_GIFT_FLAG_ID
     assert int.from_bytes(card[2:4], "little") == event.SPECIES_PORYGON
-    assert int.from_bytes(card[4:8], "little") == 0
+    assert int.from_bytes(card[4:8], "little") == 7
     assert card[8] & 0x3 == mystery_gift.CARD_TYPE_GIFT
     assert card[9] == 0
     assert charmap.decode(card[10:50]) == "PORYGON TM GIFT"
@@ -71,6 +71,8 @@ def test_definition_compiles_to_the_expected_porygon_card_and_cli_entry():
     override = gift_to_bin.build_parser().parse_args([
         "--gift", slug, "--flag-id", "1012"])
     assert gift_registry.resolve_flag_id(override) == 1012
+    assert int.from_bytes(
+        gift_registry.GIFT_REGISTRY.build_static(slug, flag_id=1012)[0][4:8], "little") == 12
 
 
 def test_delivery_places_clefairy_three_tiles_right_then_gives_both_tms():

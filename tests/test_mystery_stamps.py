@@ -12,7 +12,7 @@ import frlgmg_host  # noqa: E402
 from frlgsim import gift_to_bin, mystery_gift, save_inject, wonder_card  # noqa: E402
 
 
-CARD_SHA256 = "031e7034d5fc61d3afa70c1d0ce37402bbac4c0b8baec0b055144d15eef74cea"
+CARD_SHA256 = "288a9780be48923c4b1b4898ca0f20fc75aa5c42f3cd6550886b4bf3762be959"
 SCRIPT_SHA256 = "23108fe1f4a28045d19fa9a2a68679fe81286371af4a681b28c4ccddd99f031c"
 
 
@@ -45,7 +45,7 @@ def test_cutscene_matches_the_authoritative_hardware_tested_payload():
     assert len(script) == 360 <= save_inject.RAM_SCRIPT_BODY_MAX
     assert hashlib.sha256(card).hexdigest() == CARD_SHA256
     assert hashlib.sha256(script).hexdigest() == SCRIPT_SHA256
-    assert mystery_gift.crc16(card) == 0x1854
+    assert mystery_gift.crc16(card) == 0xC542
     _ram_data, ram_crc = save_inject.build_ram_script_struct(script)
     assert ram_crc == 0x4C2E
 
@@ -123,7 +123,7 @@ def test_exported_binary_geometry_and_checksums():
     card, script = wonder_card.build_legendary_beast_cutscene_gift()
     card_bin, script_bin = gift_to_bin.build_gift_bins(card, script)
     assert len(card_bin) == gift_to_bin.WONDER_CARD_BIN_SIZE == 336
-    assert card_bin[:2] == bytes.fromhex("5418") and card_bin[2:4] == b"\x00\x00"
+    assert card_bin[:2] == bytes.fromhex("42c5") and card_bin[2:4] == b"\x00\x00"
     assert card_bin[4:] == card
     assert len(script_bin) == gift_to_bin.SCRIPT_BIN_SIZE == 1004
     assert script_bin[:2] == bytes.fromhex("2e4c") and script_bin[2:4] == b"\x00\x00"

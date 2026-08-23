@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import frlgmg_host
 import frlgtrade_host
-from frlgsim import beacon, charmap, config, linkplayer, mg_script, transport
+from frlgsim import beacon, charmap, config, gift_registry, linkplayer, mg_script, transport
 from frlgsim.host_beacon import build_wonder_card_app_data
 from frlgsim.host_mg_app import MysteryGiftHostApplication
 from frlgsim.host_mystery_gift import HostMysteryGiftEngine
@@ -67,6 +67,29 @@ def test_flag_validation_is_centralized_in_the_payload():
             assert "flagId" in str(exc)
         else:
             raise AssertionError(f"invalid flag id accepted: {bad}")
+
+
+def test_gift_help_and_implicit_flag_ids_match_the_registered_catalog():
+    parser = frlgmg_host.build_parser()
+    help_text = parser.format_help()
+    for slug in gift_registry.GIFT_REGISTRY.live_choices:
+        entry = gift_registry.GIFT_REGISTRY.entry(slug)
+        assert slug in help_text
+        assert f"flag ID {entry.default_flag_id}: {entry.description}" in help_text
+
+        run = frlgmg_host.build_run_config(
+            parser, parser.parse_args(["--live", "--gift", slug]))
+        assert run.payload.flag_id == entry.default_flag_id
+        card = gift_registry.GIFT_REGISTRY.build_distribution(slug).card
+        assert int.from_bytes(card[4:8], "little") == entry.default_flag_id % 100
+
+    override = frlgmg_host.build_run_config(
+        parser, parser.parse_args([
+            "--live", "--gift", "porygon-tm-gift", "--flag-id", "1012"]))
+    assert override.payload.flag_id == 1012
+    card = gift_registry.GIFT_REGISTRY.build_distribution(
+        "porygon-tm-gift", flag_id=1012).card
+    assert int.from_bytes(card[4:8], "little") == 12
 
 
 def test_both_host_clis_use_the_same_explicit_transport_parsing():
@@ -173,7 +196,7 @@ def test_gate_1_serialized_fixtures_are_byte_identical():
     card, script = config.MysteryGiftPayload().build()
     inactive, active = build_wonder_card_app_data(config.DEFAULT_TRAINER, SESSION_ID)
     assert (len(card), _sha256(card)) == (
-        332, "059aa3d21001787a0fdde5336f70b60e4218bc6c9a8f1467c258470eaebae87c")
+        332, "1afdef737ebf3be077e6cf19d9f85a90d6bdba97e434c0784cdad967a8550025")
     assert (len(script), _sha256(script)) == (
         251, "e8d48201cbffea57bba27e65fa91464da0949e5f8fb0e230424ea7661c898a33")
     assert _sha256(inactive) == "d3e5723cab5472a2d60cc3e8d98feec7af49ed0b8df55b73340bd9db52bbcee3"

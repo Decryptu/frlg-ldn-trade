@@ -7,8 +7,8 @@
 - TM29 Psychic followed by TM46 Thief.
 - Separate delivery checkpoints so retrying Thief cannot duplicate Psychic.
 
-The card defaults to flag ID `1007`. Its numeric card ID is zero, so the Wonder Card viewer does
-not show a top-right number.
+The card defaults to flag ID `1007`, so the Wonder Card viewer shows `7` in its top-right number.
+An explicit `--flag-id` changes both the saved card flag and the displayed `flag_id % 100` number.
 
 ## Live host
 
@@ -24,7 +24,7 @@ sudo -E ./.venv/bin/python -u frlgmg_host.py \
 On the Switch choose **Mystery Gift → Wonder Cards → Friend**, select the host, save the card, and
 visit the deliveryman on the second floor of a Pokemon Center. Confirm:
 
-1. The card displays Porygon and no numeric ID.
+1. The card displays Porygon and numeric ID `7`.
 2. Clefairy appears three tiles to the player's right.
 3. The deliveryman gives TM29 Psychic, then TM46 Thief.
 4. A later interaction shows the completed message and gives no duplicate TMs.

@@ -116,6 +116,25 @@ come from TOML. `run_mystery_gift.sh` runs preflight first and then starts the
 live host with root privileges. For a temporary diagnostic override, pass a
 normal host option after the script name, for example `--verbose`.
 
+Every `frlgmg_host.py` option is forwarded by the wrapper. View the
+authoritative list without running preflight or using root:
+
+```bash
+./scripts/run_mystery_gift.sh --help
+./scripts/run_mystery_gift.sh --print-effective-config
+```
+
+The normal event controls are `--gift`, `--flag-id`, `--verbose`, `--capture`,
+`--ot`, `--version`, and `--id`. For example:
+
+```bash
+./scripts/run_mystery_gift.sh --gift celebi --verbose
+```
+
+Leave `--phy`, `--adapter`, `--skip-encryption`, and
+`--accept-decrypted-ccmp` at their tracked TP-Link defaults unless diagnosing
+different hardware.
+
 ## Later desktop changes
 
 For each committed change on the desktop:

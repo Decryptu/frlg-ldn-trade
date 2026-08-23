@@ -303,10 +303,18 @@ def _card_text(s):
 def build_wonder_card(*, flag_id=1003, icon_species=1, id_number=0,
                       card_type=CARD_TYPE_GIFT, bg_type=0, send_type=SEND_TYPE_DISALLOWED,
                       max_stamps=0, title="", subtitle="", body=(), footer1="", footer2=""):
-    """Build a 332-byte `struct WonderCard`. Defaults pass ValidateWonderCard: flagId != 0,
-    type < 3, sendType in {0,1,2}, bgType < 8, maxStamps <= 7. flagId default 1003 -> the first
-    unused receipt-flag slot (FLAG_WONDER_CARD_UNUSED_1), a clean receipt marker for a custom gift.
-    `body` is up to 4 lines of <=39 chars each."""
+    """Build a 332-byte `struct WonderCard`.
+
+    Every generated card displays its ``flag_id % 100`` in the game's
+    top-right number field. ``id_number`` is retained as an ignored keyword
+    for source compatibility with older gift definitions; it cannot override
+    the per-card display number.
+
+    Defaults pass ValidateWonderCard: flagId != 0, type < 3, sendType in
+    {0,1,2}, bgType < 8, maxStamps <= 7. flagId default 1003 -> the first
+    unused receipt-flag slot (FLAG_WONDER_CARD_UNUSED_1), a clean receipt
+    marker for a custom gift. `body` is up to 4 lines of <=39 chars each.
+    """
     if flag_id == 0:
         raise ValueError("flagId 0 is rejected by ValidateWonderCard")
     if not (0 <= card_type < 3 and 0 <= bg_type < 8 and send_type in (0, 1, 2) and 0 <= max_stamps <= 7):
@@ -317,7 +325,7 @@ def build_wonder_card(*, flag_id=1003, icon_species=1, id_number=0,
     out = bytearray()
     out += _u16(flag_id)                       # +0
     out += _u16(icon_species)                  # +2
-    out += (id_number & 0xFFFFFFFF).to_bytes(4, "little")  # +4
+    out += (flag_id % 100).to_bytes(4, "little")  # +4 idNumber shown on card
     out += bytes([bitfield, max_stamps & 0xFF])            # +8, +9
     out += _card_text(title)                   # +10
     out += _card_text(subtitle)                # +50
@@ -336,11 +344,11 @@ def build_berry_gift(item=DEFAULT_GIFT_ITEM, title=DEFAULT_GIFT_TITLE,
                      flag_id=1003):
     """A Wonder Card + deliveryman RAM script handing over Celebi and an optional item.
 
-    Returns ``(card_bytes_332, ram_script_bytes)``. ``idNumber`` is zero so the
-    Wonder Card viewer suppresses its top-right numeric label.
+    Returns ``(card_bytes_332, ram_script_bytes)``. The Wonder Card viewer
+    displays the selected ``flag_id % 100`` in its top-right numeric label.
     """
     card = build_wonder_card(
-        flag_id=flag_id, icon_species=DEFAULT_GIFT_ICON_SPECIES, id_number=0,
+        flag_id=flag_id, icon_species=DEFAULT_GIFT_ICON_SPECIES,
         title=title, subtitle=subtitle, body=body,
         footer1=DEFAULT_GIFT_SIGNATURE)
     script = build_delivery_ram_script(item=item, flag_id=flag_id)
@@ -477,7 +485,6 @@ def build_legendary_beast_cutscene_gift(
     card = build_wonder_card(
         flag_id=flag_id,
         icon_species=SPECIES_CLAYDOL,
-        id_number=0x42454153,
         title="LEGENDARY BEAST",
         subtitle="A shocking encounter!",
         body=("Meet the delivery man for", "berries and a beastly battle!"),

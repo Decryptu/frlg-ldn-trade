@@ -56,6 +56,9 @@ def test_preflight_validates_tplink_driver_modes_and_key_permissions():
 
     run = _text("scripts/run_mystery_gift.sh")
     assert 'preflight_pi.sh" "$@"' in run
+    assert "-h|--help|--print-effective-config" in run
+    assert run.index("-h|--help|--print-effective-config") < \
+        run.index('preflight_pi.sh" "$@"')
 
 
 def test_deployment_requires_clean_committed_state_and_fast_forward_only():

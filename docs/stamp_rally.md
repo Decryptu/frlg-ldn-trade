@@ -11,7 +11,7 @@ sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
 ```
 
 Both events use one `SUN AND MOON RALLY` card with a Claydol card/metadata icon, two stamp slots,
-a suppressed numeric card ID, and default flag ID `1006`. An explicit `--flag-id 1000..1019` overrides that
+a displayed numeric card ID of `6`, and default flag ID `1006`. An explicit `--flag-id 1000..1019` overrides that
 default for both events. Receive the events in either order. The host installs the shared card if
 there is no card, offers FRLG's normal toss prompt for a different card, or appends a new stamp to
 a matching rally card.

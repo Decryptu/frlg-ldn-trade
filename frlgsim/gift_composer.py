@@ -77,6 +77,8 @@ class WonderCardSpec:
     body: tuple[str, ...] = ()
     footer1: str = ""
     footer2: str = ""
+    # Retained for definition compatibility. Generated cards consistently use
+    # ``default/runtime flag_id % 100`` for the displayed top-right number.
     id_number: int = 0
     bg_type: int = 0
     send_type: int = SEND_TYPE_DISALLOWED
@@ -726,7 +728,7 @@ def _emit_plan(builder, stages, cursor, prefix, finished_label, failures,
 def _build_card(card, *, flag_id, card_type, max_stamps):
     return build_wonder_card(
         flag_id=flag_id, icon_species=card.icon_species,
-        id_number=card.id_number, card_type=card_type,
+        card_type=card_type,
         bg_type=card.bg_type, send_type=card.send_type,
         max_stamps=max_stamps, title=card.title, subtitle=card.subtitle,
         body=card.body, footer1=card.footer1, footer2=card.footer2)

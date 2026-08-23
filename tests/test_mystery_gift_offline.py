@@ -46,6 +46,7 @@ def test_wonder_card_size_and_validation_fields():
     card = wonder_card.build_wonder_card(flag_id=1003, title="ENIGMA BERRY")
     assert len(card) == 332
     assert int.from_bytes(card[0:2], "little") == 1003          # flagId != 0
+    assert int.from_bytes(card[4:8], "little") == 3             # displayed flagId % 100
     assert (card[8] & 0x3) == mg.CARD_TYPE_GIFT                  # type < 3
     assert ((card[8] >> 2) & 0xF) < mg.NUM_WONDER_BGS           # bgType < 8
     assert ((card[8] >> 6) & 0x3) in (0, 1, 2)                  # sendType valid
@@ -99,10 +100,17 @@ def test_default_gift_bundle():
     assert len(card) == 332 and len(script) == 251
     assert wonder_card.DEFAULT_GIFT_ITEM is None
     assert int.from_bytes(card[2:4], "little") == wonder_card.SPECIES_CELEBI
-    # idNumber zero hides the top-right numeric display in WonderCard_Draw.
-    assert int.from_bytes(card[4:8], "little") == 0
+    assert int.from_bytes(card[4:8], "little") == 3
     assert charmap.decode(card[250:290]).endswith("MercuryEnigma")
     assert script == wonder_card.build_delivery_ram_script(item=None, flag_id=1003)
+
+
+def test_every_generated_card_displays_its_flag_id_suffix():
+    # The old keyword remains accepted for older callers, but cannot obscure
+    # the selected card ID in the Wonder Card viewer.
+    for flag_id in (1000, 1008, 1011, 1019):
+        card = wonder_card.build_wonder_card(flag_id=flag_id, id_number=0xDEADBEEF)
+        assert int.from_bytes(card[4:8], "little") == flag_id % 100
 
 
 # --- Parent-side 0x54 framing (sim as leader/parent) -----------------------------------------

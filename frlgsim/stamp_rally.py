@@ -21,9 +21,6 @@ GIFT_LUNATONE_STAMP = "lunatone-stamp"
 STAMP_GIFT_CHOICES = (GIFT_SOLROCK_STAMP, GIFT_LUNATONE_STAMP)
 
 STAMP_RALLY_FLAG_ID = 1006
-# Zero suppresses FRLG's top-right numeric card label.  A four-character tag
-# interpreted as u32 is displayed as the capped value 999999 on hardware.
-STAMP_RALLY_CARD_ID = 0
 SPECIES_LUNATONE = 348
 SPECIES_SOLROCK = 349
 SOLROCK_STAMP_ID = 1
@@ -86,7 +83,6 @@ def build_stamp_rally_card(*, flag_id=STAMP_RALLY_FLAG_ID):
     return build_wonder_card(
         flag_id=flag_id,
         icon_species=SPECIES_CLAYDOL,
-        id_number=STAMP_RALLY_CARD_ID,
         card_type=CARD_TYPE_STAMP,
         max_stamps=2,
         title="SUN AND MOON RALLY",

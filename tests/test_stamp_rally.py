@@ -52,7 +52,7 @@ def test_shared_card_layout_and_stamp_encodings_are_exact():
     assert len(card) == wonder_card.WONDER_CARD_SIZE
     assert int.from_bytes(card[0:2], "little") == 1006
     assert int.from_bytes(card[2:4], "little") == stamp_rally.SPECIES_CLAYDOL
-    assert int.from_bytes(card[4:8], "little") == 0
+    assert int.from_bytes(card[4:8], "little") == 6
     assert card[8] & 0x3 == mystery_gift.CARD_TYPE_STAMP
     assert card[9] == 2
     assert charmap.decode(card[10:50]) == "SUN AND MOON RALLY"
@@ -66,7 +66,7 @@ def test_shared_card_layout_and_stamp_encodings_are_exact():
             ]
     assert solrock.stamp == bytes.fromhex("5d010100")
     assert lunatone.stamp == bytes.fromhex("5c010200")
-    assert mystery_gift.crc16(card) == 0x0AB8
+    assert mystery_gift.crc16(card) == 0x2FE9
 
 
 def test_hardware_one_solrock_stamp_payload_matches_without_tossing_card():
