@@ -15,14 +15,36 @@ on a Switch. The delivery script remains available after use for later conversat
 sudo -E ./.venv/bin/python -u frlgmg_host.py --live
 ```
 
-The hardware-proven command for this machine is:
+Two hardware profiles are proven end to end. For the ALFA AWUS036ACHM (`mt76x0u`), use:
 
 ```bash
 sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
-  --phy phy3 --skip-encryption --native-nonce-sequence --session-response-first
+  --phy phy3 --skip-encryption --no-accept-decrypted-ccmp \
+  --native-nonce-sequence --session-response-first
 ```
 
-`phy3` is specific to this MT7601U host; choose an AP-capable PHY elsewhere.
+`phy3` was the ALFA's name on the machine used for that run; PHY names can change after an adapter
+is reloaded or replugged. Use `iw dev` to find it, or omit `--phy` to select an AP-capable radio
+automatically. If more than one hosting adapter is attached, select the intended PHY explicitly.
+
+For the TP-Link Archer T3U (USB `2357:012d`, `rtw88_8822bu`), use:
+
+```bash
+sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
+  --skip-encryption --accept-decrypted-ccmp \
+  --native-nonce-sequence --session-response-first
+```
+
+The TP-Link command is hardware-proven through discovery, PIA/RFU negotiation, LinkPlayer exchange,
+Wonder Card transfer, save, and clean close. Its monitor output contains a retained CCMP header and
+MIC around already-decrypted receive plaintext. `--accept-decrypted-ccmp` normalizes that layout;
+the ALFA exposes standard receive frames and must leave the option disabled.
+
+Both adapters require `--skip-encryption`. The option only delegates transmit CCMP to
+mac80211/hardware, so frames remain encrypted over the air. Mystery Gift already defaults to the
+ALFA profile (`--skip-encryption` enabled and receive normalization disabled), but the commands use
+explicit flags so the selected hardware behavior is unambiguous. Startup reports the known adapter
+profile and warns when the selected flags do not match it.
 
 Then on the Switch: **Mystery Gift → Wonder Cards → Friend**, pick the host from the list.
 

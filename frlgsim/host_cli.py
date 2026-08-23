@@ -5,11 +5,25 @@ import argparse
 from . import config
 
 
+WIFI_ADAPTER_HELP = """Wi-Fi adapter profiles proven for hosting:
+  ALFA AWUS036ACHM (mt76x0u):
+    --skip-encryption --no-accept-decrypted-ccmp
+  TP-Link Archer T3U, USB 2357:012d (rtw88_8822bu):
+    --skip-encryption --accept-decrypted-ccmp
+
+--skip-encryption delegates transmit CCMP to mac80211/hardware; frames remain
+encrypted over the air. --accept-decrypted-ccmp is only for drivers that expose
+decrypted receive plaintext while retaining the CCMP header and MIC.
+"""
+
+
 def add_host_arguments(parser, *, option_defaults=None, ldn_defaults=None,
                        scene_help="LDN scene; default uses the configured FRLG scene"):
     """Add identity, lifecycle, LDN, and Pia options shared by host programs."""
     option_defaults = option_defaults or config.HostOptions()
     ldn_defaults = ldn_defaults or config.LdnConfig(phy="auto")
+    parser.epilog = "\n\n".join(
+        part for part in (parser.epilog, WIFI_ADAPTER_HELP) if part)
 
     config.add_identity_arguments(parser)
     parser.add_argument(
@@ -42,7 +56,14 @@ def add_host_arguments(parser, *, option_defaults=None, ldn_defaults=None,
         "--skip-encryption", "--skip_encryption",
         action=argparse.BooleanOptionalAction,
         default=option_defaults.skip_encryption,
-        help="delegate CCMP encryption to mac80211/hardware")
+        help="delegate transmit CCMP to mac80211/hardware; over-air frames "
+             "remain encrypted")
+    parser.add_argument(
+        "--accept-decrypted-ccmp", "--accept_decrypted_ccmp",
+        action=argparse.BooleanOptionalAction,
+        default=option_defaults.accept_decrypted_ccmp,
+        help="accept hardware-decrypted RX frames that retain their CCMP "
+             "header and MIC (TP-Link Archer T3U/rtw88_8822bu profile)")
     parser.add_argument(
         "--native-nonce-sequence", "--native_nonce_sequence",
         action=argparse.BooleanOptionalAction,
@@ -90,6 +111,7 @@ def build_host_config(parser, args):
             max_participants=args.max_participants,
             skip_preflight=args.skip_preflight,
             skip_encryption=args.skip_encryption,
+            accept_decrypted_ccmp=args.accept_decrypted_ccmp,
             native_nonce_sequence=args.native_nonce_sequence,
             session_response_first=args.session_response_first,
         )

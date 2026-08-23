@@ -375,7 +375,7 @@ def test_probe_cli_exposes_one_candidate_at_a_time_and_fixed_network_shape():
     assert {
         "--candidate", "--all-candidates", "--list-candidates", "--live", "--phy", "--keys",
         "--password", "--capture", "--channel",
-        "--skip-preflight", "--skip-encryption",
+        "--skip-preflight", "--skip-encryption", "--accept-decrypted-ccmp",
     } <= exposed
     assert {
         "--comm-id", "--max-participants", "--scene", "--app-version",
@@ -649,7 +649,8 @@ def test_probe_runtime_uses_fixed_network_identity_and_cleans_up():
         JoySpotProbeConfig(
             candidate="wireless_activity4_card", channel=6,
             skip_preflight=True,
-            skip_encryption=True, capture_path="probe.jsonl"),
+            skip_encryption=True, accept_decrypted_ccmp=True,
+            capture_path="probe.jsonl"),
         DEFAULT_TRAINER,
         log=lambda *unused: None,
         transport_factory=transport_factory,
@@ -673,6 +674,7 @@ def test_probe_runtime_uses_fixed_network_identity_and_cleans_up():
     assert kwargs["phyname"] == "phy-test"
     assert kwargs["channel"] == 6
     assert kwargs["skip_encryption"] is True
+    assert kwargs["accept_decrypted_ccmp"] is True
     assert network.preflight is False
     assert _record(kwargs["app_data"])[10:12] == b"\xbc\xf1"
 

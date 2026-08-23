@@ -76,6 +76,7 @@ def test_both_host_clis_use_the_same_explicit_transport_parsing():
         "--keys", "/keys", "--comm-id", "01006fa0233f8000",
         "--capture", "trace.jsonl", "--channel", "6", "--scene", "1234",
         "--max-participants", "7", "--skip-preflight", "--skip-encryption",
+        "--accept-decrypted-ccmp",
         "--native-nonce-sequence", "--session-response-first",
     ]
     gift = _build_mg(common)
@@ -83,6 +84,7 @@ def test_both_host_clis_use_the_same_explicit_transport_parsing():
     assert gift.profile == trade.profile
     assert gift.ldn == trade.ldn
     assert gift.role == trade.role
+    assert gift.role.accept_decrypted_ccmp is True
     assert gift.profile.trainer_id == (34567 << 16) | 12345
 
 
@@ -95,6 +97,8 @@ def test_role_defaults_preserve_both_hardware_checkpoints():
     assert (trade.role.skip_encryption,
             trade.role.native_nonce_sequence,
             trade.role.session_response_first) == (False, False, False)
+    assert gift.role.accept_decrypted_ccmp is False
+    assert trade.role.accept_decrypted_ccmp is False
     assert gift.ldn.phy == trade.ldn.phy == "auto"
 
 

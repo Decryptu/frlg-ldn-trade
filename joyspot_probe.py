@@ -107,7 +107,13 @@ def build_parser():
     parser.add_argument("--skip-preflight", action="store_true")
     parser.add_argument(
         "--skip-encryption", "--skip_encryption", action="store_true",
-        help="delegate CCMP encryption to mac80211/hardware")
+        help="delegate transmit CCMP to mac80211/hardware; over-air frames "
+             "remain encrypted")
+    parser.add_argument(
+        "--accept-decrypted-ccmp", "--accept_decrypted_ccmp",
+        action="store_true",
+        help="accept hardware-decrypted RX frames that retain their CCMP "
+             "header and MIC (TP-Link Archer T3U/rtw88_8822bu profile)")
     parser.add_argument(
         "--verbose", action="store_true",
         help="include detailed LDN, interface, and advertisement logging")
@@ -177,6 +183,7 @@ def _probe_config(args, parser, candidate, capture_path):
         capture_path=capture_path,
         skip_preflight=args.skip_preflight,
         skip_encryption=args.skip_encryption,
+        accept_decrypted_ccmp=args.accept_decrypted_ccmp,
     )
 
 

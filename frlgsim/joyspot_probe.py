@@ -39,6 +39,7 @@ class JoySpotProbeConfig:
     capture_path: str | None = None
     skip_preflight: bool = False
     skip_encryption: bool = False
+    accept_decrypted_ccmp: bool = False
 
     def __post_init__(self):
         if isinstance(self.candidate, str):
@@ -115,6 +116,7 @@ class JoySpotProbeApplication:
             phyname=phy,
             channel=self.config.channel,
             skip_encryption=self.config.skip_encryption,
+            accept_decrypted_ccmp=self.config.accept_decrypted_ccmp,
             tracer=self.tracer,
             log=self.log,
         )

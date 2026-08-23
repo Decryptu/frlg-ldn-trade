@@ -183,6 +183,7 @@ class HostOptions:
     max_participants: int = 6
     skip_preflight: bool = False
     skip_encryption: bool = False
+    accept_decrypted_ccmp: bool = False
     native_nonce_sequence: bool = False
     session_response_first: bool = False
 
@@ -237,7 +238,7 @@ class MysteryGiftPayload:
 
 
 def _mystery_gift_host_defaults():
-    """Hardware-proven transport defaults for the Friend-path distributor."""
+    """ALFA/mt76x0u defaults; Realtek retained-CCMP RX remains explicit."""
     return HostOptions(
         skip_encryption=True,
         native_nonce_sequence=True,

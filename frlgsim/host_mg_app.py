@@ -65,6 +65,7 @@ class MysteryGiftHostApplication(HostApplication):
             max_participants=self.options.max_participants,
             phyname=phy, channel=self.options.channel,
             skip_encryption=self.options.skip_encryption,
+            accept_decrypted_ccmp=self.options.accept_decrypted_ccmp,
             tracer=self.tracer, log=self.log)
         self.peer = HostPeerProtocol(
             self.network, self.profile, self.session, active,

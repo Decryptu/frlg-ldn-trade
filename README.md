@@ -33,6 +33,7 @@ This demo was recorded using the **ALFA AWUS036ACHM**. The RZ616 is half as fast
 |------------------|----------------|---------|---------------
 | AMD RZ616        | Internal (M.2) | mt7921e | Low          |
 | ALFA AWUS036ACHM | External       | mt76x0u | High         |
+| TP-Link Archer T3U (`2357:012d`) | External | rtw88_8822bu | High |
 | Realtek RTL8821CE | Internal (PCIe 1x) | rtw88_8821ce | High |
 
 ### Known Problematic WiFi Cards
@@ -57,7 +58,9 @@ sudo -E ./.venv/bin/python frlgtrade.py --live -o output.pk3 PARTY1.pk3 PARTY2.p
 Start a Direct Corner host with:
 
 ```bash
-sudo -E ./.venv/bin/python frlgtrade_host.py --live -o output.pk3 PARTY1.pk3 PARTY2.pk3
+sudo -E ./.venv/bin/python frlgtrade_host.py --live \
+  --skip-encryption --no-accept-decrypted-ccmp \
+  -o output.pk3 PARTY1.pk3 PARTY2.pk3
 ```
 
 Linux advertises the group and acts as the trade leader. With the default settings it offers the
@@ -73,12 +76,43 @@ second supplied party member (`PARTY2.pk3`) and writes the Pokémon received fro
 | `--keys` | `/path/to/prod.keys` | Non-default prod.keys location |
 | `--slot` | zero-based party index | Host party member offered in the trade |
 | `--capture` | output path | Optional JSONL diagnostic capture |
+| `--skip-encryption` | N/A | Delegate transmit CCMP to mac80211/hardware; traffic remains encrypted over the air |
+| `--accept-decrypted-ccmp` | N/A | Accept driver-decrypted RX plaintext with retained CCMP metadata |
 | `--ot` | Gen III trainer name | Override `DEFAULT_TRAINER.name` for this run |
 | `--version` | `firered` or `leafgreen` | Override the configured game version |
 | `--id` | decimal `TID[:SID]` | Override the trainer ID, and optionally secret ID |
 
-The command above is the recommended demonstration configuration. The help output is the authoritative
-list of supported options for each entry point.
+The command above selects the ALFA profile. The help output is the authoritative list of supported
+options for each entry point.
+
+### Hosting Wi-Fi adapter profiles
+
+These profiles apply when Linux is hosting with `frlgtrade_host.py` or `frlgmg_host.py`; they do not
+change the Switch-hosted `frlgtrade.py` joiner.
+
+| Adapter | Linux identity | Required host flags |
+|---|---|---|
+| ALFA AWUS036ACHM | `mt76x0u` | `--skip-encryption --no-accept-decrypted-ccmp` |
+| TP-Link Archer T3U | USB `2357:012d`, `rtw88_8822bu` | `--skip-encryption --accept-decrypted-ccmp` |
+
+For the ALFA, run the Direct Corner command shown above. For the TP-Link, use:
+
+```bash
+sudo -E ./.venv/bin/python frlgtrade_host.py --live \
+  --skip-encryption --accept-decrypted-ccmp \
+  -o output.pk3 PARTY1.pk3 PARTY2.pk3
+```
+
+Despite its historical name, `--skip-encryption` does not make the wireless connection plaintext.
+It skips LDN's Python CCMP step and asks mac80211/hardware to apply CCMP once. Both proven adapters
+need that transmit mode. The TP-Link's `rtw88_8822bu` monitor interface additionally reports a
+Protected frame with its CCMP header and MIC retained around already-decrypted receive data, so it
+also needs `--accept-decrypted-ccmp`. That opt-in path trusts the driver's completed decryption and
+removes the retained MIC before forwarding the plaintext to `ldn-tap`; keep it disabled for the ALFA.
+
+`--phy auto` selects an AP-capable PHY. If both adapters are attached, pass the intended PHY
+explicitly (for example, `--phy phy0`) after checking `iw dev`. Startup now prints the detected known
+adapter profile, the active TX/RX modes, and a warning if its flags do not match the proven profile.
 
 **Setup**
 1. Create a Python venv and install all requirements in ``requirements.txt``
@@ -123,6 +157,9 @@ sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
   --gift beast-cutscene --flag-id 1005 \
   --capture mystery-stamps-hardware.jsonl
 ```
+
+That command uses Mystery Gift's ALFA-compatible defaults. With the TP-Link Archer T3U, add
+`--accept-decrypted-ccmp`; the adapter-profile section above gives both complete flag sets.
 
 On the Switch choose **Mystery Gift → Wonder Cards → Friend**, then select the Linux host. The save
 must already have Mystery Gift unlocked. The host accepts the same `--ot`, `--version`, and decimal

@@ -168,8 +168,20 @@ live-proven redundant `0xFF` padding.
 
 - Host preflight rejects radios without AP support before LDN creation and identifies the selected
   PHY/driver capability.
+- The two hardware-proven hosting profiles are ALFA AWUS036ACHM/`mt76x0u` with
+  `--skip-encryption --no-accept-decrypted-ccmp`, and TP-Link Archer T3U USB `2357:012d`/
+  `rtw88_8822bu` with `--skip-encryption --accept-decrypted-ccmp`. Startup identifies either known
+  driver and warns if its compatibility flags do not match the proven profile.
 - Transport startup and beacon-thread failures abort the run and unwind already-created resources.
 - Authentication/decryption and malformed-message failures do not enter the RFU/trade stack.
+- After Nintendo's custom LDN authentication succeeds, the AP marks the station
+  `NL80211_STA_FLAG_AUTHORIZED`. The AP starts with userspace control-port handling, so omitting this
+  kernel-side transition caused the Realtek station to disappear about three seconds after joining
+  even while monitor-injected traffic was still flowing.
+- `--accept-decrypted-ccmp` is an opt-in receive compatibility path for monitor drivers that retain
+  CCMP metadata around hardware-decrypted plaintext; it trusts the driver's completed decryption
+  and removes the retained MIC before TAP delivery. Radiotap-advertised trailing FCS bytes are
+  removed independently for every driver.
 - Net and Session establishment retry at their proven cadence until acknowledged; RTT samples feed
   Reliable timing once the Session is finalized.
 - An unexpected participant leave halts protocol output. After the normal room-close confirmation,

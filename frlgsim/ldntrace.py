@@ -64,6 +64,16 @@ def attach(network, tracer, log=print):
     """Monkeypatch a live ldn.APNetwork instance so its hosting actions stream into `tracer`.
     Safe to call once per network object, right after ldn.create_network yields it."""
 
+    # Record compatibility switches at the start of every trace so a failed
+    # hardware run can prove which receive/transmit paths were actually live.
+    param = getattr(network, "_param", None)
+    tracer.write(
+        "network_config",
+        skip_encryption=bool(getattr(param, "skip_encryption", False)),
+        accept_decrypted_ccmp=bool(
+            getattr(param, "accept_decrypted_ccmp", False)),
+    )
+
     # -- advertisement TX: log the encoded action frame once + on every nonce change --------------
     orig_send_advert = network._send_advertisement
     state = {"last_nonce": None}
@@ -116,21 +126,57 @@ def attach(network, tracer, log=print):
 
     network._register_participant = register_participant
 
+    # -- disassociation: retain the management subtype/reason behind LeaveEvent -----------------
+    orig_disassociate = network._process_disassociation
+
+    async def process_disassociation(address, reason=None, management_type=None):
+        try:
+            tracer.write("leave", mac=str(address), reason=reason,
+                         management_type=management_type)
+        except Exception as e:                              # noqa: BLE001
+            log(f"[trace] leave hook error: {e}")
+        return await orig_disassociate(address, reason, management_type)
+
+    network._process_disassociation = process_disassociation
+
     # -- data plane: monitor vif <-> TAP ----------------------------------------------------------
     orig_data_in = network._process_data_frame
     orig_data_out = network._send_data_frame
 
     async def process_data_frame(frame):
+        candidate = bool(
+            frame.protected and
+            frame.payload.startswith(b"\xAA\xAA\x03\x00\x00\x00")
+        )
         try:
             n = tracer.counts.get("dataframe_in", 0)
             if n < DATAFRAME_HEX_LIMIT:
                 tracer.write("dataframe_in", src=str(frame.source), dst=str(frame.target),
-                             protected=bool(frame.protected), hex=_hex(frame.payload))
+                             protected=bool(frame.protected), nonce=frame.nonce,
+                             keyid=frame.keyid, tods=bool(frame.tods),
+                             fromds=bool(frame.fromds), hex=_hex(frame.payload))
             else:
                 tracer.counts["dataframe_in"] = n + 1      # count silently past the limit
         except Exception as e:                              # noqa: BLE001
             log(f"[trace] dataframe-in hook error: {e}")
-        return await orig_data_in(frame)
+        try:
+            result = await orig_data_in(frame)
+        except Exception as e:
+            try:
+                tracer.write(
+                    "dataframe_rejected", src=str(frame.source),
+                    protected=bool(frame.protected), candidate=candidate,
+                    error=f"{type(e).__name__}: {e}",
+                )
+            except Exception as trace_error:                # noqa: BLE001
+                log(f"[trace] dataframe-rejection hook error: {trace_error}")
+            raise
+        if candidate and not frame.protected:
+            try:
+                tracer.write("dataframe_normalized", src=str(frame.source))
+            except Exception as e:                          # noqa: BLE001
+                log(f"[trace] dataframe-normalized hook error: {e}")
+        return result
 
     async def send_data_frame(data, target=None):
         try:
@@ -148,6 +194,22 @@ def attach(network, tracer, log=print):
 
     network._process_data_frame = process_data_frame
     network._send_data_frame = send_data_frame
+
+    # Record the exact Ethernet frames that survived parsing/normalization and
+    # were handed to Linux.  This distinguishes successful 802.11 receive from
+    # a later ARP/IP/TAP failure.
+    tap = getattr(network, "_tap", None)
+    if tap is not None:
+        orig_tap_write = tap.write
+
+        async def tap_write(data):
+            try:
+                tracer.write("tap_in", hex=_hex(data))
+            except Exception as e:                          # noqa: BLE001
+                log(f"[trace] TAP-in hook error: {e}")
+            return await orig_tap_write(data)
+
+        tap.write = tap_write
 
     log(f"[trace] attached to APNetwork -> {tracer.path}")
     return network

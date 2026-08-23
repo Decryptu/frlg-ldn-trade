@@ -91,6 +91,7 @@ def test_default_config_selects_the_self_contained_celebi_gift():
     assert config.payload.gift == wonder_card.GIFT_CELEBI
     assert config.payload.flag_id == 1003
     assert config.role.skip_encryption is True
+    assert config.role.accept_decrypted_ccmp is False
     assert config.role.native_nonce_sequence is True
     assert config.role.session_response_first is True
     assert config.payload.receipt_flag == 0x2AA

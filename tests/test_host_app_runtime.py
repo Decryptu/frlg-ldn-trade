@@ -80,6 +80,7 @@ def test_host_cli_exposes_supported_options_and_removes_development_options():
         "--verbose", "--live", "--password", "--phy", "--keys",
         "--comm-id", "--capture", "--channel", "--scene",
         "--max-participants", "--skip-preflight", "--skip-encryption",
+        "--accept-decrypted-ccmp", "--no-accept-decrypted-ccmp",
         "--native-nonce-sequence", "--session-response-first",
         "--ot", "--version", "--id",
     } <= exposed
@@ -88,6 +89,11 @@ def test_host_cli_exposes_supported_options_and_removes_development_options():
         "--refuse-illegit", "--compress", "--connect-id",
         "--parent-pid", "--replay",
     }.isdisjoint(exposed)
+
+    help_text = parser.format_help()
+    assert "ALFA AWUS036ACHM (mt76x0u)" in help_text
+    assert "TP-Link Archer T3U" in help_text
+    assert "frames remain" in help_text and "encrypted over the air" in help_text
 
 
 def test_host_cli_applies_shared_identity_overrides():

@@ -13,6 +13,7 @@ LiveTransport   - LIVE. Joins the FRLG console's LDN session with kinnay's `ldn`
 """
 
 import json
+import os
 import select
 import socket
 import struct
@@ -612,6 +613,40 @@ def find_ap_phy(log=print):
     return None
 
 
+HOST_WIFI_PROFILES = {
+    "mt76x0u": ("ALFA AWUS036ACHM", True, False),
+    "rtw88_8822bu": ("TP-Link Archer T3U (USB 2357:012d)", True, True),
+}
+
+
+def _phy_driver(phyname):
+    """Return the selected PHY's kernel driver name, or ``?`` if unavailable."""
+    try:
+        return os.path.basename(os.path.realpath(
+            f"/sys/class/ieee80211/{phyname}/device/driver")) or "?"
+    except OSError:
+        return "?"
+
+
+def wifi_profile_messages(driver, skip_encryption, accept_decrypted_ccmp):
+    """Describe a known adapter profile and flag mismatches for startup logs."""
+    profile = HOST_WIFI_PROFILES.get(driver)
+    if profile is None:
+        return []
+    name, expected_skip, expected_accept = profile
+    expected = (
+        f"--{'skip' if expected_skip else 'no-skip'}-encryption "
+        f"--{'accept' if expected_accept else 'no-accept'}-decrypted-ccmp"
+    )
+    messages = [f"Wi-Fi adapter profile: {name} ({driver}); expected {expected}."]
+    if (bool(skip_encryption), bool(accept_decrypted_ccmp)) != \
+            (expected_skip, expected_accept):
+        messages.append(
+            "WARNING: selected Wi-Fi compatibility flags do not match the "
+            f"hardware-proven {name} profile.")
+    return messages
+
+
 def preflight_host(phyname, log=print, _iw_output=None):
     """Check BEFORE ldn.create_network whether `phyname` can host, and fail with ONE clear verdict
     instead of repeated ENOTSUP tracebacks. The authoritative signal is `iw phy` 'Supported interface
@@ -629,12 +664,7 @@ def preflight_host(phyname, log=print, _iw_output=None):
                 f"skipping the AP-mode check")
             return True                     # can't check -> let the real bring-up decide
     modes, soft = _parse_iw_modes(_iw_output)
-    driver = "?"
-    try:
-        import os
-        driver = os.path.basename(os.path.realpath(f"/sys/class/ieee80211/{phyname}/device/driver"))
-    except OSError:
-        pass
+    driver = _phy_driver(phyname)
     if "AP" in modes:
         if "monitor" not in modes and "monitor" not in soft:
             log(f"[host] preflight: {phyname} ({driver}) has AP but no monitor mode - "
@@ -675,7 +705,8 @@ class HostTransport:
     def __init__(self, app_data=b"", password=None, nickname="EMU", keys_path="~/.switch/prod.keys",
                  local_comm_id=None, scene_id=None, app_version=None, max_participants=2,
                  phyname="phy0", ifname="ldn-tap", ap_ifname="ldn", mon_ifname="ldn-mon",
-                 channel=None, skip_encryption=False, tracer=None, log=print):
+                 channel=None, skip_encryption=False, accept_decrypted_ccmp=False,
+                 tracer=None, log=print):
         self.info = getattr(log, "info", log)
         self.tracer = tracer                # optional ldntrace.Tracer: byte/action trace of hosting
         self.app_data = bytes(app_data or b"")
@@ -689,6 +720,7 @@ class HostTransport:
         self.mon_ifname = mon_ifname        # the monitor vif (scan/advertise)
         self.channel = channel
         self.skip_encryption = skip_encryption
+        self.accept_decrypted_ccmp = accept_decrypted_ccmp
         if local_comm_id is not None:
             self.LOCAL_COMMUNICATION_ID = local_comm_id
         if scene_id is not None:
@@ -718,6 +750,10 @@ class HostTransport:
         hosting (HW-0 passed). Raises RuntimeError with the fully-unwrapped cause if the card cannot
         host (e.g. AP+monitor interface combination unsupported - the fatal HW-0 answer).
         `preflight=False` skips the iw-phy AP-mode check (escape hatch if `iw` output misleads)."""
+        driver = _phy_driver(self.phyname)
+        for message in wifi_profile_messages(
+                driver, self.skip_encryption, self.accept_decrypted_ccmp):
+            self.info(message)
         if preflight:
             preflight_host(self.phyname, self.log)      # one clear verdict, not 3x ENOTSUP walls
         last_err = None
@@ -778,8 +814,14 @@ class HostTransport:
             param.ifname_monitor = self.mon_ifname
             param.ifname_tap = self.ifname
             param.skip_encryption = self.skip_encryption
+            param.accept_decrypted_ccmp = self.accept_decrypted_ccmp
             if self.channel is not None:
                 param.channel = self.channel
+            tx_mode = ("mac80211/hardware" if self.skip_encryption
+                       else "LDN software")
+            rx_mode = ("driver-decrypted retained-CCMP normalization"
+                       if self.accept_decrypted_ccmp else "standard CCMP")
+            self.info(f"Wi-Fi compatibility active: TX={tx_mode}; RX={rx_mode}.")
             self.info("Creating the LDN network (hosting)...")
             async with ldn.create_network(param) as network:
                 self._network = network
@@ -828,7 +870,12 @@ class HostTransport:
             # stale entries here made them continue RTT and Reliable traffic
             # toward a station that had already left the LDN network.
             self.participants = [p for p in self.participants if p[0] != event.index]
-            self.log(f"[host] console left: idx={event.index}")
+            reason = getattr(event, "reason", None)
+            management_type = getattr(event, "management_type", None)
+            detail = ""
+            if reason is not None:
+                detail = f" via {management_type or 'management frame'} reason={reason}"
+            self.log(f"[host] console left: idx={event.index}{detail}")
         else:
             self.log(f"[host] event: {name} {event!r}")
 
