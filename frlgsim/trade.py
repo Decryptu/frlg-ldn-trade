@@ -622,22 +622,22 @@ class TradeEngine:
                         self.log("entry: host emitted READY (0x16) - host is seated; we may sit now")
                         self.info("Host sat down.")
                         break
-        # POST-CANCEL EXIT: once back in the overworld, the host walks to the south exit, confirms leaving,
-        # and broadcasts LINK_KEY_CODE_EXIT_ROOM (0x17) in its held-keys (KeyInterCB_SendExitRoomKey), then
+        # HOST-LED EXIT: the host can walk out before any trade or after returning from a cancelled trade.
+        # It broadcasts LINK_KEY_CODE_EXIT_ROOM (0x17) in its held-keys (KeyInterCB_SendExitRoomKey), then
         # BLOCKS at KeyInterCB_WaitForPlayersToExit ("You will be escorted out of the room. Please wait.")
         # until ALL players are EXITING_ROOM [overworld.c:2962-2981; cable_club.inc TradeCenter_TerminateLink
         # -> ExitLinkRoom]. The host marks US EXITING_ROOM only when WE send our OWN EXIT_ROOM (Handle-
         # LinkPlayerKeyInput case 2751). The seat-phase scan above is gated off (_host_ready), so detect the
-        # host's EXIT_ROOM HERE; the orchestrator then has linkstate emit ours -> AreAllPlayersInLinkState(
+        # host's EXIT_ROOM HERE regardless of trade state; the orchestrator then has linkstate emit ours -> AreAllPlayersInLinkState(
         # EXITING_ROOM) -> CableClub_EventScript_DoLinkRoomExit -> READY_CLOSE_LINK (c=13). (Reference
         # captures: host EXIT_ROOM IN first, joiner EXIT_ROOM OUT ~3.7s later, THEN the host-led CLOSE.)
-        if self._post_cancel_overworld and not self._host_exiting and unwrapped is not None:
+        if not self._host_exiting and unwrapped is not None:
             for _mpid, slot in unwrapped.get("positional", []):
                 r = rfu.parse_slot(slot)
                 if (r and (r["word0"] & 0xFF00) == rfu.SEND_HELD_KEYS
                         and (int.from_bytes(slot[2:4], "little") & 0xFF) == 0x17):
                     self._host_exiting = True
-                    self.log("post-cancel: host emitted EXIT_ROOM (0x17) - it is walking out and waiting "
+                    self.log("host emitted EXIT_ROOM (0x17) - it is walking out and waiting "
                              "for ALL players to exit; respond with our EXIT_ROOM [overworld.c:2962-2981]")
                     self.info("Host is leaving the room...")
                     break
