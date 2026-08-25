@@ -2,18 +2,25 @@
 
 from .gift_composer import (
     AnyOf,
+    AllOf,
     BattlePokemon,
     DeliveryPlan,
     DeliveryStage,
+    Exit,
     GiftSpec,
+    GiveEgg,
     GiveItem,
     GivePokemon,
     Message,
     Not,
     RelativeToPlayer,
+    RequireSpecialResult,
+    SetVar,
+    SPECIAL_HAS_ALL_KANTO_MONS,
     ShowSprite,
     StampRallySpec,
     StampSlot,
+    VAR_MYSTERY_GIFT_1,
     VarEquals,
     WonderCardSpec,
     WonderGift,
@@ -24,13 +31,25 @@ from . import stamp_rally, wonder_card
 # pokefirered/include/constants/{items,species,event_objects}.h
 ITEM_TM29_PSYCHIC = 317
 ITEM_TM46_THIEF = 334
-SPECIES_PORYGON = 137
+SPECIES_BALTOY = 318
+SPECIES_CLAYDOL = 319
+SPECIES_PORYGON = 13
 OBJ_EVENT_GFX_CLEFAIRY = 113
 DIR_WEST = 3
+MOVE_ZAP_CANNON = 192
+MOVE_ERUPTION = 284
+MOVE_REFRESH = 287
+MOVE_WATER_SPOUT = 323
 
 GIFT_PORYGON_TMS = "porygon-tm-gift"
+GIFT_WORDS_XP = "worlds-xp"
 PORYGON_TM_GIFT_FLAG_ID = 1007
+WORDS_XP_GIFT_FLAG_ID = 1008
 VAR_STARTER_MON = 0x4031
+WORLDS_XP_STATE_VAR = 0x40BD
+WORLDS_XP_STATE_NEW = 0
+WORLDS_XP_STATE_BATTLED = 1
+WORLDS_XP_STATE_RECEIVED = 2
 
 CELEBI_GIFT = WonderGift(
     slug=wonder_card.GIFT_CELEBI,
@@ -74,8 +93,7 @@ LEGENDARY_BEAST_GIFT = WonderGift(
         default_flag_id=1003,
     ),
     intro_message=(
-        "Thank you for using the\n"
-        "MYSTERY GIFT system."),
+        "A MYSTERY GIFT arrived!"),
     event=GiftSpec(repeatable=True),
     delivery=DeliveryPlan(delivery=(
         DeliveryStage(
@@ -256,9 +274,134 @@ PORYGON_TM_GIFT = WonderGift(
 )
 
 
+WORDS_XP_GIFT = WonderGift(
+    slug=GIFT_WORDS_XP,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLAYDOL,
+        title="WORLDS XP",
+        subtitle="A Legendary Experience!",
+        body=(
+            "An EGG of ruins is waiting. Talk to the",
+            "deliveryman to see why it is attracting",
+            "a LEGENDARY aura.",
+            "We hope you enjoy this fan-made event!",
+        ),
+        footer1=" - PkCamp.github.io",
+        footer2="NOTE. not official use at your own risk",
+        default_flag_id=WORDS_XP_GIFT_FLAG_ID,
+    ),
+    intro_message=(
+        "This egg has the power of\n"
+        "3 beasts from a time of ruins."),
+    event=GiftSpec(repeatable=True, shareable="always"),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Exit(),
+            condition=VarEquals(WORLDS_XP_STATE_VAR, WORLDS_XP_STATE_RECEIVED),
+        ),
+        DeliveryStage(
+            SetVar(VAR_MYSTERY_GIFT_1, 0),
+            RequireSpecialResult(
+                SPECIAL_HAS_ALL_KANTO_MONS,
+                1,
+                "Finish the DEX!",
+            ),
+            # ShowSprite(
+            #     wonder_card.OBJ_EVENT_GFX_CELEBI,
+            #     RelativeToPlayer(dx=-1, dy=-2),
+            #     direction=wonder_card.DIR_SOUTH,
+            #     delay_frames=30,
+            # ),
+            GivePokemon(
+                wonder_card.SPECIES_CELEBI,
+                level=50,
+            ),
+            SetVar(WORLDS_XP_STATE_VAR, WORLDS_XP_STATE_RECEIVED),
+            Exit(),
+            condition=VarEquals(WORLDS_XP_STATE_VAR, WORLDS_XP_STATE_BATTLED),
+        ),
+        DeliveryStage(
+            GiveEgg(
+                SPECIES_BALTOY,
+                moves=(
+                    MOVE_REFRESH,
+                    MOVE_ZAP_CANNON,
+                    MOVE_ERUPTION,
+                    MOVE_WATER_SPOUT,
+                ),
+            ),
+        ),
+        DeliveryStage(
+            ShowSprite(
+                wonder_card.OBJ_EVENT_GFX_KANGASKHAN,
+                RelativeToPlayer(dx=1),
+                direction=wonder_card.DIR_WEST,
+                delay_frames=30,
+            ),
+            condition=VarEquals(VAR_STARTER_MON, 0),
+        ),
+        DeliveryStage(
+            ShowSprite(
+                wonder_card.OBJ_EVENT_GFX_KANGASKHAN,
+                RelativeToPlayer(dx=1),
+                direction=wonder_card.DIR_WEST,
+                delay_frames=30,
+            ),
+            condition=VarEquals(VAR_STARTER_MON, 1),
+        ),
+        DeliveryStage(
+            ShowSprite(
+                wonder_card.OBJ_EVENT_GFX_KANGASKHAN,
+                RelativeToPlayer(dx=1),
+                direction=wonder_card.DIR_WEST,
+                delay_frames=30,
+            ),
+            condition=Not(AnyOf((
+                VarEquals(VAR_STARTER_MON, 0),
+                VarEquals(VAR_STARTER_MON, 1),
+            ))),
+        ),
+        DeliveryStage(
+            Message("What is that?"),
+            GiveItem(wonder_card.ITEM_MASTER_BALL),
+            SetVar(WORLDS_XP_STATE_VAR, WORLDS_XP_STATE_BATTLED),
+        ),
+        DeliveryStage(
+            BattlePokemon(
+                wonder_card.SPECIES_SUICUNE,
+                level=wonder_card.LEGENDARY_BEAST_LEVEL,
+            ),
+            condition=VarEquals(VAR_STARTER_MON, 0),
+        ),
+        DeliveryStage(
+            BattlePokemon(
+                wonder_card.SPECIES_ENTEI,
+                level=wonder_card.LEGENDARY_BEAST_LEVEL,
+            ),
+            condition=VarEquals(VAR_STARTER_MON, 1),
+        ),
+        DeliveryStage(
+            BattlePokemon(
+                wonder_card.SPECIES_RAIKOU,
+                level=wonder_card.LEGENDARY_BEAST_LEVEL,
+            ),
+            condition=Not(AnyOf((
+                VarEquals(VAR_STARTER_MON, 0),
+                VarEquals(VAR_STARTER_MON, 1),
+            ))),
+        ),
+    )),
+    completed_message="Visit PkCamp.github.io.",
+)
+
+
 __all__ = [
-    "CELEBI_GIFT", "DIR_WEST", "GIFT_PORYGON_TMS", "ITEM_TM29_PSYCHIC",
+    "CELEBI_GIFT", "DIR_WEST", "GIFT_PORYGON_TMS", "GIFT_WORDS_XP",
+    "ITEM_TM29_PSYCHIC",
     "ITEM_TM46_THIEF", "LEGENDARY_BEAST_GIFT", "OBJ_EVENT_GFX_CLEFAIRY",
-    "PORYGON_TM_GIFT", "PORYGON_TM_GIFT_FLAG_ID", "SPECIES_PORYGON",
-    "SUN_MOON_RALLY", "VAR_STARTER_MON",
+    "PORYGON_TM_GIFT", "PORYGON_TM_GIFT_FLAG_ID", "SPECIES_BALTOY",
+    "SPECIES_PORYGON", "SUN_MOON_RALLY", "VAR_STARTER_MON",
+    "WORLDS_XP_STATE_BATTLED", "WORLDS_XP_STATE_NEW", "WORLDS_XP_STATE_RECEIVED",
+    "WORLDS_XP_STATE_VAR",
+    "WORDS_XP_GIFT", "WORDS_XP_GIFT_FLAG_ID",
 ]

@@ -59,9 +59,12 @@ SPECIES_ENTEI = 244
 SPECIES_SUICUNE = 245
 
 # Overworld graphics used by the preserved cutscene payload.
+OBJ_EVENT_GFX_KANGASKHAN = 119
 OBJ_EVENT_GFX_ENTEI = 141
 OBJ_EVENT_GFX_SUICUNE = 142
 OBJ_EVENT_GFX_RAIKOU = 143
+OBJ_EVENT_GFX_CELEBI = 146
+DIR_SOUTH = 1
 DIR_WEST = 3
 
 # VAR_STARTER_MON is 0:Bulbasaur, 1:Squirtle, 2:Charmander. This intentionally
@@ -305,10 +308,9 @@ def build_wonder_card(*, flag_id=1003, icon_species=1, id_number=0,
                       max_stamps=0, title="", subtitle="", body=(), footer1="", footer2=""):
     """Build a 332-byte `struct WonderCard`.
 
-    Every generated card displays its ``flag_id % 100`` in the game's
-    top-right number field. ``id_number`` is retained as an ignored keyword
-    for source compatibility with older gift definitions; it cannot override
-    the per-card display number.
+    The game's top-right card number uses ``id_number`` when it is nonzero.
+    The default ``0`` preserves the historical behavior of deriving that field
+    from ``flag_id % 100``.
 
     Defaults pass ValidateWonderCard: flagId != 0, type < 3, sendType in
     {0,1,2}, bgType < 8, maxStamps <= 7. flagId default 1003 -> the first
@@ -322,10 +324,11 @@ def build_wonder_card(*, flag_id=1003, icon_species=1, id_number=0,
     flag_for_flag_id(flag_id)  # validate flagId range early
 
     bitfield = (card_type & 0x3) | ((bg_type & 0xF) << 2) | ((send_type & 0x3) << 6)
+    display_id = flag_id % 100 if id_number == 0 else id_number
     out = bytearray()
     out += _u16(flag_id)                       # +0
     out += _u16(icon_species)                  # +2
-    out += (flag_id % 100).to_bytes(4, "little")  # +4 idNumber shown on card
+    out += display_id.to_bytes(4, "little")   # +4 idNumber shown on card
     out += bytes([bitfield, max_stamps & 0xFF])            # +8, +9
     out += _card_text(title)                   # +10
     out += _card_text(subtitle)                # +50
@@ -345,7 +348,8 @@ def build_berry_gift(item=DEFAULT_GIFT_ITEM, title=DEFAULT_GIFT_TITLE,
     """A Wonder Card + deliveryman RAM script handing over Celebi and an optional item.
 
     Returns ``(card_bytes_332, ram_script_bytes)``. The Wonder Card viewer
-    displays the selected ``flag_id % 100`` in its top-right numeric label.
+    displays the selected ``flag_id % 100`` in its top-right numeric label by
+    default.
     """
     card = build_wonder_card(
         flag_id=flag_id, icon_species=DEFAULT_GIFT_ICON_SPECIES,

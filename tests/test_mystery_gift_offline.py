@@ -105,12 +105,12 @@ def test_default_gift_bundle():
     assert script == wonder_card.build_delivery_ram_script(item=None, flag_id=1003)
 
 
-def test_every_generated_card_displays_its_flag_id_suffix():
-    # The old keyword remains accepted for older callers, but cannot obscure
-    # the selected card ID in the Wonder Card viewer.
+def test_every_generated_card_uses_flag_suffix_by_default_and_honors_explicit_id():
     for flag_id in (1000, 1008, 1011, 1019):
-        card = wonder_card.build_wonder_card(flag_id=flag_id, id_number=0xDEADBEEF)
+        card = wonder_card.build_wonder_card(flag_id=flag_id)
         assert int.from_bytes(card[4:8], "little") == flag_id % 100
+    custom = wonder_card.build_wonder_card(flag_id=1008, id_number=0xDEADBEEF)
+    assert int.from_bytes(custom[4:8], "little") == 0xDEADBEEF
 
 
 # --- Parent-side 0x54 framing (sim as leader/parent) -----------------------------------------

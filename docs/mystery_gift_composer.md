@@ -97,6 +97,10 @@ Each `DeliveryStage` is one checkpoint. If its fallible reward fails, that stage
 successful earlier stages are skipped. Do not put two fallible rewards (`GiveItem`, `GivePokemon`,
 or `GiveEgg`) in one stage.
 
+`GiveEgg` accepts the same optional `moves=(...)` tuple as `GivePokemon`. A move-bearing egg must
+fit in the active party so the compiler can apply its moves to the newly added egg slot; when the
+party is full, the stage retries later instead of sending the egg to the PC.
+
 A stage may have `condition=...`. When the condition is false, the compiler skips that stage's
 actions but still advances the cursor by one. This is useful for mutually exclusive branches that
 must not be re-tested after a later stage fails. Supported condition expressions are `VarEquals`,
@@ -112,6 +116,24 @@ DeliveryStage(
     condition=Not(AnyOf((VarEquals(0x4031, 0), VarEquals(0x4031, 1)))),
 )
 ```
+
+Use `RequireSpecialResult(...)` when a stage should pause until a runtime game check succeeds. It
+calls an FRLG field special into `VAR_RESULT`, compares that result, and shows its failure message
+without advancing the stage cursor when the check fails:
+
+```python
+DeliveryStage(
+    RequireSpecialResult(
+        SPECIAL_HAS_ALL_KANTO_MONS,
+        1,
+        "Finish the KANTO POKEDEX first.",
+    ),
+    GivePokemon(251, level=50),
+)
+```
+
+This differs from `condition=...`: a false `condition` skips the stage and still advances, while
+`RequireSpecialResult(...)` keeps the stage pending for a later visit.
 
 ## Stamp rallies
 
@@ -211,10 +233,11 @@ A slot cursor is `0` before activation, `1` when activated, and advances once af
 its fully concatenated path. Each slot becomes a separate live-host catalog choice but shares its
 card and delivery script with the other slots.
 
-Battles are prohibited in a slot path, including the shared middle used by a rally. An
-unconditional battle must be in the final stage. Conditional battle stages are allowed as terminal
-alternatives; a matching battle checkpoints completion before starting and then routes directly to
-the plan finish if control returns.
+Battles are prohibited in a slot path, including the shared middle used by a rally. Conditional
+battle stages are allowed as terminal alternatives; a matching battle performs its bookkeeping,
+releases the NPC lock, starts the battle, and then ends the script immediately. Ordinary gifts may
+also use a battle stage before a later revisit-only stage, such as a post-battle Celebi claim
+gated by `RequireSpecialResult(...)`.
 
 ## Registration and validation
 

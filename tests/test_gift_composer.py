@@ -19,7 +19,7 @@ class ScriptVM:
     BASE = 0x08000000
 
     def __init__(self, script, *, variables=None, flags=None, bag_space=True,
-                 mon_results=(), party_size=1):
+                 mon_results=(), party_size=1, special_results=None):
         self.script = script
         self.pc = 0
         self.vars = dict(variables or {})
@@ -27,6 +27,7 @@ class ScriptVM:
         self.bag_space = bag_space
         self.mon_results = list(mon_results)
         self.party_size = party_size
+        self.special_results = dict(special_results or {})
         self.comparison = 0
         self.items = []
         self.mons = []
@@ -35,6 +36,7 @@ class ScriptVM:
         self.sprites = []
         self.battles = []
         self.messages = []
+        self.release_count = 0
         self.ended = False
 
     def u16(self):
@@ -63,6 +65,9 @@ class ScriptVM:
             if op == 0x02:  # end
                 self.ended = True
                 return self
+            if op == 0x6C:  # release
+                self.release_count += 1
+                continue
             if op in (0x5A, 0x68, 0x6A, 0x6C, 0x66, 0x6D):
                 continue
             if op == 0x09:  # callstd
@@ -82,6 +87,9 @@ class ScriptVM:
             elif op == 0x21:  # compare var/value
                 variable, value = self.u16(), self.u16()
                 self.comparison = 1 if self.var(variable) == value else 0
+            elif op == 0x26:  # specialvar
+                variable, special_id = self.u16(), self.u16()
+                self.vars[variable] = self.special_results.get(special_id, 0)
             elif op == 0x28:  # delay
                 self.u16()
             elif op == 0x29:  # setflag
@@ -240,6 +248,23 @@ def test_gift_spec_shareable_controls_wonder_card_send_type():
         assert (card[8] >> 6) & 0x3 == send_type
 
 
+def test_composed_cards_preserve_an_explicit_id_number():
+    definition = _gift(
+        "id-number-gift",
+        _plan(gc.DeliveryStage(gc.Message("Gift"))),
+        card=gc.WonderCardSpec(
+            icon_species=wonder_card.SPECIES_CELEBI,
+            title="ID NUMBER",
+            subtitle="Custom number",
+            body=("Visit the deliveryman.",),
+            id_number=0x1234,
+            default_flag_id=1008,
+        ),
+    )
+    card = gc.compile_definition(definition).card
+    assert int.from_bytes(card[4:8], "little") == 0x1234
+
+
 def test_ordinary_cursor_resumes_failed_stage_without_repeating_prior_reward():
     definition = _gift(
         "resume-gift", _plan(
@@ -284,6 +309,17 @@ def test_item_preflight_and_custom_move_party_preflight_do_not_advance_cursor():
     assert room.mons == [(251, 50, 0)]
     assert room.moves == [(7, 0, 73), (7, 1, 105), (7, 2, 215), (7, 3, 219)]
 
+    egg_def = _gift(
+        "moves-egg", _plan(gc.DeliveryStage(
+            gc.GiveEgg(318, moves=(287, 192, 284, 323)))))
+    egg_full = ScriptVM(gc.compile_definition(egg_def).ram_script, party_size=6).run()
+    assert egg_full.eggs == egg_full.moves == []
+    assert egg_full.vars.get(gc.VAR_MYSTERY_GIFT_1, 0) == 0
+
+    egg_room = ScriptVM(gc.compile_definition(egg_def).ram_script, party_size=5).run()
+    assert egg_room.eggs == [318]
+    assert egg_room.moves == [(7, 0, 287), (7, 1, 192), (7, 2, 284), (7, 3, 323)]
+
 
 def test_egg_sprite_and_terminal_battle_execute_in_order_and_checkpoint_first():
     definition = _gift(
@@ -294,12 +330,14 @@ def test_egg_sprite_and_terminal_battle_execute_in_order_and_checkpoint_first():
                 gc.Message("Prepare yourself!"),
                 gc.BattlePokemon(243, 65, held_item=1)),
         ))
-    run = ScriptVM(gc.compile_definition(definition).ram_script).run()
+    script = gc.compile_definition(definition).ram_script
+    run = ScriptVM(script).run()
     assert run.eggs == [172]
     assert run.sprites == [(143, 0, 11, 20, 3, 3)]
     assert run.battles == [(243, 65, 1)]
     assert run.vars[gc.VAR_MYSTERY_GIFT_1] == 2
     assert gc.FLAG_MYSTERY_GIFT_DONE in run.flags
+    assert bytes.fromhex("6cb6f300410100b702") in script
 
 
 def test_stage_conditions_skip_actions_but_advance_the_cursor():
@@ -361,6 +399,21 @@ def test_repeatable_plan_resets_its_cursor_after_each_complete_run():
     assert gc.FLAG_MYSTERY_GIFT_DONE not in first.flags
     second = ScriptVM(script, variables=first.vars, flags=first.flags).run()
     assert second.items == [(1, 1)]
+
+
+def test_repeatable_terminal_battle_ends_immediately_after_release_and_battle():
+    definition = _gift(
+        "repeat-battle", _plan(
+            gc.DeliveryStage(
+                gc.SetVar(0x40B7, 1),
+                gc.BattlePokemon(245, 65))),
+        repeatable=True)
+    script = gc.compile_definition(definition).ram_script
+    assert bytes.fromhex("6cb6f500410000b702") in script
+    run = ScriptVM(script).run()
+    assert run.battles == [(245, 65, 0)]
+    assert run.vars[gc.VAR_MYSTERY_GIFT_1] == 0
+    assert run.vars[0x40B7] == 1
 
 
 def test_more_than_fifteen_stages_use_one_integer_cursor():
@@ -499,12 +552,22 @@ def test_validation_reports_precise_paths_and_execution_hazards():
     _assert_invalid(_gift(
         "bad-battle", _plan(
             gc.DeliveryStage(gc.BattlePokemon(1, 5)),
-            gc.DeliveryStage(gc.Message("Too late")))),
-        "unconditional battle must be in the final stage")
+            gc.DeliveryStage(gc.BattlePokemon(2, 5)))),
+        "at most one unconditional battle")
+    _assert_invalid(
+        _gift(
+            "late-battle", _plan(
+                gc.DeliveryStage(gc.BattlePokemon(1, 5)),
+                gc.DeliveryStage(gc.GiveItem(1)))),
+        "an unconditional battle must be in the final stage")
     _assert_invalid(_gift(
         "bad-moves", _plan(gc.DeliveryStage(
             gc.GivePokemon(1, 5, moves=(1, 2, 3, 4, 5))))),
         "bad-moves.delivery.delivery[0].actions[0].moves")
+    _assert_invalid(_gift(
+        "bad-egg-moves", _plan(gc.DeliveryStage(
+            gc.GiveEgg(1, moves=(1, 2, 3, 4, 5))))),
+        "bad-egg-moves.delivery.delivery[0].actions[0].moves")
     _assert_invalid(_gift(
         "bad-empty", gc.DeliveryPlan()),
         "composed delivery path must contain at least one stage")
@@ -518,6 +581,10 @@ def test_validation_reports_precise_paths_and_execution_hazards():
         delivery=_plan(gc.DeliveryStage(gc.Message("Gift"))),
         completed_message="Done"),
         "shareable must be one of never, once, always")
+    _assert_invalid(_gift(
+        "bad-special", _plan(gc.DeliveryStage(
+            gc.RequireSpecialResult(-1, 1, "Nope")))),
+        "special ID must be an integer from 0 through 65535")
 
     _assert_invalid(gc.WonderGift(
         slug="bad-top-hooks", card=_card(), intro_message="Intro",
