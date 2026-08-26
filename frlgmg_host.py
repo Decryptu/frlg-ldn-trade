@@ -33,7 +33,8 @@ BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
-from frlgsim import config as configmod, gift_registry, host_cli, trade_runtime  # noqa: E402
+from frlgsim import (config as configmod, gift_artifact, gift_registry, host_cli,
+                     trade_runtime)  # noqa: E402
 from frlgsim.host_mg_app import MysteryGiftHostApplication  # noqa: E402
 from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
 
@@ -67,6 +68,13 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         default=None, metavar="N",
         help=("diagnostic: quiet child polls after LinkPlayer standby before "
               "the first Mystery Gift message; default is the built-in timing"))
+    parser.add_argument(
+        "--make-artifact", action=argparse.BooleanOptionalAction, default=False,
+        help=("write an annotated listing for the exact Mystery Gift bytes that "
+              "will be sent (default: disabled)"))
+    parser.add_argument(
+        "--artifact-dir", metavar="DIR", default="artifacts",
+        help="directory for --make-artifact output (default: artifacts)")
     host_cli.add_host_config_arguments(
         parser, shared_path=shared_path, local_path=local_path)
     host_cli.add_host_arguments(
@@ -112,11 +120,23 @@ def main(argv=None):
         return 0
     if not args.live:
         parser.error("hosting only supports live mode; omit --no-live")
+    config = build_run_config(parser, args)
+    distribution = None
+    if args.make_artifact:
+        distribution = config.payload.build_distribution()
+        definition = gift_registry.GIFT_REGISTRY.entry(args.gift).definition
+        try:
+            artifact_path = gift_artifact.write_artifact(
+                args.artifact_dir, gift=args.gift, flag_id=config.payload.flag_id,
+                distribution=distribution, definition=definition)
+        except OSError as exc:
+            parser.error(f"could not write --artifact-dir {args.artifact_dir!r}: {exc}")
+        print(f"wrote Mystery Gift artifact: {artifact_path}")
     if os.geteuid() != 0:
         parser.error("live LDN hosting requires root; run with sudo -E")
-    config = build_run_config(parser, args)
     joined = MysteryGiftHostApplication(
-        config, log=trade_runtime.ConsoleLog(args.verbose)).run()
+        config, distribution=distribution,
+        log=trade_runtime.ConsoleLog(args.verbose)).run()
     return 0 if joined else 130
 
 

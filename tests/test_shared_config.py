@@ -4,9 +4,9 @@ import frlgtrade
 from frlgsim import config, linkplayer
 
 
-def test_default_profile_is_completed_and_matches_legacy_identity():
+def test_default_profile_is_completed_and_matches_configured_identity():
     profile = config.DEFAULT_TRAINER
-    assert (profile.name, profile.version) == ("EMU", "leafgreen")
+    assert (profile.name, profile.version) == ("PkCamp", "leafgreen")
     assert (profile.tid, profile.sid) == (0x8822, 0x47ED)
     assert profile.trainer_id == 0x47ED8822
     assert profile.progress_flags == 0x11

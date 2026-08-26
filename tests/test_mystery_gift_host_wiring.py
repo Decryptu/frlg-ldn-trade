@@ -45,7 +45,7 @@ def test_wonder_card_advertisement_matches_the_proven_friend_control():
     Anything that changes these bytes changes whether the console can see us."""
     inactive, _active = build_wonder_card_app_data(DEFAULT_TRAINER, SESSION_ID)
     record = _record(inactive)
-    assert record.hex() == "2288bfc7cfffffffffff7bf1000000009515000000000000"
+    assert record.hex() == "2288cadfbdd5e1e4ffff7bf1000000009515000000000000"
 
 
 def test_advertisement_declares_activity_wonder_card_and_is_joinable():
@@ -80,7 +80,7 @@ def test_trade_advertisement_is_unchanged_by_the_gift_host():
     """The trade host is proven on hardware and must stay bit-identical."""
     inactive, _active = build_trade_app_data(DEFAULT_TRAINER, SESSION_ID)
     record = _record(inactive)
-    assert record.hex() == "2288bfc7cfffffffffff7bf1000000008415000000000000"
+    assert record.hex() == "2288cadfbdd5e1e4ffff7bf1000000008415000000000000"
     assert record[beacon.SEARCH_WORD_OFFSET] & beacon.SEARCH_ACTIVITY_MASK \
         == beacon.ACTIVITY_TRADE
 

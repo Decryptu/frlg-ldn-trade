@@ -28,11 +28,12 @@ MysteryGiftRunConfig = configmod.MysteryGiftRunConfig
 class MysteryGiftHostApplication(HostApplication):
     """Host one Wonder Card handout for a single console."""
 
-    def __init__(self, config, **kwargs):
+    def __init__(self, config, *, distribution=None, **kwargs):
         super().__init__(config, **kwargs)
         self.card = None
         self.ram_script = None
         self.distribution = None
+        self._prepared_distribution = distribution
         self._last_state = None
         self._result_logged = False
 
@@ -42,7 +43,8 @@ class MysteryGiftHostApplication(HostApplication):
 
     def _build_distribution(self):
         """Build the complete selected live-host conversation."""
-        return self.config.payload.build_distribution()
+        return (self._prepared_distribution if self._prepared_distribution is not None
+                else self.config.payload.build_distribution())
 
     def _build_components(self):
         phy, keys = self._resolve_phy_and_keys()

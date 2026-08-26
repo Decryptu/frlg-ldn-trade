@@ -3,7 +3,7 @@
 from .gift_composer import (
     AnyOf,
     AllOf,
-    BattlePokemon,
+    BattleLegendary,
     DeliveryPlan,
     DeliveryStage,
     Exit,
@@ -42,9 +42,9 @@ MOVE_REFRESH = 287
 MOVE_WATER_SPOUT = 323
 
 GIFT_PORYGON_TMS = "porygon-tm-gift"
-GIFT_WORDS_XP = "worlds-xp"
+GIFT_WORLDS_XP = "worlds-xp"
 PORYGON_TM_GIFT_FLAG_ID = 1007
-WORDS_XP_GIFT_FLAG_ID = 1008
+WORLDS_XP_GIFT_FLAG_ID = 1006
 VAR_STARTER_MON = 0x4031
 WORLDS_XP_STATE_VAR = 0x40BD
 WORLDS_XP_STATE_NEW = 0
@@ -140,19 +140,19 @@ LEGENDARY_BEAST_GIFT = WonderGift(
         ),
         DeliveryStage(GiveItem(wonder_card.ITEM_MASTER_BALL)),
         DeliveryStage(
-            BattlePokemon(
+            BattleLegendary(
                 wonder_card.SPECIES_SUICUNE,
                 level=wonder_card.LEGENDARY_BEAST_LEVEL),
             condition=VarEquals(VAR_STARTER_MON, 0),
         ),
         DeliveryStage(
-            BattlePokemon(
+            BattleLegendary(
                 wonder_card.SPECIES_ENTEI,
                 level=wonder_card.LEGENDARY_BEAST_LEVEL),
             condition=VarEquals(VAR_STARTER_MON, 1),
         ),
         DeliveryStage(
-            BattlePokemon(
+            BattleLegendary(
                 wonder_card.SPECIES_RAIKOU,
                 level=wonder_card.LEGENDARY_BEAST_LEVEL),
             condition=Not(AnyOf((
@@ -274,8 +274,8 @@ PORYGON_TM_GIFT = WonderGift(
 )
 
 
-WORDS_XP_GIFT = WonderGift(
-    slug=GIFT_WORDS_XP,
+WORLDS_XP_GIFT = WonderGift(
+    slug=GIFT_WORLDS_XP,
     card=WonderCardSpec(
         icon_species=SPECIES_CLAYDOL,
         title="WORLDS XP",
@@ -286,13 +286,16 @@ WORDS_XP_GIFT = WonderGift(
             "a LEGENDARY aura.",
             "We hope you enjoy this fan-made event!",
         ),
-        footer1=" - PkCamp.github.io",
+        footer1=" - MercuryEnigma.github.io/pkcamp",
         footer2="NOTE. not official use at your own risk",
-        default_flag_id=WORDS_XP_GIFT_FLAG_ID,
+        default_flag_id=WORLDS_XP_GIFT_FLAG_ID,
     ),
     intro_message=(
         "This egg has the power of\n"
         "3 beasts from a time of ruins."),
+        #     intro_message=(
+        # "Come to Pokemon Worlds in San Francisco!\n"
+        # "See what LEGENDARY gift awaits."),
     event=GiftSpec(repeatable=True, shareable="always"),
     delivery=DeliveryPlan(delivery=(
         DeliveryStage(
@@ -306,12 +309,6 @@ WORDS_XP_GIFT = WonderGift(
                 1,
                 "Finish the DEX!",
             ),
-            # ShowSprite(
-            #     wonder_card.OBJ_EVENT_GFX_CELEBI,
-            #     RelativeToPlayer(dx=-1, dy=-2),
-            #     direction=wonder_card.DIR_SOUTH,
-            #     delay_frames=30,
-            # ),
             GivePokemon(
                 wonder_card.SPECIES_CELEBI,
                 level=50,
@@ -333,7 +330,7 @@ WORDS_XP_GIFT = WonderGift(
         ),
         DeliveryStage(
             ShowSprite(
-                wonder_card.OBJ_EVENT_GFX_KANGASKHAN,
+                wonder_card.OBJ_EVENT_GFX_SUICUNE,
                 RelativeToPlayer(dx=1),
                 direction=wonder_card.DIR_WEST,
                 delay_frames=30,
@@ -342,7 +339,7 @@ WORDS_XP_GIFT = WonderGift(
         ),
         DeliveryStage(
             ShowSprite(
-                wonder_card.OBJ_EVENT_GFX_KANGASKHAN,
+                wonder_card.OBJ_EVENT_GFX_ENTEI,
                 RelativeToPlayer(dx=1),
                 direction=wonder_card.DIR_WEST,
                 delay_frames=30,
@@ -351,7 +348,7 @@ WORDS_XP_GIFT = WonderGift(
         ),
         DeliveryStage(
             ShowSprite(
-                wonder_card.OBJ_EVENT_GFX_KANGASKHAN,
+                wonder_card.OBJ_EVENT_GFX_RAIKOU,
                 RelativeToPlayer(dx=1),
                 direction=wonder_card.DIR_WEST,
                 delay_frames=30,
@@ -367,21 +364,21 @@ WORDS_XP_GIFT = WonderGift(
             SetVar(WORLDS_XP_STATE_VAR, WORLDS_XP_STATE_BATTLED),
         ),
         DeliveryStage(
-            BattlePokemon(
+            BattleLegendary(
                 wonder_card.SPECIES_SUICUNE,
                 level=wonder_card.LEGENDARY_BEAST_LEVEL,
             ),
             condition=VarEquals(VAR_STARTER_MON, 0),
         ),
         DeliveryStage(
-            BattlePokemon(
+            BattleLegendary(
                 wonder_card.SPECIES_ENTEI,
                 level=wonder_card.LEGENDARY_BEAST_LEVEL,
             ),
             condition=VarEquals(VAR_STARTER_MON, 1),
         ),
         DeliveryStage(
-            BattlePokemon(
+            BattleLegendary(
                 wonder_card.SPECIES_RAIKOU,
                 level=wonder_card.LEGENDARY_BEAST_LEVEL,
             ),
@@ -396,12 +393,12 @@ WORDS_XP_GIFT = WonderGift(
 
 
 __all__ = [
-    "CELEBI_GIFT", "DIR_WEST", "GIFT_PORYGON_TMS", "GIFT_WORDS_XP",
+    "CELEBI_GIFT", "DIR_WEST", "GIFT_PORYGON_TMS", "GIFT_WORLDS_XP",
     "ITEM_TM29_PSYCHIC",
     "ITEM_TM46_THIEF", "LEGENDARY_BEAST_GIFT", "OBJ_EVENT_GFX_CLEFAIRY",
     "PORYGON_TM_GIFT", "PORYGON_TM_GIFT_FLAG_ID", "SPECIES_BALTOY",
     "SPECIES_PORYGON", "SUN_MOON_RALLY", "VAR_STARTER_MON",
     "WORLDS_XP_STATE_BATTLED", "WORLDS_XP_STATE_NEW", "WORLDS_XP_STATE_RECEIVED",
     "WORLDS_XP_STATE_VAR",
-    "WORDS_XP_GIFT", "WORDS_XP_GIFT_FLAG_ID",
+    "WORLDS_XP_GIFT", "WORLDS_XP_GIFT_FLAG_ID",
 ]

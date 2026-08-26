@@ -38,8 +38,8 @@ def _profile(**overrides):
     return TrainerProfile(**values)
 
 
-def test_default_trainer_preserves_live_identity():
-    assert DEFAULT_TRAINER.name == "EMU"
+def test_default_trainer_preserves_configured_live_identity():
+    assert DEFAULT_TRAINER.name == "PkCamp"
     assert DEFAULT_TRAINER.tid == 0x8822
     assert DEFAULT_TRAINER.sid == 0x47ED
     assert DEFAULT_TRAINER.version == "leafgreen"

@@ -20,6 +20,7 @@ from frlgsim import (  # noqa: E402
 )
 from frlgsim import mg_script, mg_server  # noqa: E402
 from frlgsim.gift_composer import (  # noqa: E402
+    BattleLegendary,
     FLAG_MYSTERY_GIFT_DONE,
     SPECIAL_HAS_ALL_KANTO_MONS,
     VAR_MYSTERY_GIFT_1,
@@ -30,14 +31,14 @@ from test_mystery_gift_end_to_end import _run_full_stack  # noqa: E402
 
 
 def _distribution():
-    return compile_definition(event.WORDS_XP_GIFT)
+    return compile_definition(event.WORLDS_XP_GIFT)
 
 
 def test_definition_compiles_to_the_expected_card_and_cli_entry():
     distribution = _distribution()
     card = distribution.card
     assert len(card) == wonder_card.WONDER_CARD_SIZE
-    assert int.from_bytes(card[0:2], "little") == event.WORDS_XP_GIFT_FLAG_ID
+    assert int.from_bytes(card[0:2], "little") == event.WORLDS_XP_GIFT_FLAG_ID
     assert int.from_bytes(card[2:4], "little") == event.SPECIES_CLAYDOL
     assert int.from_bytes(card[4:8], "little") == 8
     assert card[8] & 0x3 == mystery_gift.CARD_TYPE_GIFT
@@ -45,8 +46,26 @@ def test_definition_compiles_to_the_expected_card_and_cli_entry():
     assert card[9] == 0
     assert charmap.decode(card[10:50]) == "WORLDS XP"
     assert len(distribution.ram_script) <= 995
+    battle_actions = tuple(
+        stage.actions[-1]
+        for stage in event.WORLDS_XP_GIFT.delivery.delivery[7:10]
+    )
+    assert all(isinstance(action, BattleLegendary) for action in battle_actions)
+    for species in (
+        wonder_card.SPECIES_SUICUNE,
+        wonder_card.SPECIES_ENTEI,
+        wonder_card.SPECIES_RAIKOU,
+    ):
+        expected_tail = (
+            bytes([0xB6]) + species.to_bytes(2, "little")
+            + bytes([
+                wonder_card.LEGENDARY_BEAST_LEVEL,
+                0, 0, 0x25, 0x38, 0x01, 0x02,
+            ])
+        )
+        assert expected_tail in distribution.ram_script
 
-    slug = event.GIFT_WORDS_XP
+    slug = event.GIFT_WORLDS_XP
     assert slug in gift_registry.GIFT_REGISTRY.live_choices
     assert slug in gift_registry.GIFT_REGISTRY.static_choices
     assert slug in frlgmg_host.build_parser()._option_string_actions["--gift"].choices
@@ -100,13 +119,8 @@ def test_revisit_requires_the_kanto_pokedex_then_gives_celebi():
         special_results={SPECIAL_HAS_ALL_KANTO_MONS: 1},
     ).run()
     assert complete.mons == [(wonder_card.SPECIES_CELEBI, 50, 0)]
-    assert complete.sprites == [
-        (wonder_card.OBJ_EVENT_GFX_CELEBI, 0, 10, 18, 3, wonder_card.DIR_SOUTH),
-    ]
-    assert complete.moves == [
-        (7, 0, wonder_card.MOVE_HEAL_BELL),
-        (7, 1, wonder_card.MOVE_SAFEGUARD),
-    ]
+    assert complete.sprites == []
+    assert complete.moves == []
     assert complete.vars[VAR_MYSTERY_GIFT_1] == 0
     assert complete.vars[event.WORLDS_XP_STATE_VAR] == event.WORLDS_XP_STATE_RECEIVED
     assert FLAG_MYSTERY_GIFT_DONE not in complete.flags
@@ -118,9 +132,8 @@ def test_revisit_requires_the_kanto_pokedex_then_gives_celebi():
     ).run()
     assert later.eggs == later.mons == later.battles == later.items == []
     assert [charmap.decode(line) for line in later.messages[-1].split(b"\xfe")] == [
-        "This egg has the",
-        "power of 3 beasts",
-        "from a time of ruins.",
+        "Come to Pokemon Worlds in San Francisco!",
+        "See what LEGENDARY gift awaits.",
     ]
 
 

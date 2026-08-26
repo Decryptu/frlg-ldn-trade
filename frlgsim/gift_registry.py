@@ -17,6 +17,7 @@ class GiftCatalogEntry:
     static: bool
     description: str
     builder: object
+    definition: WonderGift | None = None
 
     def build_distribution(self, *, flag_id=None):
         selected_flag = self.default_flag_id if flag_id is None else flag_id
@@ -88,7 +89,8 @@ class GiftRegistry:
                 live=True, static=True,
                 description=f"composed gift {definition.card.title!r}",
                 builder=lambda flag_id, definition=definition:
-                    compile_definition(definition, flag_id=flag_id)),)
+                    compile_definition(definition, flag_id=flag_id),
+                definition=definition),)
         else:
             rally = definition.event
             assert isinstance(rally, StampRallySpec)
@@ -100,7 +102,8 @@ class GiftRegistry:
                     description=(f"{slot.slug} for "
                                  f"{definition.card.title!r}"),
                     builder=lambda flag_id, definition=definition, slug=slot.slug:
-                        compile_definition(definition, flag_id=flag_id)[slug])
+                        compile_definition(definition, flag_id=flag_id)[slug],
+                    definition=definition)
                 for slot in rally.slots)
             # Touch the registration-time result so every advertised slug is
             # guaranteed to have been produced by the rally compiler.
@@ -171,7 +174,7 @@ def build_default_registry():
     registry.register_definition(wonder_card_events.CELEBI_GIFT)
     registry.register_definition(wonder_card_events.SUN_MOON_RALLY)
     registry.register_definition(wonder_card_events.PORYGON_TM_GIFT)
-    registry.register_definition(wonder_card_events.WORDS_XP_GIFT)
+    registry.register_definition(wonder_card_events.WORLDS_XP_GIFT)
     return registry
 
 

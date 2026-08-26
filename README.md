@@ -181,6 +181,19 @@ must already have Mystery Gift unlocked. The host accepts the same `--ot`, `--ve
 `--id TID[:SID]` identity overrides as the trade programs; run `frlgmg_host.py --help` for all gift
 and transport options.
 
+To retain a readable audit listing of the exact Wonder Card and delivery-script
+bytes sent by a run, add `--make-artifact`. It is disabled by default and writes
+to `artifacts/`; choose another destination with `--artifact-dir DIR`:
+
+```bash
+sudo -E ./.venv/bin/python -u frlgmg_host.py \
+  --gift worlds-xp --make-artifact --artifact-dir artifacts
+```
+
+The generated `.ram.lst` file includes raw opcode bytes, decoded field
+instructions, branch/message targets, checksums, and the source delivery-stage
+plan. Use `--no-make-artifact` to explicitly disable it in an automated command.
+
 The beast depends on the receiving save's starter: Bulbasaur gives Suicune, Squirtle gives Entei,
 and Charmander gives Raikou. See [the legendary-beast gift guide](docs/legendary_beast_gift.md) for
 the reward sequence, binary export, and save-injection tools.

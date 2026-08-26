@@ -135,6 +135,20 @@ example:
   --client-ready-idle-frames 45 --capture /tmp/solrock-45.jsonl
 ```
 
+To keep an annotated byte listing for a run, add `--make-artifact`. It is off
+by default, writes a deterministic `.ram.lst` file under `artifacts/`, and can
+be redirected with `--artifact-dir DIR`:
+
+```bash
+./scripts/run_mystery_gift.sh --gift worlds-xp --make-artifact
+./scripts/run_mystery_gift.sh --gift worlds-xp --make-artifact \
+  --artifact-dir /home/chase/mystery-gift-artifacts
+```
+
+The listing records the exact compiled RAM script bytes, decoded instructions,
+checksums, branch/message destinations, and its source delivery-stage summary.
+Pass `--no-make-artifact` to explicitly disable generation in a saved command.
+
 Leave `--phy`, `--adapter`, `--skip-encryption`, and
 `--accept-decrypted-ccmp` at their tracked TP-Link defaults unless diagnosing
 different hardware.

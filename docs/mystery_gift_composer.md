@@ -49,7 +49,7 @@ An ordinary gift selects `GiftSpec` and puts its stages in the shared middle:
 
 ```python
 from frlgsim.gift_composer import (
-    AnyOf, BattlePokemon, DeliveryPlan, DeliveryStage, GiftSpec, GiveItem,
+    AnyOf, BattleLegendary, DeliveryPlan, DeliveryStage, GiftSpec, GiveItem,
     Message, Not, RelativeToPlayer, ShowSprite, VarEquals, WonderCardSpec,
     WonderGift,
 )
@@ -74,7 +74,7 @@ MEWTWO_GIFT = WonderGift(
         DeliveryStage(
             ShowSprite(0, RelativeToPlayer(dx=1)),
             Message("Prepare yourself!"),
-            BattlePokemon(150, level=70),
+            BattleLegendary(150, level=70),
         ),
     )),
     completed_message="That mysterious encounter is over.",
@@ -112,10 +112,17 @@ DeliveryStage(
     condition=VarEquals(0x4031, 0),  # VAR_STARTER_MON == Bulbasaur
 )
 DeliveryStage(
-    BattlePokemon(243, level=65),
+    BattleLegendary(243, level=65),
     condition=Not(AnyOf((VarEquals(0x4031, 0), VarEquals(0x4031, 1)))),
 )
 ```
+
+Use `BattleLegendary` for a terminal legendary encounter in a saved Wonder Card RAM script. It
+emits `setwildbattle`, FRLG's `special StartLegendaryBattle`, and then `end` without `waitstate`;
+this avoids resuming a suspended RAM-script pointer after the game relocates SaveBlock memory
+during the battle transition. `BattlePokemon` remains available for compatibility and emits the
+ordinary `dowildbattle` command. Both battle actions must be the final action in their stage and
+follow the same terminal-battle validation rules.
 
 Use `RequireSpecialResult(...)` when a stage should pause until a runtime game check succeeds. It
 calls an FRLG field special into `VAR_RESULT`, compares that result, and shows its failure message

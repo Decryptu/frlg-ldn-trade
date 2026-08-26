@@ -74,6 +74,7 @@ SHARE_NEVER = "never"
 SHARE_ONCE = "once"
 SHARE_ALWAYS = "always"
 SPECIAL_HAS_ALL_KANTO_MONS = 335
+SPECIAL_START_LEGENDARY_BATTLE = 312
 SHAREABLE_STATES = (SHARE_NEVER, SHARE_ONCE, SHARE_ALWAYS)
 _SHAREABLE_SEND_TYPES = {
     SHARE_NEVER: SEND_TYPE_DISALLOWED,
@@ -186,6 +187,13 @@ class BattlePokemon:
 
 
 @dataclass(frozen=True)
+class BattleLegendary:
+    species: int
+    level: int
+    held_item: int = 0
+
+
+@dataclass(frozen=True)
 class RequireSpecialResult:
     special_id: int
     expected: int
@@ -238,8 +246,9 @@ class AnyOf:
 Condition: TypeAlias = VarEquals | FlagSet | Not | AllOf | AnyOf
 GiftAction: TypeAlias = (
     Message | GiveItem | GivePokemon | GiveEgg | ShowSprite
-    | BattlePokemon | RequireSpecialResult | SetVar | Exit)
+    | BattlePokemon | BattleLegendary | RequireSpecialResult | SetVar | Exit)
 _FALLIBLE_REWARD_TYPES = (GiveItem, GivePokemon, GiveEgg)
+_BATTLE_TYPES = (BattlePokemon, BattleLegendary)
 
 
 @dataclass(frozen=True, init=False)
@@ -421,7 +430,7 @@ def _validate_action(action, path):
         _validate_int(action.elevation, 0, 15, f"{path}.elevation", "elevation")
         _validate_int(action.delay_frames, 0, 0xFFFF,
                       f"{path}.delay_frames", "delay")
-    elif isinstance(action, BattlePokemon):
+    elif isinstance(action, _BATTLE_TYPES):
         _validate_int(action.species, 1, MAX_POKEMON_SPECIES,
                       f"{path}.species", "species")
         _validate_int(action.level, 1, 100, f"{path}.level", "level")
@@ -513,7 +522,7 @@ def _validate_effective_plan(stages, path, *, allow_battle):
     for stage_index, (stage, stage_path) in enumerate(stages):
         for action_index, action in enumerate(stage.actions):
             action_path = f"{stage_path}.actions[{action_index}]"
-            if isinstance(action, BattlePokemon):
+            if isinstance(action, _BATTLE_TYPES):
                 battle_paths.append((stage_index, action_index, action_path, stage))
     if battle_paths and not allow_battle:
         _fail(battle_paths[0][2], "battles are not allowed in stamp-slot delivery plans")
@@ -639,6 +648,7 @@ _OP_SETVAR = 0x16
 _OP_ADDVAR = 0x17
 _OP_SETVAR_OR_COPY = 0x1A
 _OP_COMPARE_VAR_TO_VALUE = 0x21
+_OP_SPECIAL = 0x25
 _OP_SETFLAG = 0x29
 _OP_CLEARFLAG = 0x2A
 _OP_CHECKFLAG = 0x2B
@@ -879,6 +889,11 @@ def _emit_action(builder, action, *, sprite_id, failure_label, exit_label):
         builder.emit(bytes([_OP_SETWILDBATTLE]) + _u16(action.species)
                      + bytes([action.level]) + _u16(action.held_item)
                      + bytes([_OP_DOWILDBATTLE]))
+    elif isinstance(action, BattleLegendary):
+        builder.emit(bytes([_OP_SETWILDBATTLE]) + _u16(action.species)
+                     + bytes([action.level]) + _u16(action.held_item)
+                     + bytes([_OP_SPECIAL])
+                     + _u16(SPECIAL_START_LEGENDARY_BATTLE))
     elif isinstance(action, RequireSpecialResult):
         builder.emit(_specialvar(_VAR_RESULT, action.special_id))
         builder.emit(_compare(_VAR_RESULT, action.expected))
@@ -923,13 +938,13 @@ def _emit_plan(builder, stages, cursor, prefix, finished_label, failures,
                 builder, stage.condition, run_label, checkpoint_label,
                 f"{prefix}_stage_{stage_index}_condition")
             builder.label(run_label)
-        has_battle = any(isinstance(action, BattlePokemon) for action in stage.actions)
+        has_battle = any(isinstance(action, _BATTLE_TYPES) for action in stage.actions)
         for action_index, action in enumerate(stage.actions):
             failure_label = f"{prefix}_failure_{stage_index}_{action_index}"
             message = _failure_message(action)
             if message is not None:
                 failures.append((failure_label, message))
-            if isinstance(action, BattlePokemon):
+            if isinstance(action, _BATTLE_TYPES):
                 if reset_on_terminal_battle:
                     builder.emit(_setvar(cursor, 0))
                     builder.emit(_setflag(receipt_flag))
@@ -943,10 +958,10 @@ def _emit_plan(builder, stages, cursor, prefix, finished_label, failures,
                 failure_label=failure_label, exit_label=exit_label)
             if isinstance(action, ShowSprite):
                 sprite_counter += 1
-        # Battle is validated as the final action. If it returns normally these
-        # writes would otherwise let a conditional battle fall through to later
-        # alternatives. End the script immediately so the post-battle tail
-        # matches the proven hand-authored beast cutscene.
+        # Battles are validated as the final action. End immediately so a
+        # conditional battle cannot fall through to later alternatives. This
+        # also makes BattleLegendary safe for saved RAM scripts: its special is
+        # followed by END rather than leaving the RAM-script pointer suspended.
         if has_battle:
             builder.emit(bytes([_OP_END]))
         builder.label(checkpoint_label)
@@ -1188,11 +1203,12 @@ def compile_definition(definition, *, flag_id=None):
 
 
 __all__ = [
-    "AllOf", "AnyOf", "BattlePokemon", "DeliveryPlan", "DeliveryStage",
+    "AllOf", "AnyOf", "BattleLegendary", "BattlePokemon", "DeliveryPlan",
+    "DeliveryStage",
     "Exit", "FlagSet", "GiftSpec", "GiftValidationError", "GiveEgg", "GiveItem",
     "GivePokemon", "MapPosition", "Message", "RelativeToPlayer", "SetVar", "ShowSprite",
     "Not", "RequireSpecialResult", "SHARE_ALWAYS", "SHARE_NEVER", "SHARE_ONCE",
-    "SPECIAL_HAS_ALL_KANTO_MONS",
+    "SPECIAL_HAS_ALL_KANTO_MONS", "SPECIAL_START_LEGENDARY_BATTLE",
     "SHAREABLE_STATES", "StampRallySpec", "StampSlot", "VarEquals",
     "WonderCardSpec", "WonderGift",
     "FLAG_MYSTERY_GIFT_DONE", "MAX_RAM_SCRIPT_SIZE", "MAX_STAMP_SLOTS",

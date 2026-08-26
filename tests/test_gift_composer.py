@@ -35,6 +35,7 @@ class ScriptVM:
         self.moves = []
         self.sprites = []
         self.battles = []
+        self.prepared_battle = None
         self.messages = []
         self.release_count = 0
         self.ended = False
@@ -87,6 +88,12 @@ class ScriptVM:
             elif op == 0x21:  # compare var/value
                 variable, value = self.u16(), self.u16()
                 self.comparison = 1 if self.var(variable) == value else 0
+            elif op == 0x25:  # special
+                special_id = self.u16()
+                assert special_id == gc.SPECIAL_START_LEGENDARY_BATTLE
+                assert self.prepared_battle is not None
+                self.battles.append(self.prepared_battle)
+                self.prepared_battle = None
             elif op == 0x26:  # specialvar
                 variable, special_id = self.u16(), self.u16()
                 self.vars[variable] = self.special_results.get(special_id, 0)
@@ -149,8 +156,11 @@ class ScriptVM:
                 level = self.script[self.pc]
                 self.pc += 1
                 item = self.u16()
-                self.battles.append((species, level, item))
+                self.prepared_battle = (species, level, item)
             elif op == 0xB7:  # dowildbattle
+                assert self.prepared_battle is not None
+                self.battles.append(self.prepared_battle)
+                self.prepared_battle = None
                 continue
             elif op == 0xB8:  # setvaddress
                 assert self.u32() == self.BASE
@@ -416,6 +426,18 @@ def test_repeatable_terminal_battle_ends_immediately_after_release_and_battle():
     assert run.vars[0x40B7] == 1
 
 
+def test_legendary_battle_uses_special_and_ends_immediately():
+    definition = _gift(
+        "legendary-battle", _plan(
+            gc.DeliveryStage(gc.BattleLegendary(245, 65))),
+        repeatable=True)
+    script = gc.compile_definition(definition).ram_script
+    assert bytes.fromhex("6cb6f50041000025380102") in script
+    run = ScriptVM(script).run()
+    assert run.battles == [(245, 65, 0)]
+    assert run.vars[gc.VAR_MYSTERY_GIFT_1] == 0
+
+
 def test_more_than_fifteen_stages_use_one_integer_cursor():
     definition = _gift(
         "long-gift", _plan(*(
@@ -560,6 +582,10 @@ def test_validation_reports_precise_paths_and_execution_hazards():
                 gc.DeliveryStage(gc.BattlePokemon(1, 5)),
                 gc.DeliveryStage(gc.GiveItem(1)))),
         "an unconditional battle must be in the final stage")
+    _assert_invalid(_gift(
+        "bad-legendary-position", _plan(gc.DeliveryStage(
+            gc.BattleLegendary(1, 5), gc.Message("Too late")))),
+        "battle must be the last action of its stage")
     _assert_invalid(_gift(
         "bad-moves", _plan(gc.DeliveryStage(
             gc.GivePokemon(1, 5, moves=(1, 2, 3, 4, 5))))),

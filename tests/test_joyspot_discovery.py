@@ -203,7 +203,7 @@ def test_identity_and_rfu_parent_id_are_the_only_identity_mutations():
     assert record[10:12] == host_session_id
     assert record[10:12] != b"\x7d\x7f"
     assert record == bytes.fromhex(
-        "2288bfc7cfffffffffffb7f1000000009515000000000000")
+        "2288cadfbdd5e1e4ffffb7f1000000009515000000000000")
     assert beacon.decode_pia_header(app_data)["nickname"] \
         == DEFAULT_TRAINER.session_name
 
