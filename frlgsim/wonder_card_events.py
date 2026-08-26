@@ -278,7 +278,7 @@ WORLDS_XP_GIFT = WonderGift(
     slug=GIFT_WORLDS_XP,
     card=WonderCardSpec(
         icon_species=SPECIES_CLAYDOL,
-        title="WORLDS XP",
+        title="The First Mystery Gift - WORLDS XP 2026",
         subtitle="A Legendary Experience!",
         body=(
             "An EGG of ruins is waiting. Talk to the",
