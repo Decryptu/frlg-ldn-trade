@@ -36,6 +36,10 @@ def test_setup_uses_vendored_requirements_and_unmanaged_ldn_interfaces():
     assert "--install-mt7601u-ap" in text
     assert "linux-headers-rpi-v8" in text
     assert "dkms" in text
+
+    driver = _text("scripts/install_mt7601u_ap.sh")
+    assert "KERNEL_RELEASES" in driver
+    assert 'for kernel_release in "${KERNEL_RELEASES[@]}"' in driver
     assert "scp " not in text
     assert " rsync" not in text
 
@@ -66,6 +70,11 @@ def test_preflight_validates_tplink_driver_modes_and_key_permissions():
     assert "-h|--help|--print-effective-config" in run
     assert run.index("-h|--help|--print-effective-config") < \
         run.index('preflight_pi.sh" "$@"')
+    assert "--end-on-success" in run
+    assert "--idle-timeout \"$IDLE_TIMEOUT_SECONDS\"" in run
+    assert "secrets.randbelow(65536)" in run
+    assert "Restarting after successful distribution" not in run
+    assert "Restarting after %s" in run
 
 
 def test_deployment_requires_clean_committed_state_and_fast_forward_only():

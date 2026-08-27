@@ -52,6 +52,19 @@ command -v dkms >/dev/null 2>&1 || {
     exit 1
 }
 
+# APT may install a newer Pi kernel and its headers while the older kernel is
+# still running. Build for every installed kernel with headers so the first
+# reboot after setup does not fall back to the stock mt7601u module.
+KERNEL_RELEASES=()
+for kernel_build in /lib/modules/*/build; do
+    [[ -f "$kernel_build/Makefile" ]] || continue
+    KERNEL_RELEASES+=("$(basename "$(dirname "$kernel_build")")")
+done
+((${#KERNEL_RELEASES[@]})) || {
+    printf 'No installed kernels have usable headers.\n' >&2
+    exit 1
+}
+
 # Remove only the same named/versioned DKMS registration.  The source directory
 # is then refreshed from the committed checkout so stale files cannot survive a
 # future source update.
@@ -61,9 +74,11 @@ install -d -m 0755 "$SYSTEM_SOURCE_DIR"
 cp -a "$SOURCE_DIR/." "$SYSTEM_SOURCE_DIR/"
 
 dkms add -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION"
-dkms build -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" -k "$KERNEL_RELEASE"
-dkms install -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" -k "$KERNEL_RELEASE"
-depmod -a "$KERNEL_RELEASE"
+for kernel_release in "${KERNEL_RELEASES[@]}"; do
+    dkms build -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" -k "$kernel_release"
+    dkms install -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" -k "$kernel_release"
+    depmod -a "$kernel_release"
+done
 
 MODULE_PATH=$(modinfo -k "$KERNEL_RELEASE" -n mt7601u 2>/dev/null || true)
 if [[ "$MODULE_PATH" != */updates/dkms/mt7601u.ko* ]]; then

@@ -112,9 +112,19 @@ standard `sbin` command paths itself, so it behaves the same in an interactive
 shell and through a one-line SSH command.
 
 The normal run command has no Wi-Fi flags because those safe, tested defaults
-come from TOML. `run_mystery_gift.sh` runs preflight first and then starts the
-live host with root privileges. For a temporary diagnostic override, pass a
-normal host option after the script name, for example `--verbose`.
+come from TOML. `run_mystery_gift.sh` runs preflight once, then supervises
+short-lived root host processes. Each process gets a newly generated random
+TID/SID, and the wrapper restarts it after a successful delivery, an
+unsuccessful attempt, or five minutes without a Switch join or Pia/RFU traffic.
+Use Ctrl-C once to stop the supervisor. For a temporary diagnostic override,
+pass a normal host option after the script name, for example `--verbose`.
+
+`frlgmg_host.py` also exposes the lifecycle controls used by the wrapper:
+`--end-on-success` ends after the safe post-delivery close sequence, and
+`--idle-timeout SECONDS` ends after a specified period without meaningful
+Switch traffic. They are useful for direct, supervised integrations; the shell
+wrapper always uses `--end-on-success --idle-timeout 300` and owns `--id` so a
+saved `--id` cannot accidentally reuse an old identity.
 
 Every `frlgmg_host.py` option is forwarded by the wrapper. View the
 authoritative list without running preflight or using root:
@@ -188,8 +198,9 @@ cd ~/frlg-ldn-trade
 ```
 
 This uses Raspberry Pi OS's APT packages `dkms` and `linux-headers-rpi-v8`,
-then registers a DKMS module that rebuilds after compatible kernel updates.
-If the headers do not match the currently running kernel, the installer stops
+then registers a DKMS module for every installed kernel that has matching
+headers. This matters because APT can install a newer kernel before the Pi is
+rebooted. If the running kernel lacks matching headers, the installer stops
 instead of compiling against the wrong ABI. Unplug/reconnect the MT7601U
 adapter (or reboot), use `iw dev` to find its new PHY number, then run:
 

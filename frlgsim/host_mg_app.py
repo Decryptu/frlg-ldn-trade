@@ -144,7 +144,10 @@ class MysteryGiftHostApplication(HostApplication):
     def run(self):
         joined = super().run()
         engine = self.session.activity if self.session is not None else None
-        if engine is not None and engine.result in (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT):
+        self.delivery_succeeded = bool(
+            engine is not None
+            and engine.result in (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT))
+        if self.delivery_succeeded:
             noun = "Stamp" if engine.result == SVR_MSG_STAMP_SENT else "Wonder Card"
             print(f"{noun} delivered. On the Switch, talk to the delivery man "
                   "on the second floor of any Pokemon Center to receive the gift.")
