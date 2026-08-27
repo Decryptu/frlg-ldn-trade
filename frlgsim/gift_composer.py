@@ -86,12 +86,13 @@ MON_CANT_GIVE = 2
 PARTY_SIZE = 6
 LAST_PARTY_MON_INDEX = PARTY_SIZE + 1
 
-DEFAULT_BAG_FULL_MESSAGE = (
-    "There is no room in your BAG.\nPlease make room and come back!")
-DEFAULT_STORAGE_FULL_MESSAGE = (
-    "Your party and PC BOXES are full.\nPlease make room and come back!")
-DEFAULT_PARTY_FULL_MESSAGE = (
-    "Your party is full.\nPlease make room and come back!")
+# One generic line covers a full party, PC boxes, or BAG. Keeping the three
+# names identical lets the message pool store the text once no matter how many
+# fallible gives a plan has.
+_DEFAULT_NO_ROOM_MESSAGE = "No room! Make space, then\ncome back."
+DEFAULT_BAG_FULL_MESSAGE = _DEFAULT_NO_ROOM_MESSAGE
+DEFAULT_STORAGE_FULL_MESSAGE = _DEFAULT_NO_ROOM_MESSAGE
+DEFAULT_PARTY_FULL_MESSAGE = _DEFAULT_NO_ROOM_MESSAGE
 DEFAULT_COMPLETED_MESSAGE = (
     "You already received this MYSTERY GIFT.\nPlease look forward to future gifts!")
 
@@ -665,6 +666,8 @@ _OP_WAITBUTTONPRESS = 0x6D
 _OP_GIVEMON = 0x79
 _OP_GIVEEGG = 0x7A
 _OP_SETMONMOVE = 0x7B
+_OP_PLAYFANFARE = 0x31              # playfanfare <u16 song> (non-blocking)
+MUS_OBTAIN_ITEM = 258              # the "you received it!" jingle
 _OP_CREATEVOBJECT = 0xAA
 _OP_SETWILDBATTLE = 0xB6
 _OP_DOWILDBATTLE = 0xB7
@@ -739,11 +742,18 @@ class _FieldScriptBuilder:
 
     def finish(self, path):
         code = bytearray(self.code)
+        # Pool identical strings so a message reused across stages (e.g. a shared
+        # "party is full" failure line) is stored only once.
         message_offsets = []
+        blobs = []
+        pool = {}
         offset = len(code)
         for message in self.messages:
-            message_offsets.append(offset)
-            offset += len(message)
+            if message not in pool:
+                pool[message] = offset
+                blobs.append(message)
+                offset += len(message)
+            message_offsets.append(pool[message])
         for position, label in self.branch_fixups:
             if label not in self.labels:
                 _fail(path, f"unresolved compiler label {label!r}")
@@ -752,7 +762,7 @@ class _FieldScriptBuilder:
         for position, message_index in self.message_fixups:
             target = _RAM_SCRIPT_VIRTUAL_BASE + message_offsets[message_index]
             code[position:position + 4] = target.to_bytes(4, "little")
-        return bytes(code) + b"".join(self.messages)
+        return bytes(code) + b"".join(blobs)
 
 
 def _setvar(variable, value):
@@ -838,7 +848,7 @@ def _emit_condition_branch(builder, condition, true_label, false_label, prefix):
         raise AssertionError(type(condition))
 
 
-def _emit_action(builder, action, *, sprite_id, failure_label, exit_label):
+def _emit_action(builder, action, *, sprite_id, failure_label, completed_label):
     if isinstance(action, Message):
         builder.message(action.text)
     elif isinstance(action, GiveItem):
@@ -858,6 +868,7 @@ def _emit_action(builder, action, *, sprite_id, failure_label, exit_label):
         builder.vgoto_if(_COMPARE_EQ, failure_label)
         for slot, move in enumerate(action.moves):
             builder.emit(bytes([_OP_SETMONMOVE, LAST_PARTY_MON_INDEX, slot]) + _u16(move))
+        builder.emit(bytes([_OP_PLAYFANFARE]) + _u16(MUS_OBTAIN_ITEM))
     elif isinstance(action, GiveEgg):
         if action.moves:
             builder.emit(bytes([_OP_GETPARTYSIZE]))
@@ -868,6 +879,7 @@ def _emit_action(builder, action, *, sprite_id, failure_label, exit_label):
         builder.vgoto_if(_COMPARE_EQ, failure_label)
         for slot, move in enumerate(action.moves):
             builder.emit(bytes([_OP_SETMONMOVE, LAST_PARTY_MON_INDEX, slot]) + _u16(move))
+        builder.emit(bytes([_OP_PLAYFANFARE]) + _u16(MUS_OBTAIN_ITEM))
     elif isinstance(action, ShowSprite):
         if isinstance(action.position, RelativeToPlayer):
             builder.emit(bytes([_OP_GETPLAYERXY]) + _u16(_VAR_PLAYER_X) + _u16(_VAR_PLAYER_Y))
@@ -903,7 +915,9 @@ def _emit_action(builder, action, *, sprite_id, failure_label, exit_label):
     elif isinstance(action, SetVar):
         builder.emit(_setvar(action.variable, action.value))
     elif isinstance(action, Exit):
-        builder.vgoto(exit_label)
+        # Exit is validated as terminal, so it doubles as the event's natural
+        # conclusion: route through the shared completed_message before ending.
+        builder.vgoto(completed_label)
     else:  # pragma: no cover - validation prevents this path.
         raise AssertionError(type(action))
 
@@ -925,7 +939,7 @@ def _failure_message(action):
 
 
 def _emit_plan(builder, stages, cursor, prefix, finished_label, failures,
-               sprite_counter, *, receipt_flag, exit_label,
+               sprite_counter, *, receipt_flag, completed_label,
                overall_completion=False, reset_on_terminal_battle=False):
     """Emit stage bodies after a dispatch and return the next sprite id."""
     for stage_index, (stage, source_path) in enumerate(stages):
@@ -955,7 +969,7 @@ def _emit_plan(builder, stages, cursor, prefix, finished_label, failures,
                 builder.emit(bytes([_OP_RELEASE]))
             _emit_action(
                 builder, action, sprite_id=sprite_counter,
-                failure_label=failure_label, exit_label=exit_label)
+                failure_label=failure_label, completed_label=completed_label)
             if isinstance(action, ShowSprite):
                 sprite_counter += 1
         # Battles are validated as the final action. End immediately so a
@@ -1039,7 +1053,7 @@ def _compile_gift(definition, flag_id):
         "main", "finish")
     _emit_plan(
         builder, stages, VAR_MYSTERY_GIFT_1, "main", "finish",
-        failures, 0, receipt_flag=receipt_flag, exit_label="exit",
+        failures, 0, receipt_flag=receipt_flag, completed_label="completed",
         overall_completion=not repeatable,
         reset_on_terminal_battle=repeatable)
 
@@ -1051,10 +1065,12 @@ def _compile_gift(definition, flag_id):
         builder.emit(_setflag(FLAG_MYSTERY_GIFT_DONE))
         builder.emit(_setflag(receipt_flag))
     builder.vgoto("exit")
-    if not repeatable:
-        builder.label("completed")
-        builder.message(definition.completed_message)
-        builder.vgoto("exit")
+    # Always emit the completion line: a non-repeatable gift reaches it from the
+    # FLAG_MYSTERY_GIFT_DONE check above, and any gift can reach it from a
+    # terminal Exit() action (e.g. a repeatable gift's own "done" state).
+    builder.label("completed")
+    builder.message(definition.completed_message)
+    builder.vgoto("exit")
     _append_failures(builder, failures, "exit")
     builder.label("exit")
     builder.emit(bytes([_OP_RELEASE, _OP_END]))
@@ -1118,7 +1134,7 @@ def _compile_rally(definition, flag_id):
         sprite_counter = _emit_plan(
             builder, stages, cursor, prefix, next_label,
             failures, sprite_counter, receipt_flag=receipt_flag,
-            exit_label=next_label)
+            completed_label="completed")
         # Slot cursor values have an activation offset of one. Patch the
         # compiler-emitted post-stage setvar values in a simple explicit tail:
         # rather than byte surgery, each stage label gets an overriding cursor
@@ -1155,7 +1171,7 @@ def _compile_rally(definition, flag_id):
     _emit_plan(
         builder, completion, VAR_MYSTERY_GIFT_1,
         "completion", "finish", failures, sprite_counter,
-        receipt_flag=receipt_flag, exit_label="exit",
+        receipt_flag=receipt_flag, completed_label="completed",
         overall_completion=True)
 
     builder.label("finish")

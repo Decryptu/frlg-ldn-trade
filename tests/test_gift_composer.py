@@ -37,6 +37,7 @@ class ScriptVM:
         self.battles = []
         self.prepared_battle = None
         self.messages = []
+        self.fanfares = []
         self.release_count = 0
         self.ended = False
 
@@ -105,6 +106,8 @@ class ScriptVM:
                 self.flags.discard(self.u16())
             elif op == 0x2B:  # checkflag
                 self.comparison = 1 if self.u16() in self.flags else 0
+            elif op == 0x31:  # playfanfare
+                self.fanfares.append(self.u16())
             elif op == 0x42:  # getplayerxy
                 x, y = self.u16(), self.u16()
                 self.vars[x], self.vars[y] = 10, 20

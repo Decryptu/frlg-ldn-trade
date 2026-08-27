@@ -50,7 +50,7 @@ def test_definition_compiles_to_the_expected_porygon_card_and_cli_entry():
                 "Visit the deliveryman on the",
                 "2nd floor of a Pokemon Center.",
             ]
-    assert len(distribution.ram_script) == 520
+    assert len(distribution.ram_script) == 433
 
     slug = event.GIFT_PORYGON_TMS
     assert slug in gift_registry.GIFT_REGISTRY.live_choices

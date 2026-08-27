@@ -279,7 +279,7 @@ WORLDS_XP_GIFT = WonderGift(
     card=WonderCardSpec(
         icon_species=SPECIES_CLAYDOL,
         bg_type=1,
-        title="FANtastic Mystery Gift - WORLDS XP 2026",
+        title="FANtastic Mystery Gift - WORLDS 26",
         subtitle="A Legendary Experience!",
         body=(
             "An EGG of ruins is waiting. Talk to the",
@@ -292,8 +292,7 @@ WORLDS_XP_GIFT = WonderGift(
         default_flag_id=WORLDS_XP_GIFT_FLAG_ID,
     ),
     intro_message=(
-        "This egg has the power of\n"
-        "3 beasts from a time of ruins."),
+        "Thank you for using the MYSTERY\nGIFT System."),
         #     intro_message=(
         # "Come to Pokemon Worlds in San Francisco!\n"
         # "See what LEGENDARY gift awaits."),
@@ -314,6 +313,7 @@ WORLDS_XP_GIFT = WonderGift(
                 wonder_card.SPECIES_CELEBI,
                 level=50,
             ),
+            Message("Congrats! Here is a CELEBI."),
             SetVar(WORLDS_XP_STATE_VAR, WORLDS_XP_STATE_RECEIVED),
             Exit(),
             condition=VarEquals(WORLDS_XP_STATE_VAR, WORLDS_XP_STATE_BATTLED),
@@ -328,6 +328,8 @@ WORLDS_XP_GIFT = WonderGift(
                     MOVE_WATER_SPOUT,
                 ),
             ),
+            Message("This egg has the power of\n"
+                    "3 beasts from a time of ruins."),
         ),
         DeliveryStage(
             ShowSprite(
@@ -389,7 +391,7 @@ WORLDS_XP_GIFT = WonderGift(
             ))),
         ),
     )),
-    completed_message="Visit PkCamp.github.io.",
+    completed_message="Visit MercuryEnigma.github.io/pkcamp",
 )
 
 
