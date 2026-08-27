@@ -51,6 +51,9 @@ def test_preflight_validates_tplink_driver_modes_and_key_permissions():
     assert "load_host_file_config_from_argv" in text
     assert "skip_encryption" in text
     assert "accept_decrypted_ccmp" in text
+    assert "USE_EXPLICIT_PHY" in text
+    assert "mt76x0u requires accept_decrypted_ccmp=false" in text
+    assert "named adapter is bypassed" in text
     assert "stat -c '%a'" in text
     assert '"$PROJECT_ROOT" "$@"' in text
 

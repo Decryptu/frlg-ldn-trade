@@ -153,6 +153,19 @@ Leave `--phy`, `--adapter`, `--skip-encryption`, and
 `--accept-decrypted-ccmp` at their tracked TP-Link defaults unless diagnosing
 different hardware.
 
+For the previously tested Gen5 / ALFA `mt76x0u` adapter, select its current
+PHY explicitly and disable only the TP-Link-specific receive normalization:
+
+```bash
+./scripts/run_mystery_gift.sh --gift worlds-xp --phy phy1 \
+  --no-accept-decrypted-ccmp --capture /tmp/gen5.jsonl
+```
+
+An explicit `--phy` bypasses the named TP-Link selector. Preflight then checks
+that selected PHY's AP and monitor modes and verifies the known `mt76x0u` CCMP
+profile. Use `iw dev` after reconnecting the adapter to find its current PHY;
+the number can change after a replug.
+
 ## Later desktop changes
 
 For each committed change on the desktop:
