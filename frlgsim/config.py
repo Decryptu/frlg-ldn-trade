@@ -482,6 +482,7 @@ class MysteryGiftRunConfig:
     client_ready_idle_frames: int | None = None
     end_on_success: bool = False
     idle_timeout_seconds: int | None = None
+    attempt_log_dir: str | None = None
 
     def __post_init__(self):
         if not isinstance(self.profile, TrainerProfile):
@@ -504,6 +505,8 @@ class MysteryGiftRunConfig:
                 and (type(self.idle_timeout_seconds) is not int
                      or not 1 <= self.idle_timeout_seconds <= 24 * 60 * 60)):
             raise ValueError("idle_timeout_seconds must be between 1 and 86400")
+        if self.attempt_log_dir is not None and not isinstance(self.attempt_log_dir, str):
+            raise ValueError("attempt_log_dir must be a string or None")
 
 
 def parse_trainer_id(value):

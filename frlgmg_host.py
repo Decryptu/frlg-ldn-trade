@@ -87,6 +87,10 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help=("stop after this many seconds without meaningful Switch traffic "
               "(join or Pia/RFU datagram); default: disabled"))
     parser.add_argument(
+        "--attempt-log-dir", metavar="DIR", default=None,
+        help=("append completed joined-attempt records to daily CSV files in DIR; "
+              "default: disabled (the supervised shell host enables logs/)"))
+    parser.add_argument(
         "--make-artifact", action=argparse.BooleanOptionalAction, default=False,
         help=("write an annotated listing for the exact Mystery Gift bytes that "
               "will be sent (default: disabled)"))
@@ -117,7 +121,8 @@ def build_run_config(parser, args):
             payload=payload, trust_pia=args.trust_pia,
             client_ready_idle_frames=args.client_ready_idle_frames,
             end_on_success=args.end_on_success,
-            idle_timeout_seconds=args.idle_timeout)
+            idle_timeout_seconds=args.idle_timeout,
+            attempt_log_dir=args.attempt_log_dir)
     except ValueError as exc:
         parser.error(str(exc))
 

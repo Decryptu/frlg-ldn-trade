@@ -53,6 +53,7 @@ def test_mystery_gift_models_are_immutable_and_composed():
     assert isinstance(run.role, config.HostOptions)
     assert run.client_ready_idle_frames == 45
     assert run.end_on_success is False and run.idle_timeout_seconds is None
+    assert run.attempt_log_dir is None
     for obj, attribute, value in (
             (payload, "flag_id", 1004),
             (run, "trust_pia", False)):
@@ -122,9 +123,13 @@ def test_mystery_gift_client_ready_idle_frame_override_is_diagnostic_only():
 
 
 def test_mystery_gift_host_lifecycle_options_are_explicit_and_validated():
-    run = _build_mg(["--live", "--end-on-success", "--idle-timeout", "300"])
+    run = _build_mg([
+        "--live", "--end-on-success", "--idle-timeout", "300",
+        "--attempt-log-dir", "logs",
+    ])
     assert run.end_on_success is True
     assert run.idle_timeout_seconds == 300
+    assert run.attempt_log_dir == "logs"
 
     for bad in (0, -1, 86401, True, "300"):
         try:

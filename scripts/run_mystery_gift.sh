@@ -8,6 +8,7 @@ PROJECT_ROOT=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd -P)
 PYTHON="$PROJECT_ROOT/.venv/bin/python"
 IDLE_TIMEOUT_SECONDS=300
 RESTART_DELAY_SECONDS=1
+ATTEMPT_LOG_DIR="$PROJECT_ROOT/logs"
 
 # Informational modes do not need hardware checks or root privileges. Every
 # other argument is passed through both preflight and the live host.
@@ -56,7 +57,8 @@ while true; do
     set +e
     sudo -E "$PYTHON" -u "$PROJECT_ROOT/frlgmg_host.py" \
         "${HOST_ARGS[@]}" --id "$identity" --end-on-success \
-        --idle-timeout "$IDLE_TIMEOUT_SECONDS"
+        --idle-timeout "$IDLE_TIMEOUT_SECONDS" \
+        --attempt-log-dir "$ATTEMPT_LOG_DIR"
     status=$?
     set -e
 

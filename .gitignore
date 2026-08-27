@@ -43,6 +43,7 @@ __pycache__/
 *.pcap
 *.pcapng
 host-tap-*.txt
+logs/
 # Nested standalone clone (kinnay/LDN) — reference source for the LDN hosting
 # stack (@ 39d0b20 = v0.0.17, identical to the installed venv package).
 LDN/

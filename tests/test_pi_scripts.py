@@ -72,9 +72,13 @@ def test_preflight_validates_tplink_driver_modes_and_key_permissions():
         run.index('preflight_pi.sh" "$@"')
     assert "--end-on-success" in run
     assert "--idle-timeout \"$IDLE_TIMEOUT_SECONDS\"" in run
+    assert "--attempt-log-dir \"$ATTEMPT_LOG_DIR\"" in run
     assert "secrets.randbelow(65536)" in run
     assert "Restarting after successful distribution" not in run
     assert "Restarting after %s" in run
+
+    ignore = _text(".gitignore")
+    assert "logs/" in ignore
 
 
 def test_deployment_requires_clean_committed_state_and_fast_forward_only():
