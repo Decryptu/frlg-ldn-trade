@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import frlgtrade_host
 from frlgsim import config
 from frlgsim.config import DEFAULT_TRAINER
+from frlgsim import host_app
 from frlgsim.host_app import HostApplication
 
 
@@ -298,6 +299,27 @@ def test_runtime_interruption_still_cleans_up():
     peer = _Peer(session, network)
     app = _RuntimeApplication(network, injector, session, peer)
     assert app.run() is False
+    assert network.stopped == injector.stopped == 1
+    assert app.interrupted is True
+
+
+def test_runtime_idle_timeout_uses_only_peer_activity():
+    network = _Network()
+    injector = _Injector()
+    session = _session()
+    peer = _Peer(session, network)
+    app = _RuntimeApplication(network, injector, session, peer)
+    app.config = SimpleNamespace(idle_timeout_seconds=300, end_on_success=False)
+
+    original_monotonic = host_app.time.monotonic
+    moments = iter((100.0, 400.0))
+    try:
+        host_app.time.monotonic = lambda: next(moments)
+        assert app.run() is False
+    finally:
+        host_app.time.monotonic = original_monotonic
+
+    assert app.idle_timed_out is True
     assert network.stopped == injector.stopped == 1
 
 

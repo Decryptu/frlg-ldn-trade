@@ -43,6 +43,8 @@ class HostApplication:
         self._saved_commits = 0
         self._last_trade_state = None
         self._absence_logged = False
+        self.interrupted = False
+        self.idle_timed_out = False
 
     def _load_party(self):
         party = trade_runtime.load_party(self.plan.party_paths, self.log)
@@ -142,6 +144,18 @@ class HostApplication:
     def _completion_message(self):
         return "Room-exit grace period complete; host peer traffic stopped cleanly."
 
+    def _idle_timeout_seconds(self):
+        """Optional meaningful-peer-traffic watchdog used by the MG supervisor."""
+        return getattr(self.config, "idle_timeout_seconds", None)
+
+    def _end_on_success(self):
+        """Whether a completed activity should exit immediately after safe close."""
+        return bool(getattr(self.config, "end_on_success", False))
+
+    def _activity_succeeded(self):
+        """Whether the configured activity completed a successful outward action."""
+        return bool(getattr(self._activity(), "gift_sent", False))
+
     def _log_activity_progress(self):
         activity = self._activity()
         state = activity.state
@@ -170,6 +184,7 @@ class HostApplication:
     def run(self):
         joined_once = False
         rfu_ni_logged = False
+        last_peer_activity = time.monotonic()
         try:
             link_player = self._build_components()
             self._log_identity(link_player)
@@ -183,6 +198,7 @@ class HostApplication:
                     raise RuntimeError(f"802.11 beacon injector stopped: {self.injector.error}")
                 if self.network.participants and not joined_once:
                     joined_once = True
+                    last_peer_activity = time.monotonic()
                     self.peer.on_participant_joined()
                     self.info("Switch joined the Linux LDN host successfully.")
                 if joined_once and not self.network.participants:
@@ -196,23 +212,34 @@ class HostApplication:
                         self.info("The console left the LDN network; stopping host peer traffic.")
                         break
 
-                for datagram, src_ip in self.network.recv():
+                received = self.network.recv()
+                if received:
+                    last_peer_activity = time.monotonic()
+                for datagram, src_ip in received:
                     events = self.peer.receive(datagram, src_ip)
                     self._log_protocol_events(events)
                     self._send_pending(self.peer.drain())
 
                 now = time.monotonic()
+                idle_timeout = self._idle_timeout_seconds()
+                if idle_timeout is not None and now - last_peer_activity >= idle_timeout:
+                    self.idle_timed_out = True
+                    self.info(f"No meaningful Switch traffic for {idle_timeout}s; stopping host.")
+                    break
                 self._send_pending(self.peer.tick(now))
                 self._log_activity_progress()
                 if self.session.rfu.ni_complete and not rfu_ni_logged:
                     rfu_ni_logged = True
                     self.info(self._rfu_ready_message())
-                if self._activity().done and not self.network.participants:
+                if (self._activity().done and (
+                        not self.network.participants
+                        or (self._end_on_success() and self._activity_succeeded()))):
                     self.info(self._completion_message())
                     break
                 timeout = self.peer.next_deadline(now, HOST_CONTROL_POLL_SECONDS)
                 self.network.wait_readable(timeout)
         except KeyboardInterrupt:
+            self.interrupted = True
             self.log("[host] interrupted; shutting down")
         finally:
             if self.injector is not None:

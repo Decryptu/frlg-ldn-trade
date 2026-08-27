@@ -54,6 +54,16 @@ def _client_ready_idle_frames(value):
     return frames
 
 
+def _idle_timeout_seconds(value):
+    try:
+        seconds = int(value, 10)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a decimal number of seconds") from exc
+    if not 1 <= seconds <= 24 * 60 * 60:
+        raise argparse.ArgumentTypeError("must be between 1 and 86400 seconds")
+    return seconds
+
+
 def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
@@ -67,7 +77,19 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         "--client-ready-idle-frames", type=_client_ready_idle_frames,
         default=None, metavar="N",
         help=("diagnostic: quiet child polls after LinkPlayer standby before "
-              "the first Mystery Gift message; default is the built-in timing"))
+             "the first Mystery Gift message; default is the built-in timing"))
+    parser.add_argument(
+        "--end-on-success", action=argparse.BooleanOptionalAction, default=False,
+        help=("stop after the post-delivery RFU close sequence; used by the "
+              "supervised run_mystery_gift.sh host"))
+    parser.add_argument(
+        "--idle-timeout", type=_idle_timeout_seconds, metavar="SECONDS", default=None,
+        help=("stop after this many seconds without meaningful Switch traffic "
+              "(join or Pia/RFU datagram); default: disabled"))
+    parser.add_argument(
+        "--attempt-log-dir", metavar="DIR", default=None,
+        help=("append completed joined-attempt records to daily CSV files in DIR; "
+              "default: disabled (the supervised shell host enables logs/)"))
     parser.add_argument(
         "--make-artifact", action=argparse.BooleanOptionalAction, default=False,
         help=("write an annotated listing for the exact Mystery Gift bytes that "
@@ -97,7 +119,10 @@ def build_run_config(parser, args):
         return configmod.MysteryGiftRunConfig(
             profile=profile, ldn=ldn, role=role,
             payload=payload, trust_pia=args.trust_pia,
-            client_ready_idle_frames=args.client_ready_idle_frames)
+            client_ready_idle_frames=args.client_ready_idle_frames,
+            end_on_success=args.end_on_success,
+            idle_timeout_seconds=args.idle_timeout,
+            attempt_log_dir=args.attempt_log_dir)
     except ValueError as exc:
         parser.error(str(exc))
 
@@ -134,10 +159,15 @@ def main(argv=None):
         print(f"wrote Mystery Gift artifact: {artifact_path}")
     if os.geteuid() != 0:
         parser.error("live LDN hosting requires root; run with sudo -E")
-    joined = MysteryGiftHostApplication(
+    app = MysteryGiftHostApplication(
         config, distribution=distribution,
-        log=trade_runtime.ConsoleLog(args.verbose)).run()
-    return 0 if joined else 130
+        log=trade_runtime.ConsoleLog(args.verbose))
+    joined = app.run()
+    if app.interrupted:
+        return 130
+    if app.idle_timed_out:
+        return 124
+    return 0 if app.delivery_succeeded else 1
 
 
 if __name__ == "__main__":

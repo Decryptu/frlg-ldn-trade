@@ -48,6 +48,7 @@ else
 fi
 
 CONFIG_VALUES=""
+USE_EXPLICIT_PHY=false
 if [[ -x "$PYTHON" ]]; then
     if "$PYTHON" "$PROJECT_ROOT/frlgmg_host.py" \
             --print-effective-config "$@" >/dev/null; then
@@ -91,32 +92,32 @@ if [[ -n "$CONFIG_VALUES" ]]; then
     LIVE=${CONFIG_LINES[4]}
     SKIP_ENCRYPTION=${CONFIG_LINES[5]}
     ACCEPT_DECRYPTED_CCMP=${CONFIG_LINES[6]}
-    if [[ "$LIVE" == true && "$SKIP_ENCRYPTION" == true && "$ACCEPT_DECRYPTED_CCMP" == true ]]; then
-        pass "TP-Link live/encryption defaults are enabled"
-    else
-        fail "TP-Link profile requires live=true, skip_encryption=true, and accept_decrypted_ccmp=true"
+    if [[ "$CONFIG_PHY" != "auto" ]]; then
+        USE_EXPLICIT_PHY=true
     fi
-    if [[ "$ADAPTER" != "tplink-archer-t3u" ]]; then
-        fail "adapter is $ADAPTER; expected tplink-archer-t3u for this Pi profile"
+    if [[ "$LIVE" == true && "$SKIP_ENCRYPTION" == true ]]; then
+        pass "live hosting and delegated transmit CCMP are enabled"
     else
-        pass "configured TP-Link Archer T3U profile"
+        fail "host profile requires live=true and skip_encryption=true"
+    fi
+    if [[ "$USE_EXPLICIT_PHY" == false ]]; then
+        if [[ "$ACCEPT_DECRYPTED_CCMP" != true ]]; then
+            fail "TP-Link profile requires accept_decrypted_ccmp=true"
+        else
+            pass "TP-Link retained-CCMP receive normalization is enabled"
+        fi
+        if [[ "$ADAPTER" != "tplink-archer-t3u" ]]; then
+            fail "adapter is $ADAPTER; expected tplink-archer-t3u when phy is auto"
+        else
+            pass "configured TP-Link Archer T3U profile"
+        fi
+    else
+        pass "configured explicit host phy $CONFIG_PHY (named adapter is bypassed)"
     fi
 else
     KEYS_PATH=""
     CONFIG_KEYS_PATH=""
     CONFIG_PHY="auto"
-fi
-
-if command -v lsusb >/dev/null 2>&1 && lsusb -d 2357:012d >/dev/null 2>&1; then
-    pass "TP-Link USB 2357:012d is attached"
-else
-    fail "TP-Link Archer T3U (USB 2357:012d) is not attached"
-fi
-
-if command -v modinfo >/dev/null 2>&1 && modinfo rtw88_8822bu >/dev/null 2>&1; then
-    pass "rtw88_8822bu kernel module is available"
-else
-    fail "rtw88_8822bu kernel module is unavailable"
 fi
 
 find_tplink_phy() {
@@ -139,36 +140,96 @@ find_tplink_phy() {
     return 1
 }
 
-TP_LINK_PHY=$(find_tplink_phy || true)
-if [[ -z "$TP_LINK_PHY" ]]; then
-    fail "could not map USB 2357:012d to an ieee80211 phy"
-else
-    pass "TP-Link is $TP_LINK_PHY"
-    DRIVER_LINK="/sys/class/ieee80211/$TP_LINK_PHY/device/driver"
-    DRIVER=""
-    [[ -L "$DRIVER_LINK" ]] && DRIVER=$(basename "$(readlink -f "$DRIVER_LINK")")
-    if [[ "$DRIVER" == "rtw88_8822bu" ]]; then
-        pass "TP-Link phy uses rtw88_8822bu"
-    else
-        fail "TP-Link phy driver is ${DRIVER:-unknown}; expected rtw88_8822bu"
-    fi
-    if command -v iw >/dev/null 2>&1; then
-        PHY_INFO=$(iw phy "$TP_LINK_PHY" info 2>/dev/null || true)
-        if grep -qE '^[[:space:]]*\* AP$' <<<"$PHY_INFO"; then
-            pass "TP-Link phy supports AP mode"
-        else
-            fail "TP-Link phy does not report AP mode"
-        fi
-        if grep -qE '^[[:space:]]*\* monitor$' <<<"$PHY_INFO"; then
-            pass "TP-Link phy supports monitor mode"
-        else
-            fail "TP-Link phy does not report monitor mode"
-        fi
-    else
+check_phy_modes() {
+    local phy=$1 label=$2 phy_info
+    if ! command -v iw >/dev/null 2>&1; then
         fail "iw is not installed"
+        return
     fi
-    if [[ "$CONFIG_PHY" != "auto" && "$CONFIG_PHY" != "$TP_LINK_PHY" ]]; then
-        fail "configured phy is $CONFIG_PHY but TP-Link is $TP_LINK_PHY"
+    phy_info=$(iw phy "$phy" info 2>/dev/null || true)
+    if grep -qE '^[[:space:]]*\* AP$' <<<"$phy_info"; then
+        pass "$label supports AP mode"
+    else
+        fail "$label does not report AP mode"
+    fi
+    if grep -qE '^[[:space:]]*\* monitor$' <<<"$phy_info"; then
+        pass "$label supports monitor mode"
+    else
+        fail "$label does not report monitor mode"
+    fi
+}
+
+if [[ "$USE_EXPLICIT_PHY" == true ]]; then
+    SELECTED_PHY=$CONFIG_PHY
+    if [[ ! -d "/sys/class/ieee80211/$SELECTED_PHY" ]]; then
+        fail "configured phy $SELECTED_PHY does not exist"
+    else
+        DRIVER_LINK="/sys/class/ieee80211/$SELECTED_PHY/device/driver"
+        DRIVER=""
+        [[ -L "$DRIVER_LINK" ]] && DRIVER=$(basename "$(readlink -f "$DRIVER_LINK")")
+        pass "selected phy is $SELECTED_PHY (${DRIVER:-unknown} driver)"
+        case "$DRIVER" in
+            mt76x0u)
+                if [[ "$ACCEPT_DECRYPTED_CCMP" == false ]]; then
+                    pass "mt76x0u uses standard CCMP receive frames"
+                else
+                    fail "mt76x0u requires accept_decrypted_ccmp=false"
+                fi
+                ;;
+            mt7601u)
+                if [[ "$ACCEPT_DECRYPTED_CCMP" == false ]]; then
+                    pass "mt7601u uses standard CCMP receive frames"
+                else
+                    fail "mt7601u requires accept_decrypted_ccmp=false"
+                fi
+                MODULE_PATH=$(modinfo -k "$(uname -r)" -n mt7601u 2>/dev/null || true)
+                if [[ "$MODULE_PATH" == */updates/dkms/mt7601u.ko* ]]; then
+                    pass "mt7601u AP-mode DKMS module is installed"
+                else
+                    fail "mt7601u stock module is active; install the AP-mode driver with scripts/setup_pi.sh --install-mt7601u-ap"
+                fi
+                ;;
+            rtw88_8822bu)
+                if [[ "$ACCEPT_DECRYPTED_CCMP" == true ]]; then
+                    pass "rtw88_8822bu retained-CCMP receive normalization is enabled"
+                else
+                    fail "rtw88_8822bu requires accept_decrypted_ccmp=true"
+                fi
+                ;;
+            *)
+                pass "selected phy has no built-in CCMP receive profile"
+                ;;
+        esac
+        check_phy_modes "$SELECTED_PHY" "selected phy $SELECTED_PHY"
+    fi
+else
+    if command -v lsusb >/dev/null 2>&1 && lsusb -d 2357:012d >/dev/null; then
+        pass "TP-Link USB 2357:012d is attached"
+    else
+        fail "TP-Link Archer T3U (USB 2357:012d) is not attached"
+    fi
+
+    if command -v modinfo >/dev/null 2>&1 && modinfo rtw88_8822bu >/dev/null; then
+        pass "rtw88_8822bu kernel module is available"
+    else
+        fail "rtw88_8822bu kernel module is unavailable"
+    fi
+
+    TP_LINK_PHY=$(find_tplink_phy || true)
+    if [[ -z "$TP_LINK_PHY" ]]; then
+        fail "could not map USB 2357:012d to an ieee80211 phy"
+    fi
+    if [[ -n "$TP_LINK_PHY" ]]; then
+        pass "TP-Link is $TP_LINK_PHY"
+        DRIVER_LINK="/sys/class/ieee80211/$TP_LINK_PHY/device/driver"
+        DRIVER=""
+        [[ -L "$DRIVER_LINK" ]] && DRIVER=$(basename "$(readlink -f "$DRIVER_LINK")")
+        if [[ "$DRIVER" == "rtw88_8822bu" ]]; then
+            pass "TP-Link phy uses rtw88_8822bu"
+        else
+            fail "TP-Link phy driver is ${DRIVER:-unknown}; expected rtw88_8822bu"
+        fi
+        check_phy_modes "$TP_LINK_PHY" "TP-Link phy"
     fi
 fi
 

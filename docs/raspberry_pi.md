@@ -112,9 +112,28 @@ standard `sbin` command paths itself, so it behaves the same in an interactive
 shell and through a one-line SSH command.
 
 The normal run command has no Wi-Fi flags because those safe, tested defaults
-come from TOML. `run_mystery_gift.sh` runs preflight first and then starts the
-live host with root privileges. For a temporary diagnostic override, pass a
-normal host option after the script name, for example `--verbose`.
+come from TOML. `run_mystery_gift.sh` runs preflight once, then supervises
+short-lived root host processes. Each process gets a newly generated random
+TID/SID, and the wrapper restarts it after a successful delivery, an
+unsuccessful attempt, or five minutes without a Switch join or Pia/RFU traffic.
+Use Ctrl-C once to stop the supervisor. For a temporary diagnostic override,
+pass a normal host option after the script name, for example `--verbose`.
+
+`frlgmg_host.py` also exposes the lifecycle controls used by the wrapper:
+`--end-on-success` ends after the safe post-delivery close sequence, and
+`--idle-timeout SECONDS` ends after a specified period without meaningful
+Switch traffic. They are useful for direct, supervised integrations; the shell
+wrapper always uses `--end-on-success --idle-timeout 300` and owns `--id` so a
+saved `--id` cannot accidentally reuse an old identity.
+
+Each joined attempt is also appended to the ignored daily CSV ledger under
+`logs/`, named `mystery-gift-attempts-YYYY-MM-DD.csv`. The columns are
+`attempt`, `received_result`, `time`, `trainer_name`, and `trainer_ot`.
+`received_result` is `true` only when the host sent a Wonder Card or Stamp;
+the trainer name and five-digit trainer ID come from the Switch's LinkPlayer
+block. An attempt that fails before that block arrives is retained with blank
+identity fields. For direct `frlgmg_host.py` usage, enable the same ledger with
+`--attempt-log-dir logs`.
 
 Every `frlgmg_host.py` option is forwarded by the wrapper. View the
 authoritative list without running preflight or using root:
@@ -152,6 +171,55 @@ Pass `--no-make-artifact` to explicitly disable generation in a saved command.
 Leave `--phy`, `--adapter`, `--skip-encryption`, and
 `--accept-decrypted-ccmp` at their tracked TP-Link defaults unless diagnosing
 different hardware.
+
+For the previously tested Gen5 / ALFA `mt76x0u` adapter, select its current
+PHY explicitly and disable only the TP-Link-specific receive normalization:
+
+```bash
+./scripts/run_mystery_gift.sh --gift worlds-xp --phy phy1 \
+  --no-accept-decrypted-ccmp --capture /tmp/gen5.jsonl
+```
+
+An explicit `--phy` bypasses the named TP-Link selector. Preflight then checks
+that selected PHY's AP and monitor modes and verifies the known `mt76x0u` CCMP
+profile. Use `iw dev` after reconnecting the adapter to find its current PHY;
+the number can change after a replug.
+
+### MT7601U adapter with the custom AP driver
+
+The separate MT7601U adapter uses the stock `mt7601u` driver by default. That
+driver has monitor mode but does **not** advertise AP mode, so it cannot host
+LDN until the project-pinned `mt7601u-ap` DKMS module is installed. The source
+is tracked under `vendor/mt7601u-ap-1.0`; it is built on the Pi for the
+currently running ARM64 kernel. Do not copy a desktop-built `.ko` file.
+
+After deploying a clean commit, install it explicitly either from the desktop:
+
+```bash
+./scripts/deploy_pi.sh --host pi-ldn --user PI_USER --install-mt7601u-ap
+```
+
+or on the Pi:
+
+```bash
+cd ~/frlg-ldn-trade
+./scripts/setup_pi.sh --install-mt7601u-ap --no-networkmanager
+```
+
+This uses Raspberry Pi OS's APT packages `dkms` and `linux-headers-rpi-v8`,
+then registers a DKMS module for every installed kernel that has matching
+headers. This matters because APT can install a newer kernel before the Pi is
+rebooted. If the running kernel lacks matching headers, the installer stops
+instead of compiling against the wrong ABI. Unplug/reconnect the MT7601U
+adapter (or reboot), use `iw dev` to find its new PHY number, then run:
+
+```bash
+./scripts/run_mystery_gift.sh --gift worlds-xp --phy phyN \
+  --no-accept-decrypted-ccmp --capture /tmp/mt7601u.jsonl
+```
+
+Preflight confirms that the selected `mt7601u` module comes from
+`updates/dkms` and now exposes both AP and monitor mode.
 
 ## Later desktop changes
 

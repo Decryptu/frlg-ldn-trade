@@ -8,7 +8,7 @@ counts as progress.
 """
 
 from . import (charmap, config as configmod, gift_registry, host_session,
-               ldntrace)
+               ldntrace, mystery_gift_attempts)
 from .host_app import HostApplication
 from .host_beacon import build_wonder_card_app_data
 from .host_mystery_gift import (
@@ -144,11 +144,23 @@ class MysteryGiftHostApplication(HostApplication):
     def run(self):
         joined = super().run()
         engine = self.session.activity if self.session is not None else None
-        if engine is not None and engine.result in (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT):
+        self.delivery_succeeded = bool(
+            engine is not None
+            and engine.result in (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT))
+        if self.delivery_succeeded:
             noun = "Stamp" if engine.result == SVR_MSG_STAMP_SENT else "Wonder Card"
             print(f"{noun} delivered. On the Switch, talk to the delivery man "
                   "on the second floor of any Pokemon Center to receive the gift.")
         elif engine is not None and engine.result is not None:
             print("Session finished without delivering a card: "
                   + SERVER_RESULT_NAMES.get(engine.result, f"code {engine.result}"))
+        if joined and self.config.attempt_log_dir:
+            try:
+                path, attempt = mystery_gift_attempts.append_attempt(
+                    self.config.attempt_log_dir,
+                    received_result=self.delivery_succeeded,
+                    trainer=(engine.child_link_player if engine is not None else None))
+                self.info(f"Attempt ledger: recorded attempt {attempt} in {path}")
+            except OSError as exc:
+                self.info(f"Attempt ledger write failed: {exc}")
         return joined

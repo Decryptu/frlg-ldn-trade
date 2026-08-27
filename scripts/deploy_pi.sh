@@ -11,6 +11,7 @@ PI_PATH=${PI_PROJECT_PATH:-}
 PI_REPO=${PI_BARE_REPO:-}
 BRANCH=deploy
 RUN_TESTS=true
+INSTALL_MT7601U_AP=false
 
 usage() {
     cat <<'USAGE'
@@ -22,6 +23,9 @@ Options:
   --path PATH       absolute Pi checkout path (default: /home/USER/frlg-ldn-trade)
   --repo PATH       absolute Pi bare-repository path (default: /home/USER/repos/frlg-ldn-trade.git)
   --branch NAME     deployment branch (default: deploy)
+  --install-mt7601u-ap
+                    after deployment, explicitly install the custom MT7601U
+                    AP-mode DKMS module on the Pi (uses sudo and APT)
   --skip-tests      do not run the local static configuration tests
 
 The local worktree must be entirely clean. The remote checkout only performs a
@@ -36,6 +40,7 @@ while (($#)); do
         --path) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; PI_PATH=$2; shift ;;
         --repo) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; PI_REPO=$2; shift ;;
         --branch) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; BRANCH=$2; shift ;;
+        --install-mt7601u-ap) INSTALL_MT7601U_AP=true ;;
         --skip-tests) RUN_TESTS=false ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -114,6 +119,13 @@ if [[ ! -e "$worktree/.git" ]]; then
 fi
 "$worktree/scripts/update_pi.sh" --branch "$branch"
 REMOTE_UPDATE
+
+if [[ "$INSTALL_MT7601U_AP" == true ]]; then
+    # Allocate a TTY so the remote sudo prompt remains usable.  This is kept
+    # opt-in: ordinary code deployment must not alter kernel modules or APT.
+    ssh -t "$SSH_TARGET" \
+        "cd '$PI_PATH' && ./scripts/setup_pi.sh --install-mt7601u-ap --no-networkmanager"
+fi
 
 printf 'Deployed %s to %s:%s\n' \
     "$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)" "$SSH_TARGET" "$PI_PATH"

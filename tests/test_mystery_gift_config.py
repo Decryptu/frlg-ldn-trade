@@ -52,6 +52,8 @@ def test_mystery_gift_models_are_immutable_and_composed():
     assert isinstance(run.ldn, config.LdnConfig)
     assert isinstance(run.role, config.HostOptions)
     assert run.client_ready_idle_frames == 45
+    assert run.end_on_success is False and run.idle_timeout_seconds is None
+    assert run.attempt_log_dir is None
     for obj, attribute, value in (
             (payload, "flag_id", 1004),
             (run, "trust_pia", False)):
@@ -118,6 +120,57 @@ def test_mystery_gift_client_ready_idle_frame_override_is_diagnostic_only():
                 assert exc.code == 2
             else:
                 raise AssertionError(f"invalid timing override accepted: {bad}")
+
+
+def test_mystery_gift_host_lifecycle_options_are_explicit_and_validated():
+    run = _build_mg([
+        "--live", "--end-on-success", "--idle-timeout", "300",
+        "--attempt-log-dir", "logs",
+    ])
+    assert run.end_on_success is True
+    assert run.idle_timeout_seconds == 300
+    assert run.attempt_log_dir == "logs"
+
+    for bad in (0, -1, 86401, True, "300"):
+        try:
+            config.MysteryGiftRunConfig(idle_timeout_seconds=bad)
+        except ValueError as exc:
+            assert "idle_timeout_seconds" in str(exc)
+        else:
+            raise AssertionError(f"invalid idle timeout accepted: {bad!r}")
+
+
+def test_mystery_gift_main_returns_distinct_supervisor_outcomes():
+    original_app = frlgmg_host.MysteryGiftHostApplication
+    original_euid = frlgmg_host.os.geteuid
+
+    class FakeApplication:
+        delivered = False
+        interrupted = False
+        idle = False
+
+        def __init__(self, *_args, **_kwargs):
+            self.delivery_succeeded = self.delivered
+            self.interrupted = self.interrupted
+            self.idle_timed_out = self.idle
+
+        def run(self):
+            return self.delivery_succeeded
+
+    try:
+        frlgmg_host.MysteryGiftHostApplication = FakeApplication
+        frlgmg_host.os.geteuid = lambda: 0
+        FakeApplication.delivered, FakeApplication.idle, FakeApplication.interrupted = True, False, False
+        assert frlgmg_host.main(["--live"]) == 0
+        FakeApplication.delivered, FakeApplication.idle, FakeApplication.interrupted = False, False, False
+        assert frlgmg_host.main(["--live"]) == 1
+        FakeApplication.idle = True
+        assert frlgmg_host.main(["--live"]) == 124
+        FakeApplication.idle, FakeApplication.interrupted = False, True
+        assert frlgmg_host.main(["--live"]) == 130
+    finally:
+        frlgmg_host.MysteryGiftHostApplication = original_app
+        frlgmg_host.os.geteuid = original_euid
 
 
 def test_both_host_clis_use_the_same_explicit_transport_parsing():
