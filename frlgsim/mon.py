@@ -207,6 +207,7 @@ class Mon:
             tail = stats.build_party_tail(to_decrypted(wire))
             if tail is not None:
                 wire = wire[:BOX_SIZE] + tail
+        wire = wire[:85] + b"\xFF" + wire[86:]
         return cls(wire)
 
     @classmethod
