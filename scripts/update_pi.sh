@@ -47,4 +47,9 @@ if ! git -C "$PROJECT_ROOT" diff --quiet "$OLD_HEAD" "$NEW_HEAD" -- \
     # apt or alter NetworkManager configuration implicitly.
     "$PROJECT_ROOT/scripts/setup_pi.sh" --no-apt --no-networkmanager
 fi
+if ! git -C "$PROJECT_ROOT" diff --quiet "$OLD_HEAD" "$NEW_HEAD" -- \
+        vendor/mt7601u-ap-1.0 scripts/install_mt7601u_ap.sh; then
+    printf 'MT7601U DKMS source changed. Reinstall it explicitly with: sudo %s/scripts/install_mt7601u_ap.sh\n' \
+        "$PROJECT_ROOT"
+fi
 printf 'Pi checkout is now at %s\n' "$NEW_HEAD"

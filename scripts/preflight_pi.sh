@@ -176,6 +176,19 @@ if [[ "$USE_EXPLICIT_PHY" == true ]]; then
                     fail "mt76x0u requires accept_decrypted_ccmp=false"
                 fi
                 ;;
+            mt7601u)
+                if [[ "$ACCEPT_DECRYPTED_CCMP" == false ]]; then
+                    pass "mt7601u uses standard CCMP receive frames"
+                else
+                    fail "mt7601u requires accept_decrypted_ccmp=false"
+                fi
+                MODULE_PATH=$(modinfo -k "$(uname -r)" -n mt7601u 2>/dev/null || true)
+                if [[ "$MODULE_PATH" == */updates/dkms/mt7601u.ko* ]]; then
+                    pass "mt7601u AP-mode DKMS module is installed"
+                else
+                    fail "mt7601u stock module is active; install the AP-mode driver with scripts/setup_pi.sh --install-mt7601u-ap"
+                fi
+                ;;
             rtw88_8822bu)
                 if [[ "$ACCEPT_DECRYPTED_CCMP" == true ]]; then
                     pass "rtw88_8822bu retained-CCMP receive normalization is enabled"

@@ -33,6 +33,9 @@ def test_setup_uses_vendored_requirements_and_unmanaged_ldn_interfaces():
     assert "interface-name:ldn-mon" in text
     assert "interface-name:ldn-tap" in text
     assert "install_switch_keys.sh" in text
+    assert "--install-mt7601u-ap" in text
+    assert "linux-headers-rpi-v8" in text
+    assert "dkms" in text
     assert "scp " not in text
     assert " rsync" not in text
 
@@ -54,6 +57,7 @@ def test_preflight_validates_tplink_driver_modes_and_key_permissions():
     assert "USE_EXPLICIT_PHY" in text
     assert "mt76x0u requires accept_decrypted_ccmp=false" in text
     assert "named adapter is bypassed" in text
+    assert "mt7601u AP-mode DKMS module is installed" in text
     assert "stat -c '%a'" in text
     assert '"$PROJECT_ROOT" "$@"' in text
 
@@ -71,6 +75,7 @@ def test_deployment_requires_clean_committed_state_and_fast_forward_only():
     assert "HEAD:refs/heads/$BRANCH" in text
     assert "git clone --branch" in text
     assert "update_pi.sh" in text
+    assert "--install-mt7601u-ap" in text
     assert "test_switch_key_installer.py" in text
     assert "git reset" not in text
     assert "rsync" in text  # documented as deliberately not used
@@ -78,6 +83,7 @@ def test_deployment_requires_clean_committed_state_and_fast_forward_only():
     update = _text("scripts/update_pi.sh")
     assert "merge --ff-only FETCH_HEAD" in update
     assert "git reset" not in update
+    assert "MT7601U DKMS source changed" in update
 
 
 def test_pi_guide_keeps_keys_and_references_out_of_deployment():

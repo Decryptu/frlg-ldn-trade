@@ -166,6 +166,41 @@ that selected PHY's AP and monitor modes and verifies the known `mt76x0u` CCMP
 profile. Use `iw dev` after reconnecting the adapter to find its current PHY;
 the number can change after a replug.
 
+### MT7601U adapter with the custom AP driver
+
+The separate MT7601U adapter uses the stock `mt7601u` driver by default. That
+driver has monitor mode but does **not** advertise AP mode, so it cannot host
+LDN until the project-pinned `mt7601u-ap` DKMS module is installed. The source
+is tracked under `vendor/mt7601u-ap-1.0`; it is built on the Pi for the
+currently running ARM64 kernel. Do not copy a desktop-built `.ko` file.
+
+After deploying a clean commit, install it explicitly either from the desktop:
+
+```bash
+./scripts/deploy_pi.sh --host pi-ldn --user PI_USER --install-mt7601u-ap
+```
+
+or on the Pi:
+
+```bash
+cd ~/frlg-ldn-trade
+./scripts/setup_pi.sh --install-mt7601u-ap --no-networkmanager
+```
+
+This uses Raspberry Pi OS's APT packages `dkms` and `linux-headers-rpi-v8`,
+then registers a DKMS module that rebuilds after compatible kernel updates.
+If the headers do not match the currently running kernel, the installer stops
+instead of compiling against the wrong ABI. Unplug/reconnect the MT7601U
+adapter (or reboot), use `iw dev` to find its new PHY number, then run:
+
+```bash
+./scripts/run_mystery_gift.sh --gift worlds-xp --phy phyN \
+  --no-accept-decrypted-ccmp --capture /tmp/mt7601u.jsonl
+```
+
+Preflight confirms that the selected `mt7601u` module comes from
+`updates/dkms` and now exposes both AP and monitor mode.
+
 ## Later desktop changes
 
 For each committed change on the desktop:
