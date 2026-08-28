@@ -12,6 +12,7 @@ PI_REPO=${PI_BARE_REPO:-}
 BRANCH=deploy
 RUN_TESTS=true
 INSTALL_MT7601U_AP=false
+REFRESH_SERVICE=true
 
 usage() {
     cat <<'USAGE'
@@ -26,6 +27,10 @@ Options:
   --install-mt7601u-ap
                     after deployment, explicitly install the custom MT7601U
                     AP-mode DKMS module on the Pi (uses sudo and APT)
+  --skip-service-refresh
+                    do not reinstall/restart the fr-ldn-mystery-gift systemd
+                    service after deployment (default: refresh it so the
+                    running service always uses the freshly deployed scripts)
   --skip-tests      do not run the local static configuration tests
 
 The local worktree must be entirely clean. The remote checkout only performs a
@@ -41,6 +46,7 @@ while (($#)); do
         --repo) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; PI_REPO=$2; shift ;;
         --branch) [[ $# -ge 2 ]] || { usage >&2; exit 2; }; BRANCH=$2; shift ;;
         --install-mt7601u-ap) INSTALL_MT7601U_AP=true ;;
+        --skip-service-refresh) REFRESH_SERVICE=false ;;
         --skip-tests) RUN_TESTS=false ;;
         -h|--help) usage; exit 0 ;;
         *) printf 'Unknown option: %s\n' "$1" >&2; usage >&2; exit 2 ;;
@@ -120,6 +126,14 @@ fi
 "$worktree/scripts/update_pi.sh" --branch "$branch"
 REMOTE_UPDATE
 
+if [[ "$REFRESH_SERVICE" == true ]]; then
+    # Reinstall + restart the systemd unit so the running service picks up the
+    # freshly deployed run_mystery_gift.sh and unit definition. Needs a TTY for
+    # the remote sudo prompt, like the MT7601U step below.
+    ssh -t "$SSH_TARGET" \
+        "cd '$PI_PATH' && ./scripts/setup_mg_service.sh"
+fi
+
 if [[ "$INSTALL_MT7601U_AP" == true ]]; then
     # Allocate a TTY so the remote sudo prompt remains usable.  This is kept
     # opt-in: ordinary code deployment must not alter kernel modules or APT.
@@ -129,4 +143,9 @@ fi
 
 printf 'Deployed %s to %s:%s\n' \
     "$(git -C "$PROJECT_ROOT" rev-parse --short HEAD)" "$SSH_TARGET" "$PI_PATH"
-printf 'On the Pi, run: %s/scripts/preflight_pi.sh\n' "$PI_PATH"
+if [[ "$REFRESH_SERVICE" == true ]]; then
+    printf 'Refreshed and restarted the fr-ldn-mystery-gift service.\n'
+    printf 'Watch it with: ssh %s journalctl -u fr-ldn-mystery-gift.service -f\n' "$SSH_TARGET"
+else
+    printf 'On the Pi, run: %s/scripts/preflight_pi.sh\n' "$PI_PATH"
+fi
