@@ -121,6 +121,17 @@ class ReliableLink:
     def inflight(self):
         return len(self.unacked)
 
+    def outstanding(self):
+        """Frames the peer has NOT acknowledged yet - the honest measure of how much of the send
+        window is actually in use. inflight() counts every BUFFERED frame, including ones the peer
+        has already acked that are merely still held because an older hole has not filled (see
+        on_ack, which only advances window_lo over the contiguous acked run). Those frames are on
+        the peer already; charging them against the send window throttles the sender for no reason,
+        which is Go-Back-N accounting bolted onto a selective-repeat sender. Gate NEW sends on this,
+        not on inflight() - the buffer still has to hold the acked frames so the window base can
+        advance later, but they must not cost send capacity."""
+        return sum(1 for e in self.unacked.values() if not e[_E_ACKED])
+
     def send_low(self):
         """The header 'lowest sequence id pending ack' field = the send-window base: our oldest seq still
         awaiting ack, or out_seq when nothing is outstanding."""

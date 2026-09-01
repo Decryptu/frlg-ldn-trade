@@ -123,6 +123,26 @@ def run_live(run_config, lg):
     graceful_interrupt = False
     interrupt_count = 0
 
+    # Emission snapshot for both stall diagnostics. The joiner's failures all look the same on the
+    # wire - the console keeps polling and we go quiet - and neither diagnostic reported a RATE, so
+    # a starved child slot stream was indistinguishable from a healthy wait. host_t/s vs our t/s is
+    # the classifier: a healthy child answers a ~60/s console poll at ~60/s, and the reference
+    # failure ran at 0-3/s. `out` is the reliable frames the host has not acked (the send gate) and
+    # `rto` is the retransmit timeout the RTT samples have produced.
+    last_rates = [0.0, 0, 0, 0]      # [t_at_sample, host_t_in, t_out, k_out]
+
+    def rates():
+        now = time.monotonic()
+        dt = max(1e-3, now - last_rates[0])
+        r = (f"host_t={(s.host_t_in - last_rates[1]) / dt:.0f}/s "
+             f"our_t={(s.t_out - last_rates[2]) / dt:.0f}/s "
+             f"k={(s.k_out - last_rates[3]) / dt:.0f}/s "
+             f"out={s.rel.outstanding()}/{s.rel.max_inflight} "
+             f"rto={s.rel.rto() and round(s.rel.rto())}ms "
+             f"max_quiet={s.max_silence}f forced={s.silence_forced}")
+        last_rates[:] = [now, s.host_t_in, s.t_out, s.k_out]
+        return r
+
     def on_interrupt(_signum, _frame):
         nonlocal graceful_interrupt, interrupt_count
         interrupt_count += 1
@@ -156,7 +176,7 @@ def run_live(run_config, lg):
             if engine.commits > saved_commits:
                 saved_commits = engine.commits
                 try:
-                    n = save_received(engine, args, lg)
+                    n = save_received(engine, run_config, lg)
                     lg(f"[live] trade committed -> saved {n} received mon(s) to disk now "
                           f"(robust to an abrupt exit)")
                 except Exception as e:                       # never let a save error kill the link tail
@@ -202,7 +222,8 @@ def run_live(run_config, lg):
                        f"send_ni={'done' if (ni is not None and ni.done) else 'in progress' if ni else 'not built'}, "
                        f"host_ni_ack={'pending' if s._cur_ni_ack else 'none'}, "
                        f"host_ni_null={s._host_ni_null_seen}, host_uni={s._host_uni_seen}, "
-                       f"rx_ok={s.rx_count} protos={dict(sorted(s.rx_protos.items()))} tx={s.tx_count}")
+                       f"rx_ok={s.rx_count} protos={dict(sorted(s.rx_protos.items()))} tx={s.tx_count} "
+                       f"{rates()}")
             # Post-handshake entry observability. Everything below here logs to the verbose-only
             # sink, and --verbose is banned on live runs (it stalls the handshake), so a stall in
             # the union-room -> trade-room entry is completely invisible. Report the entry state on
@@ -217,7 +238,7 @@ def run_live(run_config, lg):
                             f"host_ready={getattr(engine, 'host_ready', None)}, "
                             f"we_sat={sat}, in_seat_phase={getattr(engine, 'in_seat_phase', None)}, "
                             f"card_pulled={getattr(ent, 'card_pulled', None)}, "
-                            f"rx_ok={s.rx_count} tx={s.tx_count}")
+                            f"rx_ok={s.rx_count} tx={s.tx_count} {rates()}")
             if not announced_established and engine.established:
                 announced_established = True
                 lg("[live] RFU link ESTABLISHED (gReceivedRemoteLinkPlayers: both LinkPlayer "
