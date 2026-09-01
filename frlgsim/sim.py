@@ -104,6 +104,17 @@ DUP_NACK_THRESHOLD = 3
 RTO_CEIL_MS = 670
 RTO_BACKOFF = 1.0
 RECV_NI_REACK_EVERY = 20  # re-ack the host's NI sub-frame every N repeats (it polls ~60/s)
+# DO NOT RAISE THESE - it has been tried and it is strictly worse. The whole child registration
+# must finish inside the parent's rfu_LMAN_establishConnection window of 240/360 frames = 4-6s
+# [link_rfu_2.c:340-345, 522-527], and on hardware (j21, healthy at 60 host polls/s) the host needed
+# TEN re-sends of one NI sub-frame over 2s before registering it, so one lost sub-frame eats half
+# the budget. The obvious response - re-send sooner and more often - was tried at 4/4 (~15/s): j22
+# died 0.7s after the host accepted us, against 6.6s at these values. The send window was not the
+# limit in either run (5 of 24 outstanding), so this is NOT congestion; the host's librfu NI
+# receiver is itself intolerant of the extra sub-frames. That reproduces the hazard already in
+# NOTES.local.md, where an every-poll re-send dropped the link in 0.9s - and it was reproduced here
+# even with the recv-NI ack given strict priority, so priority was not the explanation either.
+# A lost NI sub-frame does not get fixed by sending more of them.
 HOST_ACK_REPEAT_BEFORE_RESEND = 10   # repeats of one host ack before we assume a loss
 NULL_REEMIT_EVERY = 12    # re-send the terminator every N polls (~5/s), not every VBlank
 NULL_REEMIT_MAX = 30      # ~6s of paced re-sends before giving up on a stuck host
@@ -788,13 +799,19 @@ class Sim:
             #     assumption that "Pia Reliable guarantees delivery"; the same capture showed 116
             #     retransmitted seqs, so that assumption does not hold at the librfu layer. Re-emit
             #     the terminator until the host advances. Bounded so a genuinely dead host still ends.
-            # 1b. Our send-NI is finished, but the host is still re-acking one of our sub-frames,
-            #     which means the NEXT one never reached it. The sender is single-pass on the
-            #     assumption that "Pia Reliable guarantees delivery"; hardware captures disprove
-            #     that (105-160 duplicate deliveries per run, and the host re-acking one sub-frame
-            #     356 times over 6s before dropping the link). Re-send the sub-frame it is waiting
-            #     for. Paced, not every poll: emitting continuously starves the recv-NI ack below
-            #     and the codebase already records duplicate-ack spam causing a Communication error.
+            # 1b. Ack the host's CURRENT NI sub-frame FIRST, once per DISTINCT sub-frame
+            #     (idempotent - the host needs only its current one acked). This outranks our own
+            #     re-sends below because the host is BLOCKED on it and because a branch here returns
+            #     early: with the order reversed, a fast re-send starves this ack entirely.
+            if self._cur_ni_ack is not None and self._ni_ack_bytes != self._cur_ni_ack:
+                self._emitted_ni_ack = self._cur_ni_ack
+                return self._wrap_t(self._cur_ni_ack)
+            # 2. Our send-NI is finished but the host is still re-acking one of our sub-frames, so
+            #    the NEXT one never reached it. The sender is single-pass on the assumption that
+            #    "Pia Reliable guarantees delivery"; hardware captures disprove that (105-160
+            #    duplicate deliveries per run, and the host re-acking one sub-frame 356 times over
+            #    6s before dropping the link). Re-send the one it waits for, PACED - see the
+            #    constants above for why the rate must not be raised.
             if (self._ni.done and not self._host_uni_seen
                     and self._host_ni_resend is not None
                     and self._null_reemits < NULL_REEMIT_MAX):
@@ -804,11 +821,6 @@ class Sim:
                     if self._null_reemits == 1:
                         self.info("Host is still awaiting one of our NI sub-frames; re-sending it.")
                     return self._wrap_t(self._host_ni_resend)
-            # 2. emit the recv-NI ack once per DISTINCT host sub-frame (idempotent; the reliable layer
-            #    retransmits it under loss, so there is no need to re-queue it every poll).
-            if self._cur_ni_ack is not None and self._ni_ack_bytes != self._cur_ni_ack:
-                self._emitted_ni_ack = self._cur_ni_ack
-                return self._wrap_t(self._cur_ni_ack)
             # 3. switch to UNI only once the host itself has entered UNI (_host_uni_seen); switching earlier
             #    sends a state-4 slot into the host's still-open NI sender -> the in-game Communication error.
             if not self._host_uni_seen:
