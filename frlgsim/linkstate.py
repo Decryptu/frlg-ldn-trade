@@ -132,14 +132,32 @@ KEEPALIVE_WATCHDOG = 60
 # 145-frame route ran out of runway mid-way (UP and RIGHT done, final UP and READY not; the player
 # saw us walk partway and stop). 112 frames fits that budget with margin.
 TILE_STEP_FRAMES = 16
+
+
+def _step_gap(run_frames):
+    # Updates still owed to FINISH the step a run of `run_frames` direction keys left in progress,
+    # plus one of margin. FacingHandler_DpadMovement sets directionSequenceIndex = 16 and
+    # MovementStatusHandler_TryAdvanceScript decrements it once per link update while the key is
+    # ignored (MOVEMENT_MODE_FROZEN) [overworld.c:3432-3470] - so a step is exactly 16 updates start
+    # to finish, and a run of N keys leaves (N mod 16) of its last step already spent. The gap only
+    # has to cover the remainder, not a whole TILE_STEP_FRAMES. Overshooting is not harmful (a fresh
+    # direction sent while frozen is ignored, and the next run's remaining keys retry it) - it just
+    # burns slots, and the route costs one slot per host poll.
+    return (TILE_STEP_FRAMES - (run_frames % TILE_STEP_FRAMES)) % TILE_STEP_FRAMES + 1
+
+
+# The console's trade room does not always live long. Measured in ITS OWN link updates
+# (scratchpad/room_life.py): 152, 151, 123, 109 on the good runs, and 67, 64, 33, 29, 27, 9 on the
+# bad ones. The route spends one slot per update, so trimming it fits the walk inside more of those
+# rooms: 112 -> 88 frames, same geometry, same five tiles, one update of margin on every gap.
 ENTRY_RIGHT_CHAIR_ROUTE = (
     (LINK_KEY_CODE_EMPTY, 4),
     (LINK_KEY_CODE_DPAD_UP, 43),
-    (LINK_KEY_CODE_EMPTY, TILE_STEP_FRAMES),
+    (LINK_KEY_CODE_EMPTY, _step_gap(43)),      # 43 = 2 whole steps + 11 -> 5 owed, +1
     (LINK_KEY_CODE_DPAD_RIGHT, 9),
-    (LINK_KEY_CODE_EMPTY, TILE_STEP_FRAMES),
+    (LINK_KEY_CODE_EMPTY, _step_gap(9)),       # 7 owed, +1
     (LINK_KEY_CODE_DPAD_UP, 7),
-    (LINK_KEY_CODE_EMPTY, TILE_STEP_FRAMES),
+    (LINK_KEY_CODE_EMPTY, _step_gap(7)),       # 9 owed, +1
     (LINK_KEY_CODE_READY, 1),
 )
 
