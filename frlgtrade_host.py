@@ -47,6 +47,15 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser.add_argument("--trades", type=int, default=1, choices=range(1, 7), metavar="N")
     parser.add_argument("--anim-delay", type=int, default=None,
                         help="override the proven trade-animation frame delay")
+    parser.add_argument(
+        "--player-ids-repeat-frames", type=int, default=None, metavar="N",
+        help=("diagnostic: consecutive polls the opening SEND_PLAYER_IDS burst "
+              "occupies before the LinkPlayer block request; default is the "
+              "built-in timing"))
+    parser.add_argument(
+        "--link-player-idle-frames", type=int, default=None, metavar="N",
+        help=("diagnostic: quiet console polls after the LinkPlayer exchange "
+              "before the leader starts the trainer-card exchange itself"))
     host_cli.add_host_config_arguments(
         parser, shared_path=shared_path, local_path=local_path)
     host_cli.add_host_arguments(
@@ -83,6 +92,8 @@ def build_run_config(parser, args):
             output_size=args.out_size, output_format=args.out_format,
             trade_slot=args.slot, offered_slots=_offered_slots(parser, args),
             trades=args.trades, anim_delay=args.anim_delay,
+            player_ids_repeat_frames=args.player_ids_repeat_frames,
+            link_player_idle_frames=args.link_player_idle_frames,
             trust_pia=args.trust_pia)
         return configmod.TradeRunConfig(profile, plan, ldn, options)
     except ValueError as exc:

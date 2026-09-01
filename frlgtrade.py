@@ -85,6 +85,8 @@ def run_live(run_config, lg):
         connect_id = options.connect_id
     else:
         connect_id = (int.from_bytes(os.urandom(2), "big") or 1).to_bytes(2, "big")
+    lg.info(f"emulator connect id {connect_id.hex()} "
+            f"({'override' if options.connect_id else 'random nonzero'})")
     lg(f"[live] emulator connect: will send 'C' with connect id {connect_id.hex()} "
           f"({'override' if options.connect_id else 'random nonzero'}); the host's 'A' (0x41) accept "
           f"seats our slot - the value need not match anything on the host.")
@@ -114,6 +116,8 @@ def run_live(run_config, lg):
     announced_established = False
     saved_commits = 0       # received mons already written to disk (save AT COMMIT, not just run-end)
     connect_ticks = 0
+    ni_wait_ticks = 0
+    entry_ticks = 0
     leave_until = None
     close_until = None
     graceful_interrupt = False
@@ -184,6 +188,36 @@ def run_live(run_config, lg):
                       f"(conn={conn.state} after {connect_ticks}f). Awaiting the emulator RFU "
                       f"connect/'A' + NI handshake + LinkPlayer exchange before sitting.")
                 connect_announced = True
+            # Post-connect stall diagnostic. Between the host's 'A' and its first UNI poll the
+            # child is legitimately silent (the reference capture sends zero 'T' across the host's
+            # join-textbox gap), so a stall here is invisible: it looks identical to a healthy wait.
+            # Report the NI/UNI state so "the host never engaged" can be told apart from "our own
+            # NI never finished".
+            if not s._ni_done:
+                ni_wait_ticks += 1
+                if ni_wait_ticks % 120 == 0:
+                    ni = getattr(s, "_ni", None)
+                    lg.info(f"awaiting RFU handshake: {ni_wait_ticks}f, "
+                       f"gba_accepted={s._gba_accepted}, "
+                       f"send_ni={'done' if (ni is not None and ni.done) else 'in progress' if ni else 'not built'}, "
+                       f"host_ni_ack={'pending' if s._cur_ni_ack else 'none'}, "
+                       f"host_ni_null={s._host_ni_null_seen}, host_uni={s._host_uni_seen}, "
+                       f"rx_ok={s.rx_count} protos={dict(sorted(s.rx_protos.items()))} tx={s.tx_count}")
+            # Post-handshake entry observability. Everything below here logs to the verbose-only
+            # sink, and --verbose is banned on live runs (it stalls the handshake), so a stall in
+            # the union-room -> trade-room entry is completely invisible. Report the entry state on
+            # the info sink instead.
+            if s._ni_done and not engine.commits:
+                entry_ticks += 1
+                if entry_ticks % 120 == 0:
+                    ent = getattr(engine, "entry", None)
+                    lg.info(f"entry state: {entry_ticks}f, "
+                            f"established={engine.established}, "
+                            f"host_in_seat={getattr(engine, 'host_in_seat', None)}, "
+                            f"host_ready={getattr(engine, 'host_ready', None)}, "
+                            f"we_sat={sat}, in_seat_phase={getattr(engine, 'in_seat_phase', None)}, "
+                            f"card_pulled={getattr(ent, 'card_pulled', None)}, "
+                            f"rx_ok={s.rx_count} tx={s.tx_count}")
             if not announced_established and engine.established:
                 announced_established = True
                 lg("[live] RFU link ESTABLISHED (gReceivedRemoteLinkPlayers: both LinkPlayer "

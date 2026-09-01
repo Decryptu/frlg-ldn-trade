@@ -117,6 +117,8 @@ class TradePlan:
     offered_slots: tuple | None = None
     trades: int = 1
     anim_delay: int | None = None
+    player_ids_repeat_frames: int | None = None
+    link_player_idle_frames: int | None = None
     trust_pia: bool = False
 
     def __post_init__(self):
@@ -133,6 +135,14 @@ class TradePlan:
         if self.anim_delay is not None \
                 and (type(self.anim_delay) is not int or self.anim_delay < 0):
             raise ValueError("anim_delay must be a non-negative integer")
+        if (self.player_ids_repeat_frames is not None
+                and (type(self.player_ids_repeat_frames) is not int
+                     or not 1 <= self.player_ids_repeat_frames <= 600)):
+            raise ValueError("player_ids_repeat_frames must be between 1 and 600")
+        if (self.link_player_idle_frames is not None
+                and (type(self.link_player_idle_frames) is not int
+                     or not 0 <= self.link_player_idle_frames <= 600)):
+            raise ValueError("link_player_idle_frames must be between 0 and 600")
         if self.offered_slots is not None:
             if len(self.offered_slots) != self.trades:
                 raise ValueError("offered_slots must contain one slot per trade")

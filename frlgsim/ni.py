@@ -158,13 +158,33 @@ class NISender:
         self.remain = NI_HEADER_SIZE                            # NI_START sends the 7-byte header
         self.now = [0] * WINDOW_COUNT                           # per-phase offset into src (SENDING)
         self._header = _ni_header(self.data_type, self.payload_size, self.data_size)
+        self.null_slot = None          # the emitted NULL terminator, retained for re-emission
+        self.emitted = []              # [(state, n, phase, slot)] in emission order
 
     @property
     def done(self):
         return self.state == SLOT_STATE_DONE
 
     def _emit(self, state_lcom, n, phase, size, payload):
-        return rfu.child_ni_llsf(state_lcom, n, phase, 0, size) + bytes(payload)
+        slot = rfu.child_ni_llsf(state_lcom, n, phase, 0, size) + bytes(payload)
+        # Keep every emitted sub-frame, in order, so a lost one can be re-sent. The machine is
+        # single-pass ("Pia Reliable guarantees delivery"), but hardware captures show the host
+        # re-acking a sub-frame hundreds of times because the NEXT one never arrived - with no
+        # retransmit window that deadlocks the whole handshake.
+        self.emitted.append((state_lcom, n, phase, slot))
+        return slot
+
+    def resend_after(self, state_lcom, n, phase):
+        """Return the sub-frame that follows the one the host last acked, or None.
+
+        The host's ack carries the (state, n, phase) of the last sub-frame it received, so the
+        one it is waiting for is simply the next one we emitted."""
+        for i, (st, nn, ph, _slot) in enumerate(self.emitted):
+            if (st, nn, ph) == (state_lcom, n, phase):
+                if i + 1 < len(self.emitted):
+                    return self.emitted[i + 1][3]
+                return None
+        return None
 
     def next_slot(self):
         """Advance the NI machine one sub-frame and return its slot bytes (or None when done).
@@ -210,6 +230,10 @@ class NISender:
             # NULL: n=1, size=0 - the terminator the child emits once before going UNI.
             slot = self._emit(rfu.LCOM_NULL, 1, 0, 0, b"")
             self.state = SLOT_STATE_DONE
+            # Keep the terminator so the orchestrator can re-emit it if the host never registers
+            # it. Observed on hardware: the host sat re-acking our NI_END 328 times (~11s) and
+            # then dropped the link, which is what a lost NULL looks like from its side.
+            self.null_slot = slot
             return slot
 
         return None

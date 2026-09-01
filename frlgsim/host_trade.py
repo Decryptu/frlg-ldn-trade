@@ -22,12 +22,13 @@ With :class:`frlgsim.rfu_leader.RFULeader`, the live loop is intentionally small
 ``rfu_leader.disconnect_frame()`` and calls ``mark_disconnect_sent``.
 """
 
-from collections import deque
+from collections import Counter, deque
 from dataclasses import dataclass
 
 from . import block, linkplayer, mon as monmod, rfu, trade
 
 
+STATUS_REPORT_FRAMES = 30   # 0.5s; the H_LINK_PLAYER stall window is only ~2s
 H_LINK_PLAYER = "H_LINK_PLAYER"
 H_ENTRY_CARD = "H_ENTRY_CARD"
 H_ENTRY_SEAT = "H_ENTRY_SEAT"
@@ -60,6 +61,35 @@ class HostTradeTiming:
     # BufferTradeParties needs a quiescent window after the child's first IDLE reaches the host.
     party_link_settle_frames: int = 30
     startup_standby_echo_frames: int = 4
+    # How many consecutive polls the opening SEND_PLAYER_IDS burst occupies.
+    #
+    # The native parent holds SEND_PLAYER_IDS in gSendCmd across many polls: it
+    # is prepared in Task_PlayerExchange case 1 and case 101 then spins on
+    # IsSendCmdComplete() before the task advances [link_rfu_2.c:1832-1845].
+    # The child parks in case 2 until gRfu.playerCount becomes non-zero, which
+    # only a *received* SEND_PLAYER_IDS sets. Emitting it for a single VBlank
+    # loses that race: the child never leaves case 2, so it never sends its
+    # LinkPlayer block and the leader sits in H_LINK_PLAYER forever. This is the
+    # same constant, and the same reasoning, as the Mystery Gift host's proven
+    # MysteryGiftTiming.player_ids_repeat_frames.
+    player_ids_repeat_frames: int = 8
+    # Quiet child polls after the LinkPlayer block exchange before the leader starts the
+    # trainer-card exchange on its own.
+    #
+    # The room-entry standby barrier is normally child-initiated, but after both LinkPlayer
+    # blocks land the console can sit on pure IDLE waiting for the leader to move first,
+    # while the leader waits for a standby that never comes. Observed on hardware: the child
+    # went silent for 1.2s and then tore the LDN session down (2318-0006). This is the same
+    # shape as the Mystery Gift host's client_ready_idle_frames. Counted only after our own block
+    # has drained, so this is the console's *block consumption* window, not its idle patience.
+    #
+    # Nothing on the wire reports that the console has consumed a block
+    # (see MysteryGiftTiming.inter_block_gap_frames), so this has to be a timer. 12 is the value
+    # MG measured for exactly this - "the console may take up to this + 1 frames to consume a
+    # block with nothing dropped". 3 completed one trade and then failed the next: the successful
+    # run only worked because our own block happened to drain slowly (0.4s from block start vs
+    # 0.3s on the failure), which accidentally supplied the margin this constant should provide.
+    link_player_idle_frames: int = 12
     # Longer than SendReadyExitStandbyUntilAllReady's native re-emission cadence.
     entry_final_standby_quiet_frames: int = 75
     # CB2_CreateTradeMenu needs time to finish installing its menu callback.
@@ -78,6 +108,8 @@ SAVE_BARRIER_ROUNDS = DEFAULT_HOST_TRADE_TIMING.save_barrier_rounds
 SAVE_FINAL_STANDBY_QUIET_FRAMES = DEFAULT_HOST_TRADE_TIMING.save_final_standby_quiet_frames
 PARTY_LINK_SETTLE_FRAMES = DEFAULT_HOST_TRADE_TIMING.party_link_settle_frames
 STARTUP_STANDBY_ECHO_FRAMES = DEFAULT_HOST_TRADE_TIMING.startup_standby_echo_frames
+PLAYER_IDS_REPEAT_FRAMES = DEFAULT_HOST_TRADE_TIMING.player_ids_repeat_frames
+LINK_PLAYER_IDLE_FRAMES = DEFAULT_HOST_TRADE_TIMING.link_player_idle_frames
 ENTRY_FINAL_STANDBY_QUIET_FRAMES = DEFAULT_HOST_TRADE_TIMING.entry_final_standby_quiet_frames
 FINAL_MENU_READY_FRAMES = DEFAULT_HOST_TRADE_TIMING.final_menu_ready_frames
 POST_CANCEL_EXIT_WAIT_FRAMES = DEFAULT_HOST_TRADE_TIMING.post_cancel_exit_wait_frames
@@ -179,6 +211,7 @@ class HostTradeEngine:
         self._link_waiting_idle = False
         self._link_idle_frames = 0
         self._link_completed = None
+        self._link_player_idle = 0
         self._child_ready = False
         self._child_finish = False
         self._anim_wait = None
@@ -208,14 +241,47 @@ class HostTradeEngine:
         self._held_plan = deque()
         self._held_steady = None
         self._held_label = None
+        # Diagnostic counters. A stall in H_LINK_PLAYER is otherwise invisible: the console
+        # goes quiet and nothing says whether it never answered, answered something
+        # unexpected, or stopped part-way. Mirrors the Mystery Gift engine's status report.
+        self._child_frames = 0
+        self._child_idles = 0
+        self._child_op_counts = Counter()
+        self._child_ops = set()
+        self._parent_polls = 0
+        self._status_countdown = STATUS_REPORT_FRAMES
         self.trace = []
 
         # The RFU leader announces IDs, then performs the session-one-shot LinkPlayer pull/exchange.
-        self._queue_words(rfu.send_player_ids_words(), "SEND_PLAYER_IDS")
-        self._request_and_send(trade.BLOCK_REQ_SIZE_NONE,
-                               linkplayer.build_block(
-                                   self.lp, name_pad=HOST_NAME_PAD).ljust(200, b"\x00"),
-                               "link_player")
+        # SEND_PLAYER_IDS is idempotent in RfuHandleReceiveCommand, so repeating it is safe and is
+        # what the native parent's IsSendCmdComplete() spin looks like on the wire.
+        for _ in range(self.timing.player_ids_repeat_frames):
+            self._queue_words(rfu.send_player_ids_words(), "SEND_PLAYER_IDS")
+        self._link_player_block = linkplayer.build_block(
+            self.lp, name_pad=HOST_NAME_PAD).ljust(200, b"\x00")
+        # Native Task_PlayerExchange case 3 emits ONLY the block request, then the parent parks at
+        # case 4 on AreAllPlayersFinishedReceiving() until the child's block has landed
+        # [link_rfu_2.c:1852-1868]. Queueing our own 200-byte block here too puts both sides on the
+        # wire at once for ~17 frames. Send ours from _after_child_block, on the same signal the
+        # Mystery Gift host uses: a *valid* child block proves the child's gBlockSendBuffer was
+        # filled by case 0, so it is ready to receive.
+        self._expected = "link_player"
+        self._queue_words(rfu.send_block_req_words(trade.BLOCK_REQ_SIZE_NONE),
+                          "BLOCK_REQ:link_player")
+
+    def _report_status(self):
+        """Say what the console is actually sending while the leader waits."""
+        ops = ", ".join(
+            f"{rfu.RFUCMD_NAMES.get(op, hex(op))}x{count}"
+            for op, count in sorted(self._child_op_counts.items(),
+                                    key=lambda kv: -kv[1])) or "none"
+        self.info(
+            f"Waiting in {self.state}: expecting {self._expected!r}, "
+            f"console LinkPlayer {'received' if self.child_link_player else 'NOT received'}, "
+            f"child frames {self._child_frames} ({self._child_idles} idle) "
+            f"vs parent polls {self._parent_polls}, "
+            f"queued words {len(self._words)} blocks {len(self._blocks)}, "
+            f"opcodes seen: {ops}")
 
     def _set_state(self, state):
         if state != self.state:
@@ -370,9 +436,19 @@ class HostTradeEngine:
         if expected == "link_player":
             lp, ok = linkplayer.parse_block(data)
             if not ok:
-                raise ValueError("child LinkPlayer block has invalid GameFreak magic")
+                # LocalLinkPlayerToBlock only fills the child's send buffer in Task_PlayerExchange
+                # case 0, so a block that predates it carries whatever was left there. That is a
+                # too-early request, not a fatal protocol error: keep waiting rather than tearing
+                # down a live LDN network.
+                self._rejected_link_players = getattr(self, "_rejected_link_players", 0) + 1
+                self.trace.append(("link_player_rejected", self._rejected_link_players))
+                self.info("Console LinkPlayer block had an invalid GameFreak magic "
+                          f"(#{self._rejected_link_players}); still waiting for a valid one.")
+                return
             self.child_link_player = lp
             self._expected = "warp0"
+            self._queue_block(self._link_player_block, "host:link_player")
+            self.info(f"Console identified as {lp.name!r}; sending the host LinkPlayer block now.")
             return
         if expected == "card":
             self.child_card = bytes(data[:100])
@@ -406,6 +482,18 @@ class HostTradeEngine:
 
     def feed_child_slot(self, slot):
         """Consume one child gSendCmd row (14 bytes, rolling tag permitted)."""
+        self._child_frames += 1
+        if bytes(slot) != rfu.idle_slot():
+            _rec = rfu.parse_slot(slot)
+            if _rec is not None:
+                self._child_op_counts[_rec["op"]] += 1
+                if _rec["op"] not in self._child_ops:
+                    self._child_ops.add(_rec["op"])
+                    self.info("First console "
+                              f"{rfu.RFUCMD_NAMES.get(_rec['op'], hex(_rec['op']))} "
+                              f"while host is in {self.state}.")
+        else:
+            self._child_idles += 1
         if bytes(slot) == rfu.idle_slot():
             if self.state == H_SAVE and self._save_final_standby_seen:
                 self._save_standby_quiet += 1
@@ -423,6 +511,21 @@ class HostTradeEngine:
                                        self._entry_standby_quiet))
                     self._expected = None
                     self._begin_party_exchange()
+                return
+            if self.state == H_LINK_PLAYER and self._expected == "warp0":
+                # Our own LinkPlayer block is ~17 frames on the wire. tick() drains self._words
+                # before continuing an in-flight BlockSender, so queueing the next BLOCK_REQ while
+                # ours is still going out preempts it mid-transfer and the console never receives a
+                # complete block. Wait for our sender to drain before counting the console's idle.
+                if self._sender is not None or self._blocks:
+                    return
+                # The console has our block and its own; it is waiting for the leader to act.
+                self._link_player_idle += 1
+                if self._link_player_idle >= self.timing.link_player_idle_frames:
+                    self.trace.append(("link_player_idle_complete", self._link_player_idle))
+                    self.info("Console is idle after the LinkPlayer exchange; "
+                              "starting the trainer-card exchange.")
+                    self._begin_card_exchange()
                 return
             if self.state == H_PARTY and self._link_waiting_idle:
                 self._link_idle_frames += 1
@@ -450,6 +553,7 @@ class HostTradeEngine:
             return
         if self.state == H_PARTY and self._link_waiting_idle:
             self._link_idle_frames = 0
+        self._link_player_idle = 0
         rec = rfu.parse_slot(slot)
         if rec is None:
             return
@@ -628,6 +732,12 @@ class HostTradeEngine:
 
     def tick(self):
         """Advance one VBlank and return the parent's seven-word gSendCmd."""
+        self._parent_polls += 1
+        if self.state == H_LINK_PLAYER:
+            self._status_countdown -= 1
+            if self._status_countdown <= 0:
+                self._status_countdown = STATUS_REPORT_FRAMES
+                self._report_status()
         if self.state == H_LEAVE_MENU and self._leave_menu_wait is not None:
             self._leave_menu_wait -= 1
             if self._leave_menu_wait <= 0:

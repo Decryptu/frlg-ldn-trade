@@ -1,7 +1,9 @@
 """Composition of the FRLG leader Reliable, RFU, and trade layers."""
 
+from dataclasses import replace
+
 from . import reliable, rfu, trade
-from .host_trade import HostTradeEngine
+from .host_trade import DEFAULT_HOST_TRADE_TIMING, HostTradeEngine
 from .rfu_leader import RFULeader, UNI
 
 
@@ -16,13 +18,18 @@ class HostSession:
     def __init__(self, party=None, *, engine=None, plan=None, profile=None, trade_slot=0,
                  offered_slots=None, trades=1, link_player=None,
                  anim_delay=None, trust_pia=True, log=lambda *a: None,
-                 reliable_kwargs=None, rfu_kwargs=None):
+                 reliable_kwargs=None, rfu_kwargs=None,
+                 player_ids_repeat_frames=None, link_player_idle_frames=None):
         if plan is not None:
             trade_slot = plan.trade_slot
             offered_slots = plan.offered_slots
             trades = plan.trades
             anim_delay = plan.anim_delay
             trust_pia = plan.trust_pia
+            if player_ids_repeat_frames is None:
+                player_ids_repeat_frames = plan.player_ids_repeat_frames
+            if link_player_idle_frames is None:
+                link_player_idle_frames = plan.link_player_idle_frames
         self.reliable = reliable.HostReliableSession(**(reliable_kwargs or {}))
         self.rfu = RFULeader(**(rfu_kwargs or {}))
         if engine is not None:
@@ -30,11 +37,17 @@ class HostSession:
                 raise ValueError("supply an activity engine or trade configuration, not both")
             self.activity = engine
         elif party is not None:
+            overrides = {}
+            if player_ids_repeat_frames is not None:
+                overrides["player_ids_repeat_frames"] = player_ids_repeat_frames
+            if link_player_idle_frames is not None:
+                overrides["link_player_idle_frames"] = link_player_idle_frames
+            timing = replace(DEFAULT_HOST_TRADE_TIMING, **overrides) if overrides else None
             self.activity = HostTradeEngine(
                 party, trade_slot=trade_slot, offered_slots=offered_slots, trades=trades,
                 link_player=link_player, profile=profile,
                 anim_delay=(trade.DEFAULT_ANIM_FRAMES if anim_delay is None else anim_delay),
-                trust_pia=trust_pia, log=log)
+                trust_pia=trust_pia, timing=timing, log=log)
         else:
             raise ValueError("HostSession needs either a party or an activity engine")
         self.log = log

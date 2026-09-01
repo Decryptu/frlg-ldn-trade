@@ -487,8 +487,10 @@ def test_host_identity_uses_redundant_gen3_name_terminators():
     profile deliberately retains its capture-matching zero padding.
     """
     h = HostTradeEngine([_mon(1)], link_player=linkplayer.LinkPlayer(name="EMU"))
-    payload, label = h._blocks[0]
-    assert label == "host:link_player"
+    # The block is built at construction but only queued once the child's own LinkPlayer block
+    # lands, so that both sides are not sending blocks over each other.
+    payload = h._link_player_block
+    assert not h._blocks
     parsed, ok = linkplayer.parse_block(payload)
     assert ok and parsed.name == "EMU"
     assert payload[24:32] == bytes.fromhex("bfc7cfffffffffff")

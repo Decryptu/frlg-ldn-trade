@@ -82,6 +82,17 @@ def _dump_beacon(app_data, log):
                     f"TID=0x{int.from_bytes(d[0:2], 'little'):04x} "
                     f"RFU-session-id=0x{int.from_bytes(d[10:12], 'little'):04x} "
                     f"tradeSpecies={int.from_bytes(d[20:24], 'little') >> 16}")
+                # The RFU search word carries the host's GAME state: which activity it is
+                # advertising and whether it has already started one. Roughly half of all joiner
+                # runs get a console that accepts the LDN/Pia/RFU link and then never runs its
+                # game link loop (zero NI acks, ~3 'T'/s instead of ~40). This is the only
+                # pre-join, read-only view of that state, so surface it on the INFO sink - the
+                # verbose sink is unusable on live runs.
+                word = int.from_bytes(d[16:18], "little")
+                info = getattr(log, "info", log)
+                info(f"host beacon game state: activity={word & 0x007F} "
+                     f"started_activity={bool(word & (1 << 15))} "
+                     f"has_card={bool(word & 0x4000)} word=0x{word:04x}")
         except Exception as e:
             log(f"[live] beacon decode skipped ({type(e).__name__}: {e})")
     return app_data
@@ -290,13 +301,16 @@ class LiveTransport:
 
     def __init__(self, password=None, nickname="EMU", keys_path="~/.switch/prod.keys",
                  local_comm_id=None, scene_id=None, app_version=None,
-                 phyname="phy0", ifname="ldnclient", log=print):
+                 phyname="phy0", ifname="ldnclient", log=print,
+                 scan_channels=(1, 6, 11), scan_dwell=0.6):
         self.info = getattr(log, "info", log)   # clean milestone sink (default-mode narration)
         self.password = password if password else GBA_APP_PASSPHRASE
         self.nickname = nickname
         self.keys_path = keys_path
         self.phyname = phyname
         self.ifname = ifname
+        self.scan_channels = tuple(scan_channels)
+        self.scan_dwell = scan_dwell
         if local_comm_id is not None:
             self.LOCAL_COMMUNICATION_ID = local_comm_id
         if scene_id is not None:
@@ -370,7 +384,14 @@ class LiveTransport:
         async def main():
             keys = ldn.load_keys(self.keys_path)
             self.info("Scanning for the FRLG network...")
-            networks = await ldn.scan(keys, phyname=self.phyname)
+            # ldn.scan defaults to a 110ms dwell, but a Switch beacons about every 102ms
+            # (100 TU), so the default gives barely one beacon per channel and misses the
+            # network outright on a bad roll - observed as 'saw 0, 0 joinable' on a console
+            # that was definitely hosting, immediately followed by a successful join.
+            # ldn_scan.py uses --dwell 0.6 for discovery; match it.
+            networks = await ldn.scan(keys, phyname=self.phyname,
+                                      channels=list(self.scan_channels),
+                                      dwell_time=self.scan_dwell)
             joinable = [n for n in networks
                         if n.accept_policy != ldn.ACCEPT_NONE
                         and n.num_participants < n.max_participants]
@@ -531,6 +552,15 @@ class LiveTransport:
                 continue
             src_ip, src_port, dst_ip, dst_port, payload = parsed
             if src_ip == self.our_ip or dst_port != PIA_PORT or not self._accept_dst(dst_ip):
+                # Diagnostic: a stall where only broadcast Net/Session arrive and never the
+                # unicast RTT/Reliable looks identical to "the host is silent" unless we can see
+                # what we are dropping. Bounded so it cannot flood the frame loop.
+                if dst_port == PIA_PORT and src_ip != self.our_ip:
+                    self._rx_filtered = getattr(self, "_rx_filtered", 0) + 1
+                    if self._rx_filtered <= 12:
+                        self.log(f"[live] RX FILTERED #{self._rx_filtered}: {src_ip} -> "
+                                 f"{dst_ip}:{dst_port} len={len(payload)} "
+                                 f"(our_ip={self.our_ip}) {payload[:4].hex()}")
                 continue
             self._rx_seen += 1
             if self._rx_seen <= 10:

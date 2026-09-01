@@ -92,6 +92,10 @@ RTT_JITTER_K = 4.0
 DUP_NACK_THRESHOLD = 3
 RTO_CEIL_MS = 670
 RTO_BACKOFF = 1.0
+RECV_NI_REACK_EVERY = 20  # re-ack the host's NI sub-frame every N repeats (it polls ~60/s)
+HOST_ACK_REPEAT_BEFORE_RESEND = 10   # repeats of one host ack before we assume a loss
+NULL_REEMIT_EVERY = 12    # re-send the terminator every N polls (~5/s), not every VBlank
+NULL_REEMIT_MAX = 30      # ~6s of paced re-sends before giving up on a stuck host
 RTO_BOOTSTRAP_MS = 200    # RTO while sampleless so the connect J/C retransmit until the host engages (NOT a floor)
 # K-ack pacing: the K-ack is the emulator's ack of a received host poll. _drive_reliable emits up to
 # K_PER_VBLANK new K-acks per VBlank (the free-run cadence), leaving window room for the 'T'. K_BACKLOG_MAX
@@ -201,6 +205,13 @@ class Sim:
         # that gap -> a malformed/out-of-protocol slot -> in-game "Communication error". Stop acking at
         # NULL: emit _cur_ni_ack only until NULL is seen, then K/bulk-acks only until _host_uni_seen.
         self._host_ni_null_seen = False
+        self._host_ni_ack_state = None    # LLSF state of the host's most recent ack of OUR send-NI
+        self._host_ni_repeat = 0          # consecutive repeats of the host's current NI sub-frame
+        self._host_ni_ack_key = None      # (state,n,phase) of the host's last ack of OUR NI
+        self._host_ni_ack_repeat = 0      # how many times it has repeated that ack
+        self._host_ni_resend = None       # the sub-frame it is waiting for, to re-send
+        self._null_reemits = 0            # bounded re-sends of our NI terminator
+        self._null_ticks = 0              # polls spent waiting to re-send it
         self._ni_status_logged = False    # logged the host's recv-NI join status once
         self.ni_rejected = False          # host returned a non-JOIN_GROUP_OK status -> abort the trade
         self.host_disconnected = False    # host sent a emulator 'D' (0x44) disconnect -> link closing
@@ -387,7 +398,38 @@ class Sim:
         if ni_rec is not None:
             ack_slot = self._ni_recv.on_host_ni(ni_rec)
             if ack_slot is not None:
+                if ack_slot == self._cur_ni_ack:
+                    # The host is REPEATING the same sub-frame, which means it has not seen our
+                    # ack. Emitting the ack once per distinct sub-frame assumes reliable delivery;
+                    # observed on hardware: the host re-sent NI_START 480 times over 8s, timed out
+                    # its own NI, and the entry handshake never recovered. Periodically clear the
+                    # in-flight marker so the ack is re-emitted - every poll would spam hundreds of
+                    # duplicates (a documented past failure), so re-ack on a slow cadence.
+                    self._host_ni_repeat += 1
+                    if self._host_ni_repeat % RECV_NI_REACK_EVERY == 0:
+                        self._ni_ack_bytes = None
+                        if self._host_ni_repeat == RECV_NI_REACK_EVERY:
+                            self.info("Host is repeating its NI sub-frame; re-acking it.")
+                else:
+                    self._host_ni_repeat = 0
                 self._cur_ni_ack = ack_slot         # latest host NI sub-frame -> the ack to re-emit
+            if ni_rec.get("ack") == 1:
+                # The host's ack of OUR send-NI names the last sub-frame it registered, so the one
+                # it is waiting for is the next one we emitted. A REPEATED ack means that next
+                # sub-frame was lost.
+                key = (ni_rec.get("state"), ni_rec.get("n"), ni_rec.get("phase"))
+                self._host_ni_ack_state = ni_rec.get("state")
+                if key == self._host_ni_ack_key:
+                    self._host_ni_ack_repeat += 1
+                    if (self._host_ni_ack_repeat >= HOST_ACK_REPEAT_BEFORE_RESEND
+                            and self._ni is not None and self._host_ni_resend is None):
+                        self._host_ni_resend = self._ni.resend_after(*key)
+                else:
+                    self._host_ni_ack_key = key
+                    self._host_ni_ack_repeat = 0
+                    self._host_ni_resend = None
+                    self._null_reemits = 0
+                    self._null_ticks = 0
             if ni_rec.get("state") == rfu.LCOM_NULL and ni_rec.get("ack") == 0:
                 self._host_ni_null_seen = True       # host's NI terminator -> stop acking, go quiet
             # host join STATUS: log it once; a non-OK value means the host REJECTED us (full
@@ -678,6 +720,28 @@ class Sim:
                 slot = self._ni.next_slot()
                 if slot is not None:
                     return self._wrap_t(slot)
+            # 1b. our send-NI is finished, but if the host is STILL acking NI_END it never
+            #     registered our NULL terminator, so it will re-ack forever and then drop the link
+            #     (observed: 328 NI_END acks over ~11s, then close). The sender is single-pass on the
+            #     assumption that "Pia Reliable guarantees delivery"; the same capture showed 116
+            #     retransmitted seqs, so that assumption does not hold at the librfu layer. Re-emit
+            #     the terminator until the host advances. Bounded so a genuinely dead host still ends.
+            # 1b. Our send-NI is finished, but the host is still re-acking one of our sub-frames,
+            #     which means the NEXT one never reached it. The sender is single-pass on the
+            #     assumption that "Pia Reliable guarantees delivery"; hardware captures disprove
+            #     that (105-160 duplicate deliveries per run, and the host re-acking one sub-frame
+            #     356 times over 6s before dropping the link). Re-send the sub-frame it is waiting
+            #     for. Paced, not every poll: emitting continuously starves the recv-NI ack below
+            #     and the codebase already records duplicate-ack spam causing a Communication error.
+            if (self._ni.done and not self._host_uni_seen
+                    and self._host_ni_resend is not None
+                    and self._null_reemits < NULL_REEMIT_MAX):
+                self._null_ticks += 1
+                if self._null_ticks % NULL_REEMIT_EVERY == 0:
+                    self._null_reemits += 1
+                    if self._null_reemits == 1:
+                        self.info("Host is still awaiting one of our NI sub-frames; re-sending it.")
+                    return self._wrap_t(self._host_ni_resend)
             # 2. emit the recv-NI ack once per DISTINCT host sub-frame (idempotent; the reliable layer
             #    retransmits it under loss, so there is no need to re-queue it every poll).
             if self._cur_ni_ack is not None and self._ni_ack_bytes != self._cur_ni_ack:
