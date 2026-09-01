@@ -56,7 +56,7 @@ RTX_GAP_LIMIT_NI = 2       # NI/seat phase: a slightly longer tail (a few critic
 #     Communication error (measured: both 18 and 128 fault shortly before the save; 6 is the ceiling and
 #     completes the trade). Emission is FREE-RUN (one datagram per VBlank, below) rather than paced to the
 #     host's poll arrivals, so in steady state in-flight self-limits well under the window - the window is
-#     the safety cap, not the pacer. (K_INFLIGHT_MAX reserves part of it for the critical 'T' so a K-ack
+#     the safety cap, not the pacer. (K_INFLIGHT_MAX bounds the K layer independently so a K-ack
 #     burst can never starve it.)
 #   RTT_JITTER_K - the RTO must cover the JITTER, not just the median, or every slow-but-not-lost frame in
 #     the 1s tail is retransmitted prematurely. rto() adds K * MAD(RTT) when this is > 0 (0 = console).
@@ -130,11 +130,25 @@ RTO_BOOTSTRAP_MS = 200    # RTO while sampleless so the connect J/C retransmit u
 # So K SUPERSEDES rather than queues: only the NEWEST un-acked host ts is pending (K is a monotonic
 # ts ack and the host re-sends any 'T' we leave un-acked, so an older K carries nothing a newer one
 # does not), and at most ONE goes out per VBlank.
-# K in-flight cap: at most this many of OUR K-acks unacked at once. K is droppable; capping it
-# RESERVES room in the small window for the critical per-poll T (recv-NI ack / UNI slot), which must
-# never be starved - with the window full of K, a host NI-handshake flood would crowd out the
-# recv-NI ack the host waits on and the NI handshake deadlocks.
-K_INFLIGHT_MAX = 2
+# The count it carries is NOT droppable, though. `k_seq` is the running total of host 'T' frames we
+# have received, incremented on receipt, and the console's parent uses it as the DRAC ack that gates
+# RfuMain2_Parent's `(lman.parentAck_flag & parentSlots) == parentSlots` [link_rfu_2.c:867]. That gate
+# does nothing until the parent finalizes (RfuMain1_Parent takes the pre-FINALIZED branch), so an
+# under-reported k_seq is invisible right up to the trade-room entry and then wedges it: gSendCmd is
+# never cleared by MoveSendCmdToRecv, SEND_PLAYER_IDS never reaches the wire, and the parent stops
+# transmitting altogether. Measured (j23): 247 host 'T', k_seq 51, one UNI frame then silence for 125s.
+# K in-flight cap. This is now the ONLY bound on the K layer: a pending K goes out regardless of the
+# send window, exactly like the child-liveness override below and for the same reason - a full window
+# costs throughput, a withheld ack costs the link. Supersession makes that safe: at most ONE K is ever
+# pending, so we offer at most one per VBlank and never more than K_INFLIGHT_MAX unacked at a time.
+#
+# Measured (j24, hardware): with K gated a slot TIGHTER than the 'T' the entry phase ran at out=24/24
+# with k=0/s - our own idle UNI slots filled a window draining at ~2/s and locked the K out
+# permanently, so the console never learned we had received its finalize poll and went quiet. The
+# ordering was backwards: the K is not the droppable frame here, it is the frame the peer is blocked
+# on. (The older worry - that K crowds out the recv-NI ack during a host NI flood - was written when K
+# queued one frame per host poll. It cannot recur now that K supersedes to one pending frame.)
+K_INFLIGHT_MAX = 4
 # CHILD LIVENESS. Measured in joiner_entry_reference: the console polled at 60-97 'T'/s while the
 # child emitted 0-3/s, going quiet for 0.6s, 0.8s, 1.0s, 1.2s, 2.2s, 2.7s and 2.9s at a stretch -
 # because the Pia send window was full (see the K flood above) or _gba_frame() had nothing new to
@@ -151,12 +165,31 @@ K_INFLIGHT_MAX = 2
 # child slot is treated as a liveness obligation and not merely as data: the congestion window may
 # DELAY it, but it must not silence it indefinitely.
 CHILD_SILENCE_LIMIT = 20   # VBlanks (~335ms) without a child 'T' before we emit one regardless
+
 # Ceiling on the liveness override, as a multiple of the send window. The override exists to outlast
 # a congested link, NOT to keep talking to a peer that has gone away: once the console stops
 # responding entirely, every forced slot goes unacked forever and `outstanding` grows without bound
 # (observed live at 74/24 and climbing, with rx frozen). Past this the peer is genuinely gone and
 # more slots cannot help, so the window resumes being a hard cap and the run's leave tail ends it.
 SILENCE_OVERRIDE_CEIL = 2  # allow outstanding up to SILENCE_OVERRIDE_CEIL * max_inflight
+# Poll credits. librfu's child readies a slot only when the parent's poll actually landed
+# [MscCallback_Child: rfu_UNI_readySendData under recv.newDataFlag], so one child slot per host 'T'
+# is the native cadence. Measured (j29, hardware): free-running at 60/s against a host polling at
+# 3/s pinned out=24/24 and the RTO at its 670ms ceiling, and the console's parent is stop-and-wait
+# on our K-ack - so every surplus idle slot directly delayed the one frame it was blocked on, and
+# its LinkPlayer block crawled at ~1 fragment/s until it gave up. Credits cap the burst; the
+# CHILD_SILENCE_LIMIT floor still guarantees we never go quiet on a host that has paused.
+SLOT_CREDIT_MAX = 2        # host polls we may owe a reply to at once
+# Slots we may spend per received poll WHILE WALKING TO THE SEAT. The console's runway in the trade
+# room is finite and small - measured (j50): it polls at 13-16/s for about six seconds after entering
+# the room and then goes quiet, which is ~85 slots. The route is 112 frames and the peer advances our
+# avatar ONE frame per slot it receives, so at one slot per poll we run out of runway mid-walk; j50
+# did finish the route and sit, but only at 69.7s, 31s after starting, long after the console had
+# given up. Two per poll fits 112 frames into that window with margin.
+# NOT free-running: j43 emitted held-keys at 57/s uncorrelated with the console's polls (~4x its
+# rate, in one unbroken run) and it stopped transmitting after five slots. This stays proportional to
+# the console's own cadence, just doubled, and only for the ~112 frames of the walk.
+WALK_SLOTS_PER_POLL = 2
 ACK_PERIOD = 2             # delayed-ack interval: a standalone bulk-ack is owed at most every ~33ms (2
                            # VBlanks). The ack piggybacks on a data datagram whenever one is being sent this
                            # VBlank and goes out standalone only when one is owed (received data / a gap to
@@ -215,10 +248,15 @@ class Sim:
         # child 'T' frame counter (u32). One per NEW 'T' we emit; reused on a Pia retransmit (the
         # retransmit re-offers the already-built frame bytes, so ts is baked in at build time).
         self.ts = TS_SEED
-        # emulator 'K' ack layer: the host sends a 'T' per VBlank; we owe exactly ONE 'K' per
-        # UNIQUE host 'T' ts (k_seq global +1 from 1; host idle T (slot_len<=1) is acked too; the host
-        # sends us NO K). `mid` (1-based position within the OUT Pia datagram) is assigned at flush.
-        self._k_seq = 0                  # last k_seq used (next K is _k_seq+1)
+        # emulator 'K' ack layer: the host sends a 'T' per VBlank and we ack it with a 'K' (the host
+        # sends us NO K). `k_seq` is a CUMULATIVE COUNT OF HOST 'T' FRAMES RECEIVED, not a counter of
+        # the K frames we send - it is incremented on RECEIPT of each unique host ts, and whichever K
+        # actually goes out carries the running total. Verified in joiner_entry_reference: only 96 K
+        # frames reached the console yet their k_seq ran 1..532 with large jumps (16->61, 138->259,
+        # 300->434), exactly tracking the host 'T' index, and the console accepted every one. So gaps
+        # in the K stream are fine; a k_seq that under-reports what we have received is not.
+        # `mid` (1-based position within the OUT Pia datagram) is assigned at flush.
+        self._k_seq = 0                  # host 'T' frames received so far = the value the next K carries
         self._acked_ts = set()           # host T ts values already K-acked (dedup)
         self._pending_k_ts = None        # NEWEST host ts still owing a K (older ones are superseded)
         self._k_seqs = set()             # reliable seqs of OUR K-acks still in flight (for K_INFLIGHT_MAX)
@@ -316,13 +354,11 @@ class Sim:
         self._connect_id = bytes(connect_id) if connect_id else None
         self._gba_conn_sent = False
         self._gba_accepted = False        # have we seen the host's emulator connect accept ('A')
-        # Emission is FREE-RUN: _drive_reliable emits one child slot ('T') per local VBlank, on our own
-        # clock, NOT paced to the host's slot arrivals. The flood the host's receive side can't absorb is
-        # bounded by the small send window (MAX_INFLIGHT), not by response pacing - so a steady one-per-
-        # VBlank cadence keeps few frames in flight and keeps the host's poll loop fed across the NI->UNI
-        # seam (a poll-paced child instead goes silent there and the host parks). _slot_credit still counts
-        # host slots delivered but not yet responded to, but the free-run path resets it each VBlank and
-        # does not gate emission on it (informational here).
+        # Emission is POLL-PACED with a liveness floor: _drive_reliable spends one credit (one host
+        # 'T' received) per child slot, and emits regardless once CHILD_SILENCE_LIMIT VBlanks have
+        # passed with nothing sent. That is librfu's own child cadence, and it still keeps us fed
+        # across the NI->UNI seam - the earlier free-run version was written to fix silence there, but
+        # the floor is what actually fixes it; free-running only added congestion (see SLOT_CREDIT_MAX).
         self._slot_credit = 0
         self._last_seat_emit = -100      # last tick we emitted a seat/leave held-keys (keepalive floor)
         self._seen_in = set()
@@ -457,6 +493,7 @@ class Sim:
         self.host_t_in += 1
         if ts is not None and ts not in self._acked_ts:
             self._acked_ts.add(ts)
+            self._k_seq += 1                       # cumulative host-'T' receive count (see __init__)
             self._pending_k_ts = ts                # supersede any older pending K (see K_INFLIGHT_MAX)
             if len(self._acked_ts) > 8192:         # bound memory on a long session
                 self._acked_ts = set(list(self._acked_ts)[-2048:])
@@ -521,10 +558,12 @@ class Sim:
         if rec.get("llsf_state") == 4:
             self._host_uni_seen = True
         # Count every host 'T' (NI sub-frame, NI ack, UNI, or idle keepalive) as one delivered host slot.
-        # _slot_credit tracks host slots delivered but not yet responded to; it is informational under the
-        # free-run send path (which emits one child slot per VBlank and resets the credit each time), kept
-        # so the counter stays meaningful if a poll-paced path is ever reintroduced.
-        self._slot_credit += 1
+        # _slot_credit is host slots delivered but not yet answered - the emission pacer spends it.
+        # The seat walk earns WALK_SLOTS_PER_POLL per poll (see the constant): its runway is short.
+        _walk = self.linkstate is not None and self.linkstate.walking
+        _per_poll = WALK_SLOTS_PER_POLL if _walk else 1
+        self._slot_credit = min(self._slot_credit + _per_poll,
+                                SLOT_CREDIT_MAX * _per_poll)
         # Feed the host's UNI slots (the mpId gRecvCmds) to the trade engine; the parse_in record's
         # `positional` alias is exactly what the engine reads. A host idle/NI 'T' has no
         # UNI slots, so feed_in_frame is a no-op for it (it still got K-acked + counted as a tick).
@@ -688,20 +727,19 @@ class Sim:
         # returns the phase-correct slot (NI sub-frame / block fragment / trade slot / idle keepalive) or
         # None (recv-NI quiet / nothing to send), so one call per VBlank covers every phase. The flood guard
         # is the send window (max_inflight) + the RTT-driven gap-targeted retransmit, not response pacing.
-        self._slot_credit = 0                         # consume any accumulated poll credits (unused here)
         # 2. K-acks FIRST (wire order K-then-T): at most one per VBlank for the newest owed host ts,
         #    under the K in-flight cap, leaving window slots for the 'T'. _k_seqs tracks our unacked K
         #    so a K burst can never starve the critical per-poll T (recv-NI ack / UNI slot).
         self._k_seqs.intersection_update(self.rel.unacked)   # drop K seqs the host has acked (drained)
         queued = 0
         k_frames = []
-        # ONE K per VBlank, carrying the NEWEST owed host ts; anything older was superseded on
-        # receive. It is gated a slot TIGHTER than the 'T' below (max_inflight - 1) so a K can never
-        # be the reason the game-critical slot is skipped this VBlank.
+        # ONE K per VBlank, carrying the NEWEST owed host ts and the RUNNING host-'T' receive count;
+        # anything older was superseded on receive. Superseding drops a K frame, never a count: _k_seq
+        # was already advanced on receipt, so the K that does go out reports everything the dropped
+        # ones would have. It is NOT window-gated: the console blocks its whole post-finalize sequence
+        # on this ack (K_INFLIGHT_MAX above), and one superseding frame per VBlank cannot flood.
         if (self._pending_k_ts is not None
-                and self.rel.outstanding() < self.rel.max_inflight - 1
                 and len(self._k_seqs) < K_INFLIGHT_MAX):
-            self._k_seq += 1
             kf = gbaframe.build_k(self._k_seq, 1, self._pending_k_ts)
             seq = self.rel.queue(kf, reliable.FLAGSA_GBA, now_ms)
             self._k_seqs.add(seq)
@@ -722,15 +760,38 @@ class Sim:
             # full window only costs throughput while silence costs the link (MC_TimerCount above).
             # The override is self-limiting - at most one extra frame per CHILD_SILENCE_LIMIT VBlanks.
             _out = self.rel.outstanding()
-            _starved = (self._tick - self._last_t_tick >= CHILD_SILENCE_LIMIT
-                        and _out < self.rel.max_inflight * SILENCE_OVERRIDE_CEIL)
-            _gated = _out >= self.rel.max_inflight and not _starved
+            _quiet = self._tick - self._last_t_tick >= CHILD_SILENCE_LIMIT
+            _starved = _quiet and _out < self.rel.max_inflight * SILENCE_OVERRIDE_CEIL
+            # Two independent gates: the congestion window, and the poll credit. The credit stops us
+            # out-running a host that has slowed down; the quiet floor overrides both, so a paused
+            # host can never make us go silent.
+            # NOTHING exempts a slot from the credit pacer - not even a block mid-transfer. The
+            # parent samples exactly ONE child slot per poll, and every non-idle slot must carry the
+            # next childSendCmdId in sequence; slots it never samples are lost tag increments, and
+            # after >4 of those it hard-errors [link_rfu_2.c:884-888, and rfu.SlotBuilder]. Measured
+            # (j34): a bounded 17-fragment burst was echoed back as fragment 0 then fragment 9 - the
+            # parent saw two of seventeen - and it stopped transmitting at the instant the burst ended.
+            # Out-running the parent does not merely waste bandwidth here, it faults the console.
+            # NOTHING is exempt from the credit pacer, the seat walk included. The child's cadence is
+            # ONE SLOT PER POLL RECEIVED - that is the same rule the leader follows (host_trade emits
+            # one held-key per VBlank because as the PARENT it owns the clock; the child's equivalent
+            # is per poll, not per VBlank). Every non-idle slot advances the rolling childSendCmdId,
+            # and slots the parent never samples are lost tag increments - it hard-errors after >4
+            # [link_rfu_2.c:884-888]. Measured (j43): exempting the walk let it free-run at 57/s
+            # uncorrelated with the console's polls; the console stopped transmitting after exactly
+            # FIVE of our slots, 54ms BEFORE our first movement key. It had been polling at 55/s right
+            # up to that point - credit-paced we would have matched it and walked the 145-frame route
+            # in ~2.6s.
+            _gated = ((_out >= self.rel.max_inflight and not _starved)
+                      or (self._slot_credit <= 0 and not _quiet))
             if _starved and _out >= self.rel.max_inflight:
                 self.silence_forced += 1
             inner = None
             if not _gated:
                 inner = self._gba_frame()
                 if inner is not None:
+                    if self._slot_credit > 0:
+                        self._slot_credit -= 1
                     self._last_seat_emit = tick
                     seq = self.rel.queue(inner, reliable.FLAGSA_GBA, now_ms)
                     t_frames.append((seq, reliable.FLAGSA_GBA, inner))
@@ -876,7 +937,8 @@ class Sim:
         if (self.linkstate is not None and (words[0] & 0xFFFF) == 0
                 and getattr(self.engine, "established", False)
                 and getattr(self.engine, "host_in_seat", False)
-                and getattr(self.engine, "in_seat_phase", True)):
+                and getattr(self.engine, "held_keys_active",
+                            getattr(self.engine, "in_seat_phase", True))):
             # held-keys keepalive + sit, ONLY once the host is at its seat (host_in_seat) AND we are still
             # in the seat phase (before the party exchange latches seat_phase_over) (seat-barrier).
             words = self.linkstate.tick()

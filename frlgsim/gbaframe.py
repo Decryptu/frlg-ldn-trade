@@ -85,7 +85,10 @@ def build_disconnect(connect_id):
 
 def build_k(k_seq, mid, acked_ts):
     """Build a 'K' (0x4b) emulator ack frame [reference capture, verified]: 57 4b 0c 00 <k_seq:u32><mid:u32>
-    <acked_host_ts:u32> (all LE). One per UNIQUE host 'T' ts; k_seq is joiner-global (+1 from 1);
+    <acked_host_ts:u32> (all LE). `k_seq` is the CUMULATIVE COUNT OF HOST 'T' FRAMES RECEIVED (from 1),
+    not a per-K-frame sequence: joiner_entry_reference delivered only 96 K frames whose k_seq ran
+    1..532 with jumps (16->61, 138->259, 300->434) matching the host 'T' index, and the console
+    accepted them all. Skipping a K is safe; under-reporting k_seq stalls the parent's DRAC ack.
     mid = 1-based position within the OUT Pia datagram; acked_ts = the host 'T's ts verbatim."""
     body = ((k_seq & 0xFFFFFFFF).to_bytes(4, "little")
             + (mid & 0xFFFFFFFF).to_bytes(4, "little")
