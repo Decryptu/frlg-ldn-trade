@@ -197,10 +197,18 @@ def run_live(run_config, lg):
             if not s.connected:
                 connect_ticks += 1
                 if connect_ticks % 120 == 0:
-                    lg(f"[live] awaiting host connection: {connect_ticks}f, conn={conn.state}, "
-                          f"host_var={'learned' if s._learned else 'unseen'}, "
-                          f"rx_ok={s.rx_count} rx_decryptfail={s.rx_fail} "
-                          f"protos_seen={dict(sorted(s.rx_protos.items()))} tx={s.tx_count}")
+                    # INFO sink, not [live]. This is the one stall with no visible symptom at all:
+                    # the joiner sits between "Host acknowledged our join" and "Connection
+                    # established" indefinitely and prints NOTHING, because [live] is verbose-gated
+                    # and --verbose is banned on live runs. Observed on hardware as a silent hang of
+                    # minutes with the process alive and the console idle. `protos` separates the
+                    # two cases: no proto 13 means the console never sent its Session join (a wedged
+                    # host session - close and reopen the game, backing out is not enough), while
+                    # proto 13 present with conn not OK is a handshake we are mishandling.
+                    lg.info(f"awaiting host connection: {connect_ticks}f, conn={conn.state}, "
+                            f"host_var={'learned' if s._learned else 'unseen'}, "
+                            f"rx_ok={s.rx_count} rx_decryptfail={s.rx_fail} "
+                            f"protos={dict(sorted(s.rx_protos.items()))} tx={s.tx_count}")
                 time.sleep(period)
                 continue
             if not connect_announced:
