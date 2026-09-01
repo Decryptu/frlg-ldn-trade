@@ -99,9 +99,17 @@ MAX_INFLIGHT = 24         # shared reliable window. Throughput here is window/RT
                           # owes. Swept offline against the captured host stream: 6 -> 15/s, 12 -> 33/s,
                           # 24 -> 56/s, 48 -> 57/s at 120ms one-way / 10% loss. 24 is the knee - it reaches
                           # the console's native poll rate, and past it the clock binds instead.
-RTT_JITTER_K = 4.0
-DUP_NACK_THRESHOLD = 3
-RTO_CEIL_MS = 670
+# RTT_JITTER_K / RTO_CEIL_MS re-derived from Karn-clean measurements (j50/j57/j60): frames acked on
+# their FIRST transmission come back at median 18ms, p90 37ms. The old 4.0 / 670 pushed the RTO to
+# ~105ms - about 6x the round trip - so every lost datagram cost >=105ms before the first retry, and
+# 89% of our retransmits (174 of 196 in j57) were timer-driven rather than NACK-driven. The values
+# they were chosen against ("RTT ranges from ~50ms to ~1s") were measured BEFORE the selective-ack
+# mask origin was fixed, when a frozen ack base made every RTT sample look enormous; that link no
+# longer exists. 1.0 * MAD over a median of 18ms lands the RTO near 70ms, and the ceiling bounds the
+# worst case at 120ms instead of 670ms.
+RTT_JITTER_K = 1.0
+DUP_NACK_THRESHOLD = 1
+RTO_CEIL_MS = 120
 RTO_BACKOFF = 1.0
 RECV_NI_REACK_EVERY = 20  # re-ack the host's NI sub-frame every N repeats (it polls ~60/s)
 # DO NOT RAISE THESE - it has been tried and it is strictly worse. The whole child registration
@@ -180,16 +188,21 @@ SILENCE_OVERRIDE_CEIL = 2  # allow outstanding up to SILENCE_OVERRIDE_CEIL * max
 # its LinkPlayer block crawled at ~1 fragment/s until it gave up. Credits cap the burst; the
 # CHILD_SILENCE_LIMIT floor still guarantees we never go quiet on a host that has paused.
 SLOT_CREDIT_MAX = 2        # host polls we may owe a reply to at once
-# Slots we may spend per received poll WHILE WALKING TO THE SEAT. The console's runway in the trade
-# room is finite and small - measured (j50): it polls at 13-16/s for about six seconds after entering
-# the room and then goes quiet, which is ~85 slots. The route is 112 frames and the peer advances our
-# avatar ONE frame per slot it receives, so at one slot per poll we run out of runway mid-walk; j50
-# did finish the route and sit, but only at 69.7s, 31s after starting, long after the console had
-# given up. Two per poll fits 112 frames into that window with margin.
-# NOT free-running: j43 emitted held-keys at 57/s uncorrelated with the console's polls (~4x its
-# rate, in one unbroken run) and it stopped transmitting after five slots. This stays proportional to
-# the console's own cadence, just doubled, and only for the ~112 frames of the walk.
-WALK_SLOTS_PER_POLL = 2
+# Slots we may spend per received poll WHILE WALKING TO THE SEAT. This is 1 and MUST STAY 1.
+# The parent keeps exactly ONE child slot per poll (`gRfu.childRecvBuffer[i]`, overwritten by the
+# adapter) and checks its rolling tag against the last one it kept: any tag that is not exactly
+# +1 mod 8 counts a child receive error, and the FIFTH one is fatal
+# [link_rfu_2.c:876-892, RfuMain2_Parent -> RfuSetErrorParams(F_RFU_ERROR_8 | F_RFU_ERROR_1)].
+# So a second slot inside one poll is not "faster", it is a guaranteed dropped tag, and five polls
+# later the console tears the link down. Survival in the trade room scales inversely with how far
+# past one-per-poll we go, measured off the captures:
+#     j43  free-running (~57/s vs its ~55/s polls)  console stopped 0.10s after the walk started
+#     j56  2 slots per poll                         console stopped 0.28s after the walk started
+#     j50  1 slot per poll                          console kept polling for 5.8s
+# j56 is also the counter-example to the runway argument this constant used to make: the console
+# polled its trade room at 43/s, not the 13-16/s of j50, so a credit-paced 112-frame route fits in
+# ~2.6s. The walk is not exempt from the pacer and cannot be made exempt.
+WALK_SLOTS_PER_POLL = 1
 ACK_PERIOD = 2             # delayed-ack interval: a standalone bulk-ack is owed at most every ~33ms (2
                            # VBlanks). The ack piggybacks on a data datagram whenever one is being sent this
                            # VBlank and goes out standalone only when one is owed (received data / a gap to
