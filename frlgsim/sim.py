@@ -82,12 +82,23 @@ RTX_GAP_LIMIT_NI = 2       # NI/seat phase: a slightly longer tail (a few critic
 #     ~2x the trade latency, p50 104->228ms): the instant the FIRST RTT sample arrives the pure formula
 #     (33 + 1.4*median + jitter, capped by RTO_CEIL_MS) takes over with no minimum -> trade stays fast
 #     (win2-slow-entry: p50 104ms / 5% NACK). So bootstrap fixes connect WITHOUT slowing the trade.
-MAX_INFLIGHT = 6          # shared reliable window. Must stay SMALL on this bridge: a larger window lets us
-                          # put more frames in flight than the host's receive side tolerates, and it faults
-                          # with an in-game Communication error. Re-confirmed on the clean free-run base: 18
-                          # comms-errored shortly before the save, exactly like the earlier 128 - so 6 is the
-                          # ceiling. (The ~2x retransmit seen at 6 is therefore NOT a window problem; it is the
-                          # RTO firing before the host's ack returns - a separate, RTO-side lever.)
+MAX_INFLIGHT = 24         # shared reliable window. Throughput here is window/RTO, and the RTO sits at its
+                          # 670ms ceiling on this bridge, so 6 bought only ~9 reliable frames/s - far under
+                          # the ~120/s (one 'T' + one 'K' per VBlank) the child owes a console polling at
+                          # 60/s. Measured on hardware (j19): the window read 6/6 essentially the whole run
+                          # while the console polled at 60/s and the child answered at 3-8/s, so the join
+                          # handshake took ~9s and the console abandoned the room entry.
+                          #
+                          # 6 was chosen when 18 and 128 both comms-errored "shortly before the save". That
+                          # evidence does NOT carry over: back then the K layer queued one frame per host
+                          # poll and drained it oldest-first, so the generator could offer 4 frames/VBlank
+                          # (~240/s) and a bigger window simply let more of that flood through - which is
+                          # exactly "more frames in flight than the host's receive side tolerates". With K
+                          # superseded to one per VBlank the offered rate is bounded by the VBlank CLOCK, not
+                          # by the window, so the window can only ever release frames the child genuinely
+                          # owes. Swept offline against the captured host stream: 6 -> 15/s, 12 -> 33/s,
+                          # 24 -> 56/s, 48 -> 57/s at 120ms one-way / 10% loss. 24 is the knee - it reaches
+                          # the console's native poll rate, and past it the clock binds instead.
 RTT_JITTER_K = 4.0
 DUP_NACK_THRESHOLD = 3
 RTO_CEIL_MS = 670
