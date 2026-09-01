@@ -137,6 +137,12 @@ K_INFLIGHT_MAX = 2
 # child slot is treated as a liveness obligation and not merely as data: the congestion window may
 # DELAY it, but it must not silence it indefinitely.
 CHILD_SILENCE_LIMIT = 20   # VBlanks (~335ms) without a child 'T' before we emit one regardless
+# Ceiling on the liveness override, as a multiple of the send window. The override exists to outlast
+# a congested link, NOT to keep talking to a peer that has gone away: once the console stops
+# responding entirely, every forced slot goes unacked forever and `outstanding` grows without bound
+# (observed live at 74/24 and climbing, with rx frozen). Past this the peer is genuinely gone and
+# more slots cannot help, so the window resumes being a hard cap and the run's leave tail ends it.
+SILENCE_OVERRIDE_CEIL = 2  # allow outstanding up to SILENCE_OVERRIDE_CEIL * max_inflight
 ACK_PERIOD = 2             # delayed-ack interval: a standalone bulk-ack is owed at most every ~33ms (2
                            # VBlanks). The ack piggybacks on a data datagram whenever one is being sent this
                            # VBlank and goes out standalone only when one is owed (received data / a gap to
@@ -688,9 +694,11 @@ class Sim:
             # have been quiet for CHILD_SILENCE_LIMIT VBlanks the slot goes out regardless, because a
             # full window only costs throughput while silence costs the link (MC_TimerCount above).
             # The override is self-limiting - at most one extra frame per CHILD_SILENCE_LIMIT VBlanks.
-            _starved = self._tick - self._last_t_tick >= CHILD_SILENCE_LIMIT
-            _gated = self.rel.outstanding() >= self.rel.max_inflight and not _starved
-            if _starved and self.rel.outstanding() >= self.rel.max_inflight:
+            _out = self.rel.outstanding()
+            _starved = (self._tick - self._last_t_tick >= CHILD_SILENCE_LIMIT
+                        and _out < self.rel.max_inflight * SILENCE_OVERRIDE_CEIL)
+            _gated = _out >= self.rel.max_inflight and not _starved
+            if _starved and _out >= self.rel.max_inflight:
                 self.silence_forced += 1
             inner = None
             if not _gated:
