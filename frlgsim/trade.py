@@ -115,8 +115,23 @@ REQ_SIZE = {BLOCK_REQ_SIZE_NONE: 200, BLOCK_REQ_SIZE_200: 200, BLOCK_REQ_SIZE_10
 # to pull (one run: 7s) we flooded ~247 standby frames, JAMMED the reliable window (max_inflight unacked)
 # and could not send the card when finally pulled -> desync -> black screen. Cap the NEW emits per round;
 # reliable retransmit (re-sends the queued burst until acked) guarantees delivery even under loss, so a
-# small bounded burst is robust. 6 = the reference capture's ~4 plus a small loss margin.
-WARP_STANDBY_EMITS = 6
+# small bounded burst is robust.
+# 6 was "the reference capture's ~4 plus a small loss margin" - both wrong. RECORDED off a real
+# French FireRed acting as the CHILD against this repo's own host, full trade, run h1
+# (HostTradeEngine.child_slot_runs, printed by host_app):
+#
+#     IDLE x262   READY_EXIT_STANDBY w1=0x0000 x1
+#     IDLE x72    READY_EXIT_STANDBY w1=0x0001 x1
+#     IDLE x45    <the room: held keys, the walk, READY, then 13 EMPTY>
+#     IDLE x22    READY_EXIT_STANDBY w1=0x0002 x1
+#     IDLE x28    READY_EXIT_STANDBY w1=0x0003 x1
+#     IDLE x75    -> the host pulls the party
+#
+# Every round is exactly ONE frame, and the child is fully IDLE (all-zero gSendCmd) between them.
+# Pia Reliable retransmits that one frame until it lands - something the GBA-to-GBA link could not
+# do - so one is not a risk here, it is the faithful behaviour. Repeating the count instead keeps
+# the host seeing the SAME round it has already completed.
+WARP_STANDBY_EMITS = 1
 
 # Post-seat warp into the trade SCENE (fixes a black screen after both players sit). Reference capture:
 # after BOTH players sit (READY), the guest emits TWO more standby rounds - READY_EXIT_STANDBY count=2
@@ -151,6 +166,11 @@ SAVE_BARRIER_GAP = 60
 # burst went out at 15.0s, the console stopped transmitting in the same 100ms, and the sustain never
 # re-armed before it gave up ~10s later. The save chain keeps 60 - there the host is actively echoing,
 # so slots are cheap and a tight gap would be spam.
+HOST_WALK_QUIET_FRAMES = 20  # host held-key frames with no DPAD code before we treat it as parked
+                             # at its chair (~1.3s at its 15/s update rate).
+SEAT_HOST_READY_MAX = 1200  # ~20s at 60 ticks/s. Longest we sit waiting for the human on the other
+                            # end to reach their chair before starting the post-seat standby rounds
+                            # regardless. A safety bound, not a timeout to design around.
 ENTRY_BARRIER_GAP = 6
 # Idle ticks between our block fragments (BlockSender.STREAM_GAP), joiner only. 0 = UNPACED.
 #
@@ -510,6 +530,17 @@ class TradeEngine:
         self._barrier_initiated_warp4 = False
         self._warp3_regap = 0            # idle frames since the count=2 burst, before re-arming it (sustain)
         self._warp4_regap = 0            # idle frames since the count=3 burst, before re-arming it (sustain)
+        self._self_standby_echo = 0      # highest READY_EXIT_STANDBY count the host has REFLECTED back
+                                         # in OUR OWN mpId slot. On hardware this is the ONLY evidence
+                                         # that a child-initiated entry barrier landed: the real console
+                                         # never broadcasts its own 0x6600 at mpId 0 (verified j45-j58),
+                                         # so barrier.host_count stays None for the whole run. Our OFFLINE
+                                         # leader model does echo at mpId 0, which is why the harness
+                                         # never saw this. Gate the warps on max(host_count, this).
+        self._seat_wait_host = 0         # ticks spent seated, waiting for the host to sit too
+        self._self_ready_echo = False    # the host has reflected OUR READY (0x16) back at us
+        self._host_walk_quiet = 0        # consecutive host held-key frames carrying NO dpad code
+        self._post_seat_logged = False
         self._self_seated = False        # we have emitted our READY (0x16) at the cable seat
         self._post_seat_wait = 0         # held-keys keepalive ticks left before the post-seat standbys
         self._save_barriers = False     # (c) post-trade save barrier chain is running [trade_scene 2566+]
@@ -597,7 +628,18 @@ class TradeEngine:
         [Task_StartWirelessTrade case 0; cable_club.c:918]."""
         if not self.in_seat_phase:
             return False
-        if self._self_seated and (self.barrier.host_count or 0) >= 3:
+        # Same evidence rule as the warp gate: on hardware the console never broadcasts its own
+        # 0x6600, it only REFLECTS ours, so host_count alone leaves this True forever and the
+        # leader's quiet-frame counter can never run.
+        if self._self_seated and max(self.barrier.host_count or 0, self._self_standby_echo) >= 3:
+            return False
+        # ...and stop as soon as the host has CONSUMED our READY. The recorded real child (h1) sends
+        # 13 EMPTY held-keys after its READY and is then fully IDLE - IDLE x22, count=2, IDLE x28,
+        # count=3, IDLE x75 - all the way to the party pull. It does NOT keepalive 0xBE00 through the
+        # post-seat rounds, and the leader's entry_final_standby_quiet_frames counter only advances on
+        # a slot that is exactly idle [host_trade.feed_child_slot]. The reflection of our READY is the
+        # observable equivalent of "those 13 frames have been seen".
+        if self._self_seated and self._self_ready_echo:
             return False
         return True
 
@@ -644,6 +686,8 @@ class TradeEngine:
         # (LinkPlayer/standby/card) must NOT see us sit. (black-screen / seat-barrier)
         if unwrapped is not None and not self._host_ready:
             for _mpid, slot in unwrapped.get("positional", []):
+                if _mpid == self.mpid:
+                    continue            # our OWN slot reflected back - never read host state off it
                 r = rfu.parse_slot(slot)
                 if not r:
                     continue
@@ -655,10 +699,16 @@ class TradeEngine:
                     self._player_ids_seen = True
                     count = int.from_bytes(slot[2:4], "little")
                     id0 = int.from_bytes(slot[4:6], "little")
-                    self.log(f"entry: host SEND_PLAYER_IDS playerCount={count} ids[0]={id0} (our mpId={self.mpid})")
+                    # On the INFO sink: self.log is the verbose-gated ConsoleLog, and --verbose is
+                    # banned on live runs, so this validation has never actually been seen on hardware.
+                    # The seat route is hardcoded for the RIGHT chair (mpId 1); if the console ever
+                    # seats us elsewhere the walk is wrong and nothing else would say so.
+                    self.info(f"Host assigned player slots: count={count} ids[0]={id0} "
+                              f"(our mpId={self.mpid}).")
                     if count != 2 or id0 != self.mpid:
-                        self.log(f"entry: WARNING SEND_PLAYER_IDS (count={count}, ids[0]={id0}) does not "
-                                 f"match the 2-player RIGHT-seat assumption (mpId {self.mpid}) - trade may mis-address")
+                        self.info(f"WARNING: SEND_PLAYER_IDS (count={count}, ids[0]={id0}) does not match "
+                                  f"the 2-player RIGHT-seat assumption (mpId {self.mpid}) - the seat walk "
+                                  f"is hardcoded for the right chair and may be wrong.")
                 if op == rfu.SEND_HELD_KEYS:
                     if not self._host_in_seat:
                         # FIRST host held-keys = host entered the Trade-Center field (gRfu.callback==
@@ -675,7 +725,12 @@ class TradeEngine:
                     # host's seat FSM immediately (observed as a comms error on load). Latch host_ready off the
                     # host's READY so the orchestrator sits WITH the host (both -> PLAYER_LINK_STATE_READY
                     # -> GetCableClubPartnersReady SUCCESS).
-                    if (int.from_bytes(slot[2:4], "little") & 0xFF) == 0x16 and not self._host_ready:
+                    _k = int.from_bytes(slot[2:4], "little") & 0xFF
+                    if 0x12 <= _k <= 0x15:      # DPAD_DOWN/UP/LEFT/RIGHT - the host is still WALKING
+                        self._host_walk_quiet = 0
+                    else:
+                        self._host_walk_quiet += 1
+                    if _k == 0x16 and not self._host_ready:
                         self._host_ready = True
                         self.log("entry: host emitted READY (0x16) - host is seated; we may sit now")
                         self.info("Host sat down.")
@@ -706,6 +761,28 @@ class TradeEngine:
         # [link_rfu_2.c:1178-1180,1541-1547]) AND the reactive path (the host initiated; we mirror it).
         # observe_frame drives the per-frame watchdogs every IN frame so an unanswered initiated barrier
         # (non-participating host) releases the FSM and a finished reactive round resumes trade traffic.
+        # Our OWN reflected standby slot (mpId == self.mpid). _host_barrier_in_frame deliberately skips
+        # it - a round must never be completed off our own reply - but the REFLECTION itself is the
+        # host's acknowledgement that it consumed that count, and on hardware it is the only one we get.
+        if unwrapped is not None:
+            for _mpid, _slot in unwrapped.get("positional", []):
+                if _mpid != self.mpid:
+                    continue
+                _d = rfu.parse_slot(_slot)
+                if (_d is not None and (_d["word0"] & 0xFF00) == rfu.SEND_HELD_KEYS
+                        and (int.from_bytes(_slot[2:4], "little") & 0xFF) == 0x16
+                        and not self._self_ready_echo):
+                    # The host has consumed our READY: sPlayerLinkStates[us] = PLAYER_LINK_STATE_READY
+                    # [overworld.c:2755]. With both players READY its Task_EnterCableClubSeat leaves
+                    # CABLE_SEAT_WAITING, runs Task_StartWirelessTrade -> SetLinkStandbyCallback, and
+                    # then WAITS for our count=2. This reflection is the starting gun for that round.
+                    self._self_ready_echo = True
+                    self.log("entry: host reflected our READY - both players seated")
+                if _d is not None and _d["op"] == rfu.READY_EXIT_STANDBY:
+                    _c = _d.get("count")
+                    if _c is not None and _c > self._self_standby_echo:
+                        self._self_standby_echo = _c
+                        self.log(f"entry: host reflected our READY_EXIT_STANDBY count={_c}")
         host_slot = self._host_barrier_in_frame(unwrapped)
         saw_barrier = host_slot is not None
         if saw_barrier:
@@ -1522,7 +1599,54 @@ class TradeEngine:
         # reliable retransmit delivers them; then idle -> held-keys keepalive until the host's party pull
         # latches seat_phase_over and ends this phase.
         if self.established and self._self_seated and not self.entry.seat_phase_over:
-            if self._post_seat_wait > 0:
+            # BOTH players must be seated before the post-seat standby rounds. The trade only starts
+            # at GetCableClubPartnersReady() == CABLE_SEAT_SUCCESS, which needs
+            # AreAllPlayersInLinkState(PLAYER_LINK_STATE_READY) [overworld.c:2988-2999]; until then the
+            # host is CABLE_SEAT_WAITING and driving count=2 at it faults its seat FSM. We reach our
+            # chair first whenever the human is still walking to theirs - measured (j62): we sat at
+            # 37.0s with the player one tile short of their computer, count=2 followed, and the console
+            # quit within 2s. Bounded so a missed READY cannot deadlock us; while waiting we emit the
+            # EMPTY held-keys keepalive, which is exactly what the native child does in this state
+            # [KeyInterCB_Ready returns LINK_KEY_CODE_EMPTY until every player is READY].
+            # The host is seated when it says READY (0x16) - but it OFTEN never puts that on the
+            # wire. j58 did; j62 and j68 did not, zero 0x16 frames in either. `_host_ready` is
+            # therefore as unreliable as `barrier.host_count` was, and waiting on it alone stalls us
+            # for SEAT_HOST_READY_MAX while the console sits at its computer waiting for count=2 -
+            # which is how j68 died, 151 link updates in, right as the player sat.
+            # What IS always on the wire is the host's held-key stream: while its player walks it
+            # emits DPAD codes (0x12-0x15), and it stops the moment they stop moving. So: proceed
+            # when it says READY, OR when it has not moved for HOST_WALK_QUIET_FRAMES of its own
+            # updates. That still avoids the j62 race (there the player was mid-stride, one tile
+            # short, and DPAD keys were flowing the whole time).
+            # ONLY the host's own READY (0x16) counts. "It has stopped sending DPAD codes" was tried
+            # (j73) and is unsound: UpdateHeldKeyCode nulls all four DPAD codes to LINK_KEY_CODE_NULL
+            # whenever GetLinkSendQueueLength() > 1 [overworld.c:2786-2810], so a walking player goes
+            # silent under queue pressure and looks parked. j73 fired count=2 on that, 0.6s after we
+            # sat and while the player was still walking to their computer - console dead 0.09s later,
+            # the same CABLE_SEAT_WAITING fault as j62.
+            # 0x16 itself is NOT in that null list, so the console always transmits its READY when it
+            # reaches it. The runs with zero 0x16 (j62, j68) are ones where it died BEFORE sitting -
+            # a consequence, not a reason to stop waiting for it.
+            _host_settled = self._host_ready
+            if not _host_settled:
+                self._seat_wait_host += 1
+                if self._seat_wait_host <= SEAT_HOST_READY_MAX:
+                    if self._seat_wait_host == 1:
+                        self.info("Seated; waiting for the host to reach its chair.")
+                    return [0] * 7      # idle -> the sim emits the EMPTY held-keys keepalive
+                if self._seat_wait_host == SEAT_HOST_READY_MAX + 1:
+                    self.info("Host never settled at its chair; starting the post-seat rounds anyway.")
+            elif not self._post_seat_logged:
+                self._post_seat_logged = True
+                self.info("Both players seated; starting the post-seat standby rounds.")
+            # Fire count=2 the moment the host has REFLECTED our READY, rather than burning the
+            # full POST_SEAT_STANDBY_DELAY. The delay exists only to let our READY reach the wire,
+            # and the reflection is proof it already has - waiting past it is dead time against a
+            # console that is now sitting in Task_EnterCableClubSeat waiting for this round.
+            # Measured (j69): console READY 23.856, our READY 24.306, host reflects it 25.056, host's
+            # last frame 25.408 - and our count=2 did not go out until 26.122, 0.7s after it had
+            # already given up. It waited about 1.1s; the fixed delay cost us 1.8s.
+            if self._post_seat_wait > 0 and not self._self_ready_echo:
                 self._post_seat_wait -= 1
                 return [0] * 7         # still letting our READY + keepalives go out before count=2
             # The two post-seat standbys (count=2 then count=3, Task_StartWirelessTrade) are MUTUAL
@@ -1533,7 +1657,12 @@ class TradeEngine:
             # sent count=3 while the host was still finishing count=2 (recv gate rejected it) and our
             # burst then ended, the host sat silently waiting for a fresh count=3 forever. Same sustain
             # pattern as the post-trade save chain.)
-            hc = self.barrier.host_count or 0
+            # The host's progress through these barriers, from EITHER kind of evidence: its own mpId-0
+            # broadcast (offline leader model only) or its REFLECTION of our slot at mpId 1 (the only
+            # signal the real console gives). Gating on host_count alone pinned hc at 0 for every
+            # hardware run, so count=3 was NEVER sent: j58 walked, sat, saw the console sit
+            # (its own 0x16 held key), and then died 0.09s later still driving count=2.
+            hc = max(self.barrier.host_count or 0, self._self_standby_echo)
             if hc < 2:                          # warp#3: drive count=2 until the host completes it
                 if not self._barrier_initiated_warp3:
                     self._barrier_initiated_warp3 = True
