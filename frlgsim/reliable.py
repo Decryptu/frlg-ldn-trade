@@ -33,6 +33,11 @@ RTO_RTT_FACTOR = 1.4    # RTT term in the RTO: RTO = RTO_BASE_MS + RTO_RTT_FACTO
                         # exponential backoff and no clamp - every (re)send re-arms the same deadline.
 RTT_WINDOW = 7          # the RTO uses the MEDIAN of the most recent <=7 round-trip samples, so a single
                         # jittered/bufferbloated spike cannot inflate it the way a running average would.
+FAST_RETX_MIN_MS = 25   # never re-send the peer's hole more often than this (or the median RTT, whichever
+                        # is larger). The fast-retransmit is allowed to fire REPEATEDLY - a peer that keeps
+                        # NACKing the same seq keeps telling us it is still missing - but a hole re-sent
+                        # faster than one round trip is re-sent before we could possibly have learned it
+                        # arrived, which is the duplicate-spam hazard this codebase has hit twice.
 MAX_INFLIGHT = 128      # the selective-ack mask spans 128 sequence ids, so at most 128 frames can be
                         # outstanding past the cumulative ack point.
 
@@ -252,11 +257,27 @@ class ReliableLink:
             self._peer_gap = None
             self._gap_nacks = 0
 
+    def _fast_retx_gap(self):
+        """Minimum interval between two fast-retransmits of the SAME hole: one round trip, floored at
+        FAST_RETX_MIN_MS. Re-sending sooner cannot have learned anything new."""
+        if self._rtt:
+            s = sorted(self._rtt)
+            return max(FAST_RETX_MIN_MS, s[len(s) // 2])
+        return FAST_RETX_MIN_MS
+
     def due_retransmits(self, now_ms, limit=None):
         """[(seq, flagsA, inner)] for unacked frames due to resend (oldest first); stamps them re-sent.
         Two triggers, NO exponential backoff:
-          - FAST-RETRANSMIT: the peer's current hole (_peer_gap) is resent ONCE, but only after
-            dup_nack_threshold acks have agreed it is missing. On the console that threshold is 1 (a single
+          - FAST-RETRANSMIT: the peer's current hole (_peer_gap) is resent when dup_nack_threshold acks
+            have agreed it is missing. The FIRST response is immediate (console-faithful: a SACK that
+            covers a later frame but not this one is proof of loss, not of flight); every response after
+            that additionally requires one round trip (_fast_retx_gap) since we last sent it, and firing
+            consumes the NACK count so the next one must be earned again. This is RE-ARMABLE on purpose. It used to fire exactly once per frame in its lifetime, after which
+            a hole the peer was still NACKing every ~18ms could only be resent on the ~105ms RTO - and
+            because Pia delivers in order, that hole stalls the whole GAME stream behind it. Measured on
+            hardware (j57, j60): a single lost datagram froze the exchange for 0.5-1.2s, the console's
+            ack base crawled two sequences per ~100ms, and both runs died at the post-card barrier with
+            our fragments and the barrier itself queued behind the hole. On the console that threshold is 1 (a single
             NACK => loss). DIVERGENCE for high-jitter links: there a single NACK does NOT imply loss - a
             slow frame is often still in flight when the peer NACKs it - so the driver raises the threshold
             (several agreeing NACKs = really gone, not just reordered) to stop resending in-flight frames.
@@ -275,9 +296,11 @@ class ReliableLink:
             entry = self.unacked[seq]
             if entry[_E_ACKED]:
                 continue                                   # peer already has it -> never retransmit
-            if (seq == self._peer_gap and entry[_E_RESENDS] == 0
-                    and self._gap_nacks >= self._dup_nack_threshold):
-                due = True                                 # confirmed hole, not yet resent -> fast-retransmit ONCE
+            if (seq == self._peer_gap and self._gap_nacks >= self._dup_nack_threshold
+                    and (entry[_E_RESENDS] == 0                      # first response: immediate
+                         or (now_ms - entry[_E_LASTTX]) >= self._fast_retx_gap())):
+                due = True                                 # confirmed hole -> fast-retransmit (re-armable)
+                self._gap_nacks = 0                        # earn the next one with fresh NACKs
             elif base_rto is None:                         # no RTT sample yet -> no timer retransmit
                 due = False
             else:
