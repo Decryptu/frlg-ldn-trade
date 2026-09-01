@@ -50,12 +50,22 @@ def build_bulk_ack(next_expected, mask=b"\x00" * 16, stream_id=0):
 
 def parse_bulk_ack(payload):
     """-> (ack_id, mask) from a FLAGSA_CTRL payload. ack_id = next-expected seq (every seq below it
-    is acked); mask = 128-bit gap bitmap (`ack_id + index` is acked when bit `index` is set;
-    bit zero is normally clear because ack_id itself is the cumulative hole).
-    Returns (None, b'') if too short."""
+    is acked); mask = 128-bit gap bitmap of the frames ABOVE the hole: bit `i` set => `ack_id + i + 1`
+    is acked. The bitmap starts at ack_id+1, not at ack_id - ack_id is by definition the hole, so it
+    has no bit of its own. Returns (None, b'') if too short.
+
+    The +1 origin is measured, not assumed. Across three hardware captures (j23/j29/j31, 591 masks
+    with a non-zero bitmap) reading bit i as `ack_id + i` makes the console mark its OWN cumulative
+    hole as received 255 times - impossible - while `ack_id + i + 1` yields zero contradictions and
+    an absolute received-set that only ever grows. See MASK_ORIGIN_OFFSET."""
     if len(payload) < 4:
         return None, b""
     return int.from_bytes(payload[2:4], "big"), payload[4:20].ljust(16, b"\x00")
+
+
+# Gap-bitmap origin: bit i of a bulk-ack mask refers to ack_id + i + MASK_ORIGIN_OFFSET.
+# Reading and writing MUST use the same value - the console runs one codec for both directions.
+MASK_ORIGIN_OFFSET = 1
 
 
 def _seq_lt(a, b):
@@ -209,12 +219,16 @@ class ReliableLink:
         maskint = int.from_bytes(mask, "little") if mask else 0
         for seq, entry in self.unacked.items():
             arrived = _seq_lt(seq, ack_id)                 # cumulative run below ack_id
-            if not arrived and maskint:                    # selective mask: bit i => ack_id+i received
-                # Bit zero corresponds to ack_id itself.  Since ack_id is the
-                # cumulative hole that bit is normally clear; the first
-                # out-of-order sequence (ack_id + 1) is bit one.  Native
-                # capture example: ack_id=fff7, mask=06 marks fff8+fff9.
-                i = (seq - ack_id) & 0xFFFF
+            if not arrived and maskint:                    # selective mask: bit i => ack_id+i+1 received
+                # The bitmap covers the frames ABOVE the hole, so it starts at
+                # ack_id + 1 (see parse_bulk_ack for the measurement that settles
+                # this). Getting the origin wrong is not a cosmetic off-by-one: it
+                # marks the peer's real hole as acked, so that frame is never
+                # retransmitted and the peer's window base never advances again,
+                # while the send budget goes on re-sending a frame it already has.
+                # Measured on j31: seq 113 (the hole) sent once and never repeated,
+                # seq 115 and 117 sent 116x and 114x, stream dead from 26s on.
+                i = (seq - ack_id - MASK_ORIGIN_OFFSET) & 0xFFFF
                 arrived = i < 128 and bool((maskint >> i) & 1)
             if arrived and not entry[_E_ACKED]:
                 if now_ms is not None and entry[_E_RESENDS] == 0:
@@ -314,12 +328,14 @@ class ReliableLink:
     def ack_payload(self):
         """Bulk-ack: CUMULATIVE next-expected (recv_next) + a SELECTIVE MASK of the out-of-order frames we
         hold (recv_ooo), so the peer fast-retransmits exactly its dropped frames (mask bit i set =>
-        recv_next+i received, LSB-first within each byte; bit zero is the cumulative hole and is clear).
-        recv_ooo is populated by note_received (live
+        recv_next+i+1 received, LSB-first within each byte; recv_next is the hole and has no bit).
+        The origin matches what the console's own encoder does (parse_bulk_ack): one codec serves both
+        directions, so the peer would mis-read a mask written to any other origin and retransmit the
+        wrong frames back at us. recv_ooo is populated by note_received (live
         path); on the offline on_data path it stays empty -> zero mask (cumulative-only)."""
         mask = bytearray(16)
         for s in self.recv_ooo:
-            i = (s - self.recv_next) & 0xFFFF
+            i = (s - self.recv_next - MASK_ORIGIN_OFFSET) & 0xFFFF
             if i < 128:
                 mask[i >> 3] |= (1 << (i & 7))
         return build_bulk_ack(self.recv_next, bytes(mask))

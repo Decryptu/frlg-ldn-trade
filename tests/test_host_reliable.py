@@ -71,9 +71,12 @@ def test_gap_sack_fast_retransmit_and_ordered_delivery():
     sack = receiver.poll(3)[0]
     ack_id, mask = reliable.parse_bulk_ack(sack.payload)
     assert ack_id == 0xFFF1
-    # Native bitmap origin is ack_id itself: fff2/fff3 above the fff1 hole
-    # occupy bits 1 and 2 (0x06), not bits 0 and 1.
-    assert mask[0] & 0b111 == 0b110
+    # The bitmap covers the frames ABOVE the hole and so starts at ack_id + 1:
+    # fff2/fff3 above the fff1 hole occupy bits 0 and 1 (0x03). The old expectation
+    # here was bits 1 and 2, taken from a single ambiguous capture example; three
+    # hardware captures (591 masks) settle it the other way - see
+    # reliable.MASK_ORIGIN_OFFSET.
+    assert mask[0] & 0b111 == 0b011
 
     sender.receive(sack.serialize(), 4)
     retransmits = sender.poll(4)
