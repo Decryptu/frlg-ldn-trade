@@ -117,6 +117,9 @@ RECV_NI_REACK_EVERY = 20  # re-ack the host's NI sub-frame every N repeats (it p
 # A lost NI sub-frame does not get fixed by sending more of them.
 HOST_ACK_REPEAT_BEFORE_RESEND = 10   # repeats of one host ack before we assume a loss
 NULL_REEMIT_EVERY = 12    # re-send the terminator every N polls (~5/s), not every VBlank
+NI_ACK_WAIT_RESEND = 12   # while awaiting the host's ack of our current NI sub-frame, re-send it
+                          # this often (~5/s) - the same proven pacing, but aimed at the sub-frame
+                          # the host is actually waiting for instead of at a repeat-count guess.
 NULL_REEMIT_MAX = 30      # ~6s of paced re-sends before giving up on a stuck host
 RTO_BOOTSTRAP_MS = 200    # RTO while sampleless so the connect J/C retransmit until the host engages (NOT a floor)
 # K-ack pacing: the K-ack is the emulator's ack of a received host poll. The host polls ~60x/s, so
@@ -235,6 +238,19 @@ class Sim:
         self._ni = None
         self._ni_done = False
         self._ni_built = False
+        # librfu's NI transfer is STOP-AND-WAIT: the receiver takes one sub-frame, acks it, and only
+        # then accepts the next. This repo's own parent implements exactly that
+        # [rfu_leader.py _parent_waiting], but NISender did not - next_slot() advanced on every call,
+        # so the child dumped all six sub-frames in ~92ms. The host registered the first, acked it,
+        # and the rest arrived while its NI receiver was still on that one. Recovery then fell to the
+        # "host repeated its ack 10 times" guess at ~5/s, which measured ~2s PER sub-frame on
+        # hardware (j21) - roughly 10s for the transfer against the parent's 4-6s
+        # establishConnection budget, so the host disconnected every time. Sending faster made it
+        # worse (j22, dead in 0.7s) because that just puts more out-of-sequence sub-frames into the
+        # host's NI receiver. Gate on the ack instead: one sub-frame in flight, advance the moment
+        # the host acknowledges it, so a clean link finishes the transfer in ~6 round-trips.
+        self._ni_awaiting = None     # (state, n, phase) of the sub-frame awaiting the host's ack
+        self._ni_wait_ticks = 0      # polls spent awaiting it (paces the re-send)
         # RECV-side NI: right after the host acks OUR send-NI it runs its OWN librfu NI
         # sender (its connection/join-status data). The child must ACK every host NI sub-frame (ack=1,
         # mirroring state/n/phase) or the host's NI transfer never completes and the host faults the
@@ -790,9 +806,21 @@ class Sim:
             # 1. drive our send-NI to completion first (one sub-frame per VBlank). Single pass - Pia
             #    Reliable guarantees delivery+order under us, so we don't stop-and-wait.
             if not self._ni.done:
-                slot = self._ni.next_slot()
-                if slot is not None:
-                    return self._wrap_t(slot)
+                # Stop-and-wait (see _ni_awaiting): emit the next sub-frame only once the host has
+                # acked the one before it. _host_ni_ack_key carries the (state, n, phase) named by
+                # the host's most recent ack of OUR NI.
+                if self._ni_awaiting is None or self._host_ni_ack_key == self._ni_awaiting:
+                    slot = self._ni.next_slot()
+                    if slot is not None:
+                        self._ni_awaiting = self._ni.emitted[-1][:3]
+                        self._ni_wait_ticks = 0
+                        return self._wrap_t(slot)
+                else:
+                    # Still unacknowledged: re-send THIS sub-frame on the paced timer. Falls through
+                    # rather than returning, so the recv-NI ack below is never starved.
+                    self._ni_wait_ticks += 1
+                    if self._ni_wait_ticks % NI_ACK_WAIT_RESEND == 0:
+                        return self._wrap_t(self._ni.emitted[-1][3])
             # 1b. our send-NI is finished, but if the host is STILL acking NI_END it never
             #     registered our NULL terminator, so it will re-ack forever and then drop the link
             #     (observed: 328 NI_END acks over ~11s, then close). The sender is single-pass on the
