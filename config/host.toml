@@ -15,7 +15,7 @@ skip_preflight = false
 # Delegate outgoing CCMP to mac80211/hardware; over-air traffic remains encrypted.
 skip_encryption = true
 # Normalize this driver's decrypted monitor RX frames that retain CCMP metadata.
-accept_decrypted_ccmp = false
+accept_decrypted_ccmp = true
 native_nonce_sequence = true
 session_response_first = true
 

@@ -30,13 +30,13 @@ def test_tracked_host_profile_is_the_tp_link_live_default():
     assert loaded.live is True
     assert loaded.adapter == "tplink-archer-t3u"
     assert loaded.skip_encryption is True
-    assert loaded.accept_decrypted_ccmp is False
+    assert loaded.accept_decrypted_ccmp is True
     assert loaded.native_nonce_sequence is True
     assert loaded.session_response_first is True
     assert loaded.phy == "auto"
     assert loaded.to_host_options() == config.HostOptions(
         skip_encryption=True,
-        accept_decrypted_ccmp=False,
+        accept_decrypted_ccmp=True,
         native_nonce_sequence=True,
         session_response_first=True,
     )

@@ -201,8 +201,8 @@ def test_role_defaults_use_the_checked_in_tp_link_profile():
     assert (trade.role.skip_encryption,
             trade.role.native_nonce_sequence,
             trade.role.session_response_first) == (True, True, True)
-    assert gift.role.accept_decrypted_ccmp is False
-    assert trade.role.accept_decrypted_ccmp is False
+    assert gift.role.accept_decrypted_ccmp is True
+    assert trade.role.accept_decrypted_ccmp is True
     assert gift.ldn.phy == trade.ldn.phy == "auto"
 
 
