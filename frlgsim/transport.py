@@ -143,6 +143,44 @@ def _sysctl(key, val):
     _run(["sysctl", "-wq", f"{key}={val}"])
 
 
+def get_power_save(iface):
+    """-> True/False/None (unknown) for `iw dev <iface> get power_save`."""
+    try:
+        out = subprocess.check_output(["iw", "dev", iface, "get", "power_save"],
+                                      text=True, stderr=subprocess.DEVNULL)
+    except Exception:
+        return None
+    low = out.lower()
+    if "power save: on" in low:
+        return True
+    if "power save: off" in low:
+        return False
+    return None
+
+
+def disable_power_save(iface, log=print):
+    """Turn 802.11 power save OFF on the joiner's station vif, and say what it was.
+
+    A new managed vif inherits the driver default, which on rtw88 is PS ON. A dozing station
+    only wakes on the AP's beacons, so with the console beaconing at 100 TU every exchange
+    costs up to a beacon interval: the measured joiner captures (j43/j50/j55) show the child
+    <-> parent ping-pong pinned at 11-15 exchanges/s with 100-400ms latency tails and ~50% of
+    our reliable frames retransmitted, while the console's own frame counter advances at
+    55-60/s. The host direction never had this because an AP vif does not doze - which is why
+    hosting a trade works and joining crawls. Everything the joiner has to fit inside the
+    console's patience (the trainer-card round, the entry barriers, the 112-slot seat walk)
+    is throughput-bound on that number."""
+    before = get_power_save(iface)
+    _run(["iw", "dev", iface, "set", "power_save", "off"])
+    after = get_power_save(iface)
+    if after is False:
+        log(f"[live] 802.11 power save on {iface}: {'on -> off' if before else 'off'}")
+    else:
+        log(f"[live] WARNING: could not turn 802.11 power save off on {iface} "
+            f"(before={before}, after={after}); the link will run at beacon cadence")
+    return after is False
+
+
 def list_phy_ifaces():
     """Map phyName -> [netdev names] by parsing `iw dev`."""
     mapping, current = {}, None
@@ -358,6 +396,8 @@ class LiveTransport:
                 last_err = self._err                    # already unwrapped + logged in _run_ldn
             else:
                 tune_iface(self.iface, self.our_ip, self.broadcast, self.log)  # host broadcasts
+                disable_power_save(self.iface, self.info)   # a dozing station caps the link at
+                                                            # the console's beacon interval
                 self._setup_sockets()
                 if attempt > 1:
                     self.log(f"[live] LDN join succeeded on attempt {attempt}/{attempts}.")
