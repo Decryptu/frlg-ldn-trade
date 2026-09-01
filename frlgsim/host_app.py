@@ -169,6 +169,15 @@ class HostApplication:
             }.get(state)
             if message:
                 self.info(message)
+            if state == host_trade.H_PARTY:
+                # The child's walk to the RIGHT trade chair, as (LINK_KEY_CODE, frames). The joiner
+                # has no other source for this route - see HostTradeEngine.child_route_runs.
+                runs = activity.child_route_runs()
+                if runs:
+                    names = {0x11: "EMPTY", 0x12: "DOWN", 0x13: "UP", 0x14: "LEFT", 0x15: "RIGHT",
+                             0x16: "READY", 0x17: "EXIT_ROOM", 0x19: "A", 0x1D: "EXIT_SEAT"}
+                    self.info("child seat route: " + ", ".join(
+                        f"({names.get(k, hex(k))}, {n})" for k, n in runs))
         if activity.commits > self._saved_commits:
             self._saved_commits = activity.commits
             self._save_received()

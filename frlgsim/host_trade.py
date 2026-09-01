@@ -237,6 +237,7 @@ class HostTradeEngine:
         # SEND_HELD_KEYS carries a rolling high-byte counter and a low-byte overworld key. Entry is
         # an actual movement route, not a static READY flag; omitting it strands the child on the
         # black room-transition screen.
+        self._child_key_runs = []       # [[keycode, run-length], ...] of the child's SEND_HELD_KEYS
         self._held_count = 0
         self._held_plan = deque()
         self._held_steady = None
@@ -297,6 +298,10 @@ class HostTradeEngine:
     def _queue_block(self, data, label):
         self._blocks.append((bytes(data), label))
         self.trace.append(("queue_block", label, len(data)))
+
+    def child_route_runs(self):
+        """The child's observed held-key route as (keycode, run-length) tuples."""
+        return tuple((k, n) for k, n in self._child_key_runs)
 
     def _set_held_plan(self, runs, label, steady=None):
         self._held_plan.clear()
@@ -571,6 +576,16 @@ class HostTradeEngine:
             return
         if op == rfu.SEND_HELD_KEYS:
             key = rec.get("keycode", 0) & 0xFF
+            # Record the child's held-key route as (keycode, run-length) pairs. This is the ONLY
+            # source for the child's walk to the RIGHT trade chair: the joiner has to emit that route
+            # itself (host_trade's ENTRY_LEFT_CHAIR_ROUTE is the leader's, to the LEFT chair) and no
+            # capture of it existed. The host --capture trace records no ssid, so a host-direction
+            # capture cannot be decrypted offline - hence recording it here, where the slot is already
+            # parsed. Printed by child_route_runs() at the end of a run.
+            if self._child_key_runs and self._child_key_runs[-1][0] == key:
+                self._child_key_runs[-1][1] += 1
+            else:
+                self._child_key_runs.append([key, 1])
             if key == LINK_KEY_READY and self.state == H_ENTRY_SEAT:
                 self._child_ready = True
                 self.trace.append(("child_key", "READY"))
