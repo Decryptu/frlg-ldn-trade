@@ -20,6 +20,7 @@ OFFLINE self-check (replays a captured host stream through the full RX stack - n
 
 import argparse
 import os
+import signal
 import sys
 import time
 
@@ -115,6 +116,18 @@ def run_live(run_config, lg):
     connect_ticks = 0
     leave_until = None
     close_until = None
+    graceful_interrupt = False
+    interrupt_count = 0
+
+    def on_interrupt(_signum, _frame):
+        nonlocal graceful_interrupt, interrupt_count
+        interrupt_count += 1
+        if interrupt_count == 1:
+            graceful_interrupt = True
+        else:
+            raise KeyboardInterrupt
+
+    old_sigint = signal.signal(signal.SIGINT, on_interrupt)
     # Overworld leave tail: keep the link ALIVE (held-keys keepalive) while waiting for the HOST to lead
     # the walk-out and sever the link itself (graceful). The host's exit is human-paced (walk to the south
     # exit -> confirm-leave prompt -> EXIT_ROOM -> RunTerminateLinkScript -> CloseLink -> 'D'), so this is
@@ -124,6 +137,14 @@ def run_live(run_config, lg):
     try:
         while True:
             s.tick()
+            if graceful_interrupt:
+                graceful_interrupt = False
+                if engine.host_in_seat and engine.in_seat_phase and lstate is not None:
+                    lstate.exit()
+                    lg("[live] Ctrl+C: sent EXIT_ROOM; waiting for the host to terminate the link. "
+                       "Press Ctrl+C again to stop immediately.")
+                else:
+                    raise KeyboardInterrupt
             # Save each received mon the INSTANT it commits (on CONFIRM_FINISH), not just at graceful
             # run-end: the post-trade tail (save chain / cancel / close) can stall or be Ctrl+C'd, and the
             # mon data is already valid at commit. Writing here means the received mon survives an
@@ -240,6 +261,7 @@ def run_live(run_config, lg):
                 break
             time.sleep(period)
     finally:
+        signal.signal(signal.SIGINT, old_sigint)
         s.close()          # flush the --capture .jsonl
         t.stop()
         lg.info("Link closed.")
