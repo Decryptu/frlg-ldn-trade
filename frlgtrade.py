@@ -111,7 +111,7 @@ def run_live(run_config, lg):
     # an unestablished slot and faulting the host's childSendCmdId check; it is removed. Live residual:
     # the warp/seat transition itself is a local field task not on the wire, so we approximate it
     # with the establishment latch - the last wire-observable milestone before the seat.
-    sat = exited = connect_announced = responded_exit = False
+    sat = walking = exited = connect_announced = responded_exit = False
     announced_cancel = announced_close = announced_entry = announced_menu = False
     announced_established = False
     saved_commits = 0       # received mons already written to disk (save AT COMMIT, not just run-end)
@@ -258,9 +258,19 @@ def run_live(run_config, lg):
             # cable-seat FSM immediately (observed as a comms error on trade-room load). Until host_ready we emit
             # EMPTY held-keys keepalive (host_in_seat armed the seat keepalive); we sit WITH the host so
             # GetCableClubPartnersReady sees both PLAYER_LINK_STATE_READY and clears.
-            if not sat and engine.host_ready:
-                lg("[live] host sat (READY 0x16) - sitting at the RIGHT seat (READY 0x16).")
-                lstate.sit()
+            # Start the WALK as soon as the host is in the room (host_in_seat). Waiting for the host's
+            # own READY (host_ready) deadlocks: measured on hardware (j35), the console leader streams
+            # nothing but EMPTY held-keys in the trade room and waits for the CHILD's READY - which is
+            # exactly what this repo's own leader does [host_trade.py, LINK_KEY_READY in H_ENTRY_SEAT].
+            # Neither side moved and it timed out. The earlier note that sitting on host_in_seat faults
+            # the host FSM was right about the CAUSE but wrong about the fix: the fault was firing READY
+            # from the doorway. walk_to_seat() sends the real route first and READY only at the chair.
+            if not walking and engine.host_in_seat:
+                lg("[live] host is in the trade room - walking to the RIGHT seat.")
+                lstate.walk_to_seat()
+                walking = True
+            if not sat and lstate.seated:
+                lg("[live] our READY (0x16) went out at the RIGHT seat.")
                 engine.note_self_seated()   # arm the post-seat warp-into-scene standbys (count=2, count=3)
                 sat = True
             # ENTRY-phase observability: report the union-room -> trade-center handshake.

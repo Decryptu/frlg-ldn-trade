@@ -68,12 +68,17 @@ keepalive replaces an IDLE slot ONLY - never a real SEND_BLOCK/LINKCMD slot. sim
 trade engine first; only if it returns idle does it emit this keepalive (see sim.py).
 """
 
+from collections import deque
+
 from . import rfu
 
 # Key codes [include/overworld.h:7-24]; the OUT subset linkstate emits.
 LINK_KEY_CODE_NULL = 0x00        # suppress (SendKeysToRfu skips)
 LINK_KEY_CODE_EMPTY = 0x11       # keepalive (no state change)
 LINK_KEY_CODE_DPAD_DOWN = 0x12
+LINK_KEY_CODE_DPAD_UP = 0x13
+LINK_KEY_CODE_DPAD_LEFT = 0x14
+LINK_KEY_CODE_DPAD_RIGHT = 0x15
 LINK_KEY_CODE_READY = 0x16       # sit -> sPlayerLinkStates[self]=READY(0x82)
 LINK_KEY_CODE_EXIT_ROOM = 0x17   # leave -> sPlayerLinkStates[self]=EXITING_ROOM(0x83)
 LINK_KEY_CODE_IDLE = 0x1A
@@ -98,6 +103,45 @@ SEND_NOTHING = "SEND_NOTHING"
 
 # 60-frame watchdog (CheckRfuKeepAliveTimer >60 -> LinkRfu_FatalError [overworld.c:2623-2626]).
 KEEPALIVE_WATCHDOG = 60
+
+# The child's walk from the trade-room entrance to the RIGHT chair, as (LINK_KEY_CODE, frames).
+# The seat walk is REAL PLAYER INPUT relayed over the link, not a script: each side animates the
+# peer's avatar from the key codes it receives, so a child that only ever sends EMPTY stands in the
+# doorway forever and the host waits for a READY that never comes. host_trade.ENTRY_LEFT_CHAIR_ROUTE
+# is the mirror of this for the LEADER (UP -> LEFT -> UP -> READY, to the left chair).
+#
+# Measured, not guessed: recorded off a real French FireRed acting as the CHILD against this repo's
+# own host (HostTradeEngine.child_route_runs), walking a clean path to its chair:
+#     (EMPTY,1) (0x1b,21) (EMPTY,5) (0x1a,1) (EMPTY,87)
+#     (UP,43) (EMPTY,23) (RIGHT,9) (EMPTY,30) (UP,7) (EMPTY,59) (READY,1) (EMPTY,13)
+# The 0x1b/0x1a prefix (HANDLE_RECV_QUEUE / IDLE) is the console's own queue housekeeping around the
+# room load, not movement, so it is not reproduced here; the movement and its gaps are verbatim. The
+# EMPTY runs between direction changes are load-bearing - tile movement has to finish before the next
+# direction is accepted - so do not compress them without a fresh capture to justify it.
+# The two long EMPTY runs in the recording - 87 before the first step and 59 before READY - are the
+# player waiting for the room to render and pausing at the chair, not protocol. They are trimmed:
+# the peer advances our avatar ONE key per slot it receives, so every frame here costs a slot, and
+# measured on hardware (j38) the console goes quiet the moment it is in the room, dropping us to the
+# 3/s liveness floor - at which 87 lead-in frames alone is 29 seconds of standing still. The gaps
+# BETWEEN direction changes are kept verbatim: tile movement has to finish before the next direction
+# is accepted, and those are load-bearing.
+# The gaps are trimmed to TILE_STEP_FRAMES, the length of one walking step - the peer has to finish
+# the step in progress before it will accept a new direction, and that is the whole job of the gap;
+# the recorded 23/30/59 were the player pausing on top of it. Measured (j50): the console polled for
+# ~6s after entering the room, ~85 slots at 13-16/s, and we emit ONE route frame per poll - so a
+# 145-frame route ran out of runway mid-way (UP and RIGHT done, final UP and READY not; the player
+# saw us walk partway and stop). 112 frames fits that budget with margin.
+TILE_STEP_FRAMES = 16
+ENTRY_RIGHT_CHAIR_ROUTE = (
+    (LINK_KEY_CODE_EMPTY, 4),
+    (LINK_KEY_CODE_DPAD_UP, 43),
+    (LINK_KEY_CODE_EMPTY, TILE_STEP_FRAMES),
+    (LINK_KEY_CODE_DPAD_RIGHT, 9),
+    (LINK_KEY_CODE_EMPTY, TILE_STEP_FRAMES),
+    (LINK_KEY_CODE_DPAD_UP, 7),
+    (LINK_KEY_CODE_EMPTY, TILE_STEP_FRAMES),
+    (LINK_KEY_CODE_READY, 1),
+)
 
 
 class LinkState:
@@ -125,6 +169,8 @@ class LinkState:
         self.state = PRE_SEAT
         self._held_key_count = 0             # static u8 heldKeyCount [link_rfu_2.c:1071]; ++ before OR
         self._pending_once = None            # a one-shot key (READY/EXIT_ROOM) to emit next tick
+        self._route = deque()                # queued seat-walk key codes (ENTRY_RIGHT_CHAIR_ROUTE)
+        self._walking = False
         self._seated = False
         self._exiting = False
         # host-side mirror of OUR own slot's link state, advanced by the key WE send (the host
@@ -132,6 +178,31 @@ class LinkState:
         self.our_link_state = PLAYER_LINK_STATE_IDLE
 
     # ---- orchestrator signals ----------------------------------------------
+    @property
+    def seated(self):
+        """True once our READY (0x16) has actually gone out."""
+        return self._seated
+
+    @property
+    def walking(self):
+        """True while seat-walk route frames are still queued."""
+        return bool(self._route)
+
+    def walk_to_seat(self):
+        """Walk the RIGHT-chair route and sit at the end of it (ENTRY_RIGHT_CHAIR_ROUTE).
+
+        Call this once the host is in the trade room. Prefer it to sit(): firing READY without
+        walking puts our avatar in the doorway with a READY the host's cable-seat FSM rejects as
+        out of sequence, and standing still forever deadlocks - the host is waiting for our READY
+        while we wait for its own."""
+        if self._walking or self._seated:
+            return
+        self._walking = True
+        for keycode, frames in ENTRY_RIGHT_CHAIR_ROUTE:
+            self._route.extend([keycode] * max(0, int(frames)))
+        self.info("Walking to the right seat.")
+        self.log(f"linkstate: walk_to_seat() -> {len(self._route)} route frames to the RIGHT chair")
+
     def sit(self):
         """Take the RIGHT seat: emit LINK_KEY_CODE_READY(0x16) on exactly the NEXT tick, then
         keepalive in SEATED. Mirrors Task_EnterCableClubSeat -> SetInCableClubSeat ->
@@ -187,6 +258,15 @@ class LinkState:
         live (it keeps seeing us / our READY). This is NOT the child-local CheckRfuKeepAliveTimer (that
         is the child's own >60-frame watchdog, reset by a key-intercept callback CHANGE and not even
         running once seated [overworld.c:2613-2626, 2941]); it is the wire keepalive the host needs."""
+        # the seat walk, one key per VBlank, ahead of the steady keepalive. EXIT_ROOM still preempts
+        # it (the host can walk out mid-route), but nothing else does.
+        if self._route and self._pending_once is None:
+            key = self._route.popleft()
+            if key == LINK_KEY_CODE_READY:
+                self._seated = True
+                self.state = SEATED
+                self.info("Sat down at the right seat.")
+            return self._emit(key)
         # one-shot READY/EXIT_ROOM takes precedence, exactly once.
         if self._pending_once is not None:
             key = self._pending_once
