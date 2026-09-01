@@ -237,6 +237,13 @@ class HostTradeEngine:
         # SEND_HELD_KEYS carries a rolling high-byte counter and a low-byte overworld key. Entry is
         # an actual movement route, not a static READY flag; omitting it strands the child on the
         # black room-transition screen.
+        self._child_slot_runs = []      # [[(op, w1), run-length], ...] of EVERY child slot, idles
+                                        # included, from the first one on. The held-key run-lengths
+                                        # below only cover 0xBE00; this is the whole child stream, so
+                                        # a run of ours can be diffed against what a real console
+                                        # child actually sends in the trade room (its queue
+                                        # housekeeping 0x1B/0x1A, the ORDER and COUNT of its
+                                        # READY_EXIT_STANDBY rounds, what it does after READY).
         self._child_key_runs = []       # [[keycode, run-length], ...] of the child's SEND_HELD_KEYS
         self._held_count = 0
         self._held_plan = deque()
@@ -302,6 +309,20 @@ class HostTradeEngine:
     def child_route_runs(self):
         """The child's observed held-key route as (keycode, run-length) tuples."""
         return tuple((k, n) for k, n in self._child_key_runs)
+
+    def child_slot_runs(self):
+        """EVERY child slot as ((op, word1), run-length) tuples - the authoritative reference for
+        what a real console child sends, which the joiner has never had beyond the held keys."""
+        return tuple((tuple(k), n) for k, n in self._child_slot_runs)
+
+    def format_child_slots(self):
+        """child_slot_runs() as one readable line per run."""
+        out = []
+        for (op, w1), n in self.child_slot_runs():
+            name = "IDLE" if op is None else rfu.RFUCMD_NAMES.get(op, f"0x{op:04x}")
+            detail = "" if op is None else f" w1=0x{w1:04x}"
+            out.append(f"    {name}{detail} x{n}")
+        return "\n".join(out)
 
     def _set_held_plan(self, runs, label, steady=None):
         self._held_plan.clear()
@@ -488,6 +509,12 @@ class HostTradeEngine:
     def feed_child_slot(self, slot):
         """Consume one child gSendCmd row (14 bytes, rolling tag permitted)."""
         self._child_frames += 1
+        _r = None if bytes(slot) == rfu.idle_slot() else rfu.parse_slot(slot)
+        _key = (None, 0) if _r is None else (_r["op"], int.from_bytes(slot[2:4], "little"))
+        if self._child_slot_runs and self._child_slot_runs[-1][0] == _key:
+            self._child_slot_runs[-1][1] += 1
+        else:
+            self._child_slot_runs.append([_key, 1])
         if bytes(slot) != rfu.idle_slot():
             _rec = rfu.parse_slot(slot)
             if _rec is not None:

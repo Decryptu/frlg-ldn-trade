@@ -178,6 +178,13 @@ class HostApplication:
                              0x16: "READY", 0x17: "EXIT_ROOM", 0x19: "A", 0x1D: "EXIT_SEAT"}
                     self.info("child seat route: " + ", ".join(
                         f"({names.get(k, hex(k))}, {n})" for k, n in runs))
+                # The FULL child slot stream, not just the held keys: the authoritative reference
+                # for what a real console child sends through room entry, the seat and the standby
+                # rounds. The joiner has never had this, and every joiner stall in the trade room so
+                # far has been diagnosed by guessing at it.
+                slots = activity.format_child_slots()
+                if slots:
+                    self.info("child slot stream (op x run-length):\n" + slots)
         if activity.commits > self._saved_commits:
             self._saved_commits = activity.commits
             self._save_received()
