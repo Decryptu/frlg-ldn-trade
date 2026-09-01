@@ -145,6 +145,25 @@ WARP4_WATCHDOG = 180
 # We instead wait SAVE_BARRIER_GAP frames between rounds (the FIRST round stays prompt - its host-side wait
 # [case 100] has a 180f timeout; the later rounds [cases 42/44/6] have NO timeout, so being slower is safe).
 SAVE_BARRIER_GAP = 60
+# Re-arm gap for the four ENTRY warp barriers. These re-arm on EMITTED SLOTS, and the leader goes
+# silent while it waits for the round - which drops us to the CHILD_SILENCE_LIMIT floor of ~3 slots/s,
+# where the save chain's 60 would be a TWENTY SECOND wait for the re-send. Measured (j40): our count=1
+# burst went out at 15.0s, the console stopped transmitting in the same 100ms, and the sustain never
+# re-armed before it gave up ~10s later. The save chain keeps 60 - there the host is actively echoing,
+# so slots are cheap and a tight gap would be spam.
+ENTRY_BARRIER_GAP = 6
+# Idle ticks between our block fragments (BlockSender.STREAM_GAP), joiner only. 0 = UNPACED.
+#
+# Tried at 5 (~10/s, to match the ~6/s the console streams its own card at) and it is WORSE, because
+# it compounds with the credit pacer: j47's 17-fragment LinkPlayer block took 7.5s (7.1s -> 14.6s)
+# against ~0.4s unpaced, and the console quit before it finished. So a block cannot be slowed down
+# to the console's own streaming rate - the LinkPlayer exchange has a much tighter budget than that.
+#
+# The observation that motivated it still stands and is still unexplained: j34/j45/j46 all died
+# after the console acknowledged only the first one or two fragments of a fast burst, with a
+# provably clean tag sequence (scratchpad/tagcheck.py). Whatever the real limit is, it is not
+# "fragments per second" alone. Do not re-tune this against a single run.
+JOINER_STREAM_GAP = 0
 
 # Dead-host safety net for the post-trade save chain. The host pauses up to ~1.8s between save barriers
 # (its real LinkFullSave writes), so the chain must NOT end on a short quiet window - it ends when the host
@@ -482,7 +501,9 @@ class TradeEngine:
         self._barrier_initiated_warp1 = False  # post-LinkPlayer warp-quiesce (count 0)
         self._barrier_initiated_warp2 = False  # post-card warp-quiesce (count 1)
         self._warp1_emits = 0           # NEW count-0 standby frames emitted (BOUNDED burst, not a flood)
+        self._warp1_regap = 0           # idle frames since the count-0 burst, before re-arming it (sustain)
         self._warp2_emits = 0           # NEW count-1 standby frames emitted
+        self._warp2_regap = 0           # idle frames since the count-1 burst, before re-arming it (sustain)
         self._warp3_emits = 0           # NEW count-2 standby frames (post-seat, warp into trade scene)
         self._warp4_emits = 0           # NEW count-3 standby frames (post-seat)
         self._barrier_initiated_warp3 = False
@@ -560,6 +581,25 @@ class TradeEngine:
         once both LinkPlayers are exchanged it never clears on the trade path (the post-trade loop
         re-enters the menu, not the union-room entry)."""
         return self._lp_sent and self.host_link_player is not None
+
+    @property
+    def held_keys_active(self):
+        """Should the sim still emit the seat held-keys keepalive on an idle VBlank?
+
+        NO once we are seated AND the post-seat standby rounds are done (the host has echoed
+        count=3). The leader then needs a run of IDLE child slots to finish the entry -
+        `entry_final_standby_quiet_frames` = 75 of them, and its counter only advances on a slot
+        that is exactly idle [host_trade.feed_child_slot]. Keepaliving held-keys through that window
+        deadlocks it: reproduced offline against our own leader
+        (scratchpad/entry_harness.py) - child_ready and entry_final_standby_seen both True, and the
+        leader still parked in H_ENTRY_SEAT because our keepalive never let it count a quiet frame.
+        This mirrors the native child, which clears its key-intercept callback once seated
+        [Task_StartWirelessTrade case 0; cable_club.c:918]."""
+        if not self.in_seat_phase:
+            return False
+        if self._self_seated and (self.barrier.host_count or 0) >= 3:
+            return False
+        return True
 
     @property
     def host_in_seat(self):
@@ -732,7 +772,7 @@ class TradeEngine:
         which would falsely satisfy the send gates and complete the new block after one fragment.
         Clearing it makes the sender wait for the fresh wire ACK (true against the real host too)."""
         self.rx.peers[1] = block.RecvBlock()
-        self.sender = block.BlockSender(buf, trust_pia=self.trust_pia)
+        self.sender = block.BlockSender(buf, trust_pia=self.trust_pia, stream_gap=JOINER_STREAM_GAP)
         return self.sender
 
     def _on_req(self, reqtype):
@@ -1124,8 +1164,8 @@ class TradeEngine:
         self.state = S1_LINK
 
     # ---- CHILD-INITIATED standby barriers [link_rfu_2.c:1566-1573] -----------
-    def _sustain_standby(self, count, emits_attr, regap_attr):
-        """Emit READY_EXIT_STANDBY `count` as a bounded burst, RE-ARMED across a SAVE_BARRIER_GAP idle gap,
+    def _sustain_standby(self, count, emits_attr, regap_attr, gap=SAVE_BARRIER_GAP):
+        """Emit READY_EXIT_STANDBY `count` as a bounded burst, RE-ARMED across a `gap` idle gap,
         so a FRESH count keeps reaching the host (the leader waits silently for it) until it completes the
         round - without flooding. The caller stops calling this once the host completes (barrier.host_count
         advances past `count`). Mirrors the save chain's sustain; fixes the live seat-phase comms error
@@ -1137,7 +1177,7 @@ class TradeEngine:
             return rfu.exit_standby_words(count)
         regap = getattr(self, regap_attr) + 1     # burst delivered (+ retransmitting); idle, then re-arm
         setattr(self, regap_attr, regap)
-        if regap >= SAVE_BARRIER_GAP:
+        if regap >= gap:
             setattr(self, emits_attr, 0)
             setattr(self, regap_attr, 0)
         return [0] * 7
@@ -1223,14 +1263,23 @@ class TradeEngine:
         _advance_timers, so calling _advance_timers here AND self.tick() does not double-advance."""
         self._advance_timers()
         if self.sender is not None and self.sender.state == block.HOLD:
-            self.tick()        # ticks ONLY the sender (returns early); emitted words discarded
+            self.tick(sender_only=True)   # ticks ONLY the sender; emitted words discarded
 
     # ---- emit (one slot per VBlank) ----------------------------------------
-    def tick(self):
+    def tick(self, sender_only=False):
+        """`sender_only` = advance the block sender and return ITS words, nothing else.
+
+        poll_send_done() uses it. Without it, a HOLD tick that yields (below) would fall through and
+        run the ENTRY BARRIER inside a call whose words poll_send_done DISCARDS - silently burning
+        the warp burst. Measured (j53): exactly ONE count=1 frame of a six-frame burst reached the
+        wire in a whole run, the other five consumed by poll_send_done."""
         ack = self.rx.peers[1]          # the host's reflection of our block = wire ACK
 
         if self.sender is not None:
-            words = self.sender.tick(ack)
+            # peer 0 = the host's own block. While it is mid-transfer we must not stream ours into it.
+            host_rx = self.rx.peers[0]
+            peer_sending = bool(host_rx.receiving and not host_rx.done)
+            words = self.sender.tick(ack, peer_sending=peer_sending)
             if self.sender.done:
                 self.sender = None
                 # a cancel block has fully streamed out [S5/S6 cancel / cancel-to-leave].
@@ -1249,7 +1298,18 @@ class TradeEngine:
                         # (trade.c:2094-2132).
                         self.done = True
                         self.log("cancel block sent -> S_CANCEL (leaving)")
-            return words
+            # A HOLD tick that emits NOTHING must not own the slot. HOLD is confirm-driven with no
+            # live watchdog (deliberately - an early DONE left the host a fragment short and
+            # deadlocked the 3/3 party exchange), so if the host never reflects our last fragment it
+            # holds FOREVER, and returning its idle here starves everything below - including the
+            # entry warp barriers. Measured (j52): our card streamed 0..8, the console went quiet
+            # without reflecting fragment 8, HOLD never completed, and warp#2 count=1 was NEVER SENT
+            # for the whole run. j50 is the control: the console reflected fragment 8 at 19.914s and
+            # our count=1 went out 1ms later. HOLD keeps its own paced re-sends; only its idle
+            # frames yield.
+            if sender_only or (words[0] & 0xFFFF) != 0 or self.sender is None \
+                    or self.sender.state != block.HOLD:
+                return words
 
         # [barrier (d)] cancel-exit standby [trade.c:2117-2132]. After a BOTH_CANCEL the child stands by
         # ONE last time before returning to the field. Stay QUIESCENT (emit only the 0x6600) until the
@@ -1408,21 +1468,51 @@ class TradeEngine:
             # acks it, so the host gets our standby without us jamming the window with hundreds of frames
             # (which previously blocked the card send -> black screen). Return idle DIRECTLY (not falling
             # through to the priority-5 barrier, which would re-flood by mirroring the host's echoes).
+            # SUSTAINED, exactly like warp#3/#4 below - a bounded burst RE-ARMED across an idle gap,
+            # not a one-shot. These two were the last one-shot bursts left, and they fail the same way
+            # warp#3 did before it was sustained: the leader waits SILENTLY for the round, so if our
+            # burst is lost or arrives while it is still finishing the previous one, it sits forever.
+            # Measured across j35-j39: the post-card round (warp#2) reached the trade room in 2 runs
+            # of 5; the other 3 died right here with the console silent after the card exchange.
+            # The caller stops calling this the moment the round completes (card_supplied for #1,
+            # _host_in_seat for #2), so the sustain cannot outlive the barrier.
+            # STOP as soon as the host ECHOES the round (barrier.host_count), exactly like warp#3/#4
+            # below. Gating on a downstream side effect instead - card_supplied for #1, _host_in_seat
+            # for #2 - LIVELOCKS: every count we send makes the leader queue an echo
+            # [host_trade._on_child_standby -> _queue_words], and that queue PREEMPTS its held-key
+            # route, so it can never walk to its chair, so it never streams SEND_HELD_KEYS, so
+            # _host_in_seat never latches and we sustain forever. Reproduced deterministically offline
+            # against this repo's own leader (scratchpad/entry_harness.py): leader parked in
+            # H_ENTRY_SEAT emitting READY_EXIT_STANDBY against our count=1, forever.
+            # ONE-SHOT bounded burst, then SILENCE. Do not sustain these two.
+            #
+            # The leader queues an echo for every count it receives [host_trade._on_child_standby ->
+            # _queue_words] and that queue PREEMPTS its held-key route, so a child that keeps talking
+            # here stops the leader ever walking to its chair. Reproduced deterministically offline
+            # against our own leader (scratchpad/entry_harness.py): parked in H_ENTRY_SEAT trading
+            # READY_EXIT_STANDBY with us forever. It also matches the hardware history - j35/j38/j43
+            # reached the trade room on this one-shot burst, and every run after it was made
+            # "sustained" (j40-j42, j49) died at this barrier instead.
+            #
+            # Deliberately NOT gated on the host echoing the round: the real console never emits
+            # READY_EXIT_STANDBY in its OWN mp0 row (verified across j45-j49 - it only reflects OURS
+            # at mp1), so barrier.host_count stays None forever on hardware. That gate works offline
+            # only because our leader model does echo; it is a model artifact, not the protocol.
             if wcount == 0:
                 if not self._barrier_initiated_warp1:
                     self._barrier_initiated_warp1 = True
-                    self.log("warp#1: emitting post-LinkPlayer READY_EXIT_STANDBY count=0 (await host card)")
+                    self.log("warp#1: post-LinkPlayer READY_EXIT_STANDBY count=0 (one-shot burst)")
                 if self._warp1_emits < WARP_STANDBY_EMITS:
                     self._warp1_emits += 1
                     return rfu.exit_standby_words(0)
             else:
                 if not self._barrier_initiated_warp2:
                     self._barrier_initiated_warp2 = True
-                    self.log("warp#2: emitting post-card READY_EXIT_STANDBY count=1 (await host seat)")
+                    self.log("warp#2: post-card READY_EXIT_STANDBY count=1 (one-shot burst)")
                 if self._warp2_emits < WARP_STANDBY_EMITS:
                     self._warp2_emits += 1
                     return rfu.exit_standby_words(1)
-            return [0] * 7              # burst delivered/in-flight; idle + wait (no window-jamming flood)
+            return [0] * 7              # burst delivered; go QUIET so the leader can walk
 
         # POST-SEAT warp into the trade SCENE (fixes a black screen after both players sit). Once WE have sat
         # (note_self_seated) and we are still in the seat phase, emit the two remaining standby rounds -
@@ -1448,13 +1538,13 @@ class TradeEngine:
                 if not self._barrier_initiated_warp3:
                     self._barrier_initiated_warp3 = True
                     self.log("warp#3: post-seat READY_EXIT_STANDBY count=2 (sustained until host completes)")
-                return self._sustain_standby(2, "_warp3_emits", "_warp3_regap")
+                return self._sustain_standby(2, "_warp3_emits", "_warp3_regap", gap=ENTRY_BARRIER_GAP)
             if hc < 3:                          # warp#4: count=3 ONLY after the host did count=2; sustained
                 if not self._barrier_initiated_warp4:
                     self._barrier_initiated_warp4 = True
                     self.log("warp#4: post-seat READY_EXIT_STANDBY count=3 (host reached count=2; "
                              "sustained until host completes)")
-                return self._sustain_standby(3, "_warp4_emits", "_warp4_regap")
+                return self._sustain_standby(3, "_warp4_emits", "_warp4_regap", gap=ENTRY_BARRIER_GAP)
             return [0] * 7              # both post-seat bursts sent / waiting; idle + keepalive
 
         # Priority 5: standby / close-link barrier. Reached ONLY when no block send (priority 1),
