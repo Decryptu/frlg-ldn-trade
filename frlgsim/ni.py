@@ -53,6 +53,7 @@ NI_HEADER_SIZE = 7                       # dataType(1) + payloadSize(2) + dataSi
 
 # RfuGameData compatibility bit layout [include/link_rfu.h:81-93] - all in the first u16 (LE).
 ACTIVITY_TRADE = 0x04                    # gRfuGameData.activity for a trade [link_rfu.h activity:7]
+ACTIVITY_WONDER_CARD = 21                # Mystery Gift -> Wonder Cards -> Friend [constants/union_room.h:46]
 
 
 def build_game_data(version_low, trainer_id, ot_name, *, language=linkplayer.LANGUAGE_ENGLISH,

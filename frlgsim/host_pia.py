@@ -15,6 +15,36 @@ from . import crypto, pia_connect, reliable
 PIA_HOST_VAR = 0x00C6
 NET_RETRY_SECONDS = 0.5
 SESSION_ACCEPT_RETRY_SECONDS = 0.25
+# frlg-ldn-trade session 12 (2026-09-02): the first capture from INSIDE a real Mystery Gift host's
+# session (scratchpad/mc1, frlgmg_client.py) showed that a console SHARING a Wonder Card does NOT
+# accept the Pia Session join the way a trade host (j84) does: it sends NO type 2 Join Response at
+# all, sends the type 5 Update Session only 2.03s after the join request, and originates RTT
+# requests every 316ms from 0.25s after the join, BEFORE the session is finalized. Our host answers
+# in 2ms with type 2 + type 5 and starts RTT only after finalization. These three switches make the
+# host mimic the real Mystery Gift host's timing, for an A/B against the 3-second wall.
+#   FRLG_ACCEPT_DELAY_MS=2030   delay the session acceptance this long after the join request
+#   FRLG_NO_TYPE2=1             never send the type 2 Join Response (type 5 only, like mc1)
+#   FRLG_EARLY_RTT=1            originate RTT probes from join+0.25s, before finalization
+EARLY_RTT_FIRST_SECONDS = 0.25
+
+
+def _env_int(name, default=0):
+    try:
+        return int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _env_flag(name):
+    return os.environ.get(name, "") not in ("", "0")
+
+
+def synth_rtt_request_template(host_var, random4=None):
+    """A host-originated RTT request in the layout the real Mystery Gift host uses (mc1):
+    type(1) 00 00 01 | 4 constant bytes | 8-byte systime | 00 00 00 | sender var (2, BE)."""
+    rnd = bytes(random4 or os.urandom(4))
+    return (bytes([0, 0, 0, 1]) + rnd + bytes(8) + bytes(3)
+            + (host_var & 0xFFFF).to_bytes(2, "big"))
 HOST_RTT_PERIOD_SECONDS = 0.315
 # frlg-ldn-trade session 11: FRLG_LIVENESS_SCALE scales the RTT / Net-property keepalive cadence to
 # test whether feeding the emulator's svc_51 watchdog FASTER pushes the 3s wall out. 1.0 = the real
@@ -149,7 +179,7 @@ def build_net_property_update(network, app_data, sequence_id=1):
 
 
 def build_session_acceptance(network, pia_crypto, join, host_name,
-                             nonce_source=None):
+                             nonce_source=None, update_pktid=1):
     """Build the native type-5 update/type-2 response acceptance pair."""
     host_constant = pia_connect.ldn_constant_id(network.our_mac)
     host_var, guest_var = join["destination_var"], join["source_var"]
@@ -165,7 +195,7 @@ def build_session_acceptance(network, pia_crypto, join, host_name,
         compress=False, footer_var=guest_var, nonce_source=nonce_source)
     update_data = build_message(
         network, pia_crypto, pia_connect.PROTO_SESSION, update,
-        dst_var=pia_connect.SESSION_VAR, src_var=host_var, pktid=1,
+        dst_var=pia_connect.SESSION_VAR, src_var=host_var, pktid=update_pktid,
         compress=True, footer_var=guest_var, nonce_source=nonce_source)
     return update_data, response_data
 
@@ -260,6 +290,13 @@ class HostPeerProtocol:
         except ValueError:
             self._host_carry_depth = 0
         self._reliable_carry = []
+        # session-12 real-MG-host timing switches (see the constants above)
+        self.accept_delay = _env_int("FRLG_ACCEPT_DELAY_MS", 0) / 1000.0
+        self.no_type2 = _env_flag("FRLG_NO_TYPE2")
+        self.early_rtt = _env_flag("FRLG_EARLY_RTT")
+        if self.accept_delay or self.no_type2 or self.early_rtt:
+            self.info(f"[mg-host-timing] accept_delay={self.accept_delay:.3f}s "
+                      f"no_type2={self.no_type2} early_rtt={self.early_rtt}")
 
     def drain(self):
         result, self._out = self._out, []
@@ -283,12 +320,24 @@ class HostPeerProtocol:
         return build_net_property_update(self.network, self.active_app_data)
 
     def _session_pair(self):
+        # The type 5 rides the shared Session channel (dst 0x0001) with the RTT probes. lg86: with
+        # early RTT the probes had used pktids 2..7 before the type 5 went out as pktid 1, and the
+        # console ignored all four copies and left at 3.0s - it drops a session-channel packet id
+        # that runs backwards. A real host numbers its type 5 after its probes (mc1: pktid 8).
+        pktid = 1
+        if self.early_rtt:
+            pktid = self.session_packet_id
+            self.session_packet_id = ((self.session_packet_id + 1) & 0xFFFF) or 1
         return build_session_acceptance(
             self.network, self.pia_crypto, self.session_join,
-            self.profile.session_name, self.nonces)
+            self.profile.session_name, self.nonces, update_pktid=pktid)
 
     def _send_session_acceptance(self):
         update, response = self._session_pair()
+        if self.no_type2:
+            self._send(update, self.network.broadcast)
+            self._unicast_session_update(update)
+            return "type 5 Update Session only (broadcast + unicast; FRLG_NO_TYPE2)"
         if self.response_first:
             self._send(response, self.session_join["ip"])
             self._send(update, self.network.broadcast)
@@ -433,6 +482,19 @@ class HostPeerProtocol:
                           f"player={join['players'][0]['name']!r}.")
             self.session_join = join
             self.guest_var, self.guest_ip = join["source_var"], src_ip
+            if self.early_rtt and self.rtt_template is None:
+                self.rtt_template = synth_rtt_request_template(PIA_HOST_VAR)
+                self.next_rtt_send = now + EARLY_RTT_FIRST_SECONDS
+                self.info(f"[mg-host-timing] originating RTT probes from join+{EARLY_RTT_FIRST_SECONDS}s")
+            if not self.session_finalized and self.accept_delay > 0 and self.session_accepts == 0 \
+                    and self.next_session_accept_send is None:
+                self.next_session_accept_send = now + self.accept_delay
+                self.info(f"[mg-host-timing] holding the Session acceptance for {self.accept_delay:.2f}s "
+                          "(a real Mystery Gift host waits 2.03s, mc1)")
+                return
+            if not self.session_finalized and self.accept_delay > 0 \
+                    and self.next_session_accept_send is not None and now < self.next_session_accept_send:
+                return                          # still inside the deliberate hold
             if not self.session_finalized:
                 order = self._send_session_acceptance()
                 self.session_accepts += 1
@@ -494,7 +556,7 @@ class HostPeerProtocol:
             self.session_accepts += 1
             self.next_session_accept_send = now + SESSION_ACCEPT_RETRY_SECONDS
             self.log(f"[host] Session acceptance retry #{self.session_accepts}: {order}")
-        if (self.session_finalized and self.rtt_template is not None
+        if ((self.session_finalized or self.early_rtt) and self.rtt_template is not None
                 and self.guest_var is not None and self.next_rtt_send is not None
                 and now >= self.next_rtt_send):
             self.rtt_systime = (self.rtt_systime + 1) & 0xFFFFFFFFFFFFFFFF
@@ -538,7 +600,7 @@ class HostPeerProtocol:
         if self.session_join is not None and not self.session_finalized \
                 and self.next_session_accept_send is not None:
             deadlines.append(self.next_session_accept_send)
-        if self.session_finalized and self.next_rtt_send is not None:
+        if (self.session_finalized or self.early_rtt) and self.next_rtt_send is not None:
             deadlines.append(self.next_rtt_send)
         if self.session_finalized and self.next_protocol_tick is not None:
             deadlines.append(self.next_protocol_tick)

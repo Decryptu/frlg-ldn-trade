@@ -299,11 +299,13 @@ Ordered roughly by promise. NONE of these has been properly done. A future agent
    clear channel (survey all of 1-13, not just 1/6/11 which are all congested here by the home
    Liveboxes), running at a quiet time of day, moving the console within centimetres of the adapter,
    an external antenna, shielding. Correlate wall rate vs measured channel-busy / time.
-3. **The RECEIVE direction — the console sends US a card.** We have NO Mystery Gift receive client
-   (only the TRADE joiner frlgtrade.py --live). BUILD one: join a real console's Mystery Gift SHARE as
-   the client. Because OUR radio is then active, the passive-capture aggregation loss disappears and we
-   capture a real MG HOST end-to-end - the exact data we could never get passively. This directly shows
-   what a real host does in the first 3s. HIGH VALUE, not yet built.
+3. **The RECEIVE direction — DONE 2026-09-02 (session 12): `frlgmg_client.py`.** We join a console's
+   Mystery Gift SHARE as the RFU child running `mystery_gift_client.c` (`frlgsim/mg_client.py`, offline
+   harness `scratchpad/mg_client_harness.py`, tests `tests/test_mg_client.py`, launcher
+   `scratchpad/run_mg_client.sh mcNN`). First hardware run (mc1, French FireRed 'GURVAN' sharing card
+   1017): joined, LinkPlayer exchange, client scripts, the 332B card and the 1024B RAM script received,
+   READY_END sent, clean close, 31s. The capture is the first full-fidelity view of a REAL Mystery Gift
+   host from inside its session. See "WHAT A REAL MYSTERY GIFT HOST DOES" below.
 4. **Two-console passive capture** (PROVEN to work - cc1_air.pcap, cc5_air.pcap: FireRed shares -> Switch
    receives, we listen off the radio). Use it MORE: capture many real sessions, diff their 802.11/mgmt
    frames and timing against ours in detail. Method: FR shares; then MANUALLY find the channel with
@@ -318,3 +320,54 @@ Ordered roughly by promise. NONE of these has been properly done. A future agent
 7. **Systematic rate study.** Log wall/deliver for large blocks under each single change with the RF
    environment held constant, to detect small (~10-20%) rate shifts that single runs cannot see. The
    type-5 fix was found this way.
+
+
+### WHAT A REAL MYSTERY GIFT HOST DOES (mc1, 2026-09-02, decoded with scratchpad/pia_msgs.py) — FACTS
+
+Times are relative to the host's Net 0x11 (our LDN join is a few ms earlier). Compare with a real
+TRADE host (j84) and with our host (fr36 wall / fr38 delivered), same tool.
+
+    real MG host (mc1)                     real TRADE host (j84)            OUR MG host (fr38)
+    0.000 Net 0x11 (once)                  0.000 Net 0x11                   +0.02 Net 0x11 (bcast+ucast, retried 0.5s)
+    0.006 us: Net 0x12 + Sess join(0)      0.000 us: 0x12 + Sess 0          +0.71 console: 0x12 + Sess 0
+    0.252 RTT req, then every 316ms        0.034 Sess 5 AND Sess 2          +0.74 Sess 2 + Sess 5 (2ms later)
+          (6 probes, nothing else)         0.034 us: Sess 6                 +0.76 console: Sess 6
+    2.038 Sess 5 (n=0) — NO Sess 2 EVER    0.323 RTT req (after finalize)   +0.83 'A'; RTT only after finalize
+    2.040 us: Sess 6 (finalize)            0.325 us: reliable open
+    2.152 RTT req; 2.159 us: reliable open
+    2.318 host 'A' (0.28s after Sess 5)
+    2.35-2.7 NI (our game data acked)
+    4.63  host's own NI (join status = the user's YES on the console)
+    6.82  SEND_PLAYER_IDS, 6.87 BLOCK_REQ (2.2s after the YES: delayTimerAfterOk 120f + WaitRfuState)
+    8.15  Net 0x50 property update every ~0.5s from here (the "started activity" flag), acked 0x51
+
+- FACT: to OUR client, the Mystery Gift host sent no Session type 2 Join Response and held the type 5
+  for 2.03s (only RTT probes meanwhile, 316ms cadence from 0.25s; we answered none, it did not care).
+  The trade host (j84) sent type 5 + type 2 within 34ms.
+- FACT (cc1/cc5 passive two-console captures): to a REAL console child the same Mystery Gift host
+  sends its type 5 within ~50-66ms of its Net 0x11. So the 2.03s hold is a reaction to OUR join
+  request (which differs from a console's in some way not yet identified: name length, the 4
+  random bytes, single vs 0.5s-repeated join, unanswered RTT probes are the candidates), NOT how a
+  real host treats a real console. Passive captures cannot show whether a type 2 went to the child.
+- FACT (lg86, lg87 - both consoles): the console AS A CHILD does NOT finalize on a type 5 alone. With
+  FRLG_NO_TYPE2=1 it re-sent its join request every 0.5s, ignored 3-4 unicast type-5 copies (packet
+  ids monotonic in lg87) and left with deauth reason 3 exactly 3.05-3.20s after its LDN join. The
+  type 2 Join Response is REQUIRED by the console client.
+- FACT: an un-accepted console leaves at 3.0-3.2s after the join - the same instant as the wall.
+  HYPOTHESIS (untested): the wall IS this join watchdog, i.e. in a "wall" run the console's Pia
+  layer does not consider itself joined even though it sent the type 6 finalize; whatever completes
+  the join in its eyes is something we deliver only ~50% of the time. Candidates to test: the
+  console's own RTT probes being answered (every one, first try), a session update after
+  finalization, the Net 0x50 property update.
+- lg88 (FRLG_ACCEPT_DELAY_MS=2030 FRLG_EARLY_RTT=1, type 2 kept): finalized 3.4s after the join,
+  full delivery. ONE run - not evidence against the ~50% baseline; a block of >=6 each is needed.
+- HYPOTHESIS: the session channel (dst 0x0001) is replay-protected by packet id. lg86 sent the
+  type 5 as pktid 1 after RTT probes 2..7 and failed, but it also lacked the type 2, so this is
+  NOT isolated. host_pia now numbers the type 5 after the probes whenever FRLG_EARLY_RTT is set.
+- FACT: in the console-hosted session our rtw88 adapter stayed associated for the full 31s and the
+  console never used svc_51 against us. The wall is specific to the console being the STATION.
+- FACT: mc1_air.pcap: 2011 data frames, 0 CCMP failures, 0 truncated (the console-as-AP path is fully
+  decodable from a monitor vif on the same phy).
+- HOST TIMING switches (host_pia.py, all default-off): FRLG_ACCEPT_DELAY_MS=N, FRLG_NO_TYPE2=1 (do
+  not use: breaks the join, above), FRLG_EARLY_RTT=1. Ledger in NOTES.local.md session 12.
+- TOOL: scratchpad/pia_msgs.py <capture> [lo hi] - Pia message-level timeline (both capture formats).

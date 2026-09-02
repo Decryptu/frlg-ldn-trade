@@ -930,8 +930,12 @@ class Sim:
             return
         self._ni_built = True
         lp = getattr(self.engine, "lp", None) or linkplayer.LinkPlayer()
+        # The activity advertised in the child's RfuGameData: ACTIVITY_TRADE for the trade joiner,
+        # ACTIVITY_WONDER_CARD for the Mystery Gift client [SetHostRfuGameData, union_room.c:2255].
         src = ni.build_game_data(version_low=lp.version & 0xFF,
-                                 trainer_id=lp.trainer_id & 0xFFFF, ot_name=lp.name)
+                                 trainer_id=lp.trainer_id & 0xFFFF, ot_name=lp.name,
+                                 activity=getattr(self.engine, "ni_activity", ni.ACTIVITY_TRADE),
+                                 started=getattr(self.engine, "ni_started", True))
         self._ni = ni.NISender(src)
 
     def _gba_frame(self):
