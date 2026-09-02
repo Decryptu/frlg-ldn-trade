@@ -29,6 +29,7 @@ from . import block, linkplayer, mon as monmod, rfu, trade
 
 
 STATUS_REPORT_FRAMES = 30   # 0.5s; the H_LINK_PLAYER stall window is only ~2s
+LEAVE_MENU_REPORT_FRAMES = 300  # 5s; the post-trade H_LEAVE_MENU wait can last minutes
 H_LINK_PLAYER = "H_LINK_PLAYER"
 H_ENTRY_CARD = "H_ENTRY_CARD"
 H_ENTRY_SEAT = "H_ENTRY_SEAT"
@@ -258,6 +259,8 @@ class HostTradeEngine:
         self._child_ops = set()
         self._parent_polls = 0
         self._status_countdown = STATUS_REPORT_FRAMES
+        self._leave_menu_run_mark = 0
+        self._leave_menu_report = None
         self.trace = []
 
         # The RFU leader announces IDs, then performs the session-one-shot LinkPlayer pull/exchange.
@@ -276,6 +279,21 @@ class HostTradeEngine:
         self._expected = "link_player"
         self._queue_words(rfu.send_block_req_words(trade.BLOCK_REQ_SIZE_NONE),
                           "BLOCK_REQ:link_player")
+
+    def _report_leave_menu(self):
+        """Say what the console sends while the leader waits for its CANCEL after a trade."""
+        runs = self._child_slot_runs[self._leave_menu_run_mark:]
+        if not runs:
+            tail = "nothing at all (not even IDLE slots)"
+        else:
+            tail = ", ".join(
+                f"{'IDLE' if op is None else rfu.RFUCMD_NAMES.get(op, hex(op))}"
+                f"{'' if op is None else f'/{w1:#06x}'}x{n}"
+                for (op, w1), n in runs[-8:])
+        self.info(
+            f"Waiting in H_LEAVE_MENU for the Switch CANCEL; host cancel ready="
+            f"{self._host_cancel_ready}, child cancel seen={self._child_cancel_requested}. "
+            f"Console has sent since the party refresh: {tail}")
 
     def _report_status(self):
         """Say what the console is actually sending while the leader waits."""
@@ -402,6 +420,12 @@ class HostTradeEngine:
             self._leave_menu_wait = self.timing.final_menu_ready_frames
             self._host_cancel_ready = False
             self._child_cancel_requested = False
+            # This window was blind: the host queues nothing here and waits for the child's
+            # REQUEST_CANCEL. When the console instead wedges on the comm-standby message, the
+            # only evidence is what its slots carry meanwhile. Record where its stream stands now
+            # so the report below can show only what it sent AFTER the party refresh.
+            self._leave_menu_run_mark = len(self._child_slot_runs)
+            self._leave_menu_report = LEAVE_MENU_REPORT_FRAMES
             self.info("Final party refresh complete; waiting 5 seconds for the trade menu.")
         else:
             self._set_state(H_SELECT)
@@ -780,6 +804,11 @@ class HostTradeEngine:
             if self._status_countdown <= 0:
                 self._status_countdown = STATUS_REPORT_FRAMES
                 self._report_status()
+        if self.state == H_LEAVE_MENU and self._leave_menu_report is not None:
+            self._leave_menu_report -= 1
+            if self._leave_menu_report <= 0:
+                self._leave_menu_report = LEAVE_MENU_REPORT_FRAMES
+                self._report_leave_menu()
         if self.state == H_LEAVE_MENU and self._leave_menu_wait is not None:
             self._leave_menu_wait -= 1
             if self._leave_menu_wait <= 0:
