@@ -101,6 +101,10 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               "quiet child polls while awaiting its reply; 0 (default) never "
               "re-sends"))
     parser.add_argument(
+        "--block-repeat", type=int, default=None, metavar="N", choices=range(1, 9),
+        help=("emit each block fragment N times (1-8, default 1 = send once); "
+              "bounded redundancy against the console's silent datagram drops"))
+    parser.add_argument(
         "--end-on-success", action=argparse.BooleanOptionalAction, default=False,
         help=("stop after the post-delivery RFU close sequence; used by the "
               "supervised run_mystery_gift.sh host"))
@@ -144,6 +148,7 @@ def build_run_config(parser, args):
             client_ready_idle_frames=args.client_ready_idle_frames,
             inter_block_gap_frames=args.inter_block_gap_frames,
             gift_resend_idle_frames=args.gift_resend_idle_frames,
+            block_repeat=args.block_repeat,
             end_on_success=args.end_on_success,
             idle_timeout_seconds=args.idle_timeout,
             attempt_log_dir=args.attempt_log_dir)

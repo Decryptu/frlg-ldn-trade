@@ -98,6 +98,8 @@ class MysteryGiftTiming:
     gift_resend_idle_frames: int = 0
     # How many times one message may be re-sent before giving up on it.
     gift_resend_limit: int = 3
+    # Emit each block fragment this many times (block.BlockSender.stream_repeat). 1 = send-once.
+    block_repeat: int = 1
     # Re-emit READY_CLOSE_LINK on this cadence while closing.
     close_retry_frames: int = 60
     # Stay on the air after the console asks to close, so its Rfu_LinkClose and
@@ -528,7 +530,8 @@ class HostMysteryGiftEngine:
 
         if self._sender is None and self._blocks:
             data, label = self._blocks.popleft()
-            self._sender = block.BlockSender(data, owner=0, trust_pia=self.trust_pia)
+            self._sender = block.BlockSender(data, owner=0, trust_pia=self.trust_pia,
+                                             stream_repeat=self.timing.block_repeat)
             self.trace.append(("send_block", label, len(data)))
 
         if self._sender is not None:

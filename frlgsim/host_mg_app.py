@@ -60,6 +60,8 @@ class MysteryGiftHostApplication(HostApplication):
             overrides["inter_block_gap_frames"] = self.config.inter_block_gap_frames
         if self.config.gift_resend_idle_frames is not None:
             overrides["gift_resend_idle_frames"] = self.config.gift_resend_idle_frames
+        if self.config.block_repeat is not None:
+            overrides["block_repeat"] = self.config.block_repeat
         if overrides:
             timing = MysteryGiftTiming(**overrides)
         engine = HostMysteryGiftEngine(
@@ -113,6 +115,9 @@ class MysteryGiftHostApplication(HostApplication):
         if self.config.gift_resend_idle_frames is not None:
             self.info("Mystery Gift timing override: "
                       f"gift_resend_idle_frames={self.config.gift_resend_idle_frames}")
+        if self.config.block_repeat is not None:
+            self.info("Mystery Gift timing override: "
+                      f"block_repeat={self.config.block_repeat}")
         self.info("Advertising ACTIVITY_WONDER_CARD. On the Switch choose "
                   "Mystery Gift -> Wonder Cards -> Friend.")
 

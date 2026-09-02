@@ -149,7 +149,7 @@ class BlockSender:
     STREAM_GAP = 0
 
     def __init__(self, data, owner=1, watchdog_init=4, watchdog_hold=6, trust_pia=False,
-                 stream_gap=None):
+                 stream_gap=None, stream_repeat=1):
         self.data = bytes(data)
         self.count = frag_count(len(self.data))
         self.owner = owner
@@ -161,6 +161,17 @@ class BlockSender:
         self._stream_gap = 0             # ticks idled since the last STREAM fragment (STREAM_GAP)
         if stream_gap is not None:
             self.STREAM_GAP = int(stream_gap)
+        # Emit each STREAM fragment this many times before advancing. 1 = send-once (unchanged).
+        # trust_pia sends every fragment exactly once, and the console silently drops ~40% of our
+        # datagrams inside its own stack (the same loss CARRY_DEPTH exists to survive on the joiner).
+        # A 17-fragment LinkPlayer block therefore has a real chance of arriving incomplete, and the
+        # console does not retry: LinkPlayerFromBlock strcmps both "GameFreak inc." magics and goes
+        # straight to CB2_LinkError [decomp:src/link.c:1629] - the 2318-0006 seen 0.2-1.0s after
+        # "Host LinkPlayer block complete". Full re-send-until-confirmed (trust_pia=False) fixes the
+        # loss but takes ~1.1s instead of ~0.35s (measured lg30 vs lg8/lg14/lg17/lg29) and lg32 died
+        # inside that longer window. Repeating each fragment is the middle: bounded cost, no round trip.
+        self.stream_repeat = max(1, int(stream_repeat))
+        self._frag_sends = 0            # repeats emitted for the current fragment
         self._rr = 0                    # round-robin cursor for re-queueing missing frags
         self.watchdog_init = watchdog_init
         self.watchdog_hold = watchdog_hold
@@ -246,6 +257,10 @@ class BlockSender:
             self._stream_gap = 0
             idx = self.index
             words = rfu.send_block_words(idx, self._chunk(idx))
+            self._frag_sends += 1
+            if self._frag_sends < self.stream_repeat:
+                return words                    # same fragment again next poll
+            self._frag_sends = 0
             if idx >= self.count - 1:
                 # trust_pia: FIRE-AND-FORGET. Pia has each fragment queued + will deliver/retransmit it, and
                 # the trade FSM advances on RECEIVING the host's block (GetBlockReceivedStatus()==3
