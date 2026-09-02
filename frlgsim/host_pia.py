@@ -16,6 +16,17 @@ PIA_HOST_VAR = 0x00C6
 NET_RETRY_SECONDS = 0.5
 SESSION_ACCEPT_RETRY_SECONDS = 0.25
 HOST_RTT_PERIOD_SECONDS = 0.315
+# frlg-ldn-trade session 11: FRLG_LIVENESS_SCALE scales the RTT / Net-property keepalive cadence to
+# test whether feeding the emulator's svc_51 watchdog FASTER pushes the 3s wall out. 1.0 = the real
+# host's rate (default, no change). 0.5 = twice as fast. Applied to the RTT period and the Net
+# property/keepalive interval only (NOT the one-shot session-accept retry). Env-gated so default
+# behaviour is byte-identical.
+def _liveness_scale():
+    try:
+        v = float(os.environ.get("FRLG_LIVENESS_SCALE", "1") or 1)
+    except ValueError:
+        v = 1.0
+    return v if 0.1 <= v <= 4.0 else 1.0
 HOST_VBLANK_SECONDS = 1.0 / 59.727
 RELIABLE_BATCH_MAX = 9
 PIA_COMPRESS_MIN = 62
@@ -198,6 +209,7 @@ class HostPeerProtocol:
         self.session = host_session
         self.active_app_data = bytes(active_app_data)
         self.response_first = bool(session_response_first)
+        self._liveness_scale = _liveness_scale()
         self.log = log
         self.info = getattr(log, "info", log)
         # Session-layer trace. The per-datagram detail below is on self.log, which is
@@ -430,7 +442,7 @@ class HostPeerProtocol:
             # destination, and the console de-duplicates by packet id.
             for participant in self.network.participants:
                 self._send(probe, participant[1])
-            self.next_net_send = now + NET_RETRY_SECONDS
+            self.next_net_send = now + NET_RETRY_SECONDS * self._liveness_scale
         if (self.session_join is not None and not self.session_finalized
                 and self.next_session_accept_send is not None
                 and now >= self.next_session_accept_send):
@@ -454,7 +466,7 @@ class HostPeerProtocol:
             self.rtt_requests_out += 1
             if self.rtt_requests_out == 1:
                 self.info("Stage 2.3 RTT liveness active: originated the first host type 0 probe.")
-            self.next_rtt_send = now + HOST_RTT_PERIOD_SECONDS
+            self.next_rtt_send = now + HOST_RTT_PERIOD_SECONDS * self._liveness_scale
         if (self.session_finalized and self.next_protocol_tick is not None
                 and now >= self.next_protocol_tick):
             self._send_reliable(self.session.tick(now * 1000.0))
@@ -472,7 +484,7 @@ class HostPeerProtocol:
                 dst_var=0, src_var=PIA_HOST_VAR, pktid=0, compress=True,
                 establishing=True, nonce_source=self.nonces)
             self._send(data, self.guest_ip)
-            self.next_property_send = now + NET_RETRY_SECONDS
+            self.next_property_send = now + NET_RETRY_SECONDS * self._liveness_scale
         return self.drain()
 
     def next_deadline(self, now, default):
