@@ -112,7 +112,7 @@ def add_host_arguments(parser, *, option_defaults=None, ldn_defaults=None,
                         default=ldn_defaults.capture_path,
                         help="record an optional JSONL protocol diagnostic")
     parser.add_argument("--channel", type=int, default=option_defaults.channel,
-                        choices=range(1, 15), metavar="1-14")
+                        choices=[*range(1, 15), 36, 40, 44, 48], metavar="1-14|36|40|44|48")
     parser.add_argument("--scene", type=int, default=option_defaults.scene_id,
                         help=scene_help)
     parser.add_argument("--max-participants", type=int,

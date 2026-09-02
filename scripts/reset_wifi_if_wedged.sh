@@ -40,9 +40,16 @@ fi
 
 echo "reset_wifi: adapter is wedged - reloading $MOD"
 for v in ldnclient ldn ldn-mon ldnair; do pass | sudo -S -p '' iw dev "$v" del 2>/dev/null; done
+if [ -n "${RTW88_PATCHED:-}" ]; then
+    # frlg-ldn-trade 2026-09-03: keep the locally built rtw88 (~/rtw88-build, scratchpad/load_rtw88_patched.sh)
+    # across reloads. RTW88_PATCHED holds the rtw88_core parameters, e.g. RTW88_PATCHED="mgmt_rate=3".
+    echo "reset_wifi: reloading the PATCHED rtw88 ($RTW88_PATCHED)"
+    SUDOPASS="${SUDOPASS:-}" "$(dirname "$0")/../scratchpad/load_rtw88_patched.sh" on $RTW88_PATCHED 2>&1 | sed 's/^/reset_wifi: /'
+else
 pass | sudo -S -p '' modprobe -r "$MOD" 2>&1 | sed 's/^/reset_wifi: /'
 sleep 3
 pass | sudo -S -p '' modprobe "$MOD" 2>&1 | sed 's/^/reset_wifi: /'
+fi
 for _ in $(seq 1 20); do
     iw dev 2>/dev/null | grep -q Interface && break
     sleep 1

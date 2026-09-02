@@ -29,3 +29,15 @@ The vendored package incorporates the following project-specific fixes:
 - Emit useful receive-side exceptions instead of silently suppressing them.
 
 Keep this file current whenever the vendored copy is rebased or modified.
+
+## frlg-ldn-trade experiment hooks (2026-09-02/03, all default-off)
+
+- `DataFrame` decodes QoS data (subtype 8): TID in the CCMP nonce priority byte and the
+  TID-only QoS control in the AAD. Before this every QoS data frame was rejected, which is
+  why the `LDN_SWITCH_IES=1` runs (whose WMM element makes the Switch use QoS data) received
+  nothing.
+- `LDN_SWITCH_IES=1..4`: Switch-host-like beacon / probe / association elements (see the
+  comment above `switch_ies_level`); 4 = level 1 without WMM.
+- `LDN_BASIC_RATES`: BSS basic rate set via `NL80211_CMD_SET_BSS` after `START_AP`.
+- `LDN_DISABLE_HT=1` (station): connect without HT so no BlockAck/A-MPDU session is set up.
+

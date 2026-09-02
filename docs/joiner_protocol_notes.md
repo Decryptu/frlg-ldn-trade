@@ -371,3 +371,20 @@ TRADE host (j84) and with our host (fr36 wall / fr38 delivered), same tool.
 - HOST TIMING switches (host_pia.py, all default-off): FRLG_ACCEPT_DELAY_MS=N, FRLG_NO_TYPE2=1 (do
   not use: breaks the join, above), FRLG_EARLY_RTT=1. Ledger in NOTES.local.md session 12.
 - TOOL: scratchpad/pia_msgs.py <capture> [lo hi] - Pia message-level timeline (both capture formats).
+
+### 802.11 LAYER FACTS (2026-09-03, offline, from air captures + driver source) — see NOTES session 12
+- The wall clock runs from the LDN join/association, not from any Pia milestone (session_diff over
+  120 runs: Pia finalized at 2.84s -> left at 2.98s; finalized at 3.86s -> lived).
+- Console-as-station: no power save, RTS/CTS on every data frame, clean mid-stream deauth (reason 3),
+  no probing before it. Beacon/advert gaps identical in wall and delivered runs.
+- rtw88 (kernel 7.0): management frames go at the lowest BSS basic rate (rtw_get_mgmt_rate), beacons
+  at 1M unconditionally (reserved page, ignore_rate=true), injected action frames have no vif -> 1M.
+  The monitor vif's copy of our own frames carries mac80211's intended rate (software loopback), so
+  air captures cannot measure our TX rate; the per-station `iw station dump` tx bitrate can.
+- A Switch host (mc1_air): beacons at 11M with SSID/rates/DS/TIM(dtim 2)/ERP/ext-rates/RSN/HT/HT-op/
+  ext-cap/HE/Nintendo VSIE/WMM; data at 48-54M; assoc response with HT/WMM/HE. Ours: a 42-byte
+  beacon with only a TIM, legacy-only assoc response, everything at 1M.
+- vendor/LDN DataFrame now decodes QoS data (subtype 8); until then any beacon carrying WMM
+  (LDN_SWITCH_IES=1) silently lost every console datagram - those runs were misread.
+- LDN allows 5 GHz channels 36/40/44/48; the host now accepts them (`--channel 44` ran on 5220 MHz).
+

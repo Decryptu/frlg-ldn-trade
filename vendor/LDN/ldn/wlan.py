@@ -13,7 +13,7 @@ from Crypto.Cipher import AES
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 
-from netlink import nl80211, route
+from netlink import nl80211, route, attributes
 from ldn import streams, util, queue
 
 import contextlib
@@ -809,6 +809,14 @@ class DataFrame:
     nonce: int = 0
     keyid: int = 0
 
+    # frlg-ldn-trade (2026-09-03): QoS data (subtype 8) support. A Switch switches to QoS data
+    # frames as soon as the AP's beacon carries a WMM element (LDN_SWITCH_IES=1: lg79/lg80 sent
+    # 563/263 QoS data frames and this decoder rejected every one, so the host saw zero datagrams
+    # and the runs were misread as "the Switch elements stall our TX"). QoS-null / null frames
+    # (subtypes 4, 12) carry no payload and are still rejected.
+    qos: bool = False
+    tid: int = 0
+
     payload: bytes = b""
 
     def decode(self, data: bytes) -> None:
@@ -817,8 +825,14 @@ class DataFrame:
         header = MACHeader()
         header.decode(stream.read(24))
 
-        if header.type != IEEE80211_FTYPE_DATA or header.subtype != 0:
+        if header.type != IEEE80211_FTYPE_DATA or header.subtype not in (0, 8):
             raise ValueError("Frame is not a data frame")
+        self.qos = header.subtype == 8
+        if self.qos:
+            qos_control = stream.u16()
+            self.tid = qos_control & 0xF
+            if qos_control & 0x80:
+                raise ValueError("A-MSDU data frames are not supported")
         
         self.tods = bool(header.flags & 1)
         self.fromds = bool(header.flags & 2)
@@ -917,7 +931,7 @@ class DataFrame:
     
     def _nonce(self) -> bytes:
         """Returns the nonce that is used for the AES-CCMP algorithm."""
-        nonce = b"\0" # Priority
+        nonce = bytes([self.tid if self.qos else 0]) # Priority = TID for QoS data
         nonce += self.source.encode()
         nonce += struct.pack(">Q", self.nonce)[2:]
         return nonce
@@ -927,6 +941,8 @@ class DataFrame:
         Returns the additional authenticated data for the AES-CCMP algorithm.
         """
         frame_control = IEEE80211_FTYPE_DATA << 2
+        if self.qos:
+            frame_control |= 8 << 4
         frame_control |= self.tods << 8
         frame_control |= self.fromds << 9
         frame_control |= self.protected << 14
@@ -936,6 +952,8 @@ class DataFrame:
         aad += self.source.encode()
         aad += self.bssid.encode()
         aad += bytes(2) # Fragment number
+        if self.qos:
+            aad += struct.pack("<H", self.tid) # QoS control, TID only [802.11-2016 12.5.3.3.3]
         return aad
 
 
@@ -1483,6 +1501,13 @@ def switch_like_elements(channel: int, rsn: bytes | None, *, assoc: bool = False
     level = switch_ies_level()
     if level <= 0:
         return b""
+    # frlg-ldn-trade 2026-09-03: level 4 = level 1 WITHOUT the WMM parameter element. WMM makes the
+    # Switch send QoS data frames (lg79/lg80: 563/263 of them) which the DataFrame decoder rejected
+    # until today; level 4 keeps the console on plain data so the beacon/element richness is tested
+    # on its own. Level 1 is usable again now that QoS data decodes.
+    with_wmm = level != 4
+    if level == 4:
+        level = 1
     if level == 3:
         # frlg-ldn-trade session 11: level 3 = ONLY the Nintendo vendor IE (the "I am a Switch" signal),
         # none of the level-1 rate/ERP/WMM elements that stalled our TX. Isolates whether that one IE is
@@ -1507,11 +1532,40 @@ def switch_like_elements(channel: int, rsn: bytes | None, *, assoc: bool = False
         out += _ie(255, SWITCH_HE_OP)
     if not assoc:
         out += _ie(WLAN_EID_VENDOR_SPECIFIC, SWITCH_NINTENDO_VSIE)
-    wmm = bytearray(SWITCH_WMM_PARAM)
-    if assoc:
-        wmm[7] = 0x00
-    out += _ie(WLAN_EID_VENDOR_SPECIFIC, bytes(wmm))
+    if with_wmm:
+        wmm = bytearray(SWITCH_WMM_PARAM)
+        if assoc:
+            wmm[7] = 0x00
+        out += _ie(WLAN_EID_VENDOR_SPECIFIC, bytes(wmm))
     return out
+
+
+# frlg-ldn-trade 2026-09-03: LDN_BASIC_RATES="11" (or "6", "1,2,5.5,11", ...) sets the BSS basic
+# rate set after START_AP via NL80211_CMD_SET_BSS. mac80211 sends every no-station frame (our
+# advertisement action frames, association responses, broadcast data) at the LOWEST basic rate,
+# and so does rtw88 for management frames (tx.c rtw_get_mgmt_rate: __ffs(basic_rates)); with the
+# kernel default (all four CCK rates basic) that is 1 Mbit/s. A real Switch host was measured
+# (mc1_air.pcap) sending its beacons at 11 Mbit/s and its data at 48-54 Mbit/s. NOTE: rtw88
+# builds beacons in a reserved page with ignore_rate=true, so the BEACON stays at 1 Mbit/s
+# unless the driver is patched (scratchpad notes); everything else follows this setting.
+def basic_rates_setting() -> bytes:
+    spec = os.environ.get("LDN_BASIC_RATES", "").strip()
+    if not spec:
+        return b""
+    out = bytearray()
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.append(int(round(float(part) * 2)) & 0x7F)
+    return bytes(out)
+
+
+try:
+    nl80211.NL80211.ATTRIBUTES.setdefault(
+        nl80211.NL80211_ATTR_BSS_BASIC_RATES, attributes.binary())
+except Exception:   # the attribute table is best-effort; SET_BSS is opt-in
+    pass
 
 
 class AccessPoint(Interface):
@@ -1768,6 +1822,13 @@ class AccessPoint(Interface):
             message = await self._wlan.receive()
             if message.type == nl80211.NL80211_CMD_START_AP:
                 break
+        basic = basic_rates_setting()
+        if basic:
+            await self._wlan.request(nl80211.NL80211_CMD_SET_BSS, {
+                nl80211.NL80211_ATTR_IFINDEX: self.index(),
+                nl80211.NL80211_ATTR_BSS_BASIC_RATES: basic,
+            })
+            print(f"[ldn] BSS basic rates set to {[b / 2 for b in basic]} Mbit/s (LDN_BASIC_RATES)")
 
         if self._key is not None:
             attrs = {

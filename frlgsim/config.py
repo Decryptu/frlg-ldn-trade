@@ -218,8 +218,10 @@ class HostOptions:
     session_response_first: bool = False
 
     def __post_init__(self):
-        if type(self.channel) is not int or not 1 <= self.channel <= 14:
-            raise ValueError("channel must be 1..14")
+        # LDN allows 2.4 GHz 1/6/11 and 5 GHz 36/40/44/48 [kinnay LDN wiki, WLAN Channels]. 5 GHz was
+        # never tried here (2026-09-03): every neighbour AP in this flat is on 2.4 GHz 1/6/11.
+        if type(self.channel) is not int or not (1 <= self.channel <= 14 or self.channel in (36, 40, 44, 48)):
+            raise ValueError("channel must be 1..14 or one of 36, 40, 44, 48")
         if type(self.max_participants) is not int or not 2 <= self.max_participants <= 8:
             raise ValueError("max_participants must be 2..8")
         if self.scene_id is not None and (
@@ -268,7 +270,8 @@ class HostFileConfig:
         _require_bool("host.live", self.live)
         _require_nonempty_string("host.adapter", self.adapter)
         _require_bool("host.trust_pia", self.trust_pia)
-        _require_int_range("host.channel", self.channel, 1, 14)
+        if self.channel not in (36, 40, 44, 48):
+            _require_int_range("host.channel", self.channel, 1, 14)
         if self.scene_id is not None:
             _require_int_range("host.scene_id", self.scene_id, 0, 0xFFFF)
         _require_int_range("host.max_participants", self.max_participants, 2, 8)
