@@ -502,6 +502,7 @@ class MysteryGiftRunConfig:
     inter_block_gap_frames: int | None = None
     gift_resend_idle_frames: int | None = None
     block_repeat: int | None = None
+    ram_script_block_repeat: int | None = None
     end_on_success: bool = False
     idle_timeout_seconds: int | None = None
     attempt_log_dir: str | None = None
@@ -533,6 +534,10 @@ class MysteryGiftRunConfig:
                 and (type(self.block_repeat) is not int
                      or not 1 <= self.block_repeat <= 8)):
             raise ValueError("block_repeat must be between 1 and 8")
+        if (self.ram_script_block_repeat is not None
+                and (type(self.ram_script_block_repeat) is not int
+                     or not 1 <= self.ram_script_block_repeat <= 8)):
+            raise ValueError("ram_script_block_repeat must be between 1 and 8")
         if type(self.end_on_success) is not bool:
             raise ValueError("end_on_success must be a bool")
         if (self.idle_timeout_seconds is not None

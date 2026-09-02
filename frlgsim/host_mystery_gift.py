@@ -32,7 +32,7 @@ waiting for a block that was dropped without an error.
 from collections import Counter, deque
 from dataclasses import dataclass
 
-from . import block, linkplayer, mg_link, rfu, trade
+from . import block, linkplayer, mg_link, mystery_gift, rfu, trade
 from .mg_server import SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT, MysteryGiftServer
 
 MG_LINK_PLAYER = "MG_LINK_PLAYER"
@@ -100,6 +100,12 @@ class MysteryGiftTiming:
     gift_resend_limit: int = 3
     # Emit each block fragment this many times (block.BlockSender.stream_repeat). 1 = send-once.
     block_repeat: int = 1
+    # Extra redundancy for JUST the RAM/delivery script (ident 25, MG_LINKID_RAM_SCRIPT) - the
+    # largest, last, stall-prone message. 0 = fall back to block_repeat (no change). The ident-25
+    # stall is a fragment LOST in the console's post-Pia RFU->game handoff, and the MG client never
+    # reflects our gift block so the host cannot tell which fragment to resend; proactive redundancy
+    # on this one message is the only lever with a mechanism. See NOTES.local.md "ident-25 STALL".
+    ram_script_block_repeat: int = 0
     # Re-emit READY_CLOSE_LINK on this cadence while closing.
     close_retry_frames: int = 60
     # Stay on the air after the console asks to close, so its Rfu_LinkClose and
@@ -537,9 +543,13 @@ class HostMysteryGiftEngine:
 
         if self._sender is None and self._blocks:
             data, label = self._blocks.popleft()
+            repeat = self.timing.block_repeat
+            if (self.timing.ram_script_block_repeat > 0
+                    and label.startswith(f"ident{mystery_gift.MG_LINKID_RAM_SCRIPT}:")):
+                repeat = max(repeat, self.timing.ram_script_block_repeat)
             self._sender = block.BlockSender(data, owner=0, trust_pia=self.trust_pia,
-                                             stream_repeat=self.timing.block_repeat)
-            self.trace.append(("send_block", label, len(data)))
+                                             stream_repeat=repeat)
+            self.trace.append(("send_block", label, len(data), repeat))
 
         if self._sender is not None:
             words = self._sender.tick(None)

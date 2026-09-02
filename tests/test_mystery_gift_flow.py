@@ -571,6 +571,35 @@ def test_end_to_end_gift_reaches_a_console_with_no_card():
     assert console.host_link_player.name == "EMU"
 
 
+def test_ram_script_block_repeat_adds_redundancy_to_only_the_ident25_message():
+    """--ram-script-block-repeat gives the stall-prone RAM/delivery script (ident 25) extra fragment
+    redundancy while the small messages keep the base block_repeat. Regression guard for the targeted
+    fix to the ident-25 stall (NOTES.local.md): the console never reflects a gift block, so proactive
+    redundancy on JUST ident 25 is the only lever, and it must not bloat every other message."""
+    card, ram_script = wonder_card.build_default_gift()
+    console = ConsoleClientModel(flag_id=0)
+    timing = host_mystery_gift.MysteryGiftTiming(
+        client_ready_idle_frames=10, block_repeat=2, ram_script_block_repeat=4)
+    engine, _frames = _drive(console, card=card, ram_script=ram_script, timing=timing)
+    assert engine.result == mg_server.SVR_MSG_CARD_SENT and engine.gift_sent
+
+    ram_label = f"ident{mg.MG_LINKID_RAM_SCRIPT}:"
+    by_repeat = {}
+    for entry in engine.trace:
+        if entry[0] == "send_block":
+            label, repeat = entry[1], entry[3]
+            by_repeat.setdefault(label.startswith(ram_label), set()).add(repeat)
+    assert by_repeat.get(True) == {4}, "ident-25 fragments must use ram_script_block_repeat"
+    assert by_repeat.get(False) == {2}, "other messages must keep the base block_repeat"
+
+    # And with the default (ram_script_block_repeat=0) every message uses block_repeat unchanged.
+    console2 = ConsoleClientModel(flag_id=0)
+    plain = host_mystery_gift.MysteryGiftTiming(client_ready_idle_frames=10, block_repeat=2)
+    engine2, _ = _drive(console2, card=card, ram_script=ram_script, timing=plain)
+    repeats = {e[3] for e in engine2.trace if e[0] == "send_block"}
+    assert repeats == {2}, "with ram_script_block_repeat unset, ident 25 must not be special-cased"
+
+
 def test_end_to_end_never_drops_a_block_init():
     """The pacing check: an INIT that arrives before the console consumed the
     previous block is discarded, and the transfer then hangs with no error."""

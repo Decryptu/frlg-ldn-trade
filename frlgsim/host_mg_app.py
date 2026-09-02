@@ -62,6 +62,8 @@ class MysteryGiftHostApplication(HostApplication):
             overrides["gift_resend_idle_frames"] = self.config.gift_resend_idle_frames
         if self.config.block_repeat is not None:
             overrides["block_repeat"] = self.config.block_repeat
+        if self.config.ram_script_block_repeat is not None:
+            overrides["ram_script_block_repeat"] = self.config.ram_script_block_repeat
         if overrides:
             timing = MysteryGiftTiming(**overrides)
         engine = HostMysteryGiftEngine(
