@@ -1458,6 +1458,7 @@ class Station(Interface):
 # hosting Mystery Gift on channel 6). Level 1 = legacy elements (ERP, extended rates, extended
 # capabilities, the Nintendo vendor element, WMM) and the real host's rate split, capability word
 # 0x411 and DTIM period 2. Level 2 adds the HT / HE elements and starts the AP as HT20.
+# Level 3 = ONLY the Nintendo vendor IE (session 11 isolation test).
 # Default (unset / 0) is the old bare frames: SSID, rates, DS, TIM, RSN and nothing else.
 def switch_ies_level() -> int:
     try:
@@ -1482,6 +1483,11 @@ def switch_like_elements(channel: int, rsn: bytes | None, *, assoc: bool = False
     level = switch_ies_level()
     if level <= 0:
         return b""
+    if level == 3:
+        # frlg-ldn-trade session 11: level 3 = ONLY the Nintendo vendor IE (the "I am a Switch" signal),
+        # none of the level-1 rate/ERP/WMM elements that stalled our TX. Isolates whether that one IE is
+        # what shifts the emulator's svc_51 death timer. Not in the assoc-resp (the real host's isn't).
+        return b"" if assoc else _ie(WLAN_EID_VENDOR_SPECIFIC, SWITCH_NINTENDO_VSIE)
     out = b""
     if assoc:
         out += _ie(WLAN_EID_EXT_SUPP_RATES, SWITCH_EXT_RATES)
@@ -2031,6 +2037,19 @@ class Factory:
         ) as attributes:
             index = attributes[nl80211.NL80211_ATTR_IFINDEX]
             address = MACAddress(attributes[nl80211.NL80211_ATTR_MAC])
+
+            # frlg-ldn-trade session 11: FRLG_SPOOF_MAC overrides the AP vif MAC (the host's Pia
+            # connection GUID and 802.11 BSSID) before the AP comes up, to test whether the console's
+            # svc_51 watchdog fingerprints its peer by OUI. The AP vif is down here; set it then.
+            _spoof = __import__("os").environ.get("FRLG_SPOOF_MAC", "")
+            if _spoof:
+                import subprocess as _sp
+                _sp.run(["ip", "link", "set", ifname, "down"], check=False)
+                _sp.run(["ip", "link", "set", ifname, "address", _spoof], check=False)
+                try:
+                    address = MACAddress(_spoof)
+                except Exception:
+                    pass
 
             ibss = AccessPoint(
                 self._wlan, self._router, ifname, index, address, ssid, channel,
