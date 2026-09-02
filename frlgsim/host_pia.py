@@ -269,10 +269,31 @@ class HostPeerProtocol:
         if self.response_first:
             self._send(response, self.session_join["ip"])
             self._send(update, self.network.broadcast)
-            return "type 2 Join Response (unicast), then type 5 Update Session (broadcast)"
+            self._unicast_session_update(update)
+            return "type 2 Join Response (unicast), then type 5 Update Session (broadcast + unicast)"
         self._send(update, self.network.broadcast)
+        self._unicast_session_update(update)
         self._send(response, self.session_join["ip"])
-        return "type 5 Update Session (broadcast), then type 2 Join Response (unicast)"
+        return "type 5 Update Session (broadcast + unicast), then type 2 Join Response (unicast)"
+
+    def _unicast_session_update(self, update):
+        # The console receives only ~1 in 5 of our BROADCAST data frames, and the type 5 Update
+        # Session is the one Pia handshake message still sent broadcast-only. It is what the console
+        # must receive before it answers with the type 6 ACK that finalizes its Pia session; a run
+        # that never finalizes (lg59) never even reaches the RFU layer. So repeat it UNICAST to each
+        # joined station, exactly as the Net 0x11 probe already does (the Pia nonce depends on the
+        # source, not the destination, and the console de-duplicates by packet id). Unproven against
+        # the semi-random 3s quit - dead and delivered runs finalize identically - but it makes
+        # finalization reliable and follows the one fix pattern that has worked on this console.
+        seen = set()
+        targets = [p[1] for p in self.network.participants]
+        if self.session_join is not None:
+            targets.append(self.session_join["ip"])
+        for ip in targets:
+            if ip is None or ip in seen or ip == self.network.broadcast:
+                continue
+            seen.add(ip)
+            self._send(update, ip)
 
     def _send_reliable(self, outputs):
         if not outputs or self.pia_crypto is None or self.guest_var is None or self.guest_ip is None:
