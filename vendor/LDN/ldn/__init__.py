@@ -1848,6 +1848,22 @@ class APNetwork:
         action.action = frame.encode()
 
         await self._monitor.send_frame(action)
+
+        # frlg-ldn-trade, session 11: the console catches our BROADCAST frames poorly (it needs
+        # 1-4s on the search screen to catch one advertisement and join, and the Net 0x11 / Pia
+        # type 5 broadcasts had to be repeated unicast before it saw them reliably). A real host
+        # only broadcasts, but ~35% of joins still die 3.0-3.4s after the LDN join with every
+        # visible layer identical; if the console's LDN client wants to see itself advertised
+        # within that window, a unicast (acked, retried) copy to each joined station is the
+        # cheapest test. LDN_UNICAST_ADVERTS=0 disables it.
+        if os.environ.get("LDN_UNICAST_ADVERTS", "1") not in ("0", "false", "no"):
+            for participant in self._network.participants:
+                if participant.connected:
+                    copy = wlan.ActionFrame()
+                    copy.source = action.source
+                    copy.action = action.action
+                    copy.destination = participant.mac_address
+                    await self._monitor.send_frame(copy)
     
     async def _receive_data_frames(self) -> None:
         while True:
