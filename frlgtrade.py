@@ -134,6 +134,7 @@ def run_live(run_config, lg):
     connect_ticks = 0
     ni_wait_ticks = 0
     entry_ticks = 0
+    leave_ticks = 0
     leave_until = None
     close_until = None
     graceful_interrupt = False
@@ -262,6 +263,21 @@ def run_live(run_config, lg):
                             f"host_ready={getattr(engine, 'host_ready', None)}, "
                             f"we_sat={sat}, in_seat_phase={getattr(engine, 'in_seat_phase', None)}, "
                             f"card_pulled={getattr(ent, 'card_pulled', None)}, "
+                            f"rx_ok={s.rx_count} tx={s.tx_count} {rates()}")
+            # Post-trade cancel-to-leave observability. The entry heartbeat above stops the
+            # moment the trade commits, and the leave path then waits silently for the host to
+            # re-run BufferTradeParties and bring the menu back up (~11s in j85) before it can
+            # emit REQUEST_CANCEL. j86 died inside that window with nothing logged at all - the
+            # same phase as the rec1 host wedge. Report it on the info sink too.
+            if engine.commits and getattr(engine, "leaving", False) and not engine.cancelled:
+                leave_ticks += 1
+                if leave_ticks % 120 == 0:
+                    lg.info(f"leave state: {leave_ticks}f since the trade committed, "
+                            f"menu_live={engine._trade_menu_live()}, "
+                            f"state={engine.state}, selected={engine._selected}, "
+                            f"host_party_blocks={engine._host_party_blocks}/3, "
+                            f"party_sent={engine._party_sent}, "
+                            f"requested_cancel={engine.requested_cancel}, "
                             f"rx_ok={s.rx_count} tx={s.tx_count} {rates()}")
             if not announced_established and engine.established:
                 announced_established = True
