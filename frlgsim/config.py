@@ -186,6 +186,7 @@ class JoinerOptions:
     decline: bool = False
     refuse_illegit: bool = False
     compress: bool = False
+    pace_ms: int = 0    # live TX pacing window, ms (sim.PACE_MIN_GAP_MS); 0 = off. Tested j79/j80: no help
     connect_id: bytes | None = None
 
     def __post_init__(self):

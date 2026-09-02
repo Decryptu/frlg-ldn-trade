@@ -17,6 +17,7 @@ import os
 import time
 
 from . import crypto as cryptomod, reliable, gbaframe, rfu, pia_connect, ni, linkplayer
+from .reliable import _E_ACKED as _E_ACKED_IDX
 
 RELIABLE_SEQ_START = 0xFFF0
 
@@ -28,6 +29,28 @@ MS_PER_VBLANK = 1000.0 / 59.727
 # coalesce a VBlank's retransmits + K acks + the T slot + the ctrl-ack into one datagram (chunked at
 # this size) instead of one datagram per frame - the prime BufferIsFull lever.
 RELIABLE_BATCH_MAX = 9
+# Minimum spacing between two datagrams to the console, in ms (live only; 0 = off). Measured on the
+# air capture (j77/j78, scratchpad/air_match.py + spacing.py): the console MAC-acks our datagrams and
+# then DROPS ~40% of them inside its own stack, uniformly at random, whenever another datagram of ours
+# lands within ~20ms; a datagram with nothing of ours within ~33ms on either side is dropped <5% of the
+# time. Its receive path drains about once per 33ms and keeps one datagram per drain. So we hold
+# outgoing messages and emit ONE merged datagram per window - the lockstep then runs at ~30
+# exchanges/s with no loss instead of 11-20/s with a 45% retransmit rate and the in-order stalls
+# that starve the parent's child-slot poll (the trade-room deaths).
+PACE_MIN_GAP_MS = 34
+# Do not transmit within this many ms AFTER receiving anything from the console. Measured pooled over
+# j58/j69/j73/j75/j77/j78/j79 (scratchpad/ctx.py): a datagram of ours sent 0-2ms after a console
+# frame is dropped 41-42% of the time (whether or not the console keeps streaming), one sent 20ms+
+# after its last frame 6%. We used to answer every frame within ~0.6ms, i.e. always inside the window.
+REPLY_HOLDOFF_MS = 6
+# CARRY-FORWARD redundancy: every reliable data frame we send is repeated in the next CARRY_DEPTH
+# datagrams (the console de-duplicates by seq). Measured j77-j80: the console MAC-acks our datagrams and
+# drops ~40% of them inside its stack while its link loop streams, independent of spacing (j79, 34ms
+# pacing), reply timing (j80, 6ms hold-off), size, content or nonce - a Bernoulli loss we cannot
+# time around. Pia delivers in order, so one dropped datagram stalls the whole game stream for an
+# RTO (~100ms) and the parent's five-consecutive-bad-poll rule kills the room. Carrying each frame in
+# the next two datagrams turns a 40% hole rate into ~6% at the cost of bytes, not datagrams.
+CARRY_DEPTH = 4   # j83 died on a stall with depth 2; P(4 consecutive drops) ~2.5% at the measured 40%
 
 # LIVE-only cap on NEW standby (0x6600/0x5F00) frames emitted per count (live fix: standby flood
 # deadlock). The reference capture sends each standby ~3-4x then stops; emitting every VBlank keeps the host
@@ -223,8 +246,21 @@ TS_SEED = 0x0000362E
 class Sim:
     def __init__(self, transport, pia_crypto, engine, our_ip, host_ip, *, conn=None,
                  our_var=0xc493, compress=False, header_flags=0x50, capture_path=None,
-                 linkstate=None, connect_id=None, log=lambda *a: None):
+                 linkstate=None, connect_id=None, log=lambda *a: None,
+                 pace_ms=0, pace_clock=None):
         self.t = transport
+        # TX pacer (see PACE_MIN_GAP_MS): pending [(framing_key, framing_kwargs, [messages])], the
+        # wall-clock ms of the last datagram actually sent, and the clock (time.monotonic unless a
+        # test injects one). pace_ms=0 disables it (offline replay/tests send immediately).
+        self.pace_ms = pace_ms
+        self._pace_clock = pace_clock or (lambda: time.monotonic() * 1000.0)
+        self._pace_pending = []
+        self._pace_last_ms = None
+        self._last_rx_ms = None          # wall-clock ms of the last datagram from the console
+        self.reply_holdoff_ms = REPLY_HOLDOFF_MS if pace_ms else 0
+        self.paced_merges = 0            # messages that rode a datagram with earlier pending ones
+        self._carry = []                 # [[(seq, flagsA, inner)], ...] data frames of the last CARRY_DEPTH datagrams
+        self.carried = 0                 # frames re-sent by carry-forward (diagnostic)
         self.crypto = pia_crypto
         self.engine = engine
         # Held-keys overworld link-state engine [frlgsim/linkstate.py]. When present, the sim emits a
@@ -602,8 +638,24 @@ class Sim:
         self._pktid_by_dst[dv] = pktid + 1 if pktid < 0xFFFF else 1
         return pktid
 
+    def flush_paced(self):
+        """Send the oldest pending paced group as ONE datagram if PACE_MIN_GAP_MS has elapsed since the
+        last datagram. Called from _send_messages, tick(), and by the live loop between ticks (so the
+        window is honoured at sub-VBlank resolution). Returns the datagram or None."""
+        if not self._pace_pending:
+            return None
+        now = self._pace_clock()
+        if self._pace_last_ms is not None and now - self._pace_last_ms < self.pace_ms:
+            return None
+        if self._last_rx_ms is not None and now - self._last_rx_ms < self.reply_holdoff_ms:
+            return None                   # the console just transmitted - stay out of its danger window
+        key, kw, msgs = self._pace_pending.pop(0)
+        self._pace_last_ms = now
+        return self._send_messages(msgs, _paced=True, **kw)
+
     def _send_messages(self, messages, *, dst_var=None, src_var=None, compress=False,
-                       footer=True, establishing=False, unicast=True, pktid=None, footer_var=None):
+                       footer=True, establishing=False, unicast=True, pktid=None, footer_var=None,
+                       _paced=False):
         """Frame N Pia messages into ONE datagram and send it (observed: the reference capture BATCHES up to 9 reliable
         messages per datagram; we used to emit one datagram per frame -> ~1.6x+ datagram flood ->
         host SEND-buffer overflow (BufferIsFull)]. `messages` = [(proto, payload), ...] sharing one
@@ -616,6 +668,18 @@ class Sim:
         header byte5 = (padding_size << 4) | flags, flags = (1 if zstd) | (2 if establishing); the
         footer-size byte = len(footer). One pktid per datagram (per-channel), NOT per message."""
         if not messages:
+            return None
+        if self.pace_ms and not _paced:
+            key = (dst_var, src_var, compress, footer, establishing, unicast, pktid, footer_var)
+            for k, kw, msgs in self._pace_pending:
+                if k == key and len(msgs) + len(messages) <= RELIABLE_BATCH_MAX:
+                    msgs.extend(messages); self.paced_merges += len(messages)
+                    break
+            else:
+                self._pace_pending.append((key, dict(dst_var=dst_var, src_var=src_var, compress=compress,
+                                                     footer=footer, establishing=establishing, unicast=unicast,
+                                                     pktid=pktid, footer_var=footer_var), list(messages)))
+            self.flush_paced()
             return None
         dv = dst_var if dst_var is not None else int.from_bytes(self.host_var, "big")
         sv = src_var if src_var is not None else int.from_bytes(self.our_var, "big")
@@ -677,6 +741,24 @@ class Sim:
         ctrl-ack). All ride the host channel (dst=host_var) so they share one per-channel pktid."""
         if not batch:
             return
+        # carry-forward (CARRY_DEPTH): prepend the still-unacked data frames of the previous datagrams,
+        # newest first so the batch cap drops the oldest copies. Ctrl-acks are never carried (each
+        # batch builds a fresh one when owed).
+        if CARRY_DEPTH:
+            have = {s for s, _, _ in batch if s is not None}
+            carried = []
+            for prev in reversed(self._carry):
+                for seq, flagsA, inner in prev:
+                    e = self.rel.unacked.get(seq)
+                    if seq in have or e is None or e[_E_ACKED_IDX]:
+                        continue
+                    carried.append((seq, flagsA, inner)); have.add(seq)
+            room = RELIABLE_BATCH_MAX - len(batch)
+            carried = carried[:max(0, room)]
+            self.carried += len(carried)
+            self._carry.append([(s, f, i) for s, f, i in batch if s is not None and f != reliable.FLAGSA_CTRL])
+            batch = sorted(carried, key=lambda x: x[0]) + batch
+            self._carry = self._carry[-CARRY_DEPTH:]
         msgs = []
         for seq, flagsA, inner in batch:
             s = RELIABLE_SEQ_START if seq is None else seq
@@ -975,9 +1057,19 @@ class Sim:
         return rel
 
     # ---- one VBlank --------------------------------------------------------
+    def poll_rx(self):
+        """Drain and process any datagrams waiting on the transport without advancing the VBlank
+        tick (used by the live loop between ticks so replies and the hold-off clock are prompt)."""
+        for datagram, src_ip in self.t.recv():
+            if self.pace_ms:
+                self._last_rx_ms = self._pace_clock()
+            self.process_datagram(datagram, src_ip)
+
     def tick(self):
         self._tick += 1                  # drives the ReliableLink retransmit timers
         for datagram, src_ip in self.t.recv():
+            if self.pace_ms:
+                self._last_rx_ms = self._pace_clock()
             self.process_datagram(datagram, src_ip)
         # Supplementary RTT source: feed any round-trips the RTT protocol measured into the reliable RTO
         # (median of the last 7), converting VBlanks->ms. Over this link the host doesn't echo our RTT
@@ -1008,6 +1100,7 @@ class Sim:
                            dst_var=int.from_bytes(self.host_var, "big"),
                            src_var=int.from_bytes(self.our_var, "big"),
                            compress=False, footer=True, establishing=False)
+        self.flush_paced()
 
     def close(self):
         if self._cap:

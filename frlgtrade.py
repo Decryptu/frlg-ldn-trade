@@ -52,6 +52,20 @@ def make_engine(run_config, lg, *, default_anim_delay=None):
     return eng
 
 
+def _paced_sleep(s, period, slice_s=0.002):
+    """Sleep one VBlank, flushing the TX pacer every 2ms so PACE_MIN_GAP_MS / REPLY_HOLDOFF_MS are
+    honoured at that resolution instead of once per tick. Also polls RX between slices so the
+    hold-off clock sees the console's frames as they arrive, not at the next tick."""
+    end = time.monotonic() + period
+    while True:
+        now = time.monotonic()
+        if now >= end:
+            return
+        time.sleep(min(slice_s, end - now))
+        if s.pace_ms:
+            s.poll_rx()
+            s.flush_paced()
+
 def run_live(run_config, lg):
     plan, ldn, options = run_config.plan, run_config.ldn, run_config.role
     profile = run_config.profile
@@ -91,7 +105,9 @@ def run_live(run_config, lg):
           f"({'override' if options.connect_id else 'random nonzero'}); the host's 'A' (0x41) accept "
           f"seats our slot - the value need not match anything on the host.")
     s = simmod.Sim(t, pc, engine, t.our_ip, t.host_ip, conn=conn, compress=options.compress,
-                   linkstate=lstate, connect_id=connect_id, capture_path=ldn.capture_path, log=lg)
+                   linkstate=lstate, connect_id=connect_id, capture_path=ldn.capture_path, log=lg,
+                   pace_ms=options.pace_ms)
+    lg.info(f"TX pacing: one datagram per {options.pace_ms}ms" if options.pace_ms else "TX pacing: off")
     if ldn.capture_path:
         lg(f"[live] capturing every Pia datagram (both dirs) -> {ldn.capture_path} "
               f"(decrypt/analyse offline afterward)")
@@ -209,7 +225,7 @@ def run_live(run_config, lg):
                             f"host_var={'learned' if s._learned else 'unseen'}, "
                             f"rx_ok={s.rx_count} rx_decryptfail={s.rx_fail} "
                             f"protos={dict(sorted(s.rx_protos.items()))} tx={s.tx_count}")
-                time.sleep(period)
+                _paced_sleep(s, period)
                 continue
             if not connect_announced:
                 lg(f"[live] Pia connection ESTABLISHED - host confirmed us "
@@ -332,7 +348,7 @@ def run_live(run_config, lg):
             if leave_until is not None and time.monotonic() >= leave_until:
                 lg("[live] overworld leave tail elapsed without a host CLOSE - disconnecting.")
                 break
-            time.sleep(period)
+            _paced_sleep(s, period)
     finally:
         signal.signal(signal.SIGINT, old_sigint)
         s.close()          # flush the --capture .jsonl
@@ -409,6 +425,9 @@ def build_parser():
                          "workaround for the 'flood', but that was the RTT deadlock (now fixed). "
                          "--trust-pia re-enables send-once")
     ap.add_argument("--compress", action="store_true", help="zstd-compress OUT payloads")
+    ap.add_argument("--pace-ms", type=int, default=0,
+                    help="live: minimum ms between two datagrams to the console, merging what is due "
+                         "into one (0 = off). See sim.PACE_MIN_GAP_MS for the measurement.")
     ap.add_argument("--connect-id", "--parent-pid", dest="connect_id", default="",
                     help="(live) override the RFU connection id (hex, e.g. 7036) sent in the emulator "
                          "connect ('C') frame. Default: a random nonzero id - any nonzero value works. "
@@ -461,7 +480,7 @@ def _build_run_config(ap, args):
         role = configmod.JoinerOptions(
             live=args.live, replay_path=args.replay,
             self_id=args.self_id, decline=args.decline,
-            refuse_illegit=args.refuse_illegit, compress=args.compress,
+            refuse_illegit=args.refuse_illegit, compress=args.compress, pace_ms=args.pace_ms,
             connect_id=_hex_bytes(ap, "--connect-id", args.connect_id, size=2))
         return configmod.TradeRunConfig(profile, plan, ldn, role)
     except ValueError as exc:

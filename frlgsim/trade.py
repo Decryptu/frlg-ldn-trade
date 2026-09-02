@@ -172,6 +172,10 @@ SEAT_HOST_READY_MAX = 1200  # ~20s at 60 ticks/s. Longest we sit waiting for the
                             # end to reach their chair before starting the post-seat standby rounds
                             # regardless. A safety bound, not a timeout to design around.
 ENTRY_BARRIER_GAP = 6
+# Re-arm gap for the post-seat count=3 (warp#4), in idle child slots. After count=3 the native child
+# goes IDLE x75 and the leader pulls the party off that idle run (h1 reference; our own leader needs
+# 75 exactly-idle slots), so a fresh count=3 must be spaced by MORE than that, not by 6.
+POST_SEAT_REARM_GAP = 90
 # Idle ticks between our block fragments (BlockSender.STREAM_GAP), joiner only. 0 = UNPACED.
 #
 # Tried at 5 (~10/s, to match the ~6/s the console streams its own card at) and it is WORSE, because
@@ -626,6 +630,13 @@ class TradeEngine:
         leader still parked in H_ENTRY_SEAT because our keepalive never let it count a quiet frame.
         This mirrors the native child, which clears its key-intercept callback once seated
         [Task_StartWirelessTrade case 0; cable_club.c:918]."""
+        # The walk-out (j82, the first completed joiner trade): once the host has emitted EXIT_ROOM
+        # it waits for AreAllPlayersInLinkState(EXITING_ROOM) [overworld.c:2962-2981], i.e. for OUR
+        # 0x17 - which only linkstate can put on the wire. in_seat_phase is long over by then, so
+        # without this the sim streamed all-zero idle slots, our EXIT_ROOM never went out, and the
+        # console sat at "conduira a la sortie de la piece... veuillez patienter" forever.
+        if self._host_exiting:
+            return True
         if not self.in_seat_phase:
             return False
         # Same evidence rule as the warp gate: on hardware the console never broadcasts its own
@@ -1662,7 +1673,16 @@ class TradeEngine:
             # signal the real console gives). Gating on host_count alone pinned hc at 0 for every
             # hardware run, so count=3 was NEVER sent: j58 walked, sat, saw the console sit
             # (its own 0x16 held key), and then died 0.09s later still driving count=2.
-            hc = max(self.barrier.host_count or 0, self._self_standby_echo)
+            # j81 (the first run to live this long): once both are seated the real console DOES
+            # broadcast its own count at mp0 (count=2 twice, 130ms after reflecting our count=2). Its
+            # receive gate accepts a count only when it equals its own, so the count=3 we fired on the
+            # REFLECTION of our count=2 was ignored - and its reflection of that count=3 then pinned
+            # hc at 3 here, so we never sent it again and both sides idled forever at "connexion...
+            # veuillez patienter". The reflection proves the host SAW our slot, not that it completed
+            # the round. So: once the host has broadcast its own count, trust ONLY that; the
+            # reflection heuristic remains for the rounds where the console never broadcasts.
+            hc_own = self.barrier.host_count or 0
+            hc = hc_own if hc_own >= 2 else max(hc_own, self._self_standby_echo)
             if hc < 2:                          # warp#3: drive count=2 until the host completes it
                 if not self._barrier_initiated_warp3:
                     self._barrier_initiated_warp3 = True
@@ -1673,7 +1693,7 @@ class TradeEngine:
                     self._barrier_initiated_warp4 = True
                     self.log("warp#4: post-seat READY_EXIT_STANDBY count=3 (host reached count=2; "
                              "sustained until host completes)")
-                return self._sustain_standby(3, "_warp4_emits", "_warp4_regap", gap=ENTRY_BARRIER_GAP)
+                return self._sustain_standby(3, "_warp4_emits", "_warp4_regap", gap=POST_SEAT_REARM_GAP)
             return [0] * 7              # both post-seat bursts sent / waiting; idle + keepalive
 
         # Priority 5: standby / close-link barrier. Reached ONLY when no block send (priority 1),

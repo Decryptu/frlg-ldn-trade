@@ -113,3 +113,21 @@ FireRed nor LeafGreen, and it prints an in-game message rather than dropping the
 FR<->LG trading is confirmed working on hardware. The only language branch on the link path is
 `ConvertInternationalString`, which special-cases Japanese and nothing else; a French FireRed accepts
 an English Wonder Card.
+
+
+## Post-seat standby gate and walk-out (measured 2026-09-02, j81/j82)
+
+- After BOTH players sit, the console (leader) broadcasts its own `READY_EXIT_STANDBY` count=2 at
+  mpId 0 about 130ms after it reflects ours. Its receive gate accepts a child count only when it
+  equals its own (`Rfu_LinkStandby` recv gate, `link_rfu_2.c:1577-1591`), so a count=3 sent on the
+  reflection of our count=2 is ignored. The reflection of a child slot proves the parent saw it,
+  not that it completed the round. Gate count=3 on the host's OWN mp0 count=2, and keep re-arming
+  it, spaced by more than the 75 idle slots the leader needs before `BufferTradeParties`.
+- The walk-out: the host emits `LINK_KEY_CODE_EXIT_ROOM` (0x17) and blocks in
+  `KeyInterCB_WaitForPlayersToExit` until `AreAllPlayersInLinkState(EXITING_ROOM)`
+  [`overworld.c:2962-2981`]. The child must answer with its own 0x17 on the held-keys stream; an
+  all-zero child slot is not a key and the host waits forever.
+- Transport: the Switch host drops ~40% of the child's Pia datagrams inside its own stack after
+  MAC-acking them (passive-monitor measurement), independent of spacing, timing, size or content.
+  Pia delivers in order, so each drop stalls the child's whole stream for an RTO. Repeating every
+  reliable data frame in the next few datagrams (the host de-duplicates by seq) removes the stalls.

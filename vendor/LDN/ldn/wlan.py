@@ -17,6 +17,7 @@ from netlink import nl80211, route
 from ldn import streams, util, queue
 
 import contextlib
+import os
 import fcntl
 import netlink
 import socket
@@ -1380,6 +1381,16 @@ class Station(Interface):
             # If no key is provided, the frames are not encrypted.
             attrs[nl80211.NL80211_ATTR_PRIVACY] = False
 
+        if os.environ.get("LDN_DISABLE_HT") == "1":
+            # frlg-ldn-trade: associate as a legacy (non-HT) station so mac80211 never opens an
+            # 802.11 BlockAck/A-MPDU session with the console. Measured on j77 (air capture): ~45% of
+            # our datagrams were MAC-acked by the console and then dropped inside it, with a BA
+            # session on TID 0 that our own driver opened at association; rtw88_8822bu gets no TX
+            # status back from its firmware, so its BA bookkeeping is blind.
+            from netlink import attributes as _nlattr
+            nl80211.NL80211.ATTRIBUTES.setdefault(nl80211.NL80211_ATTR_DISABLE_HT, _nlattr.flag())
+            attrs[nl80211.NL80211_ATTR_DISABLE_HT] = True
+            print("[ldn] connecting with HT disabled (LDN_DISABLE_HT=1): no BlockAck/A-MPDU session")
         await self._wlan.request(nl80211.NL80211_CMD_CONNECT, attrs)
         
         while True:
