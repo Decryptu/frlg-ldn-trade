@@ -21,7 +21,11 @@ assert len(GAMEFREAK_MAGIC) == 16
 
 VERSION_FIRE_RED = 0x4004                        # gGameVersion(4) + 0x4000
 VERSION_LEAF_GREEN = 0x4005                      # gGameVersion(5) + 0x4000
-LANGUAGE_ENGLISH = 2
+LANGUAGE_ENGLISH = 2                             # include/constants/global.h:21-27
+LANGUAGE_FRENCH = 3
+LANGUAGE_ITALIAN = 4
+LANGUAGE_GERMAN = 5
+LANGUAGE_SPANISH = 7                             # 6 is unused (theorised Korean), so it is skipped
 LP_FIELD2 = 0x8000                               # gLocalLinkPlayer.lp_field_2
 HOST_NAME_PAD = 0xFF                             # robust host-role fixed-field terminators
 

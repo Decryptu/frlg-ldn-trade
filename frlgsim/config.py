@@ -13,7 +13,15 @@ VERSIONS = {
     "firered": linkplayer.VERSION_FIRE_RED,
     "leafgreen": linkplayer.VERSION_LEAF_GREEN,
 }
-LANGUAGES = {"english": linkplayer.LANGUAGE_ENGLISH}
+# The five Latin-charset languages. Japanese (1) is deliberately absent: its text uses the kana
+# table, which reuses the same byte values as the accented Latin range in frlgsim/charmap.py.
+LANGUAGES = {
+    "english": linkplayer.LANGUAGE_ENGLISH,
+    "french": linkplayer.LANGUAGE_FRENCH,
+    "italian": linkplayer.LANGUAGE_ITALIAN,
+    "german": linkplayer.LANGUAGE_GERMAN,
+    "spanish": linkplayer.LANGUAGE_SPANISH,
+}
 
 # Public alongside the other immutable run models while its implementation
 # lives with the stamp/static distribution builders.
@@ -542,17 +550,21 @@ def add_identity_arguments(parser):
     parser.add_argument("--ot", default=None, help="trainer name; defaults to DEFAULT_TRAINER")
     parser.add_argument("--version", choices=tuple(VERSIONS), default=None,
                         help="game version; defaults to DEFAULT_TRAINER")
+    parser.add_argument("--language", choices=tuple(LANGUAGES), default=None,
+                        help="trainer language; defaults to DEFAULT_TRAINER")
     parser.add_argument("--id", type=trainer_id_argument, metavar="TID[:SID]", default=None,
                         help="decimal trainer ID, optionally followed by decimal secret ID")
 
 
-def profile_from_overrides(*, ot=None, version=None, trainer_id=None,
+def profile_from_overrides(*, ot=None, version=None, language=None, trainer_id=None,
                            base=DEFAULT_TRAINER):
     changes = {}
     if ot is not None:
         changes["name"] = ot
     if version is not None:
         changes["version"] = version
+    if language is not None:
+        changes["language"] = language
     if trainer_id is not None:
         tid, sid = trainer_id
         changes["tid"] = tid

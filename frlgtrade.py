@@ -480,7 +480,8 @@ def _build_run_config(ap, args):
     try:
         offered_slots = runtime.parse_slots(args.slots, args.trades, len(args.party))
         profile = configmod.profile_from_overrides(
-            ot=args.ot, version=args.version, trainer_id=args.id)
+            ot=args.ot, version=args.version, language=args.language,
+            trainer_id=args.id)
         plan = configmod.TradePlan(
             party_paths=tuple(args.party), output_path=args.out,
             output_size=args.out_size, output_format=args.out_format,

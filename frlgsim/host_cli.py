@@ -165,7 +165,8 @@ def build_host_config(parser, args):
     """Build the shared profile, LDN config, and host options from parsed args."""
     try:
         profile = config.profile_from_overrides(
-            ot=args.ot, version=args.version, trainer_id=args.id)
+            ot=args.ot, version=args.version, language=args.language,
+            trainer_id=args.id)
         ldn = config.LdnConfig(
             password=parse_hex_bytes(parser, "--password", args.password),
             phy=args.phy,

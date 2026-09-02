@@ -61,3 +61,44 @@ def test_joiner_cli_builds_full_config_from_identity_overrides():
     assert (run.profile.tid, run.profile.sid) == (12345, 34567)
     assert run.plan.party_paths == ("one.pk3", "two.pk3")
     assert isinstance(run.role, config.JoinerOptions)
+
+
+def test_latin_languages_are_offered_with_their_decomp_values():
+    """include/constants/global.h:21-27. Japanese (1) is deliberately absent: its kana reuse the
+    same byte values as the accented Latin range in charmap, so a Japanese name cannot be encoded
+    with the international table we ship."""
+    assert config.LANGUAGES == {
+        "english": 2, "french": 3, "italian": 4, "german": 5, "spanish": 7,
+    }
+    assert "japanese" not in config.LANGUAGES
+    for name in config.LANGUAGES:
+        config.TrainerProfile(name="Zoé", tid=1, sid=2, language=name)
+
+
+def test_accented_names_survive_the_charmap_round_trip():
+    """encode() drops unknown characters, so before the accented range was added a French OT name
+    went on the wire mangled: "Zoe(acute)" -> "Zo". Names are what the console displays for us."""
+    from frlgsim import charmap
+    for name in ("Zoé", "Éloïse", "Jürgen", "Muñoz", "Grüße", "José", "Gurvan"):
+        encoded = charmap.encode(name, width=8, pad=0x00)
+        assert charmap.decode(encoded) == name, name
+
+
+def test_charmap_never_maps_the_terminator_to_a_glyph():
+    """charmap.txt maps 0xFF to '$', but 0xFF is our EOS and fixed-width pad. Mapping it would
+    corrupt every name field."""
+    from frlgsim import charmap
+    assert charmap.EOS == 0xFF and charmap.PAD == 0xFF
+    assert 0xFF not in charmap._DEC
+    assert "$" not in charmap._ENC
+
+
+def test_language_override_reaches_the_linkplayer_wire_byte():
+    """The dict is useless unless --language can select it and it lands in the struct the console
+    actually reads (LinkPlayer[26:28])."""
+    from frlgsim import linkplayer
+    for name, code in config.LANGUAGES.items():
+        profile = config.profile_from_overrides(ot="Zoé", language=name)
+        wire = profile.to_link_player().pack()
+        assert int.from_bytes(wire[26:28], "little") == code, name
+        assert linkplayer.LinkPlayer.unpack(wire).name == "Zoé"
