@@ -249,6 +249,17 @@ class HostPeerProtocol:
         self.reliable_messages_in = 0
         self.reliable_messages_out = 0
         self._out = []
+        # frlg-ldn-trade session 11: proactive carry-forward for the HOST reliable stream, mirroring the
+        # JOINER's CARRY_DEPTH (sim.py). The console silently drops ~40% of our datagrams inside its own
+        # stack; the joiner survives that by repeating each reliable data frame in the next few
+        # datagrams (one of the three fixes that made the joiner work), but the host only ever sent each
+        # once and relied on reactive Reliable retransmit. HOST_CARRY_DEPTH>0 prepends the still-unacked
+        # data frames of the last N datagrams to each new one (console dedups by seq). Default 0 = off.
+        try:
+            self._host_carry_depth = max(0, min(6, int(os.environ.get("HOST_CARRY_DEPTH", "0") or 0)))
+        except ValueError:
+            self._host_carry_depth = 0
+        self._reliable_carry = []
 
     def drain(self):
         result, self._out = self._out, []
@@ -307,9 +318,40 @@ class HostPeerProtocol:
             seen.add(ip)
             self._send(update, ip)
 
+    def _apply_carry_forward(self, outputs):
+        """Prepend the still-unacked data frames of the last HOST_CARRY_DEPTH datagrams (newest first),
+        so a datagram the console dropped is re-offered immediately instead of only on the Reliable RTO.
+        The console dedups by seq, so re-sent frames are harmless. Ctrl (pure-ack) frames are never
+        carried. No-op when HOST_CARRY_DEPTH is 0."""
+        depth = self._host_carry_depth
+        if depth <= 0:
+            return outputs
+        unacked = getattr(getattr(self.session, "reliable", None), "unacked", {}) or {}
+        have = {getattr(it, "seq", None) for it in outputs}
+        carried = []
+        for prev in reversed(self._reliable_carry):
+            for it in prev:
+                seq = getattr(it, "seq", None)
+                entry = unacked.get(seq)
+                if seq in have or entry is None or entry[reliable._E_ACKED]:
+                    continue
+                have.add(seq); carried.append(it)
+        # record THIS datagram's data frames for future carry (exclude pure-ack ctrl frames)
+        self._reliable_carry.append([it for it in outputs
+                                     if getattr(it, "seq", None) is not None
+                                     and it.flagsA != reliable.FLAGSA_CTRL])
+        self._reliable_carry = self._reliable_carry[-depth:]
+        if not carried:
+            return outputs
+        # oldest-seq first, then the fresh outputs (matches sim ordering)
+        carried.sort(key=lambda it: (it.seq - (min(have) if have else 0)) & 0xFFFF)
+        self.carried_frames = getattr(self, "carried_frames", 0) + len(carried)
+        return carried + outputs
+
     def _send_reliable(self, outputs):
         if not outputs or self.pia_crypto is None or self.guest_var is None or self.guest_ip is None:
             return
+        outputs = self._apply_carry_forward(list(outputs))
         for chunk in reliable_output_batches(outputs):
             messages = [(pia_connect.PROTO_RELIABLE, item.serialize(), item.message_flags)
                         for item in chunk]
