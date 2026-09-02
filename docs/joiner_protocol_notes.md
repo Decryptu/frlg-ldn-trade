@@ -195,3 +195,26 @@ the Pia/LDN session, and it means a run that dies with our side clean is evidenc
 layer, not about the game protocol. Do not tune game-level frame counts against these deaths -
 2026-09-02 spent 28 hardware runs doing exactly that and measured nothing (3/13 at
 `client_ready_idle_frames=20` vs 2/13 at 120, indistinguishable).
+
+### RESOLVED (2026-09-02, session 10): the culprit was a BROADCAST Pia handshake message
+
+The svc_51 pointer above ("look at the Pia session, not the RFU stream") was correct, and the
+specific cause is now found. The **type 5 Update Session** - the message the console must receive
+before it answers with the type 6 ACK that finalizes its Pia session - was being sent BROADCAST only
+(`host_pia._send_session_acceptance`). The Switch receives only ~1 in 5 of our broadcast data frames
+(the same loss that made the Net 0x11 connection request slow until af73f0e unicast it). So on ~2 in
+3 attempts the console never cleanly received the type 5 in time, its Pia session never fully
+finalized, and the emulator's svc_51 watchdog dropped the link 3.0/3.6s (180/216 frames) after the
+join - the "semi-random 3s quit".
+
+Fix: `host_pia` now ALSO sends the type 5 unicast to each joined station (commit on fork/main;
+broadcast is still sent, so the change is purely additive). Measured the same session, same consoles:
+Mystery Gift on the FireRed went 1/4 -> 4/4, the LeafGreen delivered first try (it had logged 40+
+straight deaths on this message the day before), and a full two-round host-direction TRADE completed
+clean. That is why session 9's "nothing we control changes the rate" and the 28-run
+`client_ready_idle_frames` A/B measured nothing: they compared runs where finalization HAPPENED, but
+the failure is the console MISSING the broadcast entirely - those runs have no finalize to compare.
+
+Still true: game-level frame-count tuning against these deaths is pointless (the watchdog is below
+it), and the emulator can still drop a link for other Pia-session reasons. But the dominant cause of
+the wall is fixed. The remaining known MG failure is the separate ident-25 fragment stall.
