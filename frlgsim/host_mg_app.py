@@ -84,7 +84,7 @@ class MysteryGiftHostApplication(HostApplication):
             self.network, self.profile, self.session, active,
             native_nonce_sequence=self.options.native_nonce_sequence,
             session_response_first=self.options.session_response_first,
-            log=self.log)
+            tracer=self.tracer, log=self.log)
         self._last_state = self.session.activity.state
         return link_player
 

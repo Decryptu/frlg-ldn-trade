@@ -192,7 +192,7 @@ class HostPeerProtocol:
 
     def __init__(self, network, profile, host_session, active_app_data, *,
                  native_nonce_sequence=False, session_response_first=False,
-                 log=lambda *a: None):
+                 tracer=None, log=lambda *a: None):
         self.network = network
         self.profile = profile
         self.session = host_session
@@ -200,6 +200,12 @@ class HostPeerProtocol:
         self.response_first = bool(session_response_first)
         self.log = log
         self.info = getattr(log, "info", log)
+        # Session-layer trace. The per-datagram detail below is on self.log, which is
+        # --verbose-gated and banned on live runs, so a decoded session timeline was
+        # unavailable exactly when it mattered. The emulator can close the link with no
+        # game-level cause (swi 0x51, docs/joiner_protocol_notes.md), which makes THIS
+        # layer the one worth recording. Writing to the capture costs no frame time.
+        self.tracer = tracer
         self.nonces = PiaNonceSequence(native=native_nonce_sequence)
 
         self.joined = False
@@ -299,6 +305,10 @@ class HostPeerProtocol:
         header, messages = decoded
         self.log(f"[host] Pia reply: dst=0x{header.dst:04x} src=0x{header.src:04x} "
                  f"pktid={header.pktid} protos={[m.proto for m in messages]}")
+        if self.tracer is not None:
+            self.tracer.write("pia_in", pktid=header.pktid, dst=header.dst, src=header.src,
+                              protos=[m.proto for m in messages],
+                              sizes=[len(m.payload) for m in messages])
         events = []
         for message in messages:
             if message.proto == pia_connect.PROTO_NET:
