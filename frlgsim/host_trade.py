@@ -845,6 +845,17 @@ class HostTradeEngine:
 
         if self.state == H_RETURN_FIELD and self._room_exit_wait is not None:
             self._room_exit_wait -= 1
+            # This buffer is WALL-CLOCK in intent ("5 seconds") but counted in frames, and we
+            # only tick when the console sends one. In w6 the console's rate collapsed from
+            # 67.9/s during the trade to 15.4/s here, which stretches 300 frames from 5s to
+            # ~19.5s of host silence; the console gave up 7.1s in. Report progress so a repeat
+            # says whether we were still counting down, instead of just going quiet.
+            # NOT retimed: one run is not enough to retune a fixed frame delay (see CLAUDE.md).
+            if self._room_exit_wait % 60 == 0 and self._room_exit_wait > 0:
+                done = self.timing.post_cancel_exit_wait_frames - self._room_exit_wait
+                self.info(
+                    f"Room-exit buffer {done}/{self.timing.post_cancel_exit_wait_frames} frames; "
+                    f"still waiting before Linux walks out.")
             if self._room_exit_wait <= 0:
                 self._begin_room_exit()
 
