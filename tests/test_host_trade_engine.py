@@ -540,3 +540,32 @@ if __name__ == "__main__":
     test_host_identity_uses_redundant_gen3_name_terminators()
     test_empty_mail_block_matches_firered_clear_mail_struct()
     print("host trade engine tests: OK")
+
+
+def test_leave_menu_report_separates_a_silent_console_from_a_steadily_idling_one():
+    """A console idling across the mark appends no new run, because feed_child_slot
+    increments an unbroken run in place. Without frame counts that reads identically to a
+    console that has gone off the air - which is what w1 printed for 85s while the user
+    was looking at the console's live trade menu."""
+    lines = []
+    h = HostTradeEngine([_mon(1)], log=lines.append)
+    h._words.clear()
+    h._blocks.clear()
+    h._sender = None
+    h.round = h.trades
+    # Idle before the refresh, so the run that follows the mark is a continuation.
+    h.feed_child_slot(rfu.idle_slot())
+    h._finish_party_exchange()
+    assert h.state == H_LEAVE_MENU
+
+    lines.clear()
+    h._report_leave_menu()
+    assert "no frames at all - the console is off the air" in lines[-1]
+
+    for _ in range(30):
+        h.feed_child_slot(rfu.idle_slot())
+    assert h._child_slot_runs[h._leave_menu_run_mark:] == [], "must be an in-place run"
+    lines.clear()
+    h._report_leave_menu()
+    assert "off the air" not in lines[-1]
+    assert "30 frames (30 idle)" in lines[-1]

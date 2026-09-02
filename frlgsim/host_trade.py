@@ -260,6 +260,8 @@ class HostTradeEngine:
         self._parent_polls = 0
         self._status_countdown = STATUS_REPORT_FRAMES
         self._leave_menu_run_mark = 0
+        self._leave_menu_frame_mark = 0
+        self._leave_menu_idle_mark = 0
         self._leave_menu_report = None
         self.trace = []
 
@@ -282,9 +284,17 @@ class HostTradeEngine:
 
     def _report_leave_menu(self):
         """Say what the console sends while the leader waits for its CANCEL (rec1 wedged here)."""
+        frames = self._child_frames - self._leave_menu_frame_mark
+        idles = self._child_idles - self._leave_menu_idle_mark
         runs = self._child_slot_runs[self._leave_menu_run_mark:]
         if not runs:
-            tail = "nothing at all (not even IDLE slots)"
+            # An unbroken run that STARTED before the mark is incremented in place by
+            # feed_child_slot, so it never appears in this slice. Empty therefore means
+            # "no NEW run", not "no frames" - only the frame counters separate a console
+            # that went off the air from one idling steadily. Report both.
+            tail = ("no frames at all - the console is off the air"
+                    if frames == 0 else
+                    f"one unbroken run continuing from before the refresh ({frames} frames)")
         else:
             tail = ", ".join(
                 f"{'IDLE' if op is None else rfu.RFUCMD_NAMES.get(op, hex(op))}"
@@ -293,7 +303,8 @@ class HostTradeEngine:
         self.info(
             f"Waiting in H_LEAVE_MENU for the Switch CANCEL; host cancel ready="
             f"{self._host_cancel_ready}, child cancel seen={self._child_cancel_requested}. "
-            f"Console has sent since the party refresh: {tail}")
+            f"Console has sent since the party refresh: {frames} frames "
+            f"({idles} idle): {tail}")
 
     def _report_status(self):
         """Say what the console is actually sending while the leader waits."""
@@ -422,6 +433,8 @@ class HostTradeEngine:
             self._child_cancel_requested = False
             # Mark the child stream so the report shows only what arrived after the refresh.
             self._leave_menu_run_mark = len(self._child_slot_runs)
+            self._leave_menu_frame_mark = self._child_frames
+            self._leave_menu_idle_mark = self._child_idles
             self._leave_menu_report = LEAVE_MENU_REPORT_FRAMES
             self.info("Final party refresh complete; waiting 5 seconds for the trade menu.")
         else:
