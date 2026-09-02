@@ -103,7 +103,13 @@ def run_live(args, profile, lg):
     conn = pia_connect.ConnectionManager(
         our_mac=t.our_mac or b"\x00" * 6, host_mac=t.host_mac or b"\x00" * 6,
         our_ip=t.our_ip, host_ip=t.host_ip, player_name=profile.name,
-        random4=os.urandom(4), log=lg)
+        random4=os.urandom(4), log=lg,
+        player_id=os.urandom(16) if args.random_player_id else None,
+        rtt_before_finalize=args.rtt_before_finalize,
+        join_repeat_ticks=int(round(args.join_repeat_ms / 16.74)) if args.join_repeat_ms else 0)
+    if args.random_player_id or args.rtt_before_finalize or args.join_repeat_ms:
+        lg.info(f"[join-experiment] random_player_id={args.random_player_id} "
+                f"rtt_before_finalize={args.rtt_before_finalize} join_repeat_ms={args.join_repeat_ms}")
     connect_id = _hex_bytes(None, "--connect-id", args.connect_id, size=2) if args.connect_id \
         else (int.from_bytes(os.urandom(2), "big") or 1).to_bytes(2, "big")
     lg.info(f"emulator connect id {connect_id.hex()}")
@@ -206,6 +212,12 @@ def build_parser():
                     help="idle VBlanks between two blocks of one outgoing message")
     ap.add_argument("--trust-pia", action=argparse.BooleanOptionalAction, default=False,
                     help="send each block fragment once (default: faithful re-send until reflected)")
+    ap.add_argument("--random-player-id", action="store_true",
+                    help="send a random 16-byte Pia player id in the Session join (a console sends a real one)")
+    ap.add_argument("--rtt-before-finalize", action="store_true",
+                    help="answer the host's RTT probes before the Session is finalized")
+    ap.add_argument("--join-repeat-ms", type=int, default=0,
+                    help="re-send the Session join every N ms until accepted, like a console (0 = once)")
     ap.add_argument("--compress", action="store_true", help="zstd-compress OUT payloads")
     ap.add_argument("--pace-ms", type=int, default=0)
     ap.add_argument("--connect-id", default="", help="override the 2-byte emulator connect id (hex)")

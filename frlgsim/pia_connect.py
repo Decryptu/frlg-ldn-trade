@@ -403,7 +403,19 @@ class ConnectionManager:
     (proto, payload, unicast, dst_var, src_var) - the var-ids change per stage."""
 
     def __init__(self, our_mac, host_mac, our_ip, host_ip, our_var=0xc493,
-                 player_name="EMU", random4=b"\x00\x00\x00\x00", log=lambda *a: None):
+                 player_name="EMU", random4=b"\x00\x00\x00\x00", log=lambda *a: None,
+                 player_id=None, rtt_before_finalize=False, join_repeat_ticks=0):
+        # frlg-ldn-trade session 12 (2026-09-03) client-side experiment knobs, all default-off
+        # (the trade joiner is unchanged). A real Mystery Gift host held OUR join for 2.03s but
+        # accepts a real console in ~50ms (mc1 vs cc1/cc5). Candidate differences of our join:
+        #   player_id           a console sends a real 16-byte id (lg86: 10047bd4...); ours is 00..01
+        #   rtt_before_finalize a console child does NOT answer pre-finalize RTT either (lg86/87) - kept
+        #                       as a knob because the real host probed us 6 times before accepting
+        #   join_repeat_ticks   a console re-sends its Session join every ~0.5s until accepted (lg86-88)
+        self.player_id = bytes(player_id) if player_id else DEFAULT_PLAYER_ID
+        self.rtt_before_finalize = bool(rtt_before_finalize)
+        self.join_repeat_ticks = int(join_repeat_ticks or 0)
+        self._join_sent_tick = None
         self.our_mac = bytes(our_mac)
         self.host_mac = bytes(host_mac)
         self.our_ip = our_ip
@@ -458,7 +470,18 @@ class ConnectionManager:
     def _join(self):
         return build_session_join(self.our_mac, self.our_var.to_bytes(2, "big"), self.our_ip,
                                   self.host_mac, (self.host_var or 0).to_bytes(2, "big"),
-                                  self.player_name, self.random4)
+                                  self.player_name, self.random4, player_id=self.player_id)
+
+    def maybe_repeat_join(self, tick):
+        """Re-send the Session join every join_repeat_ticks while still unaccepted (console-like)."""
+        if (not self.join_repeat_ticks or self.state != ST_NET or self.host_var is None
+                or self._join_sent_tick is None):
+            return
+        if tick - self._join_sent_tick < self.join_repeat_ticks:
+            return
+        self._join_sent_tick = tick
+        self._q(PROTO_SESSION, self._join(), 0, self.our_var, True, False, True, pktid=0)
+        self.log("[pia] re-sent the Session join (join_repeat_ticks)")
 
     def _q(self, proto, payload, dst, src, compress, footer, establishing, pktid=None, footer_var=None):
         """Queue one outbox entry (a dict the sim frames per the wire rules). `pktid` overrides the
@@ -493,6 +516,8 @@ class ConnectionManager:
                 self._q(PROTO_NET, build_net_response(seqid), 0, 0, False, False, True, pktid=0)
                 if self.host_var is not None:
                     self._q(PROTO_SESSION, self._join(), 0, self.our_var, True, False, True, pktid=0)
+                    if self._join_sent_tick is None and tick is not None:
+                        self._join_sent_tick = tick
             elif n and n[1] == NET_UPDATE_PROPERTY:
                 # Mid-session 'Update network property' (in the reference capture: at the lobby->trade
                 # transition). The host RETRANSMITS it every 500ms until it sees our Net 0x51 ack -> an
@@ -528,7 +553,8 @@ class ConnectionManager:
             # whole 0.3-2.1s join), so we don't either - the pre-OK deadlock was NOT a liveness drop; it was
             # the connect-phase J/C reliable frames being sent once and never retransmitted (fixed via the
             # reliable layer's connect bootstrap RTO, sim.py RTO_BOOTSTRAP_MS).
-            if proto == PROTO_RTT and self.state != ST_NET and self.host_var is not None:
+            if proto == PROTO_RTT and (self.state != ST_NET or self.rtt_before_finalize) \
+                    and self.host_var is not None:
                 r = parse_rtt(payload)
                 if r and r["type"] == 0:                  # host request -> respond
                     self._last_host_rtt = bytes(payload[:21])   # template for our own origination

@@ -1088,6 +1088,8 @@ class Sim:
         if self.conn:
             if hasattr(self.conn, "maybe_originate_rtt"):
                 self.conn.maybe_originate_rtt(self._tick)   # liveness RTT probe (dst=0x0001)
+            if hasattr(self.conn, "maybe_repeat_join"):
+                self.conn.maybe_repeat_join(self._tick)     # console-like join re-send (default off)
             for e in self.conn.drain():
                 self._send(e["proto"], e["payload"], dst_var=e["dst"], src_var=e["src"],
                            compress=e["compress"], footer=e["footer"],
