@@ -10,6 +10,8 @@
 # Exit 0 whether or not it reset; non-zero only if the reset itself failed.
 set -u
 MOD=rtw88_8822bu
+FORCE=0
+if [ "${1:-}" = "--force" ]; then FORCE=1; shift; fi
 THRESH="${1:-2}"
 SUDO="sudo -S -p ''"
 [ -n "${SUDOPASS:-}" ] && SUDO="sudo -S -p '' "
@@ -24,7 +26,7 @@ count_since_load() {
         END { print n + 0 }'
 }
 
-if [ "${1:-}" = "--force" ]; then
+if [ "$FORCE" = 1 ]; then
     N=$((THRESH + 1)); echo "reset_wifi: forced"
 else
     N=$(count_since_load)
