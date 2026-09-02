@@ -248,13 +248,73 @@ single-run theory, converges from several independent angles:
   association outright. Every message in the Pia handshake is ALREADY sent unicast as well as broadcast;
   there is no broadcast-only message left for the console to miss.
 
-Conclusion: the residual wall is driven by emulator-internal Pia/link state (the input to `swi 0x51`)
-that two real Switches share and a Linux reimplementation cannot fully reproduce or even observe on the
-wire. The one thing that ever helped worked by removing a specific finalization TRIGGER (a missed
-message), not by matching bytes more closely. Further progress needs the emulator side, not more air
-captures or more transmit-side tuning. Past-wall delivery is otherwise reliable, so the practical
-posture is: retry through the wall, and restart the console's game after a run of mixed failures (it
-clears an accumulated sticky link state, distinct from the wall).
+CALIBRATION RULE (read before you write ANY conclusion here): separate FACT / DEDUCTION / HYPOTHESIS /
+UNKNOWN, and never promote one tier to another. Every strong "conclusion" written about the wall so far
+("emulator-internal", "hardware limit", "a different adapter is the fix", "it is a probabilistic race")
+was an under-supported HYPOTHESIS stated as fact, and the user disproved this class of claim more than
+once (e.g. "passive two-console capture is impossible" - it was not; it works). Do not repeat that.
+
+FACTS (observed, repeatable):
+- The wall fails ~40-60% of runs, ~3.0-3.8s after the LDN join, on the finalized Pia session.
+- Outcomes CLUSTER: long delivered streaks (4-6 in a row) and long walled streaks, within one session.
+- Deliveries and walls are indistinguishable on the decoded wire up to the console's own deauth.
+- The type-5 unicast change (250c051) coincided with a measured rate improvement.
+
+DEDUCTIONS (follow logically from the facts):
+- It is NOT a fixed HARDWARE INCAPABILITY. A thing the adapter fundamentally cannot do cannot succeed
+  6 times in a row; it does. So "the rtw88 dongle can't do the Switch path, need a different adapter"
+  is DISPROVEN as a certainty. (A different adapter MIGHT still change the rate - that is a hypothesis,
+  not a conclusion.)
+- The rate is at least SOMETIMES movable (type-5). Whether other changes move it is open.
+
+HYPOTHESES (plausible, UNPROVEN - do not state as conclusions, test them):
+- A timing/latency race we win when conditions are good; RF contention (busy 2.4GHz) as the clustering
+  driver; console-state or adapter-thermal drift; driver-tunable TX behaviour; missing HT/aggregation.
+
+UNKNOWN (honest):
+- The actual root cause of the wall. We do NOT know why svc_51 fires. Everything above is either an
+  observation or an untested idea. Treat the wall as OPEN and keep working the UNTRIED avenues below.
 
 <!-- Working directive for agents in this repo: never stop, never suggest stopping or pausing the
 reverse-engineering effort; when a lever is exhausted find a new angle and continue. See CLAUDE.md. -->
+
+### HARDWARE / CAPABILITY INVENTORY (what we actually have to work with)
+- **Nintendo Switch 2 #1 — French FireRed**: can do ANYTHING. Trade HOST, trade JOINER, Mystery Gift
+  RECEIVE, and Mystery Gift SHARE (it can send a Wonder Card it holds to a friend via Mystery Gift ->
+  Wonder Cards -> Friend). Enters Pokemon Center / Union Room / trade room.
+- **Nintendo Switch 2 #2 — French LeafGreen**: Mystery Gift ONLY (Wonder Cards -> Friend, receive).
+  CANNOT enter a Pokemon Center, CANNOT trade. It CAN receive a shared card from the FireRed.
+- **Wi-Fi adapter**: TP-Link Archer T3U, USB 2357:012d, rtw88_8822bu (RTL8812BU). rtw88 is OPEN-SOURCE
+  in-kernel - it can be patched/rebuilt. The README demo used an ALFA AWUS036ACHM; other adapters exist.
+- The Linux host runs in a VMware VM. Root via `sudo -S -p '' <cmd> < scratchpad/.sudopass`.
+
+### UNTRIED / UNDER-EXPLORED AVENUES FOR THE WALL — EXPLORE THESE, do not declare the wall closed
+Ordered roughly by promise. NONE of these has been properly done. A future agent MUST work through these
+(and invent more) before ever concluding the wall is "understood" or "unfixable":
+1. **rtw88 DRIVER modification** (open-source, rebuildable). Untried: disable firmware power-save on the
+   AP/hosting path; pin the data-frame TX rate and disable rate-control; force/tune A-MPDU aggregation
+   and BlockAck to match the Switch's native path; cut TX latency/jitter; try `switch_usb_mode`. The
+   demo-quality ALFA vs our rtw88 difference is at THIS layer.
+2. **Reduce RF contention** (the wall rate CLUSTERS, implicating environment). Untried properly: a truly
+   clear channel (survey all of 1-13, not just 1/6/11 which are all congested here by the home
+   Liveboxes), running at a quiet time of day, moving the console within centimetres of the adapter,
+   an external antenna, shielding. Correlate wall rate vs measured channel-busy / time.
+3. **The RECEIVE direction — the console sends US a card.** We have NO Mystery Gift receive client
+   (only the TRADE joiner frlgtrade.py --live). BUILD one: join a real console's Mystery Gift SHARE as
+   the client. Because OUR radio is then active, the passive-capture aggregation loss disappears and we
+   capture a real MG HOST end-to-end - the exact data we could never get passively. This directly shows
+   what a real host does in the first 3s. HIGH VALUE, not yet built.
+4. **Two-console passive capture** (PROVEN to work - cc1_air.pcap, cc5_air.pcap: FireRed shares -> Switch
+   receives, we listen off the radio). Use it MORE: capture many real sessions, diff their 802.11/mgmt
+   frames and timing against ours in detail. Method: FR shares; then MANUALLY find the channel with
+   ldn_scan.py, make a fresh monitor vif + `iw dev ldnair set channel <ch>`, verify frames>0 in 3s,
+   THEN the LeafGreen receives. (run_air.sh's auto scan->monitor handoff mis-tunes; do it by hand.)
+5. **Get the Switch emulator's svc_51 input directly** - it is not on the wire, but it is in the Switch
+   app binary. Static/dynamic analysis of the FRLG NSO emulator (the `swi 0x51` handler) would show the
+   exact condition. Hard, but it is the ground truth and has NOT been attempted.
+6. **802.11 elements, done right.** Level 1 stalled our TX and levels 2/3 broke assoc ON OUR CURRENT
+   injection path - retry once the driver work (#1) makes HT/aggregation actually work, or via a
+   different injection method. Not a dead end, just blocked on #1.
+7. **Systematic rate study.** Log wall/deliver for large blocks under each single change with the RF
+   environment held constant, to detect small (~10-20%) rate shifts that single runs cannot see. The
+   type-5 fix was found this way.
