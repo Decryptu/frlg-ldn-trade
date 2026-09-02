@@ -326,7 +326,9 @@ class HostPeerProtocol:
         depth = self._host_carry_depth
         if depth <= 0:
             return outputs
-        unacked = getattr(getattr(self.session, "reliable", None), "unacked", {}) or {}
+        _rel = getattr(self.session, "reliable", None)
+        _link = getattr(_rel, "link", _rel)
+        unacked = getattr(_link, "unacked", {}) or {}
         have = {getattr(it, "seq", None) for it in outputs}
         carried = []
         for prev in reversed(self._reliable_carry):
