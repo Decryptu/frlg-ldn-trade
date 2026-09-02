@@ -766,9 +766,6 @@ class DeauthenticationFrame:
 class ActionFrame:
     source: MACAddress = MACAddress()
     action: bytes = b""
-    # None = broadcast (the LDN advertisement as a real host sends it). A unicast destination
-    # makes the injected frame 802.11-acked and retried, which a broadcast never is.
-    destination: MACAddress | None = None
 
     def decode(self, data: bytes) -> None:
         stream = streams.StreamIn(data, "<")
@@ -788,8 +785,7 @@ class ActionFrame:
         header = MACHeader()
         header.type = IEEE80211_FTYPE_MGMT
         header.subtype = IEEE80211_STYPE_ACTION
-        header.address1 = self.destination if self.destination is not None \
-            else MACAddress("ff:ff:ff:ff:ff:ff")
+        header.address1 = MACAddress("ff:ff:ff:ff:ff:ff")
         header.address2 = self.source
         header.address3 = MACAddress("ff:ff:ff:ff:ff:ff")
         
