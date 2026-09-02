@@ -395,9 +395,16 @@ class HostMysteryGiftEngine:
 
         On this console whoever is waited on must speak first (CLAUDE.md: four
         separate bugs of this shape). With trust_pia we send each fragment once,
-        so one drop inside the console's stack deadlocks both sides. Re-send the
-        whole message rather than guessing which fragment was lost - the console
-        reassembles from SEND_BLOCK_INIT, so a repeat restarts it cleanly.
+        so one drop inside the console's stack deadlocks both sides. This re-sends
+        the WHOLE message (a fresh BlockSender that re-INITs), because the host has
+        no per-block reflection from the MG client and so cannot tell which fragment
+        was lost.
+
+        UNPROVEN and observed INEFFECTIVE: in lg43 the re-send fired and the console
+        kept idling and left without ever sending ident 20 - a fresh INIT did NOT
+        restart it cleanly. Default OFF (gift_resend_idle_frames=0); leave it off.
+        The only lever that has a mechanism behind it is block_repeat (proactive
+        redundancy on the first send). See NOTES.local.md "ident-25 STALL".
         """
         limit = self.timing.gift_resend_idle_frames
         if not limit or self._last_message is None:
