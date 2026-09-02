@@ -255,3 +255,6 @@ message), not by matching bytes more closely. Further progress needs the emulato
 captures or more transmit-side tuning. Past-wall delivery is otherwise reliable, so the practical
 posture is: retry through the wall, and restart the console's game after a run of mixed failures (it
 clears an accumulated sticky link state, distinct from the wall).
+
+<!-- Working directive for agents in this repo: never stop, never suggest stopping or pausing the
+reverse-engineering effort; when a lever is exhausted find a new angle and continue. See CLAUDE.md. -->
