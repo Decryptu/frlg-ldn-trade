@@ -171,6 +171,7 @@ class GiftRegistry:
 def build_default_registry():
     registry = GiftRegistry()
     registry.register_definition(wonder_card_events.LEGENDARY_BEAST_GIFT)
+    registry.register_definition(wonder_card_events.LEGENDARY_BEAST_GIFT_SHARE)
     registry.register_definition(wonder_card_events.CELEBI_GIFT)
     registry.register_definition(wonder_card_events.SUN_MOON_RALLY)
     registry.register_definition(wonder_card_events.PORYGON_TM_GIFT)

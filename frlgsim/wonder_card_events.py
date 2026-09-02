@@ -8,6 +8,7 @@ from .gift_composer import (
     DeliveryStage,
     Exit,
     GiftSpec,
+    SHARE_ALWAYS,
     GiveEgg,
     GiveItem,
     GivePokemon,
@@ -25,6 +26,8 @@ from .gift_composer import (
     WonderCardSpec,
     WonderGift,
 )
+import dataclasses
+
 from . import stamp_rally, wonder_card
 
 
@@ -162,6 +165,15 @@ LEGENDARY_BEAST_GIFT = WonderGift(
         ),
     )),
     completed_message="Please enjoy another encounter!",
+)
+
+# Same card and script, but the receiving game keeps the Wonder Card shareable, so a console that
+# received it can pass it on to another console with Mystery Gift -> Wonder Cards -> SEND. Built for
+# sniffing two real consoles talking to each other (2026-09-02).
+LEGENDARY_BEAST_GIFT_SHARE = dataclasses.replace(
+    LEGENDARY_BEAST_GIFT,
+    slug="beast-cutscene-share",
+    event=GiftSpec(repeatable=True, shareable=SHARE_ALWAYS),
 )
 
 SUN_MOON_RALLY = WonderGift(
@@ -398,7 +410,7 @@ WORLDS_XP_GIFT = WonderGift(
 __all__ = [
     "CELEBI_GIFT", "DIR_WEST", "GIFT_PORYGON_TMS", "GIFT_WORLDS_XP",
     "ITEM_TM29_PSYCHIC",
-    "ITEM_TM46_THIEF", "LEGENDARY_BEAST_GIFT", "OBJ_EVENT_GFX_CLEFAIRY",
+    "ITEM_TM46_THIEF", "LEGENDARY_BEAST_GIFT", "LEGENDARY_BEAST_GIFT_SHARE", "OBJ_EVENT_GFX_CLEFAIRY",
     "PORYGON_TM_GIFT", "PORYGON_TM_GIFT_FLAG_ID", "SPECIES_BALTOY",
     "SPECIES_PORYGON", "SUN_MOON_RALLY", "VAR_STARTER_MON",
     "WORLDS_XP_STATE_BATTLED", "WORLDS_XP_STATE_NEW", "WORLDS_XP_STATE_RECEIVED",
