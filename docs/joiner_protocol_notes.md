@@ -131,3 +131,67 @@ an English Wonder Card.
   MAC-acking them (passive-monitor measurement), independent of spacing, timing, size or content.
   Pia delivers in order, so each drop stalls the child's whole stream for an RTO. Repeating every
   reliable data frame in the next few datagrams (the host de-duplicates by seq) removes the stalls.
+
+## The emulator can close the link on its own: `svc_51` (REVISION >= 0xA)
+
+**This is not game logic. It is the Switch emulator, and it is polled every frame.**
+
+`HandleLinkConnection` runs this on the Switch build only [decomp:src/link.c:1654]:
+
+    #if REVISION >= 0xA
+        bool32 reloadOrReset = FALSE;
+        if (svc_51())
+        {
+            if (!FuncIsActiveTask(Task_WirelessCommunicationScreen)
+                && (InUnionRoom() || gReceivedRemoteLinkPlayers != 0 || Rfu_IsMaster() <= MODE_PARENT))
+            {
+                reloadOrReset = TRUE;
+            }
+            CloseLink();
+        }
+    #endif
+
+`svc_51` is a bare `swi 0x51` whose return value comes from the emulator
+[decomp:src/sloopsvc.c:120, "Called by HandleLinkConnection"]. When it returns nonzero the ROM
+calls `CloseLink()` immediately, and then [decomp:src/link.c:1674]:
+
+    // If active task is mystery gift then soft reset, otherwise reload the save.
+    if (FuncIsActiveTask(Task_MysteryGift)) RfuSoftReset();
+    else RfuReloadSave();
+
+**So during Mystery Gift, the emulator deciding to drop the link SOFT RESETS the game.** That is
+the 2318-0006 the user sees, and it is why our captures show our own side clean at the instant the
+console leaves: no game-level condition was violated. Nothing in `gSendCmd`, the reliable window,
+the tag sequence or the K-ack stream can explain a drop that the ROM did not decide to make.
+
+The GBA original has none of this - the whole block is `REVISION >= 0xA`. Every timing gate we
+tune (`client_ready_idle_frames`, `inter_block_gap_frames`, the standby barrier) is game-level, and
+`svc_51` sits underneath all of it.
+
+What makes `svc_51` return nonzero is inside the emulator and is NOT in the decomp. It is almost
+certainly LDN/Pia session state - the layer `frlgsim/pia_connect.py` reimplements - which makes the
+Pia session (keepalives, RTT liveness, session update sequencing) the place to look for the
+semi-random quits, not the RFU command stream.
+
+### The rest of the emulator's RFU surface, for orientation
+
+| SVC | Called from | What it does |
+|---|---|---|
+| `swi 0x45` | `librfu_rfu.c:667,749` | hands the emulator `gRfuLinkStatus` (it READS our link state) |
+| `swi 0x49` | `AgbRfu_LinkManager.c:657` | while nonzero, holds `connect_period` open during SEARCH_CHILD (cap `connect_period_initial < 300`) |
+| `swi 0x4a` | `AgbRfu_LinkManager.c:720` | same, during SEARCH_PARENT |
+| `swi 0x4b` | `link_rfu_2.c:2114`, `union_room_player_avatar.c:518` | `SVC4B_EXIT_EARLY` bails out of SpawnGroupLeader; `SVC4B_RESEED_RNG` reseeds from the host's trainer id |
+| `swi 0x51` | `link.c:1654` | **close the link now** (soft reset under Mystery Gift) |
+| `swi 0x53` | `wireless_communication_status_screen.c:328` | emulator-driven exit from the status screen |
+
+`svc_49`/`svc_4a` prove the emulator is an active participant in RFU timing, not a passive host: it
+can extend the discovery window past what the ROM would allow. Assume the same kind of authority
+everywhere else on this list.
+
+### What this does NOT explain
+
+It does not say WHY the emulator drops us. It relocates the question from the RFU command stream to
+the Pia/LDN session, and it means a run that dies with our side clean is evidence about the session
+layer, not about the game protocol. Do not tune game-level frame counts against these deaths -
+2026-09-02 spent 28 hardware runs doing exactly that and measured nothing (3/13 at
+`client_ready_idle_frames=20` vs 2/13 at 120, indistinguishable).
