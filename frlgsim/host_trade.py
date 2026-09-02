@@ -281,7 +281,7 @@ class HostTradeEngine:
                           "BLOCK_REQ:link_player")
 
     def _report_leave_menu(self):
-        """Say what the console sends while the leader waits for its CANCEL after a trade."""
+        """Say what the console sends while the leader waits for its CANCEL (rec1 wedged here)."""
         runs = self._child_slot_runs[self._leave_menu_run_mark:]
         if not runs:
             tail = "nothing at all (not even IDLE slots)"
@@ -420,10 +420,7 @@ class HostTradeEngine:
             self._leave_menu_wait = self.timing.final_menu_ready_frames
             self._host_cancel_ready = False
             self._child_cancel_requested = False
-            # This window was blind: the host queues nothing here and waits for the child's
-            # REQUEST_CANCEL. When the console instead wedges on the comm-standby message, the
-            # only evidence is what its slots carry meanwhile. Record where its stream stands now
-            # so the report below can show only what it sent AFTER the party refresh.
+            # Mark the child stream so the report shows only what arrived after the refresh.
             self._leave_menu_run_mark = len(self._child_slot_runs)
             self._leave_menu_report = LEAVE_MENU_REPORT_FRAMES
             self.info("Final party refresh complete; waiting 5 seconds for the trade menu.")
