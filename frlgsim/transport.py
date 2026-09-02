@@ -128,6 +128,7 @@ def _format_join_error(e):
 
 # LDN virtual interfaces to clear off the radio (ported from the bridge tooling).
 LDN_VIFS = {"ldn", "ldn-mon", "ldn-tap", "ldnclient"}
+AIR_MONITOR_VIF = "ldnair"      # passive capture vif owned by scratchpad/run_*.sh, never touched here
 
 
 # --- radio / interface cleanup (the library needs the radio free of stale vifs) -------------
@@ -205,6 +206,12 @@ def free_radio(phys, log=print):
     mapping = list_phy_ifaces()
     for phy in {p for p in phys if p}:
         for iface in mapping.get(phy, []):
+            if iface == AIR_MONITOR_VIF:
+                # The launchers' passive air capture. It used to be created AFTER "Hosting.", i.e.
+                # while the first console was already authenticating on the same phy (lg66: 2.2s to
+                # the assoc response, 5s of undelivered data frames, a dead run). Now it is created
+                # BEFORE the host starts, so leave it up.
+                continue
             if iface in LDN_VIFS:
                 _iw_del(iface)
             else:
