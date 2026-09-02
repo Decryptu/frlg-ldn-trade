@@ -24,6 +24,8 @@ SLOT_LEN = 14
 # 'C'=connect request (rfu_REQ_startConnectParent), 'A'=host accept, 'K'=data ack, 'T'=slot data.
 TYPE_J, TYPE_C, TYPE_A = 0x4A, 0x43, 0x41
 TYPE_D = 0x44           # host emulator DISCONNECT ('D' = 57 44 02 00 <connect_id>)
+TYPE_G = 0x47           # host emulator LINK STATE ('G' = 57 47 04 00 <u32 LE>): a real Switch parent sends
+                        # G=0 shortly after its 'A' and G=1 once the child's NI is in (every joiner capture j19-j87)
 
 
 def build_gba_frame(ftype, data):
@@ -67,6 +69,14 @@ def wrap_t_parent(slot, ts):
     padded = slot + b"\x00" * (_roundup4(len(slot)) - len(slot))
     body = (ts & 0xFFFFFFFF).to_bytes(4, "little") + bytes([len(slot) & 0xFF, 0, 0, 0]) + padded
     return bytes([GBA_MARKER, TYPE_T]) + len(body).to_bytes(2, "little") + body
+
+
+def build_link_state(value):
+    """The host's 'G' (0x47) link-state push: 57 47 04 00 <value:u32 LE>. Observed from a real Switch
+    parent in every joiner capture (j19-j87): value 0 arrives 0.3-3s after 'A', value 1 later, once the
+    parent has the child's NI (2-20s after G=0). The child ROM never sees it (it is emulator-to-emulator),
+    so the semantics are inferred from timing only. Our joiner ignores it (sim.py: typ != 'T')."""
+    return build_gba_frame(TYPE_G, (int(value) & 0xFFFFFFFF).to_bytes(4, "little"))
 
 
 def build_accept(host_session_id, connect_id):

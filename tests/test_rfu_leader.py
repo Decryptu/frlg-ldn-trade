@@ -18,6 +18,8 @@ def test_31_connect_accept_matches_native_completed_trade():
     assert gbaframe.parse_in(accept) == {
         "type": "A", "host_session_id": b"\xb7\xf1", "connect_id": b"\x80\x84"
     }
+    # A real Switch parent follows A with a 'G' link-state 0 (every joiner capture j19-j87).
+    assert leader.tick() == bytes.fromhex("5747040000000000")
     # host_2.3 shows each retry C uses a new Reliable seq.  The leader must
     # not allocate another A; Reliable retransmits the original opening A.
     assert leader.receive(bytes.fromhex("574302008084")) == "connect_duplicate"
@@ -34,6 +36,7 @@ def test_32_bidirectional_ni_is_ack_gated_and_recovers_identity():
     leader = RFULeader()
     leader.receive(gbaframe.build_connect(b"\xc5\xf1"))
     leader.tick()                                      # A
+    assert leader.tick() == gbaframe.build_link_state(0)
 
     source = ni.build_game_data(5, 0x2288, "EMU")
     child = ni.NISender(source)
@@ -62,6 +65,8 @@ def test_32_bidirectional_ni_is_ack_gated_and_recovers_identity():
     assert leader.child_trainer_id == 0x2288
     assert len(parent_acks) == 5                       # NULL is not ACKed
 
+    # The child's NI is in: the real parent pushes 'G' link-state 1 before its own NI.
+    assert leader.tick() == gbaframe.build_link_state(1)
     # Parent sends one status sub-frame, then waits until the child ACKs it.
     child_recv = ni.NIReceiver()
     seen_parent = []
@@ -118,7 +123,8 @@ def test_tagged_child_command_is_normalized_for_activity_and_echo():
 def test_duplicate_child_ni_is_reacked_without_corrupting_reassembly():
     leader = RFULeader()
     leader.receive(gbaframe.build_connect(b"\x67\x79"))
-    leader.tick()
+    leader.tick()                                      # A
+    leader.tick()                                      # G 0
     slot = ni.NISender(ni.build_game_data(5, 0x2288, "EMU")).next_slot()
     frame = _child_t(slot, 1)
     assert leader.receive(frame) == "child_ni"
@@ -126,6 +132,36 @@ def test_duplicate_child_ni_is_reacked_without_corrupting_reassembly():
     assert leader.receive(frame) == "child_ni_duplicate"
     ack2 = leader.tick()
     assert gbaframe.parse_in(ack1)["ni"] == gbaframe.parse_in(ack2)["ni"]
+
+
+def test_link_state_frames_mirror_the_real_parent():
+    """Every joiner capture (j19-j87) shows the real Switch parent sending 'G' (0x47) link-state
+    frames: value 0 shortly after A, value 1 once it holds the child's NI. Session 11 added them
+    to the leader; FRLG_NO_LINK_STATE=1 (send_link_state=False) restores the old stream for A/B."""
+    leader = RFULeader()
+    leader.receive(gbaframe.build_connect(b"\x67\x79"))
+    assert gbaframe.parse_in(leader.tick())["type"] == "A"
+    g0 = leader.tick()
+    assert g0 == bytes.fromhex("5747040000000000")
+    assert gbaframe.parse_in(g0) == {"type": gbaframe.TYPE_G}
+    assert leader.tick() is None
+    child = ni.NISender(ni.build_game_data(5, 0x2288, "EMU"))
+    ts = 1
+    while not child.done:
+        slot = child.next_slot()
+        event = leader.receive(_child_t(slot, ts))
+        ts += 1
+        if rfu.parse_llsf_child(slot)["state"] != rfu.LCOM_NULL:
+            leader.tick()                             # parent ACK
+    assert event == "child_ni_complete"
+    assert leader.tick() == bytes.fromhex("5747040001000000")
+    assert gbaframe.parse_in(leader.tick())["ni"]["state"] == rfu.LCOM_NI_START
+
+    quiet = RFULeader()
+    quiet.send_link_state = False
+    quiet.receive(gbaframe.build_connect(b"\x67\x79"))
+    assert gbaframe.parse_in(quiet.tick())["type"] == "A"
+    assert quiet.tick() is None
 
 
 def test_ldn_leave_immediately_silences_queued_output():
@@ -139,7 +175,8 @@ def test_ldn_leave_immediately_silences_queued_output():
 def _complete_ni_handshake():
     leader = RFULeader()
     leader.receive(gbaframe.build_connect(b"\x67\x79"))
-    leader.tick()
+    leader.tick()                                      # A
+    leader.tick()                                      # G 0
     child = ni.NISender(ni.build_game_data(5, 0x2288, "EMU"))
     ts = 1
     while not child.done:
@@ -148,6 +185,7 @@ def _complete_ni_handshake():
         ts += 1
         if rfu.parse_llsf_child(slot)["state"] != rfu.LCOM_NULL:
             leader.tick()                             # parent ACK
+    assert leader.tick() == gbaframe.build_link_state(1)  # G 1 once the child NI is in
     child_recv = ni.NIReceiver()
     while leader.state != UNI:
         out = leader.tick()

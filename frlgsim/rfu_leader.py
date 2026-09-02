@@ -27,6 +27,7 @@ Reliable opening window is acknowledged.
 """
 
 from collections import deque
+import os
 import secrets
 
 from . import gbaframe, ni, rfu
@@ -101,6 +102,9 @@ class RFULeader:
         self.uni_out = 0
 
         self._pending = deque()
+        # Session 11: the real Switch parent pushes 'G' link-state frames (0 after A, 1 after the
+        # child NI); we never did. Set FRLG_NO_LINK_STATE=1 to A/B the old behaviour on hardware.
+        self.send_link_state = os.environ.get("FRLG_NO_LINK_STATE", "") not in ("1", "true", "yes")
         self._child_ni = None
         self._parent_ni = None
         self._parent_waiting = None
@@ -149,6 +153,9 @@ class RFULeader:
                 self.state = CHILD_NI
                 self._child_ni = ni.ParentNIReceiver(self.bm_slot)
                 self._pending.append(gbaframe.build_accept(self.host_session_id, cid))
+                if self.send_link_state:
+                    # Mirror the real parent: 'G' 0 follows 'A' (session 11, see gbaframe.TYPE_G).
+                    self._pending.append(gbaframe.build_link_state(0))
                 return "connect"
             if cid == self.connect_id and self.state != DISCONNECTED:
                 # The child emits C as NEW Reliable frames every VBlank until
@@ -210,6 +217,9 @@ class RFULeader:
                 self.child_game_data = self._child_ni.game_data
                 self._parent_ni = ni.ParentNISender(self.join_status, self.bm_slot)
                 self.state = PARENT_NI
+                if self.send_link_state:
+                    # Mirror the real parent: 'G' 1 once the child's NI is in.
+                    self._pending.append(gbaframe.build_link_state(1))
                 return "child_ni_complete"
             return "child_ni"
 
