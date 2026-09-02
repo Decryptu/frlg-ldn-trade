@@ -764,6 +764,24 @@ class HostTradeEngine:
             self._send_linkcmd(trade.START_TRADE)
         elif cmd == trade.READY_FINISH_TRADE and self.state == H_ANIM:
             self._child_finish = True
+        elif cmd == trade.REQUEST_CANCEL and self.state == H_SELECT:
+            # The player backed out of the trade SELECT screen without picking a mon. Native
+            # Leader_ReadLinkBuffer sets partnerSelectStatus = STATUS_CANCEL with NO state guard
+            # (trade.c:1622), and Leader_HandleCommunication then takes the
+            # player READY + partner CANCEL branch: PrintTradeMessage(MSG_CANCELED),
+            # QueueLinkData(LINKCMD_PARTNER_CANCEL_TRADE) -> CB_HANDLE_TRADE_CANCELED
+            # (trade.c:1694-1701). The leader is in that branch here because H_SELECT means we
+            # have already offered our mon, i.e. playerSelectStatus == STATUS_READY.
+            #
+            # Before this branch existed the command fell through the elif chain entirely: the
+            # host stayed in H_SELECT, silent, still waiting for READY_TO_TRADE, while the console
+            # waited for a leader verdict - the "your friend has not finished..." wedge. Same
+            # shape as every other stall here: whoever is waited on must speak first.
+            self._send_linkcmd(trade.PARTNER_CANCEL_TRADE)
+            self.trace.append(("partner_cancel_at_select",))
+            self.info(
+                "Switch backed out of the trade menu; Linux acknowledged the cancel. "
+                "The menu is live again - select a Pokemon, or CANCEL and confirm YES to leave.")
         elif cmd == trade.REQUEST_CANCEL and self.state == H_LEAVE_MENU:
             # Leader_HandleCommunication reaches BOTH_CANCEL only when both playerSelectStatus
             # values are CANCEL. A follower REQUEST_CANCEL is therefore a prerequisite, not merely

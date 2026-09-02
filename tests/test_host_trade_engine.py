@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from frlgsim import block, config, linkplayer, mon, rfu, trade
 from frlgsim.host_session import HostSession
 from frlgsim.host_trade import (
-    CLOSE_RETRY_FRAMES, H_ANIM, H_CANCEL, H_DONE, H_EXIT, H_LEAVE_MENU, H_PARTY,
+    CLOSE_RETRY_FRAMES, H_ANIM, H_CANCEL, H_CONFIRM, H_DONE, H_EXIT, H_LEAVE_MENU, H_PARTY,
     H_SAVE, H_SELECT,
     ENTRY_FINAL_STANDBY_QUIET_FRAMES, FINAL_MENU_READY_FRAMES, PARTY_LINK_SETTLE_FRAMES,
     POST_CANCEL_EXIT_WAIT_FRAMES, POST_CLIENT_CLOSE_GRACE_FRAMES,
@@ -569,3 +569,27 @@ def test_leave_menu_report_separates_a_silent_console_from_a_steadily_idling_one
     h._report_leave_menu()
     assert "off the air" not in lines[-1]
     assert "30 frames (30 idle)" in lines[-1]
+
+
+def test_child_cancel_at_select_is_answered_with_partner_cancel_not_silence():
+    """Backing out of the trade SELECT screen wedged the console on "your friend has not
+    finished...": REQUEST_CANCEL was only handled in H_LEAVE_MENU, so in H_SELECT it fell through
+    the elif chain and the host went silent while the console waited for a verdict.
+    Native: Leader_ReadLinkBuffer sets partnerSelectStatus = STATUS_CANCEL unguarded
+    (trade.c:1622); player READY + partner CANCEL -> LINKCMD_PARTNER_CANCEL_TRADE
+    (trade.c:1694-1701)."""
+    h = HostTradeEngine([_mon(1), _mon(2)], anim_delay=0)
+    h._words.clear()
+    h._blocks.clear()
+    h._sender = None
+    h._set_state(H_SELECT)
+
+    h._on_child_linkcmd(trade.REQUEST_CANCEL, 0)
+
+    queued = [x[1] for x in h.trace if x[0] == "queue_block"]
+    assert queued[-1:] == ["PARTNER_CANCEL_TRADE"], queued
+    assert ("partner_cancel_at_select",) in h.trace
+    # The menu stays live: a normal selection afterwards must still start a trade.
+    assert h.state == H_SELECT
+    h._on_child_linkcmd(trade.READY_TO_TRADE, 0)
+    assert h.state == H_CONFIRM
