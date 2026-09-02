@@ -81,6 +81,23 @@ class MysteryGiftTiming:
     # stays 0 (visible as owner 0x80 instead of 0x81 on its blocks) and
     # Task_PlayerExchange parks at case 2 waiting on gRfu.playerCount forever.
     player_ids_repeat_frames: int = 8
+    # Quiet child polls to tolerate while a gift message is awaiting its reply
+    # before re-sending that message. trust_pia=True sends each fragment exactly
+    # ONCE (block.BlockSender: the decomp's re-send-until-confirmed loop is
+    # disabled because it floods Pia), so a single fragment lost inside the
+    # console's stack leaves it waiting for the rest of the message while we
+    # wait for its reply - neither side speaks, forever. Measured on hardware:
+    # lg3, lg11 and lg12 all hung after the 6-block ident 25 with the LDN link
+    # demonstrably alive in both directions and no adapter wedge. lg8 answered
+    # the same message in 9.2s, so the reply window is seconds, not minutes.
+    # 0 disables the watchdog, which is the DEFAULT: re-sending is an unproven
+    # remedy for an intermittent hardware stall, and four existing regression
+    # guards deliberately starve the console to prove inter_block_gap_frames is
+    # what prevents a drop - a re-send rescues those and hides what they test.
+    # Turn it on explicitly with --gift-resend-idle-frames while investigating.
+    gift_resend_idle_frames: int = 0
+    # How many times one message may be re-sent before giving up on it.
+    gift_resend_limit: int = 3
     # Re-emit READY_CLOSE_LINK on this cadence while closing.
     close_retry_frames: int = 60
     # Stay on the air after the console asks to close, so its Rfu_LinkClose and
@@ -132,6 +149,8 @@ class HostMysteryGiftEngine:
         self._words = deque()
         self._blocks = deque()          # queued (bytes, label) SendBlock transfers
         self._sender = None
+        self._last_message = None
+        self._gift_resends = 0
         self._gap = 0
         self._expected = None
         self._link_player_seen = False
@@ -262,6 +281,8 @@ class HostMysteryGiftEngine:
                 return
 
     def _queue_message(self, ident, payload, size):
+        self._last_message = (ident, payload, size)
+        self._gift_resends = 0
         blocks = mg_link.build_message(ident, payload, size)
         self._message_label = f"ident{ident}"
         for index, data in enumerate(blocks):
@@ -364,6 +385,40 @@ class HostMysteryGiftEngine:
         if (self.state == MG_START and self._standby_seen
                 and self._idle_run >= self.timing.client_ready_idle_frames):
             self._begin_gift()
+        elif self.state == MG_GIFT:
+            self._maybe_resend_gift_message()
+
+    def _maybe_resend_gift_message(self):
+        """Speak again when a gift message has gone unanswered.
+
+        On this console whoever is waited on must speak first (CLAUDE.md: four
+        separate bugs of this shape). With trust_pia we send each fragment once,
+        so one drop inside the console's stack deadlocks both sides. Re-send the
+        whole message rather than guessing which fragment was lost - the console
+        reassembles from SEND_BLOCK_INIT, so a repeat restarts it cleanly.
+        """
+        limit = self.timing.gift_resend_idle_frames
+        if not limit or self._last_message is None:
+            return
+        if self._blocks or self._sender is not None:
+            return                              # still talking; nothing to answer yet
+        action = self.server.action
+        if action is None or action[0] != "recv":
+            return                              # not waiting on the console
+        if self._idle_run < limit:
+            return
+        if self._gift_resends >= self.timing.gift_resend_limit:
+            return
+        self._gift_resends += 1
+        ident, payload, size = self._last_message
+        blocks = mg_link.build_message(ident, payload, size)
+        for index, data in enumerate(blocks):
+            self._queue_block(data, f"{self._message_label}:resend{self._gift_resends}:{index}")
+        self.trace.append(("resend_message", ident, self._gift_resends))
+        self._idle_run = 0
+        self.info(f"[mg] console has been quiet for {limit} polls while we wait for "
+                  f"ident {action[1]}; re-sending ident {ident} "
+                  f"(attempt {self._gift_resends}/{self.timing.gift_resend_limit})")
 
     def _on_child_block(self, count, data):
         self.trace.append(("child_block", self._expected, count))
@@ -456,7 +511,7 @@ class HostMysteryGiftEngine:
     def tick(self):
         """Advance one VBlank and return the parent's seven-word gSendCmd."""
         self._parent_polls += 1
-        if self.state in (MG_LINK_PLAYER, MG_START):
+        if self.state in (MG_LINK_PLAYER, MG_START, MG_GIFT):
             self._status_countdown -= 1
             if self._status_countdown <= 0:
                 self._status_countdown = STATUS_REPORT_FRAMES
@@ -533,7 +588,27 @@ class HostMysteryGiftEngine:
             f"current idle run {self._idle_run}/"
             f"{self.timing.client_ready_idle_frames}) "
             f"vs parent polls {self._parent_polls}, "
-            f"opcodes seen: {ops}")
+            f"opcodes seen: {ops}" + self._gift_status_detail())
+
+    def _gift_status_detail(self):
+        """Gift-phase context for _report_status.
+
+        A stall inside MG_GIFT used to print nothing at all (the report was
+        gated on MG_LINK_PLAYER/MG_START), so lg3 and lg11 both went silent
+        after 'sending ident 25' with the link demonstrably alive in both
+        directions and no way to tell which side was waiting. Say which message
+        is still going out and which one we are blocked on receiving.
+        """
+        if self.state != MG_GIFT:
+            return ""
+        pending = len(self._blocks) + (1 if self._sender is not None else 0)
+        action = self.server.action
+        expecting = action[1] if action is not None and action[0] == "recv" else None
+        return (f"; gift: last message {self._message_label or 'none'}, "
+                f"{pending} block(s) still outbound, "
+                f"expecting ident {expecting if expecting is not None else 'nothing (sending)'}, "
+                f"{len(self._recv_blocks)} child block(s) buffered, "
+                f"resends {self._gift_resends}")
 
     def _record_link_player_outbound(self, words):
         """Keep an exact, low-noise record of the host LinkPlayer wire order."""

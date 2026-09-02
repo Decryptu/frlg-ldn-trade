@@ -53,9 +53,15 @@ class MysteryGiftHostApplication(HostApplication):
         self.card = self.distribution.card
         self.ram_script = self.distribution.ram_script
         timing = None
+        overrides = {}
         if self.config.client_ready_idle_frames is not None:
-            timing = MysteryGiftTiming(
-                client_ready_idle_frames=self.config.client_ready_idle_frames)
+            overrides["client_ready_idle_frames"] = self.config.client_ready_idle_frames
+        if self.config.inter_block_gap_frames is not None:
+            overrides["inter_block_gap_frames"] = self.config.inter_block_gap_frames
+        if self.config.gift_resend_idle_frames is not None:
+            overrides["gift_resend_idle_frames"] = self.config.gift_resend_idle_frames
+        if overrides:
+            timing = MysteryGiftTiming(**overrides)
         engine = HostMysteryGiftEngine(
             distribution=self.distribution, link_player=link_player,
             trust_pia=self.config.trust_pia, timing=timing, log=self.log)
@@ -101,6 +107,12 @@ class MysteryGiftHostApplication(HostApplication):
         if self.config.client_ready_idle_frames is not None:
             self.info("Mystery Gift timing override: "
                       f"client_ready_idle_frames={self.config.client_ready_idle_frames}")
+        if self.config.inter_block_gap_frames is not None:
+            self.info("Mystery Gift timing override: "
+                      f"inter_block_gap_frames={self.config.inter_block_gap_frames}")
+        if self.config.gift_resend_idle_frames is not None:
+            self.info("Mystery Gift timing override: "
+                      f"gift_resend_idle_frames={self.config.gift_resend_idle_frames}")
         self.info("Advertising ACTIVITY_WONDER_CARD. On the Switch choose "
                   "Mystery Gift -> Wonder Cards -> Friend.")
 

@@ -44,6 +44,16 @@ from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
 HOST_GIFT_CHOICES = gift_registry.GIFT_REGISTRY.live_choices
 
 
+def _gift_resend_idle_frames(value):
+    try:
+        frames = int(value, 10)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a decimal frame count") from exc
+    if not 0 <= frames <= 3600:
+        raise argparse.ArgumentTypeError("must be between 0 and 3600")
+    return frames
+
+
 def _client_ready_idle_frames(value):
     try:
         frames = int(value, 10)
@@ -78,6 +88,18 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         default=None, metavar="N",
         help=("diagnostic: quiet child polls after LinkPlayer standby before "
              "the first Mystery Gift message; default is the built-in timing"))
+    parser.add_argument(
+        "--inter-block-gap-frames", type=_client_ready_idle_frames,
+        default=None, metavar="N",
+        help=("diagnostic: idle VBlanks between the blocks of one Mystery Gift "
+              "message; raise it if a run stalls part-way through a message "
+              "(default is the built-in timing)"))
+    parser.add_argument(
+        "--gift-resend-idle-frames", type=_gift_resend_idle_frames,
+        default=None, metavar="N",
+        help=("diagnostic: re-send the in-flight gift message after this many "
+              "quiet child polls while awaiting its reply; 0 (default) never "
+              "re-sends"))
     parser.add_argument(
         "--end-on-success", action=argparse.BooleanOptionalAction, default=False,
         help=("stop after the post-delivery RFU close sequence; used by the "
@@ -120,6 +142,8 @@ def build_run_config(parser, args):
             profile=profile, ldn=ldn, role=role,
             payload=payload, trust_pia=args.trust_pia,
             client_ready_idle_frames=args.client_ready_idle_frames,
+            inter_block_gap_frames=args.inter_block_gap_frames,
+            gift_resend_idle_frames=args.gift_resend_idle_frames,
             end_on_success=args.end_on_success,
             idle_timeout_seconds=args.idle_timeout,
             attempt_log_dir=args.attempt_log_dir)

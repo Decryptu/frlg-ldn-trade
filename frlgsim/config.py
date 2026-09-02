@@ -499,6 +499,8 @@ class MysteryGiftRunConfig:
     role: HostOptions = field(default_factory=_mystery_gift_host_defaults)
     trust_pia: bool = True
     client_ready_idle_frames: int | None = None
+    inter_block_gap_frames: int | None = None
+    gift_resend_idle_frames: int | None = None
     end_on_success: bool = False
     idle_timeout_seconds: int | None = None
     attempt_log_dir: str | None = None
@@ -518,6 +520,14 @@ class MysteryGiftRunConfig:
                 and (type(self.client_ready_idle_frames) is not int
                      or not 0 <= self.client_ready_idle_frames <= 600)):
             raise ValueError("client_ready_idle_frames must be between 0 and 600")
+        if (self.inter_block_gap_frames is not None
+                and (type(self.inter_block_gap_frames) is not int
+                     or not 0 <= self.inter_block_gap_frames <= 600)):
+            raise ValueError("inter_block_gap_frames must be between 0 and 600")
+        if (self.gift_resend_idle_frames is not None
+                and (type(self.gift_resend_idle_frames) is not int
+                     or not 0 <= self.gift_resend_idle_frames <= 3600)):
+            raise ValueError("gift_resend_idle_frames must be between 0 and 3600")
         if type(self.end_on_success) is not bool:
             raise ValueError("end_on_success must be a bool")
         if (self.idle_timeout_seconds is not None
