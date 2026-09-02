@@ -400,7 +400,15 @@ class HostPeerProtocol:
     def tick(self, now=None):
         now = time.monotonic() if now is None else now
         if self.joined and not self.net_acked and now >= self.next_net_send:
-            self._send(self._build_net_probe(), self.network.broadcast)
+            probe = self._build_net_probe()
+            self._send(probe, self.network.broadcast)
+            # The console receives only ~1 in 5 of our BROADCAST data frames (2026-09-02, lg42-lg49:
+            # it answered the 2nd, 4th, 5th, 5th and 6th 0x11), which delays its Pia session join by
+            # up to 2.7s, while every UNICAST frame to it is acked. So repeat the same datagram
+            # unicast to each joined station; the Pia nonce depends on the source, not the
+            # destination, and the console de-duplicates by packet id.
+            for participant in self.network.participants:
+                self._send(probe, participant[1])
             self.next_net_send = now + NET_RETRY_SECONDS
         if (self.session_join is not None and not self.session_finalized
                 and self.next_session_accept_send is not None
