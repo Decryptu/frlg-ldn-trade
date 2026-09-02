@@ -458,6 +458,7 @@ class AssociationResponse:
     aid: int = 0
 
     elements: dict[int, bytes] = field(default_factory=dict)
+    extra: bytes = b""  # frlg-ldn-trade: raw elements appended after `elements` (keeps order, allows duplicate ids)
 
     def decode(self, data: bytes) -> None:
         stream = streams.StreamIn(data, "<")
@@ -494,6 +495,7 @@ class AssociationResponse:
         stream.u16(self.aid)
         
         stream.write(encode_elements(self.elements))
+        stream.write(self.extra)
         return stream.get()
 
 
@@ -540,6 +542,7 @@ class ProbeResponse:
     capability_information: int = 0
 
     elements: dict[int, bytes] = field(default_factory=dict)
+    extra: bytes = b""  # frlg-ldn-trade: raw elements appended after `elements` (keeps order, allows duplicate ids)
 
     def decode(self, data: bytes) -> None:
         stream = streams.StreamIn(data, "<")
@@ -573,6 +576,7 @@ class ProbeResponse:
         stream.u16(self.beacon_interval)
         stream.u16(self.capability_information)
         stream.write(encode_elements(self.elements))
+        stream.write(self.extra)
         return stream.get()
 
 
@@ -585,6 +589,7 @@ class BeaconFrame:
     capability_information: int = 0
 
     elements: dict[int, bytes] = field(default_factory=dict)
+    extra: bytes = b""  # frlg-ldn-trade: raw elements appended after `elements` (keeps order, allows duplicate ids)
 
     def decode(self, data: bytes) -> None:
         stream = streams.StreamIn(data, "<")
@@ -617,6 +622,7 @@ class BeaconFrame:
         stream.u16(self.beacon_interval)
         stream.u16(self.capability_information)
         stream.write(encode_elements(self.elements))
+        stream.write(self.extra)
         return stream.get()
 
 
@@ -1447,6 +1453,61 @@ class Station(Interface):
         await self._wlan.request(nl80211.NL80211_CMD_SET_STATION, attrs)
 
 
+# frlg-ldn-trade: LDN_SWITCH_IES=1 makes our beacon / probe response / association response carry the
+# same information elements a real Switch host sends (captured 2026-09-02, cc1_air.pcap: a Switch 2
+# hosting Mystery Gift on channel 6). Level 1 = legacy elements (ERP, extended rates, extended
+# capabilities, the Nintendo vendor element, WMM) and the real host's rate split, capability word
+# 0x411 and DTIM period 2. Level 2 adds the HT / HE elements and starts the AP as HT20.
+# Default (unset / 0) is the old bare frames: SSID, rates, DS, TIM, RSN and nothing else.
+def switch_ies_level() -> int:
+    try:
+        return int(os.environ.get("LDN_SWITCH_IES", "0") or 0)
+    except ValueError:
+        return 0
+
+SWITCH_SUPP_RATES = [0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24]   # 1 2 5.5 11 (basic) 6 9 12 18
+SWITCH_EXT_RATES = bytes([0x30, 0x48, 0x60, 0x6C])                     # 24 36 48 54
+SWITCH_HT_CAP = bytes.fromhex("0d0903ff00000000000000000000000100000000000000000000")
+SWITCH_HE_CAP = bytes.fromhex("230108001a000000200a000dc09f04000000fefffeff081c")
+SWITCH_HE_OP = bytes.fromhex("2400000081fcff")
+SWITCH_NINTENDO_VSIE = bytes.fromhex("0022aa100102")
+SWITCH_WMM_PARAM = bytes.fromhex("0050f2020101801003a4000027a4000042435e0062322f00")
+
+def _ie(eid: int, body: bytes) -> bytes:
+    return bytes([eid, len(body)]) + body
+
+def switch_like_elements(channel: int, rsn: bytes | None, *, assoc: bool = False) -> bytes:
+    """Elements after TIM in the order the real host uses (beacon / probe response), or the
+    association-response set when assoc=True. Empty when LDN_SWITCH_IES is unset."""
+    level = switch_ies_level()
+    if level <= 0:
+        return b""
+    out = b""
+    if assoc:
+        out += _ie(WLAN_EID_EXT_SUPP_RATES, SWITCH_EXT_RATES)
+        out += _ie(42, bytes([0x04]))                       # ERP: use protection
+    else:
+        out += _ie(42, bytes([0x00]))                       # ERP
+        out += _ie(WLAN_EID_EXT_SUPP_RATES, SWITCH_EXT_RATES)
+        if rsn is not None:
+            out += _ie(WLAN_EID_RSN, rsn)
+    if level >= 2:
+        ht_info = bytes([channel, 0x00, 0x04 if assoc else 0x00]) + bytes(19)
+        out += _ie(WLAN_EID_HT_CAPABILITY, SWITCH_HT_CAP)
+        out += _ie(61, ht_info)
+    out += _ie(WLAN_EID_EXT_CAPABILITY, bytes([0x00]))
+    if level >= 2:
+        out += _ie(255, SWITCH_HE_CAP)
+        out += _ie(255, SWITCH_HE_OP)
+    if not assoc:
+        out += _ie(WLAN_EID_VENDOR_SPECIFIC, SWITCH_NINTENDO_VSIE)
+    wmm = bytearray(SWITCH_WMM_PARAM)
+    if assoc:
+        wmm[7] = 0x00
+    out += _ie(WLAN_EID_VENDOR_SPECIFIC, bytes(wmm))
+    return out
+
+
 class AccessPoint(Interface):
     """This class represents a access point interface."""
 
@@ -1554,11 +1615,29 @@ class AccessPoint(Interface):
         frame.source = self.address()
         frame.beacon_interval = 100
         frame.capability_information = 0x511
+        if switch_ies_level() > 0:
+            # Real Switch host: cap 0x0411 (no short preamble), zeroed 32-byte SSID, its rate split.
+            frame.capability_information = 0x411
+            frame.extra = (_ie(WLAN_EID_SSID, bytes(32))
+                           + _ie(WLAN_EID_SUPP_RATES, bytes(SWITCH_SUPP_RATES))
+                           + _ie(WLAN_EID_DS_PARAMS, bytes([self._channel])))
         return frame.encode()
     
     def _create_beacon_tail(self) -> bytes:
-        """Returns the beacon tail."""
-        return b"" # No beacon tail for now
+        """Returns the beacon tail (everything after the TIM)."""
+        if switch_ies_level() > 0:
+            return switch_like_elements(self._channel, self._rsn_body())
+        return b"" # No beacon tail by default
+    
+    def _rsn_body(self) -> bytes | None:
+        if self._key is None:
+            return None
+        return RSNElement(
+            group_cipher_suite = WLAN_CIPHER_SUITE_CCMP,
+            pairwise_cipher_suites = [WLAN_CIPHER_SUITE_CCMP],
+            akm_suites = [WLAN_AKM_SUITE_PSK],
+            capabilities = 12
+        ).encode()
     
     def _create_probe_response(self, address: MACAddress) -> bytes:
         """Creates and encodes a probe response frame for the given address."""
@@ -1589,6 +1668,11 @@ class AccessPoint(Interface):
         if self._key is not None:
             response.capability_information |= 0x10
             response.elements[WLAN_EID_RSN] = rsn.encode()
+        if switch_ies_level() > 0:
+            response.capability_information = 0x411
+            response.elements[WLAN_EID_SUPP_RATES] = bytes(SWITCH_SUPP_RATES)
+            response.elements.pop(WLAN_EID_RSN, None)   # re-emitted in the real host's position
+            response.extra = switch_like_elements(self._channel, self._rsn_body())
         return response.encode()
     
     def _create_association_response(
@@ -1612,6 +1696,9 @@ class AccessPoint(Interface):
         response.elements = {
             WLAN_EID_SUPP_RATES: rates.encode()
         }
+        if switch_ies_level() > 0:
+            response.elements[WLAN_EID_SUPP_RATES] = bytes(SWITCH_SUPP_RATES)
+            response.extra = switch_like_elements(self._channel, None, assoc=True)
         return response.encode()
     
     def _create_association_error(
@@ -1654,7 +1741,7 @@ class AccessPoint(Interface):
             nl80211.NL80211_ATTR_BEACON_HEAD: beacon_head,
             nl80211.NL80211_ATTR_BEACON_TAIL: beacon_tail,
             nl80211.NL80211_ATTR_BEACON_INTERVAL: 100,
-            nl80211.NL80211_ATTR_DTIM_PERIOD: 3,
+            nl80211.NL80211_ATTR_DTIM_PERIOD: 2 if switch_ies_level() > 0 else 3,
             nl80211.NL80211_ATTR_HIDDEN_SSID:
                 nl80211.NL80211_HIDDEN_SSID_ZERO_CONTENTS,
             nl80211.NL80211_ATTR_CONTROL_PORT: True,
@@ -1664,6 +1751,10 @@ class AccessPoint(Interface):
             nl80211.NL80211_ATTR_SOCKET_OWNER: True
         }
 
+        if switch_ies_level() >= 2:
+            attrs[nl80211.NL80211_ATTR_WIPHY_CHANNEL_TYPE] = 1   # NL80211_CHAN_HT20
+        if switch_ies_level() > 0:
+            print(f"[ldn] AP management frames carry the Switch host's elements (LDN_SWITCH_IES={switch_ies_level()})")
         await self._wlan.request(nl80211.NL80211_CMD_START_AP, attrs)
 
         # Wait until the AP is ready
