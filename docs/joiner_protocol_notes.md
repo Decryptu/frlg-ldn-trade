@@ -218,3 +218,40 @@ the failure is the console MISSING the broadcast entirely - those runs have no f
 Still true: game-level frame-count tuning against these deaths is pointless (the watchdog is below
 it), and the emulator can still drop a link for other Pia-session reasons. But the dominant cause of
 the wall is fixed. The remaining known MG failure is the separate ident-25 fragment stall.
+
+### UPDATE (2026-09-02, session 11): the type-5 fix is real but PARTIAL - a residual ~40-50% wall remains, and it is emulator-internal
+
+The session-10 unicast type 5 was measured again over ~30 more Mystery Gift runs on both consoles and
+across a host trade. It genuinely removed one CloseLink trigger (missed type 5), but it did NOT close
+the wall: a residual ~40-50% of runs still deauth 3.0-3.6s after the LDN join. The session-10 "4/4 ->
+5/5" was the top of a lucky streak, not the steady rate. Everything below is reproduced and, unlike a
+single-run theory, converges from several independent angles:
+
+- **Two REAL consoles never wall.** With a shareable Wonder Card on one Switch (`beast-cutscene-share`,
+  sendType ALLOWED_ALWAYS), a real FireRed SHARES to a real LeafGreen (both via Mystery Gift -> Wonder
+  Cards -> Friend). Captured passively (a monitor vif on our adapter; management frames come through,
+  the aggregated A-MPDU game frames mostly do not). The two consoles connect and COMPLETE with no wall,
+  every time. So the wall is not inherent to the emulator's MG protocol; it is specific to something
+  about OUR host that the console's watchdog occasionally rejects.
+
+- **Our host is byte-faithful on the wire.** Against a real console host (decoded from joiner captures
+  where the console is the parent): identical Net 0x11/0x12, identical Session type 2/5/6 (either
+  order), identical RTT origination (~A+0.3s both) and cadence, identical 160B Net keepalive, identical
+  Reliable framing, and (with LDN_SWITCH_IES) a byte-for-byte beacon/assoc element set. A dead run is
+  indistinguishable from a delivered one at every decodable layer up to the console's own deauth.
+
+- **Nothing we TRANSMIT moves the completion rate.** Tested and their effect on COMPLETION:
+  unicast type 5 = the only positive (removes a trigger); the 'G' link-state frames a real parent sends
+  = neutral; session order 5-then-2 = null; Wi-Fi channel = null; the real host's rich 802.11 beacon
+  elements (`LDN_SWITCH_IES` level 1) = shifts the death TIME later (3.3s -> ~9-10s, a real emulator
+  effect) but stalls our handshake pre-gift so it nets 0 completions; level 2 (HT/HE) breaks the
+  association outright. Every message in the Pia handshake is ALREADY sent unicast as well as broadcast;
+  there is no broadcast-only message left for the console to miss.
+
+Conclusion: the residual wall is driven by emulator-internal Pia/link state (the input to `swi 0x51`)
+that two real Switches share and a Linux reimplementation cannot fully reproduce or even observe on the
+wire. The one thing that ever helped worked by removing a specific finalization TRIGGER (a missed
+message), not by matching bytes more closely. Further progress needs the emulator side, not more air
+captures or more transmit-side tuning. Past-wall delivery is otherwise reliable, so the practical
+posture is: retry through the wall, and restart the console's game after a run of mixed failures (it
+clears an accumulated sticky link state, distinct from the wall).
