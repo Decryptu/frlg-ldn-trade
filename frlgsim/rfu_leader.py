@@ -96,6 +96,15 @@ class RFULeader:
         self._echo_queue = deque()
         self._echo_cmd = rfu.idle_slot()
         self.echo_backlog_peak = 0
+        # Session 11 (lg67 vs lg63 + decomp): the native parent has NO echo queue - gRecvCmds reflects
+        # what it received THIS frame. A FIFO that echoes every child command one per VBlank turns a
+        # burst of in-order Reliable deliveries (after any lost datagram) into a PERMANENT lag: lg67
+        # ran 40 frames behind, the child kept re-INITing until it saw its own INIT echoed
+        # [link_rfu_2.c:1378], then its fragment echo never came, HandleSendFailure resent it for
+        # 0.3s and the game closed the link (D, "erreur de connexion"). lg63 (delivered) lagged 8-9
+        # frames. Echo the LATEST command and drop the backlog; FRLG_FIFO_ECHO=1 restores the queue.
+        self.echo_latest_only = os.environ.get("FRLG_FIFO_ECHO", "") not in ("1", "true", "yes")
+        self.echo_dropped = 0
         self.child_game_data = None
         self.k_acks = 0
         self.uni_in = 0
@@ -274,7 +283,12 @@ class RFULeader:
             else:
                 parent_cmd = rfu.serialize(parent_words)
             if self._echo_queue:
-                self._echo_cmd = self._echo_queue.popleft()
+                if self.echo_latest_only:
+                    self._echo_cmd = self._echo_queue[-1]
+                    self.echo_dropped += len(self._echo_queue) - 1
+                    self._echo_queue.clear()
+                else:
+                    self._echo_cmd = self._echo_queue.popleft()
             table = rfu.pack_recv_cmds([parent_cmd, self._echo_cmd])
             self.uni_out += 1
             return self._wrap_parent_t(rfu.parent_uni_slot(table, self.bm_slot))

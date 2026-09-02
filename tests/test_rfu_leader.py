@@ -196,29 +196,55 @@ def _complete_ni_handshake():
     return leader
 
 
-def test_every_child_command_is_echoed_even_when_they_arrive_in_a_burst():
-    """Row 1 reflects every child command rather than only the newest one."""
-    leader = _complete_ni_handshake()
+def _burst_of_child_fragments():
     builder = rfu.SlotBuilder()
     expected = [rfu.serialize(rfu.send_block_words(i, bytes([i]) * 12))
                 for i in range(17)]
     sent = [builder.build(rfu.send_block_words(i, bytes([i]) * 12))
             for i in range(17)]
     assert any(raw != normalized for raw, normalized in zip(sent, expected))
-    for ts, slot in enumerate(sent, 100):
-        leader.receive(_child_t(rfu.uni_slot(slot), ts))
+    return sent, expected
 
+
+def _echoed_rows(leader, ticks):
     echoed = []
-    for _ in range(len(sent) + 4):
+    for _ in range(ticks):
         record = gbaframe.parse_in(leader.tick(rfu.idle_slot()))
         row1 = dict(record["slots"]).get(1)
         if row1 is not None and row1 != rfu.idle_slot():
             echoed.append(row1)
+    return echoed
 
+
+def test_a_burst_of_child_commands_is_echoed_latest_first_like_the_native_parent():
+    """The native parent reflects what it received THIS frame (gRecvCmds), it has no queue. Echoing a
+    burst one-per-VBlank instead builds a permanent lag; the child waits for its OWN echo before
+    sending fragments [link_rfu_2.c:1378] and resends any fragment whose echo never comes, so lag
+    (lg67: 40 frames) kills the link while a dropped echo just costs one resend."""
+    leader = _complete_ni_handshake()
+    sent, expected = _burst_of_child_fragments()
+    for ts, slot in enumerate(sent, 100):
+        leader.receive(_child_t(rfu.uni_slot(slot), ts))
+    assert leader.echo_backlog_peak == 17
+    echoed = _echoed_rows(leader, 4)
+    assert echoed[0] == expected[-1]                  # the newest command, on the very next tick
+    assert leader.echo_dropped == 16
+    assert all(row == expected[-1] for row in echoed)  # and it stays until something newer arrives
+
+
+def test_fifo_echo_toggle_still_echoes_every_child_command():
+    """FRLG_FIFO_ECHO=1 (echo_latest_only=False) is the pre-session-11 behaviour, kept for A/B."""
+    leader = _complete_ni_handshake()
+    leader.echo_latest_only = False
+    sent, expected = _burst_of_child_fragments()
+    for ts, slot in enumerate(sent, 100):
+        leader.receive(_child_t(rfu.uni_slot(slot), ts))
+    echoed = _echoed_rows(leader, len(sent) + 4)
     for slot in expected:
         assert slot in echoed, (
             f"fragment {rfu.parse_slot(slot)['index']} was never echoed back")
     assert echoed[-1] == expected[-1]
+    assert leader.echo_dropped == 0
 
 
 if __name__ == "__main__":
