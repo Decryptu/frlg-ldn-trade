@@ -867,3 +867,155 @@ processes, is not decided by this data.
 
 Not worth a hardware run on its own: every capture already taken carries the signal, and
 `acklag.py <host capture>` prints it.
+
+## The Union Room battle (UR_BATTLE 0x41), read from the decomp
+
+No hardware run was spent on any of this. Every claim below is a decomp citation; what is a
+deduction from those citations is labelled, and the two hypotheses are called out as such.
+
+### The entry gate is on the console's party, not on us
+
+FACT: `HasAtLeastTwoMonsOfLevel30OrLower` [union_room.c:4565] counts party mons with
+`MON_DATA_LEVEL <= UNION_ROOM_MAX_LEVEL` (30) [constants/union_room.h:15] that are not eggs, and
+requires two. It gates the activity twice: when the console *offers* a battle [union_room.c:2923,
+message `gText_UR_NeedTwoMonsOfLevel30OrLower1`] and when it *accepts* ours [union_room.c:3176,
+which sends `ACTIVITY_DECLINE | IN_UNION_ROOM` and message ...2 instead]. Both tests read
+`gPlayerParty`, i.e. each side tests only itself. So the console needs two non-egg mons at level
+30 or lower in its own party or the battle cannot start, and the refusal is a message on its
+screen, not a protocol fault on ours.
+
+### The pre-battle block exchange
+
+FACT [union_room_battle.c, `CB2_UnionRoomBattle`]: after both sides pick two mons, each sends one
+0x20-byte block whose first byte is `ACTIVITY_ACCEPT | 0x40` = 0x51, or `ACTIVITY_DECLINE | 0x40`
+= 0x52 if the selection was cancelled (`gSelectedOrderFromParty[0] == -gSelectedOrderFromParty[1]`).
+The rest of the block is zero. Both blocks must read 0x51 (`GetBlockReceivedStatus() == 3`) or the
+console closes the link and prints "refused". Then, on the Switch path only:
+
+    #if REVISION >= 0xA   case 50: fade; case 51: IsLinkTaskFinished -> SetLinkStandbyCallback;
+                          case 52: IsLinkTaskFinished -> SetUpPartiesAndStartBattle
+
+so there are TWO link-task waits with a standby between them, where the GBA release had one. This
+is the same REVISION >= 0xA reordering already seen elsewhere; read the 0xA branch.
+
+FACT [`SetUpPartiesAndStartBattle`]: each side keeps only its two chosen mons, zeroes the other
+four, and calls `StartUnionRoomBattle(BATTLE_TYPE_LINK | BATTLE_TYPE_TRAINER)` [union_room.c:1811],
+which sets `gLinkPlayers[0].linkType = LINKTYPE_BATTLE` (0x2211) [link.h:92] and
+`gTrainerBattleOpponent_A = TRAINER_UNION_ROOM`. `TryReceiveLinkBattleData` tests that 0x2211
+exactly [battle_controllers.c:520], so the link type is load-bearing, not cosmetic.
+
+FACT [`CB2_HandleStartBattle`, battle_main.c:934]:
+
+    state 1  SendBlock struct LinkBattlerHeader {versionSignatureLo=1, versionSignatureHi=2,
+             vsScreenHealthFlagsLo, vsScreenHealthFlagsHi, struct BattleEnigmaBerry}
+    state 2  both received -> LinkBattleComputeBattleTypeFlags, vs-screen task
+    state 3  SendBlock gPlayerParty[0..1]   200 bytes
+    state 4  recv -> gEnemyParty[0..1]
+    state 7  SendBlock gPlayerParty[2..3]   200 bytes
+    state 8  recv
+    state 11 SendBlock gPlayerParty[4..5]   200 bytes
+    state 12 recv
+    state 15 InitBattleControllers
+
+DEDUCTION: the party exchange is byte-for-byte the 3 x 200-byte block transfer we already do for
+trades (`mon.party_blocks`, `PARTY_BLOCK_SIZE` 200), proven on hardware many times. Nothing new is
+needed for it. `Rfu_InitBlockSend` asserts size <= 252 [link_rfu_2.c:1336], so 200 is legal.
+
+### Master election, and why it is the whole ballgame
+
+FACT [`InitLinkBtlControllers`, battle_controllers.c:141]: in a link single battle only the side
+with `BATTLE_TYPE_IS_MASTER` sets `gBattleMainFunc = BeginBattleIntro`. The other side's
+`gBattleMainFunc` stays `BeginBattleIntroDummy` [SetUpBattleVars, battle_controllers.c:45].
+
+DEDUCTION, and the central finding of this read: **the non-master runs no battle logic at all.**
+It has no turn resolution, no damage calculation, no RNG. It receives BUFFER_A controller commands
+over the link, runs them for display, and answers. Implementing our side as the non-master is
+therefore writing a battle *controller*, not a battle *engine* -- a bounded command handler over a
+transport we already have, instead of a reimplementation of Gen-3 battle mechanics.
+
+FACT [`LinkBattleComputeBattleTypeFlags`, battle_main.c:886], for two players, from the console's
+seat at multiplayer id 1 (we are the parent, id 0):
+  - if `gBlockRecvBuffer[0][0] == 0x100`, player 0 is master -- the console is not;
+  - else if both signatures are equal, player 0 is master -- the console is not;
+  - else "lowest index player with the highest game version": the console breaks out of the loop,
+    and so fails to be master, only if our signature is 0x201 (equal, index 0 < 1) or > 0x201.
+
+DEDUCTION: sending a version signature **below 0x201 and not equal to 0x100** -- 0x200 is the
+obvious choice -- makes the console elect *itself* master. Running the same algorithm from our
+seat would also elect us master, i.e. the game's own rule is not symmetric here; that does not
+matter, because we are not the game. The console decides its own role from the bytes we send, and
+we simply behave as the non-master regardless. This is the lever that turns the largest remaining
+item in the project into a tractable one.
+
+### The link buffer protocol
+
+FACT [battle_controllers.c:401-435]: every controller command travels as one SendBlock with an
+8-byte header, `LINK_BUFF_BUFFER_ID, ACTIVE_BATTLER, ATTACKER, TARGET, SIZE_LO, SIZE_HI,
+ABSENT_BATTLER_FLAGS, EFFECT_BATTLER`, then the payload. The stored size is the payload rounded up:
+`alignedSize = size - size % 4 + 4` (note: always at least +1 word, so a 4-byte payload is stored
+as 8). `bufferId` is 0 = BUFFER_A (a command), 1 = BUFFER_B (a reply), 2 = an exec-flag clear whose
+one payload byte is the sender's multiplayer id [Task_HandleCopyReceivedLinkBuffersData:566-594].
+
+FACT: battler numbering agrees on both sides -- battler 0 is the master's mon, battler 1 the
+non-master's -- because the master maps 0=Player/1=LinkOpponent and the non-master maps
+1=Player/0=LinkOpponent [InitLinkBtlControllers]. Our mon is battler 1.
+
+FACT, the sync rule [battle_util.c:185-201]: `MarkBattlerForControllerExec` sets bit `28+battler`;
+when the command's own block arrives back, `MarkBattlerReceivedLinkData` sets
+`gBitTable[battler] << (i*4)` for **every** linked player i and clears bit 28+battler; each player
+clears its own nibble by sending bufferId 2 with its multiplayer id. The master advances only on
+`gBattleControllerExecFlags == 0`.
+
+DEDUCTION: we must acknowledge **every** command the console emits, for **both** battlers, or the
+master stalls forever. That single rule is most of the work; the rest is the handful of commands
+that also want a BUFFER_B reply.
+
+### What we actually have to answer
+
+FACT [sPlayerBufferCommands, battle_controller_player.c:110]: 56 commands, of which all but these
+are display-only and need nothing but the ack:
+
+    CONTROLLER_GETMONDATA    -> EmitDataTransfer(BUFFER_B, size, data)   [player.c:1515]
+    CONTROLLER_CHOOSEACTION  -> EmitTwoReturnValues(1, B_ACTION_*, 0)    [player.c:232-241]
+    CONTROLLER_CHOOSEMOVE    -> EmitTwoReturnValues(1, 10, move | target << 8) [player.c:342]
+    CONTROLLER_CHOOSEPOKEMON -> EmitChosenMonReturnValue(1, partyId, order)    [player.c:1316]
+    CONTROLLER_OPENBAG       -> EmitOneReturnValue(1, itemId)            [player.c:1340]
+    CONTROLLER_EXPUPDATE     -> EmitTwoReturnValues(1, RET_VALUE_LEVELED_UP, exp) [player.c:1051]
+    CONTROLLER_ENDLINKBATTLE -> gBattleOutcome = payload[1], then ack     [player.c:2876]
+
+`B_ACTION_USE_MOVE` 0, `USE_ITEM` 1, `SWITCH` 2, `RUN` 3 [battle.h:34].
+
+FACT: the first command of every battle is `GETMONDATA` with `REQUEST_ALL_BATTLE`, emitted to each
+battler in turn [`BattleIntroGetMonsData`, battle_main.c:2519]. The reply is a whole
+`struct BattlePokemon` [pokemon.h:170, 0x58 bytes] built field by field in `CopyPlayerMonData`
+[player.c:1519]. Every field it fills -- species, the five stats, moves, PP, the six IVs, level,
+hp/maxHP, item, nickname, otName, experience, personality, status1, friendship, ppBonuses,
+abilityNum, otId -- we already compute or carry: `frlgsim/stats.py` has the exp tables, natures and
+the stat formula, and `frlgsim/mon.py` parses every substructure. Note what `CopyPlayerMonData`
+does NOT fill: `statStages`, `ability`, `type1`, `type2`, `status2`, `unknown`. They go out as
+stack garbage and the receiver recomputes them, so we may send zeros there.
+
+### Forfeiting is a complete first milestone
+
+FACT: the "you can't run from a trainer" branch explicitly excludes link battles
+[battle_main.c:3239: `BATTLE_TYPE_TRAINER && !(BATTLE_TYPE_LINK) && ... B_ACTION_RUN`], and a
+link battler choosing RUN is given top turn order [battle_main.c:3548-3560].
+
+DEDUCTION: answering the very first `CHOOSEACTION` with `B_ACTION_RUN` forfeits. That exercises the
+entire path -- 0x51 handshake, the two standby waits, the version header, three party blocks, the
+whole intro command stream with its acks, and one action selection -- and then ends the battle and
+returns both sides to the Union Room, without our ever needing to choose a move, take damage, or
+model a single turn. It is the right first hardware run, and it is one run.
+
+### Two hypotheses to settle on hardware, not by argument
+
+HYPOTHESIS 1: we can send version signature 0x200 and the console will make itself master. The
+algorithm says so; nothing else in the decomp reads the signature. Falsified if the console stalls
+at the vs-screen or both sides start emitting commands.
+
+HYPOTHESIS 2: we may skip the BUFFER_B replies for battler 0 (the console's own mon) and send only
+the ack. The console answers its own GETMONDATA locally from `gEnemyParty` through its own
+LinkOpponent controller [link_opponent.c:444], and its reply loops back to it, so ours would be a
+duplicate write of identical bytes into `gBattleBufferB[0]`. Skipping is strictly less traffic;
+sending is the reference-faithful choice but needs us to model the console's party as well.
+Falsified if the intro stalls at the first GETMONDATA.
