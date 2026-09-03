@@ -636,6 +636,17 @@ class HostTradeEngine:
         self.info(f"Union Room: the console asked for {what}.")
 
     def _child_ready_close_link(self, rec):
+        if self.union_room and self.state in (H_ENTRY_CARD, H_UROOM_PROMPT):
+            # Exit at the prompt, or a declined request: the console runs SetCloseLinkCallback and
+            # waits for every player's READY_CLOSE_LINK [WaitAllReadyToCloseLink, link_rfu_2.c:1471]
+            # before it disconnects itself. u10: without our half it sat on the prompt text.
+            self._set_state(H_CLOSE)
+            self._close_confirmed = False
+            self._close_grace_wait = None
+            for _ in range(self.timing.startup_standby_echo_frames):
+                self._queue_words(rfu.close_link_words(self._exit_count), "READY_CLOSE_LINK")
+            self._close_retry_wait = self.timing.close_retry_frames
+            self.info("Union Room: the console is closing the link; sending our READY_CLOSE_LINK.")
         if self.state != H_CLOSE:
             return
         self.trace.append(("child_close_ready", rec.get("count", 0)))

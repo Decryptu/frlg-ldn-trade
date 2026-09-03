@@ -100,3 +100,23 @@ def test_packets_are_ignored_outside_the_union_room():
     h = _engine(union_room=False)
     h.feed_child_slot(_packet_slot(0x48))
     assert _queued_packets(h) == []
+
+
+def test_exit_at_the_prompt_answers_the_close_link_handshake():
+    """u10: after Retour the console sent READY_CLOSE_LINK and waited; WaitAllReadyToCloseLink
+    [link_rfu_2.c:1471] needs the parent's READY_CLOSE_LINK before the child disconnects itself."""
+    from frlgsim.host_trade import H_CLOSE
+    h = _engine()
+    h._after_child_block(trade.COUNT_TRAINER_CARD, bytes(100))
+    h.feed_child_slot(_packet_slot(0x40))
+    h._words.clear()
+    h.feed_child_slot(rfu.serialize(rfu.close_link_words(2)))
+    assert h.state == H_CLOSE
+    assert [w[0] for w in h._words] and all(w[0] == rfu.READY_CLOSE_LINK for w in h._words)
+    assert h.close_confirmed
+
+
+def test_close_link_outside_the_room_prompt_is_still_ignored():
+    h = _engine(union_room=False)
+    h.feed_child_slot(rfu.serialize(rfu.close_link_words(2)))
+    assert h.state == H_ENTRY_CARD and not h._words
