@@ -12,6 +12,9 @@ STATUS_REPORT_FRAMES = 30   # 0.5s; the H_LINK_PLAYER stall window is only ~2s
 LEAVE_MENU_REPORT_FRAMES = 300
 H_LINK_PLAYER = "H_LINK_PLAYER"
 H_ENTRY_CARD = "H_ENTRY_CARD"
+# Union Room only: cards are exchanged, the console is at its "do something" prompt and every
+# choice arrives as a SEND_PACKET [union_room.c:2928, :2955].
+H_UROOM_PROMPT = "H_UROOM_PROMPT"
 H_ENTRY_SEAT = "H_ENTRY_SEAT"
 H_PARTY = "H_PARTY"
 H_SELECT = "H_SELECT"
@@ -98,7 +101,7 @@ class HostTradeEngine:
 
     def __init__(self, party, trade_slot=0, *, offered_slots=None, trades=1,
                  link_player=None, profile=None, anim_delay=1935, trust_pia=True, timing=None,
-                 log=lambda *a: None):
+                 union_room=False, log=lambda *a: None):
         self.party = list(party)
         if not 1 <= len(self.party) <= 6:
             raise ValueError("party must contain 1..6 Pokémon")
@@ -118,6 +121,9 @@ class HostTradeEngine:
             name_pad=HOST_NAME_PAD)
         self.anim_delay = anim_delay
         self.trust_pia = trust_pia
+        self.union_room = bool(union_room)
+        self.uroom_requests = []
+        self._last_uroom_packet = None
         self.timing = timing if timing is not None else DEFAULT_HOST_TRADE_TIMING
         self.log = log
         self.info = getattr(log, "info", log)
@@ -410,6 +416,14 @@ class HostTradeEngine:
             return
         if expected == "card":
             self.child_card = bytes(data[:100])
+            if self.union_room:
+                # No standby follows Task_ExchangeCards in the room [union_room.c:1753]; the console
+                # goes to its prompt and talks in SEND_PACKETs from here on.
+                self._expected = None
+                self._set_state(H_UROOM_PROMPT)
+                self.info("Union Room: trainer cards exchanged; waiting at the console's "
+                          "'do something' prompt for a SEND_PACKET.")
+                return
             self._expected = "warp1"
             return
         if expected and expected.startswith("party:"):
@@ -572,6 +586,51 @@ class HostTradeEngine:
     def _child_ready_exit_standby(self, rec):
         self._on_child_standby(rec.get("count", 0))
 
+    # Union Room activity words [include/constants/union_room.h]
+    UR_IN_ROOM = 0x40
+    UR_CARD = 0x48        # ACTIVITY_CARD, "Salut": show each other's trainer card
+    UR_BATTLE = 0x41      # ACTIVITY_BATTLE_SINGLE | IN_UNION_ROOM
+    UR_TRADE = 0x44       # ACTIVITY_TRADE | IN_UNION_ROOM, from the trading board
+    UR_CHAT = 0x45        # ACTIVITY_CHAT | IN_UNION_ROOM
+    UR_ACCEPT = 0x51      # ACTIVITY_ACCEPT | IN_UNION_ROOM
+    UR_DECLINE = 0x52     # ACTIVITY_DECLINE | IN_UNION_ROOM
+    UR_PACKET_REPEAT = 3  # PollPartnerYesNoResponse reads gRecvCmds every frame; a few repeats are safe
+
+    def _child_send_packet(self, rec):
+        """The parent's half of UR_STATE_HANDLE_ACTIVITY_REQUEST [union_room.c:3151]: answer the
+        console's activity request with ACCEPT or DECLINE in a SEND_PACKET of our own."""
+        packet = rec.get("packet") or [0] * 6
+        request = packet[0]
+        if not self.union_room or request == 0:
+            return
+        if self.state not in (H_ENTRY_CARD, H_UROOM_PROMPT):
+            self.trace.append(("uroom_packet_ignored", self.state, request))
+            return
+        key = tuple(packet)
+        if key == self._last_uroom_packet:
+            return
+        self._last_uroom_packet = key
+        self.uroom_requests.append(key)
+        self._set_state(H_UROOM_PROMPT)
+        if request == self.UR_CARD:
+            reply, what = self.UR_ACCEPT, "greetings (trainer cards); accepting, a standby barrier follows"
+        elif request == self.UR_TRADE:
+            reply = self.UR_ACCEPT
+            what = (f"a trade from the trading board (species {packet[1]}, level {packet[2]}); "
+                    "accepting. UNTESTED beyond this point: Task_StartUnionRoomTrade is next")
+        elif request in (self.UR_BATTLE, self.UR_CHAT):
+            reply, what = self.UR_DECLINE, "a battle or chat; declining, the console closes the link"
+        elif request == self.UR_IN_ROOM:
+            self.trace.append(("uroom_exit", key))
+            self.info("Union Room: the console chose Exit; it closes the link now.")
+            return
+        else:
+            reply, what = self.UR_DECLINE, f"an unknown activity 0x{request:02x}; declining"
+        self.trace.append(("uroom_reply", request, reply))
+        for _ in range(self.UR_PACKET_REPEAT):
+            self._queue_words(rfu.send_packet_words([reply]), f"UROOM_PACKET:{reply:#04x}")
+        self.info(f"Union Room: the console asked for {what}.")
+
     def _child_ready_close_link(self, rec):
         if self.state != H_CLOSE:
             return
@@ -602,7 +661,7 @@ class HostTradeEngine:
         # save/cancel barriers are already multi-round handshakes and keep a single echo.
         repeats = (self.timing.startup_standby_echo_frames
                    if self.state in (H_LINK_PLAYER, H_ENTRY_CARD, H_ENTRY_SEAT,
-                                     H_CANCEL, H_RETURN_FIELD) else 1)
+                                     H_UROOM_PROMPT, H_CANCEL, H_RETURN_FIELD) else 1)
         for _ in range(repeats):
             self._queue_words(rfu.exit_standby_words(count), f"STANDBY:{count}")
         self._last_child_standby = count
@@ -827,4 +886,5 @@ _CHILD_OP_HANDLERS = {
     rfu.SEND_HELD_KEYS: HostTradeEngine._child_send_held_keys,
     rfu.READY_EXIT_STANDBY: HostTradeEngine._child_ready_exit_standby,
     rfu.READY_CLOSE_LINK: HostTradeEngine._child_ready_close_link,
+    rfu.SEND_PACKET: HostTradeEngine._child_send_packet,
 }

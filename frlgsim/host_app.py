@@ -77,7 +77,7 @@ class HostApplication:
                           "keepalive_frames": int(getattr(self.options, "union_room_keepalive", 0))}
         self.session = host_session.HostSession(
             party, plan=self.plan, profile=self.profile, log=self.log,
-            rfu_kwargs=rfu_kwargs)
+            rfu_kwargs=rfu_kwargs, union_room=union_room)
         if union_room:
             inactive, active = build_union_room_app_data(
                 self.profile, self.session.rfu.host_session_id,

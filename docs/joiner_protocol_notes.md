@@ -547,3 +547,32 @@ Two probes, one variable each, both untested (tags u06, u07):
                             the keepalive and the D moves to five frames after the first UNI. If
                             the D still comes ~130 ms after the NULL, the rule is time-based and
                             game-side after all.
+
+### u06: the keepalive carries the Union Room connect all the way to the prompt
+
+FACT (u06, one run, `--union-room --union-room-keepalive 120`): the console mirrored every
+re-presented NI_START for the whole keepalive (ts=6..125, each answered `NI_START ack=1`), then
+answered the first UNI SEND_PLAYER_IDS with UNI frames of its own, sent its LinkPlayer block
+(identified as the user's trainer), took ours, exchanged trainer cards (block count 9, no standby
+after it), and the user's screen showed "PkCamp: oh bonjour <name>, vous désirez quelque chose ?"
+with Salut / Combat / Tchat / Retour. Picking Salut sent `SEND_PACKET 0x48` (ACTIVITY_CARD |
+IN_UNION_ROOM) once, and the console then waited on us ("voilà ma carte de dresseur") until the
+host was stopped, 65 s later, with no disconnect from its side.
+
+DEDUCTION: the five-frame rule was real, and it was the only gate left. With the child kept busy
+for two seconds it had all the time it needed to reach RFUSTATE_UR_PLAYER_EXCHANGE; the exact
+delay it needs is still unmeasured (somewhere between 5 and ~120 frames). The beacon flip
+(`--hold-beacon`) played no part: u06 ran with the default flip and connected.
+
+FACT (u06): the hole guard fired every ~8 s during the idle prompt (ack 6 behind, 1-8 held ticks)
+and recovered each time; same behaviour as the Mystery Gift host.
+
+Implemented from the decomp, untested past the first reply: the parent's half of the prompt
+[UR_STATE_HANDLE_ACTIVITY_REQUEST, union_room.c:3151]. `_child_send_packet` in host_trade.py answers
+0x48 (cards) and 0x44 (trading-board trade) with `SEND_PACKET 0x51` (ACCEPT | IN_UNION_ROOM),
+0x41/0x45 (battle, chat) with 0x52 (DECLINE), and treats 0x40 (Exit) as the console's close. After
+the cards both sides SetLinkStandbyCallback [union_room.c:2995, :3012] and the console returns to
+its prompt; the parent then waits for the next packet. The trade path needs our advertisement to
+carry tradeSpecies/tradeType/tradeLevel so the console's trading board lists us
+[union_room.c:3400]; where tradeType and tradeLevel sit in the 24-byte record is still UNKNOWN
+(only tradeSpecies in [22:24] is proven).

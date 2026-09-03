@@ -23,7 +23,8 @@ class HostSession:
                  offered_slots=None, trades=1, link_player=None,
                  anim_delay=None, trust_pia=True, log=lambda *a: None,
                  reliable_kwargs=None, rfu_kwargs=None,
-                 player_ids_repeat_frames=None, link_player_idle_frames=None):
+                 player_ids_repeat_frames=None, link_player_idle_frames=None,
+                 union_room=False):
         if plan is not None:
             trade_slot = plan.trade_slot
             offered_slots = plan.offered_slots
@@ -51,7 +52,7 @@ class HostSession:
                 party, trade_slot=trade_slot, offered_slots=offered_slots, trades=trades,
                 link_player=link_player, profile=profile,
                 anim_delay=(trade.DEFAULT_ANIM_FRAMES if anim_delay is None else anim_delay),
-                trust_pia=trust_pia, timing=timing, log=log)
+                trust_pia=trust_pia, timing=timing, union_room=union_room, log=log)
         else:
             raise ValueError("HostSession needs either a party or an activity engine")
         self.log = log

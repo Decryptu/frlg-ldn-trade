@@ -15,6 +15,7 @@ READY_EXIT_STANDBY = 0x6600
 READY_CLOSE_LINK = 0x5F00
 SEND_BLOCK_REQ = 0xA100
 SEND_PLAYER_IDS = 0x7700
+SEND_PACKET = 0x2F00
 DISCONNECT = 0xED00
 
 RFUCMD_NAMES = {
@@ -140,6 +141,12 @@ def send_block_req_words(reqtype=BLOCK_REQ_SIZE_NONE):
     return [SEND_BLOCK_REQ, reqtype & 0xFFFF, 0, 0, 0, 0, 0]
 
 
+def send_packet_words(packet):
+    """RFUCMD_SEND_PACKET with up to six u16 words of gRfu.packet [Rfu_SendPacket, link_rfu_2.c:1324]."""
+    packet = [int(w) & 0xFFFF for w in packet][:6]
+    return [SEND_PACKET] + packet + [0] * (6 - len(packet))
+
+
 def exit_standby_words(count):
     """w1 = resendExitStandbyCount [link_rfu_2.c:1307-1310]; the child's reply MUST equal the round the host is currently
     broadcasting or the host's recv gate ignores it (link_rfu_2.c:1178-1180).
@@ -195,4 +202,8 @@ def parse_slot(slot):
     elif op in (READY_EXIT_STANDBY, READY_CLOSE_LINK):
         # word1 = resendExitStandbyCount, the round the host advertises [link_rfu_2.c:1309].
         rec["count"] = int.from_bytes(slot[2:4], "little")
+    elif op == SEND_PACKET:
+        # gRfu.packet[0..5] in words 1..6 [Rfu_SendPacket, link_rfu_2.c:1324]. The Union Room puts
+        # activity | IN_UNION_ROOM in packet[0]; a trade request adds species and level.
+        rec["packet"] = [int.from_bytes(slot[2 + 2 * i:4 + 2 * i], "little") for i in range(6)]
     return rec
