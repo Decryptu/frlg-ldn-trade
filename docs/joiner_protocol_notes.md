@@ -717,3 +717,52 @@ cycle even with the link otherwise idle -- u13 deltas 16.9, 16.9, 16.8, 16.9, 16
 8.7, 8.7, 8.7, 9.3, 16.9, 16.8, 17.0 s. The 8.7s gaps are half of 16.9, so the fundamental is
 ~8.45 s with holds sometimes skipped. A period that stable on an idle link is a clock, not load.
 This is the same UNKNOWN left open by the ident-25 work, on a much cleaner sample.
+
+## The console's ack lag is a 512 ms metronome, not congestion (2026-09-03)
+
+The ident-25 work left an UNKNOWN: what makes the console's cumulative ack fall behind in the first
+place. It was never load. `scratchpad/acklag.py` reconstructs, per datagram, our highest sent seq
+against the console's cumulative ack (which lives in the CTRL frame's *payload* via
+`parse_bulk_ack`, not in the reliable header's `ack` field -- that one is the sender's own lowest
+pending seq).
+
+FACT: the console stalls for ~50-70 ms at a time. It is not silent-by-choice and not slow: inbound
+stops for one gap of 35-70 ms against a 15 ms baseline, during which it sends only a retransmit of
+its own last frames -- its RTO firing because our ack did not get processed -- and then it advances
+its cumulative ack several frames in a single jump. Worked example, u14 at 26.6 s:
+
+    26.553 in   D1849 D1850 ACK next=919
+    26.587 OUT  D919 D920 ACK next=1851
+    26.617 in   D1849* D1850*        (retransmits, no ack: its RTO fired)
+    26.653 in   ACK next=924         (catches up five frames at once)
+
+FACT: it is periodic, and every period is an integer number of 512 ms slots. Across 42 intervals in
+five runs -- h8 (FireRed, trade), u13 and u14 (FireRed, Union Room chat), lg154 and lg155
+(LeafGreen, Mystery Gift) -- every measured period lands on a 512 ms grid with a maximum error of
+16 ms, which is one 60 Hz frame, i.e. our own sampling resolution. The slot counts observed are 16
+and 17 (8.192 s and 8.704 s), with one 18 and one 33 where a tick was skipped. Mean spacing ~16.5
+slots, so the underlying event is not itself a multiple of 512 ms and lands on alternating slots.
+
+FACT: the grid is phase-locked to the console's LDN join. Within a run the stalls sit at a constant
+fraction of a slot after the join, and it does not drift: h8's twelve stalls over 103 s span 18 ms
+of phase, u13's twelve span 18 ms, lg154's two span 2 ms.
+
+FACT: it is not us. Our advertisement and beacon app-data updates are state transitions (u14: 0,
+9.7, 21.1, 52.4 s) and do not correlate with the stalls (17.9, 26.6, 34.8, 43.5 s). It appears on
+both consoles, in all three activities, and on a link that is otherwise idle.
+
+DEDUCTION: this is the cause the ident-25 hole guard treats the symptom of. The stall is the same
+size everywhere; what differs is what it lands on. On an idle chat link outstanding reaches 5 and
+nothing happens. Under Mystery Gift or trade load the same 50-70 ms lands on a full send window:
+h8's peaks reach 47 and lg150's reach 126, and lg150's catastrophic release at join+17.22 s is
+itself on the metronome (join+8.52 s, then +8.70 s). The guard's job is to survive these, and
+lg151-lg155 show it does.
+
+UNKNOWN: what the 512 ms grid is. It is console-internal and joins-relative, so it is a timer the
+emulator or the Pia/LDN layer starts at session establishment, not a game-side one (the ROM has no
+512 ms tick, and the stalls are indifferent to what the game is doing). Whether the ~16.5-slot
+spacing is one process with a period near 8.45 s quantised onto the grid, or two interleaved
+processes, is not decided by this data.
+
+Not worth a hardware run on its own: every capture already taken carries the signal, and
+`acklag.py <host capture>` prints it.
