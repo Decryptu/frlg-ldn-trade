@@ -695,7 +695,31 @@ accepts our ACCEPT for 0x45, runs the START_ACTIVITY standby and opens its chat 
 block arrives, our JOIN lists us as a member on its screen, our queued lines appear in order at the
 90-frame spacing, and every line it types reaches us decoded. u13 read back `SALUT` and `ÇA VA?`,
 u14 `0123456789`: letters, the accented-Latin range, punctuation and digits all round-trip through
-`charmap`. A 30-character line (the full field) sent from our side displayed correctly.
+`charmap`. A 30-character line (the full field) sent from our side reached the console and decoded,
+but see the line limit below: it was drawn off the right edge of the screen, which the run did not
+check for. The 2026-09-03 note "displayed correctly" was our own inference, not the user's report.
+
+### The chat line is 15 entries, not 30 bytes
+
+FACT (decomp, no run needed): `MESSAGE_BUFFER_NCHAR` is 15 [src/union_room_chat.c:21] and the
+keyboard's append loop stops at `bufferCursorPos < MESSAGE_BUFFER_NCHAR` [union_room_chat.c:1112],
+so the console itself can never type a 16th entry. Its buffer is `2 * MESSAGE_BUFFER_NCHAR + 1` = 31
+bytes only because one entry may be a `CHAR_EXTRA_SYMBOL` (0xF9) pair, which
+`StringLength_Multibyte` counts as one [src/string_util.c:560]; our charmap emits no 0xF9, so for us
+one entry is one byte and 31 bytes of field is 15 sendable characters.
+
+FACT: nothing on the receive path re-checks that. `ProcessReceivedChatMessage` does a bare
+`StringCopy(tempStr, recvMessage)` of whatever we sent [union_room_chat.c:1308], and
+`PrintTextOnWin0Colorized` draws it as one unwrapped line into a 168 px row that the name and an
+`EXT_CTRL_CODE_CLEAR_TO 42` push to x=42 [union_room_chat_display.c]. There is no clip and no wrap:
+entry 16 onward is drawn past the right edge. 15 glyphs of `FONT_NORMAL` are 6 px each
+[sFontNormalLatinGlyphWidths, src/text.c:187], 90 px into the ~126 px left, so a console-legal line
+always fits and anything longer is exactly what the user saw overflow.
+
+DEDUCTION: `check_text` was bounding the block field (30) instead of the console's line (15). Fixed:
+`uroom_chat.MESSAGE_NCHAR` = 15, counted multibyte-aware by `uroom_chat.entry_count`, so an
+over-long `--chat-message` or `--chat-file` line is refused at start-up rather than half-drawn on
+the console. u14's 30-character line is why the wrong bound looked proven.
 
 FACT (u13): the leader must actively close on a LEAVE. u13 marked the activity done and stopped
 there; the console sat on its "quit the chat?" yes/no prompt with the network icon spinning for 70

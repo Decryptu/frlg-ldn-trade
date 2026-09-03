@@ -67,8 +67,9 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
              "it, so the chat can be answered live instead of queued at launch")
     parser.add_argument(
         "--chat-message", action="append", default=None, metavar="TEXT",
-        help="Union Room chat: a line to send once the chat opens, repeatable. Up to 30 Gen-3 "
-             "charmap characters each; they go out one at a time, 1.5s apart")
+        help="Union Room chat: a line to send once the chat opens, repeatable. Up to 15 Gen-3 "
+             "charmap characters each, the console's own keyboard limit and the width its chat "
+             "line can draw; they go out one at a time, 1.5s apart")
     parser.add_argument("--anim-delay", type=int, default=None,
                         help="override the proven trade-animation frame delay")
     parser.add_argument(

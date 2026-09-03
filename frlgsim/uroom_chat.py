@@ -22,6 +22,17 @@ PAYLOAD_OFF = 1 + NAME_FIELD
 # each, so a full line plus its terminator is exactly the 31 bytes left in the block.
 TEXT_FIELD = BLOCK_SIZE - PAYLOAD_OFF
 
+# The console can never type more than MESSAGE_BUFFER_NCHAR entries [src/union_room_chat.c:21]: the
+# keyboard's append loop stops at `bufferCursorPos < MESSAGE_BUFFER_NCHAR` [union_room_chat.c:1112].
+# Its chat log is sized for that and for nothing more, and the receive path enforces no limit of its
+# own: ProcessReceivedChatMessage StringCopy's our whole field [union_room_chat.c:1308] and
+# PrintTextOnWin0Colorized draws one unwrapped line into a 168 px row starting at x=42
+# [union_room_chat_display.c], so entries 16+ are drawn off the right edge of the screen. 15 entries
+# of the 6 px normal font are 90 px and always fit. TEXT_FIELD is the block's capacity; this is the
+# console's.
+MESSAGE_NCHAR = 15
+EXTRA_SYMBOL = 0xF9         # CHAR_EXTRA_SYMBOL [include/characters.h:176], a two-byte entry's prefix
+
 NULL = 0
 CHAT = 1
 JOIN = 2
@@ -32,13 +43,26 @@ DISBAND = 5
 NAMES = {NULL: "NULL", CHAT: "CHAT", JOIN: "JOIN", LEAVE: "LEAVE", DROP: "DROP", DISBAND: "DISBAND"}
 
 
+def entry_count(encoded):
+    """Entries in an encoded message, counting a 0xF9 pair as one, the way StringLength_Multibyte
+    does [src/string_util.c:560]. Our charmap emits no 0xF9, so today this is the byte count."""
+    n = i = 0
+    while i < len(encoded) and encoded[i] != charmap.EOS:
+        i += 2 if encoded[i] == EXTRA_SYMBOL else 1
+        n += 1
+    return n
+
+
 def check_text(text):
-    """Raise unless `text` survives the Gen-3 charmap and the 30-character message field, so a bad
-    --chat-message fails at start-up instead of arriving on the console as dots."""
+    """Raise unless `text` survives the Gen-3 charmap and fits the console's 15-entry chat line, so
+    a bad --chat-message fails at start-up instead of arriving on the console as dots or running off
+    the side of its screen."""
     if not text:
         raise ValueError("a chat message must not be empty")
-    if len(text) > TEXT_FIELD - 1:
-        raise ValueError(f"chat message {text!r} is longer than {TEXT_FIELD - 1} characters")
+    encoded = charmap.encode(text)
+    if entry_count(encoded) > MESSAGE_NCHAR:
+        raise ValueError(f"chat message {text!r} is longer than {MESSAGE_NCHAR} characters; the "
+                         "console's own keyboard stops there and its chat line does not wrap")
     if charmap.decode(charmap.encode(text, width=TEXT_FIELD)) != text:
         raise ValueError(f"chat message {text!r} has characters outside the Gen-3 charmap")
     return text

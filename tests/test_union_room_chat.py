@@ -74,13 +74,30 @@ def test_non_chat_blocks_round_trip_with_their_multiplayer_id(cmd):
 
 
 def test_a_full_length_line_still_fits_the_block():
-    """messageEntryBuffer is 2 * MESSAGE_BUFFER_NCHAR + 1 = 31 bytes, exactly the block's tail."""
+    """messageEntryBuffer is 2 * MESSAGE_BUFFER_NCHAR + 1 = 31 bytes, exactly the block's tail. The
+    31 bytes are 15 two-byte entries; a line we can actually send is 15 one-byte ones."""
     assert uroom_chat.TEXT_FIELD == 31
-    text = "A" * (uroom_chat.TEXT_FIELD - 1)
+    text = "A" * uroom_chat.MESSAGE_NCHAR
     assert uroom_chat.parse(uroom_chat.build(uroom_chat.CHAT, "PkCamp", text=text))["text"] == text
 
 
-@pytest.mark.parametrize("bad", ["", "A" * 31, "hello あ"])
+def test_a_line_longer_than_the_consoles_own_keyboard_is_refused():
+    """The console cannot type past MESSAGE_BUFFER_NCHAR = 15 [union_room_chat.c:1112] and its chat
+    log neither clips nor wraps, so a 16th entry is drawn off the right edge of the screen."""
+    assert uroom_chat.MESSAGE_NCHAR == 15
+    uroom_chat.check_text("A" * 15)
+    with pytest.raises(ValueError, match="longer than 15"):
+        uroom_chat.check_text("A" * 16)
+
+
+def test_entries_are_counted_the_way_the_console_counts_them():
+    """StringLength_Multibyte reads a 0xF9 pair as one entry [string_util.c:560]."""
+    assert uroom_chat.entry_count(b"ABC") == 3
+    assert uroom_chat.entry_count(bytes([uroom_chat.EXTRA_SYMBOL, 0x05, 0xBB])) == 2
+    assert uroom_chat.entry_count(bytes([0xBB, charmap.EOS, 0xBB])) == 1
+
+
+@pytest.mark.parametrize("bad", ["", "A" * 16, "A" * 31, "hello あ"])
 def test_unsendable_lines_are_rejected_before_a_run(bad):
     with pytest.raises(ValueError):
         uroom_chat.check_text(bad)
