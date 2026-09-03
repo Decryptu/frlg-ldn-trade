@@ -388,3 +388,22 @@ TRADE host (j84) and with our host (fr36 wall / fr38 delivered), same tool.
   (LDN_SWITCH_IES=1) silently lost every console datagram - those runs were misread.
 - LDN allows 5 GHz channels 36/40/44/48; the host now accepts them (`--channel 44` ran on 5220 MHz).
 
+### THE WALL MOVES WITH THE 802.11 RATE SET (2026-09-03 hardware, French FireRed as Mystery Gift child)
+Alternating runs, same afternoon, same console, one variable at a time (`LDN_SWITCH_IES` in vendor/LDN):
+- plain (bare beacon, probe/assoc responses advertise 1B 2B 5.5B 11B 18 24 36 54): 3/7 past the wall.
+- level 4 (Switch beacon/probe/assoc elements, no WMM): 9/9 past the wall.
+- level 5 (only the Switch beacon head: SSID/rates/DS, cap 0x411, DTIM 2, + RSN): 2/2.
+- level 6 (bare head, only the tail elements ERP/ext-rates/RSN/ext-cap/VSIE): 2/2.
+- level 7 (bare beacon, ONLY the Switch rate set in the probe/association responses: 1B 2B 5.5B 11B
+  6 9 12 18 + ext 24 36 48 54): 2/2 and counting.
+The one thing every passing level shares is the rate set the station is told. The bare set omits the
+mandatory OFDM rates 6, 9 and 12 Mbit/s. HYPOTHESIS: the console's Wi-Fi builds its operational rate
+set from the association response; with 6/12 missing its link-quality/roaming logic declares the link
+bad ~3s after association and leaves (deauth reason 3). Not proven WHY, but the lever is real and the
+rate set is the minimal change found so far.
+- Level 3 "breaks association" (session 11) and level 5 without RSN (lg107) were the same bug: the
+  probe response dropped its RSN element while the capability word advertised privacy.
+- Transmission deaths after the card (lg93/94/100/109): an adapter TX stall of 0.25-0.75s followed by a
+  140-330 frame burst, absent from every successful run; the host process never paused (udp_out
+  timestamps continuous). rtw88 usb.c queues without back-pressure. Open.
+

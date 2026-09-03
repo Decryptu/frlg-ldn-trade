@@ -1508,11 +1508,27 @@ def switch_like_elements(channel: int, rsn: bytes | None, *, assoc: bool = False
     with_wmm = level != 4
     if level == 4:
         level = 1
+    # 2026-09-03 isolation: level 5 = the real host's beacon HEAD only (zeroed SSID, rate split, DS,
+    # cap 0x411, DTIM 2) with NO tail elements; level 6 = the bare head with the level-4 TAIL only.
+    if level == 7:
+        # 2026-09-03 isolation: level 7 = ONLY the Switch rate set in the probe/assoc responses
+        # (1B 2B 5.5B 11B 6 9 12 18 + ext 24 36 48 54); bare beacon, cap 0x511/0x411 unchanged, DTIM 3.
+        ext = _ie(WLAN_EID_EXT_SUPP_RATES, SWITCH_EXT_RATES)
+        return ext if assoc else ext + (_ie(WLAN_EID_RSN, rsn) if rsn is not None else b"")
+    if level == 5:
+        # the probe response pops its RSN and relies on the tail to re-emit it (level>0 path): a tail
+        # without RSN while the capability word advertises privacy leaves the console's association
+        # unanswered (lg107, and the session-11 level-3 runs fr39/fr40 - that was this, not the VSIE).
+        return b"" if assoc or rsn is None else _ie(WLAN_EID_RSN, rsn)
+    if level == 6:
+        level = 1
+        with_wmm = False
     if level == 3:
         # frlg-ldn-trade session 11: level 3 = ONLY the Nintendo vendor IE (the "I am a Switch" signal),
         # none of the level-1 rate/ERP/WMM elements that stalled our TX. Isolates whether that one IE is
         # what shifts the emulator's svc_51 death timer. Not in the assoc-resp (the real host's isn't).
-        return b"" if assoc else _ie(WLAN_EID_VENDOR_SPECIFIC, SWITCH_NINTENDO_VSIE)
+        rsn_ie = b"" if (assoc or rsn is None) else _ie(WLAN_EID_RSN, rsn)
+        return b"" if assoc else rsn_ie + _ie(WLAN_EID_VENDOR_SPECIFIC, SWITCH_NINTENDO_VSIE)
     out = b""
     if assoc:
         out += _ie(WLAN_EID_EXT_SUPP_RATES, SWITCH_EXT_RATES)
@@ -1675,7 +1691,7 @@ class AccessPoint(Interface):
         frame.source = self.address()
         frame.beacon_interval = 100
         frame.capability_information = 0x511
-        if switch_ies_level() > 0:
+        if switch_ies_level() > 0 and switch_ies_level() not in (6, 7):
             # Real Switch host: cap 0x0411 (no short preamble), zeroed 32-byte SSID, its rate split.
             frame.capability_information = 0x411
             frame.extra = (_ie(WLAN_EID_SSID, bytes(32))
@@ -1729,7 +1745,8 @@ class AccessPoint(Interface):
             response.capability_information |= 0x10
             response.elements[WLAN_EID_RSN] = rsn.encode()
         if switch_ies_level() > 0:
-            response.capability_information = 0x411
+            if switch_ies_level() != 7:
+                response.capability_information = 0x411
             response.elements[WLAN_EID_SUPP_RATES] = bytes(SWITCH_SUPP_RATES)
             response.elements.pop(WLAN_EID_RSN, None)   # re-emitted in the real host's position
             response.extra = switch_like_elements(self._channel, self._rsn_body())
@@ -1801,7 +1818,7 @@ class AccessPoint(Interface):
             nl80211.NL80211_ATTR_BEACON_HEAD: beacon_head,
             nl80211.NL80211_ATTR_BEACON_TAIL: beacon_tail,
             nl80211.NL80211_ATTR_BEACON_INTERVAL: 100,
-            nl80211.NL80211_ATTR_DTIM_PERIOD: 2 if switch_ies_level() > 0 else 3,
+            nl80211.NL80211_ATTR_DTIM_PERIOD: 2 if switch_ies_level() in (1, 2, 3, 4, 5) else 3,
             nl80211.NL80211_ATTR_HIDDEN_SSID:
                 nl80211.NL80211_HIDDEN_SSID_ZERO_CONTENTS,
             nl80211.NL80211_ATTR_CONTROL_PORT: True,
