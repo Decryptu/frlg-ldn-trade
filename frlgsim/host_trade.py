@@ -62,6 +62,10 @@ class HostTradeTiming:
     # Task_ReceiveChatMessage latches one block per player and scrolls it in; back-to-back sends
     # would overwrite gBlockRecvBuffer before it reads. A typed line is seconds apart natively.
     chat_message_gap_frames: int = 90
+    # ChatEntryRoutine_ExitChat runs SetCloseLinkCallback and then waits on
+    # !gReceivedRemoteLinkPlayers: the leaver never answers with a READY_CLOSE_LINK of its own, so
+    # the leader's close is bounded by its own timer, not by the child [union_room_chat.c:665].
+    chat_exit_close_frames: int = 120
 
 
 DEFAULT_HOST_TRADE_TIMING = HostTradeTiming()
@@ -78,6 +82,7 @@ POST_CANCEL_EXIT_WAIT_FRAMES = DEFAULT_HOST_TRADE_TIMING.post_cancel_exit_wait_f
 POST_CLIENT_CLOSE_GRACE_FRAMES = DEFAULT_HOST_TRADE_TIMING.post_client_close_grace_frames
 CLOSE_RETRY_FRAMES = DEFAULT_HOST_TRADE_TIMING.close_retry_frames
 CHAT_MESSAGE_GAP_FRAMES = DEFAULT_HOST_TRADE_TIMING.chat_message_gap_frames
+CHAT_EXIT_CLOSE_FRAMES = DEFAULT_HOST_TRADE_TIMING.chat_exit_close_frames
 HOST_NAME_PAD = linkplayer.HOST_NAME_PAD
 
 # Native leader route from the cable-club entrance to the LEFT trade chair as (LINK_KEY_CODE low byte,
@@ -141,6 +146,7 @@ class HostTradeEngine:
         self._chat_outbox = deque(uroom_chat.check_text(t) for t in (chat_messages or ()))
         self._chat_joined = False
         self._chat_send_wait = None
+        self._chat_exiting = False
         self._last_uroom_packet = None
         self._last_uroom_frame = 0
         self.timing = timing if timing is not None else DEFAULT_HOST_TRADE_TIMING
@@ -716,7 +722,9 @@ class HostTradeEngine:
         self.trace.append(("child_close_ready", rec.get("count", 0)))
         if not self._close_confirmed:
             self._close_confirmed = True
-            self._close_grace_wait = self.timing.post_client_close_grace_frames
+            if not self._chat_exiting:
+                # The chat exit is already on its own bounded grace; do not stretch it to 15s.
+                self._close_grace_wait = self.timing.post_client_close_grace_frames
             self.trace.append(("child_close_confirmed",
                                rec.get("count", 0),
                                self.timing.post_client_close_grace_frames))
@@ -881,7 +889,7 @@ class HostTradeEngine:
         if self.state == H_ANIM and self._anim_wait is not None:
             self._tick_anim()
         if self.state == H_UROOM_CHAT:
-            self._tick_chat_outbox()
+            self._tick_chat_exit() if self._chat_exiting else self._tick_chat_outbox()
         return self._next_parent_words()
 
     def _on_chat_block(self, data):
@@ -898,10 +906,38 @@ class HostTradeEngine:
             self._chat_send_wait = self.timing.chat_message_gap_frames
             self.info("Union Room chat: sending our JOIN; the console lists us as a member.")
         elif msg["cmd"] in (uroom_chat.LEAVE, uroom_chat.DROP, uroom_chat.DISBAND):
-            # The child parks on !gReceivedRemoteLinkPlayers until the parent drops the link, then
-            # saves and walks back into the room [union_room_chat.c:657].
-            self.done = True
-            self.info("Union Room chat: the console left the chat; closing the link.")
+            self._begin_chat_exit()
+
+    def _begin_chat_exit(self):
+        """Task_ReceiveChatMessage case 4 [union_room_chat.c:1524]: with only the two of us left,
+        the leader stops its partner search, sends a DROP block of its own, then runs
+        SetCloseLinkCallback and drops the link [ChatEntryRoutine_ExitChat, :665]. The leaver is
+        parked on !gReceivedRemoteLinkPlayers and does nothing until we do (u13: without this the
+        console sat on its yes/no prompt while we sat on `done`)."""
+        if self._chat_exiting:
+            return
+        self._chat_exiting = True
+        self._chat_send_wait = None
+        self._chat_outbox.clear()
+        self._queue_block(uroom_chat.build(uroom_chat.DROP, self.lp.name, multiplayer_id=0),
+                          "host:chat_drop")
+        self.info("Union Room chat: the console left the chat; sending our DROP, then closing "
+                  "the link it is waiting on.")
+
+    def _tick_chat_exit(self):
+        """Hold in the chat until our DROP has drained, then take the room's close-link path. The
+        console answers no READY_CLOSE_LINK here, so the grace is our own bounded timer."""
+        if self._sender is not None or self._blocks or self._words:
+            return
+        self._set_state(H_CLOSE)
+        self._close_confirmed = False
+        self._close_grace_wait = self.timing.chat_exit_close_frames
+        for _ in range(self.timing.startup_standby_echo_frames):
+            self._queue_words(rfu.close_link_words(self._exit_count), "READY_CLOSE_LINK")
+        self._close_retry_wait = self.timing.close_retry_frames
+        self.trace.append(("chat_exit_close", self._exit_count))
+        self.info("Union Room chat: our DROP is out; closing the RFU link, which is what the "
+                  "console is waiting for.")
 
     def _tick_chat_outbox(self):
         """One queued line at a time, spaced: the console latches a single block per player and

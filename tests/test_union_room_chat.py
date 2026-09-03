@@ -181,10 +181,45 @@ def test_an_in_flight_block_defers_the_next_line():
 
 
 @pytest.mark.parametrize("cmd", [uroom_chat.LEAVE, uroom_chat.DROP, uroom_chat.DISBAND])
-def test_the_console_leaving_the_chat_closes_the_link(cmd):
-    h = _engine(union_room_chat=True)
+def test_the_console_leaving_the_chat_sends_our_drop_then_closes(cmd):
+    """u13: the console sent LEAVE and then parked on !gReceivedRemoteLinkPlayers while we sat on
+    an internal flag, so its yes/no prompt never cleared. The leader's native answer is a DROP
+    block of its own followed by SetCloseLinkCallback [union_room_chat.c:1524, :665]."""
+    from frlgsim.host_trade import H_CLOSE
+    h = _engine(union_room_chat=True, chat_messages=["UNSENT"])
     h.feed_child_slot(_packet_slot(0x45))
-    assert not h.done
+    h._blocks.clear()
     h._after_child_block(trade.COUNT_RIBBON,
                          uroom_chat.build(cmd, "SWITCH", multiplayer_id=1))
-    assert h.done
+    assert _labels(h) == ["host:chat_drop"]
+    assert uroom_chat.parse(h._blocks[0][0])["cmd"] == uroom_chat.DROP
+    assert not h._chat_outbox                      # queued lines are abandoned, not sent at exit
+    assert not h.done and not h.disconnect_requested
+    closed_at = None
+    for i in range(600):
+        h.tick()
+        if h.state == H_CLOSE and closed_at is None:
+            closed_at = i
+        if h.disconnect_requested:
+            break
+    assert closed_at is not None, "never reached the close-link handshake"
+    assert h.disconnect_requested, "never asked for the disconnect the console is waiting on"
+    assert any(entry[0] == "chat_exit_close" for entry in h.trace)
+
+
+def test_the_chat_exit_grace_is_not_stretched_by_a_late_close_from_the_console():
+    """The room path waits 15s after the console's own READY_CLOSE_LINK; the chat leaver never
+    sends one, and a stray one must not push our disconnect past its own bounded timer."""
+    h = _engine(union_room_chat=True)
+    h.feed_child_slot(_packet_slot(0x45))
+    h._after_child_block(trade.COUNT_RIBBON,
+                         uroom_chat.build(uroom_chat.LEAVE, "SWITCH", multiplayer_id=1))
+    for _ in range(30):
+        h.tick()
+    h.feed_child_slot(rfu.serialize(rfu.close_link_words(2)))
+    assert h._close_grace_wait <= h.timing.chat_exit_close_frames
+    for _ in range(600):
+        h.tick()
+        if h.disconnect_requested:
+            break
+    assert h.disconnect_requested
