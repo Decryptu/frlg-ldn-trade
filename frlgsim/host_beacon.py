@@ -102,7 +102,9 @@ def build_union_room_app_data(profile, host_session_id, activity=None):
     UNTESTED on hardware: no run has advertised this yet.
     """
     if activity is None:
-        activity = beacon.ACTIVITY_SEARCH
+        # IN_UNION_ROOM | ACTIVITY_NONE: IsPartnerActivityIncompatible [link_rfu_2.c:2933] requires
+        # partner->activity == IN_UNION_ROOM exactly, so the trade intent must NOT be advertised.
+        activity = beacon.IN_UNION_ROOM
     app_data = bytearray(beacon.mutate_beacon(
         CAPTURED_TRADE_BEACON, name=profile.discovery_name,
         trainer_id=profile.discovery_trainer_id))

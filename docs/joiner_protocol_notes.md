@@ -381,3 +381,54 @@ HYPOTHESIS, untested: with `--union-room` the middle NPC lists us. UNKNOWN: what
 after it joins. The Union Room is a persistent room with avatars, chat and `ACTIVITY_PLYRTALK`
 negotiation, not the trade centre's straight-to-trade flow, so being listed is very unlikely to be
 enough to reach a trade. Being listed at all is the single thing the next run should test.
+
+### The Union Room connect, on hardware (u01-u04, 2026-09-03)
+
+FACT (u01, u02): advertising `IN_UNION_ROOM | ACTIVITY_TRADE` (0x44) spawns the PkCamp avatar in the
+room, and talking to it prints "Communication avec PkCamp" then "le DRESSEUR est occupe" with **not one
+packet from the console on the air**. The whole capture is our own beacons; `pia_msgs.py` finds no Pia
+message at all.
+
+DEDUCTION, then confirmed: `IsPartnerActivityIncompatible` [src/link_rfu_2.c:2925] tests
+
+    else if (partner->activity != IN_UNION_ROOM)   // [link_rfu_2.c:2933]
+        return TRUE;
+
+as an **exact equality**, so any activity bits beside IN_UNION_ROOM fail it. The connect is refused
+inside `Task_TryConnectToUnionRoomParent` [link_rfu_2.c:2963] before the RFU layer transmits, which is
+why the air is silent. The trade intent is carried in `sPlayerCurrActivity` and negotiated after the
+link is up (UR_STATE_SEND_TRADE_REQUST), never advertised.
+
+FACT (u03, u04, two runs, identical): advertising the bare `IN_UNION_ROOM` (0x40) connects. The console
+joins LDN, completes the Pia Session join, answers RTT liveness, sends its RFU identity, and we reach
+H_LINK_PLAYER. It then sends the RFU disconnect 'D' 0.1-0.2s after our join-status NI and leaves.
+Pia is healthy to the last frame (RTT req/rsp still flowing, no loss), so the 'D' is a game-layer
+rejection, not a transport failure. u03 and u04 die at the same point with the same frame shape.
+
+FACT: the game-layer traffic in u03 is 32 gba frames against 13413 in the good trade-centre run h8.
+In u03 we send NI_S, NI, NI_E, then `0x47`, then a **second** NI_S and a burst of repeated NI frames
+(seq 65530-65533) before the console answers 'D'.
+
+UNKNOWN: why the console rejects that NI stream. The two candidate readings are (a) the second NI
+transfer is wrong here and the union room expects a single one, (b) the union room's post-connect
+protocol differs from the trade centre's and our H_LINK_PLAYER state machine is simply the wrong
+conversation. Do not conclude between them without evidence.
+
+What the console expects after the connect [src/union_room.c:2858-2879]:
+
+    if (gReceivedRemoteLinkPlayers) {
+        CreateTrainerCardInBuffer(gBlockSendBuffer, TRUE);
+        CreateTask(Task_ExchangeCards, 5);
+        uroom->state = UR_STATE_COMMUNICATING_WAIT_FOR_DATA;
+    }
+    ... then, if sPlayerCurrActivity == (ACTIVITY_TRADE | IN_UNION_ROOM),
+        UR_STATE_SEND_TRADE_REQUST
+
+DEDUCTION: the Union Room is not a separate transport. It is the ordinary link plus a **trainer card
+block exchange** (`Task_ExchangeCards`) in front of the trade request. Step 1, the LinkPlayer exchange
+that sets `gReceivedRemoteLinkPlayers`, is code the trade host already has and is where u03/u04 die.
+Step 2 (trainer card) and step 3 (trade request) are unwritten.
+
+Also FACT, free observations: the avatar tracks our beacon live (it walked out and back in when the
+host was restarted mid-session) and it animates/walks. The room's player list is not a snapshot taken
+at entry.

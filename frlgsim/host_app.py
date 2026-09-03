@@ -72,11 +72,13 @@ class HostApplication:
         link_player = self.profile.to_link_player()
         self.session = host_session.HostSession(
             party, plan=self.plan, profile=self.profile, log=self.log)
-        build_app_data = (build_union_room_app_data
-                          if getattr(self.options, "union_room", False)
-                          else build_trade_app_data)
-        inactive, active = build_app_data(
-            self.profile, self.session.rfu.host_session_id)
+        if getattr(self.options, "union_room", False):
+            inactive, active = build_union_room_app_data(
+                self.profile, self.session.rfu.host_session_id,
+                activity=getattr(self.options, "union_room_activity", None))
+        else:
+            inactive, active = build_trade_app_data(
+                self.profile, self.session.rfu.host_session_id)
         self.tracer = (ldntrace.Tracer(self.ldn.capture_path, log=self.log)
                        if self.ldn.capture_path else None)
         self.network = self.transport_factory(

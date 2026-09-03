@@ -54,10 +54,15 @@ def test_constants_match_the_decomp():
     assert beacon.IN_UNION_ROOM & beacon.SEARCH_ACTIVITY_MASK == beacon.IN_UNION_ROOM
 
 
-def test_union_room_advertisement_declares_activity_search():
+def test_default_advertisement_is_the_bare_in_union_room_activity():
+    """HARDWARE-PROVEN (u03): IsPartnerActivityIncompatible [link_rfu_2.c:2933] tests
+    partner->activity != IN_UNION_ROOM as an exact equality. Advertising
+    IN_UNION_ROOM | ACTIVITY_TRADE (u01, u02) made the console fail the connect instantly with
+    "the trainer appears busy" and no packet on the air; the bare bit connected."""
     inactive, active = build_union_room_app_data(DEFAULT_TRAINER, SESSION_ID)
     word = _search_word(inactive)
-    assert word & beacon.SEARCH_ACTIVITY_MASK == beacon.ACTIVITY_SEARCH
+    assert word & beacon.SEARCH_ACTIVITY_MASK == beacon.IN_UNION_ROOM
+    assert word & beacon.SEARCH_ACTIVITY_MASK & ~beacon.IN_UNION_ROOM == 0
     # SetHostRfuGameData(ACTIVITY_SEARCH, 0, FALSE): no started bit, no wonder flags.
     assert not word & beacon.SEARCH_STARTED_ACTIVITY
     assert not word & beacon.SEARCH_HAS_CARD
@@ -109,7 +114,40 @@ def test_union_room_flag_parses_and_reaches_host_options():
     assert default_options.union_room is False
 
 
-def _advertised_activity(union_room):
+def test_activity_names_resolve_to_the_decomp_values():
+    resolve = config.resolve_union_room_activity
+    assert resolve(None) == beacon.IN_UNION_ROOM   # proven default, see u03
+    assert resolve("search") == beacon.ACTIVITY_SEARCH
+    assert resolve("in-room") == beacon.IN_UNION_ROOM
+    assert resolve("in-room-trade") == beacon.IN_UNION_ROOM | beacon.ACTIVITY_TRADE
+    for name, value in config.UNION_ROOM_ACTIVITIES.items():
+        assert value & beacon.SEARCH_ACTIVITY_MASK == value, name
+    try:
+        resolve("nonsense")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("unknown name must raise")
+
+
+def test_in_room_activities_carry_the_union_room_bit_and_search_does_not():
+    """The two forms are not interchangeable: a console standing in the room searches with the
+    RESUME list and would drop a bare ACTIVITY_SEARCH advertisement."""
+    assert not config.resolve_union_room_activity("search") & beacon.IN_UNION_ROOM
+    for name in ("in-room", "in-room-trade", "in-room-chat"):
+        assert config.resolve_union_room_activity(name) & beacon.IN_UNION_ROOM
+
+
+def test_union_room_activity_flag_reaches_host_options():
+    import frlgtrade_host
+    parser = frlgtrade_host.build_parser()
+    args = parser.parse_args(["--union-room", "--union-room-activity", "in-room-trade", "--no-live"])
+    _p, _l, options = host_cli.build_host_config(parser, args)
+    assert options.union_room_activity == beacon.IN_UNION_ROOM | beacon.ACTIVITY_TRADE
+    assert options.union_room is True
+
+
+def _advertised_activity(union_room, union_room_activity=None):
     """Drive the real HostApplication._build_components and read the activity it puts on the air."""
     seen = {}
 
@@ -122,7 +160,8 @@ def _advertised_activity(union_room):
         config.TradePlan(party_paths=("PARTY1.pk3", "PARTY2.pk3"), trade_slot=1,
                          offered_slots=(1,), trust_pia=True),
         config.LdnConfig(phy="phy7", keys_path=__file__),
-        config.HostOptions(union_room=union_room))
+        config.HostOptions(union_room=union_room,
+                           union_room_activity=union_room_activity))
     app = HostApplication(run, transport_factory=FakeTransport, log=lambda *_a: None,
                           injector_factory=lambda **unused: None)
     app._build_components()
@@ -130,8 +169,14 @@ def _advertised_activity(union_room):
 
 
 def test_host_app_advertises_activity_search_only_with_the_option():
-    assert _advertised_activity(True) == beacon.ACTIVITY_SEARCH
+    assert _advertised_activity(True) == beacon.IN_UNION_ROOM
     assert _advertised_activity(False) == beacon.ACTIVITY_TRADE
+
+
+def test_host_app_advertises_the_chosen_in_room_activity():
+    """The run we are about to spend: a console standing in the room needs IN_UNION_ROOM set."""
+    activity = beacon.IN_UNION_ROOM | beacon.ACTIVITY_TRADE
+    assert _advertised_activity(True, activity) == activity
 
 
 if __name__ == "__main__":

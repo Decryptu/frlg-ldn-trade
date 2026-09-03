@@ -42,6 +42,12 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
              "can list us, instead of the wireless club trade centre's THIRD NPC. UNTESTED on "
              "hardware: the Union Room search accepts only ACTIVITY_SEARCH "
              "(sAcceptedActivityIds_Init), which is why the normal trade beacon is invisible there")
+    parser.add_argument(
+        "--union-room-activity", choices=sorted(configmod.UNION_ROOM_ACTIVITIES), default=None,
+        help="which activity --union-room advertises. 'search' (default) is what the console looks "
+             "for on the screen BEFORE entering the room (Task_InitUnionRoom). Use an 'in-room' "
+             "value for a console already STANDING in the room: it runs Task_RunUnionRoom and its "
+             "search accepts IN_UNION_ROOM | activity instead")
     parser.add_argument("--anim-delay", type=int, default=None,
                         help="override the proven trade-animation frame delay")
     parser.add_argument(

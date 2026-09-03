@@ -4,7 +4,7 @@ from pathlib import Path
 import tomllib
 from typing import Any, Mapping
 
-from . import charmap, gift_registry, linkplayer, ni, stamp_rally, wonder_card
+from . import beacon, charmap, gift_registry, linkplayer, ni, stamp_rally, wonder_card
 
 
 VERSIONS = {
@@ -210,6 +210,10 @@ class HostOptions:
     # Advertise ACTIVITY_SEARCH so the Union Room NPC's search can see us instead of the trade
     # centre's. UNTESTED on hardware; see tests/test_union_room_advertisement.py.
     union_room: bool = False
+    # Which activity --union-room advertises. None = ACTIVITY_SEARCH, the form Task_InitUnionRoom
+    # looks for (the screen before entering). A console already standing in the room runs
+    # Task_RunUnionRoom and searches with the RESUME list, which accepts IN_UNION_ROOM | activity.
+    union_room_activity: int | None = None
 
     def __post_init__(self):
         # LDN channels: 2.4 GHz 1/6/11 and 5 GHz 36/40/44/48 [kinnay LDN wiki, WLAN Channels].
@@ -220,6 +224,33 @@ class HostOptions:
         if self.scene_id is not None and (
                 type(self.scene_id) is not int or not 0 <= self.scene_id <= 0xFFFF):
             raise ValueError("scene_id must fit in 16 bits")
+
+
+# --union-room-activity names, resolved to the packed activity field.
+#   search    Task_InitUnionRoom advertises ACTIVITY_SEARCH and its search (LINK_GROUP_UNION_ROOM_INIT)
+#             accepts only ACTIVITY_SEARCH. This is the screen BEFORE entering the room.
+#   in-room*  Task_RunUnionRoom sets sPlayerCurrActivity = IN_UNION_ROOM and searches with
+#             LINK_GROUP_UNION_ROOM_RESUME, which accepts IN_UNION_ROOM | activity. This is a console
+#             standing in the room. [src/union_room.c:2664, src/data/union_room.h:407-418]
+UNION_ROOM_ACTIVITIES = {
+    "search": beacon.ACTIVITY_SEARCH,
+    "in-room": beacon.IN_UNION_ROOM | 0,                      # IN_UNION_ROOM | ACTIVITY_NONE
+    "in-room-trade": beacon.IN_UNION_ROOM | beacon.ACTIVITY_TRADE,
+    "in-room-chat": beacon.IN_UNION_ROOM | 5,                 # ACTIVITY_CHAT
+}
+
+
+def resolve_union_room_activity(name):
+    # Default to the in-room form: it is the only one proven to get a console past
+    # IsPartnerActivityIncompatible (u03). "search" remains untested.
+    if name is None:
+        return UNION_ROOM_ACTIVITIES["in-room"]
+    try:
+        return UNION_ROOM_ACTIVITIES[name]
+    except KeyError:
+        raise ValueError(
+            "union_room_activity must be one of "
+            + ", ".join(sorted(UNION_ROOM_ACTIVITIES)))
 
 
 HOST_CONFIG_FILENAME = "host.toml"

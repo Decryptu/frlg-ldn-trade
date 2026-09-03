@@ -168,6 +168,8 @@ def build_host_config(parser, args):
             session_response_first=args.session_response_first,
             # Only the trade host defines --union-room; the Mystery Gift host shares this parser.
             union_room=getattr(args, "union_room", False),
+            union_room_activity=config.resolve_union_room_activity(
+                getattr(args, "union_room_activity", None)),
         )
     except ValueError as exc:
         parser.error(str(exc))
