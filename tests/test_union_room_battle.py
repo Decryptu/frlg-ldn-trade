@@ -133,7 +133,17 @@ def test_we_advertise_a_version_that_makes_the_console_master():
     h = ub.battler_header()
     assert len(h) == ub.HEADER_SIZE == 31
     assert h[0] | (h[1] << 8) == ub.VERSION_NON_MASTER
-    assert h[2:] == bytes(29)               # healthy party, and no enigma berry
+    assert h[2] | (h[3] << 8) == ub.vs_screen_flags(2)
+    assert h[4:] == bytes(27)               # no enigma berry
+
+
+def test_a_healthy_party_slot_is_one_not_zero_on_the_vs_screen():
+    """BUFFER_PARTY_VS_SCREEN_STATUS [battle_main.c:718]: 1 healthy, 2 egg or statused, 3 fainted,
+    0 EMPTY. u17 sent 0 for two healthy mons and the console drew six empty balls for us."""
+    assert ub.vs_screen_flags(0) == 0
+    assert ub.vs_screen_flags(2) == 0b0101
+    assert ub.vs_screen_flags(6) == 0b010101010101
+    assert ub.battler_header(vs_flags=0)[2:4] == b"\x00\x00"
 
 
 def test_the_party_goes_out_as_the_same_three_blocks_the_trade_uses():
@@ -351,3 +361,24 @@ def test_the_battle_ends_and_stops_expecting_blocks():
                                       bytes([bl.ENDLINKBATTLE, 3, 0, 0])))
     assert h.battle.done and h.battle.outcome == 3
     assert h._expected is None
+
+
+def test_a_short_link_record_is_not_mistaken_for_a_trade_linkcmd():
+    """u17, the bug that cost the first battle run: a link buffer record with a 4-byte payload is 16
+    bytes, i.e. trade.COUNT_LINKCMD, so _on_child_block routed every ack and every short command --
+    including the very first GETMONDATA -- into the trade LINKCMD path and dropped it. Inside a
+    battle the state decides, not the size."""
+    from frlgsim import block, trade
+    h = _into_the_battle()
+    cmd = bl.build(bl.BUFFER_A, bl.OUR_BATTLER, bytes([bl.GETMONDATA, bl.REQUEST_ALL_BATTLE, 0, 0]))
+    assert len(cmd) == 16 and block.frag_count(len(cmd)) == trade.COUNT_LINKCMD
+    h._on_child_block(trade.COUNT_LINKCMD, cmd)
+    out = [bl.parse(b) for b in _sent(h)]
+    assert [r["buffer_id"] for r in out] == [bl.BUFFER_B, bl.EXEC_CLEAR]
+
+
+def test_a_linkcmd_sized_block_is_still_a_linkcmd_outside_a_battle():
+    from frlgsim import trade
+    h = _engine()
+    h._on_child_block(trade.COUNT_LINKCMD, bytes(24))
+    assert _sent(h) == []

@@ -58,15 +58,25 @@ def read_accept_block(data):
     raise ValueError(f"selection block starts 0x{data[0]:02x}, expected 0x51 or 0x52")
 
 
-def battler_header(version=VERSION_NON_MASTER, vs_screen_flags=0):
-    """struct LinkBattlerHeader. vs_screen_flags marks fainted party slots as `3 << i*2`
-    [BufferPartyVsScreenHealth_AtStart, battle_main.c:747]; healthy mons are 0. The enigma berry
-    tail stays zero: it only matters for a mon holding an Enigma Berry, which ours do not."""
+def vs_screen_flags(count):
+    """Two bits per party slot for the VS screen [BUFFER_PARTY_VS_SCREEN_STATUS, battle_main.c:718]:
+    1 = a healthy mon, 2 = an egg or a statused one, 3 = fainted, and 0 = AN EMPTY SLOT. u17 sent 0
+    for a healthy party and the console drew six empty balls next to our name; healthy is 1, not 0."""
+    flags = 0
+    for i in range(count):
+        flags |= 1 << (i * 2)
+    return flags
+
+
+def battler_header(version=VERSION_NON_MASTER, vs_flags=None, party_count=2):
+    """struct LinkBattlerHeader. The enigma berry tail stays zero: it only matters for a mon holding
+    an Enigma Berry, which ours do not."""
+    vs_screen_flags_value = vs_screen_flags(party_count) if vs_flags is None else vs_flags
     out = bytearray(HEADER_SIZE)
     out[0] = version & 0xFF
     out[1] = (version >> 8) & 0xFF
-    out[2] = vs_screen_flags & 0xFF
-    out[3] = (vs_screen_flags >> 8) & 0xFF
+    out[2] = vs_screen_flags_value & 0xFF
+    out[3] = (vs_screen_flags_value >> 8) & 0xFF
     return bytes(out)
 
 

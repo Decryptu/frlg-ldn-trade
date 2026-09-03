@@ -782,7 +782,11 @@ class HostTradeEngine:
                 "for 15 seconds before disconnecting.")
 
     def _on_child_block(self, count, data):
-        if count == trade.COUNT_LINKCMD:
+        # u17: a battle link buffer record with a 4-byte payload is 16 bytes, which is exactly
+        # COUNT_LINKCMD, so every ack and every short command was being read as a trade LINKCMD and
+        # silently dropped. There are no trade LINKCMDs inside a battle: let the state decide, not
+        # the size. It cost the first battle run at the very first GETMONDATA.
+        if count == trade.COUNT_LINKCMD and self.state != H_UROOM_BATTLE_LINK:
             self._on_child_linkcmd(int.from_bytes(data[:2], "little"),
                                    int.from_bytes(data[2:4], "little"))
         else:
