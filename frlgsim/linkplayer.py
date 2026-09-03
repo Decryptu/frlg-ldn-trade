@@ -4,7 +4,7 @@ pulled as a fixed 200-byte buffer (count=17) with the block at offset 0."""
 
 from dataclasses import dataclass
 
-from . import charmap
+from . import charmap, easychat
 
 GAMEFREAK_MAGIC = b"GameFreak inc.\x00\x00"      # 16 bytes: "GameFreak inc." + null + 0 pad
 assert len(GAMEFREAK_MAGIC) == 16
@@ -82,12 +82,14 @@ TC_OFF_STARS = 0x01
 TC_OFF_HAS_POKEDEX = 0x02                # TrainerCardRSE.hasPokedex (bool8)
 TC_OFF_TRAINER_ID = 0x0E                 # TrainerCardRSE.trainerId (u16)
 TC_OFF_PLAYER_NAME = 0x30                # TrainerCardRSE.playerName[PLAYER_NAME_LENGTH+1]
+TC_OFF_EASY_CHAT = 0x28                  # TrainerCardRSE.easyChatProfile (u16[4])
 TC_OFF_VERSION = 0x38                    # TrainerCard.version (u8)
 TC_OFF_MON_SPECIES = 0x54               # TrainerCard.monSpecies[PARTY_SIZE] (u16[6])
 TC_OFF_WONDER_CARD = TRAINER_CARD_SIZE   # u16 written by CreateTrainerCardInBuffer @ offset 96
 
 
-def build_trainer_card(link_player, wonder_card_id=0, mon_species=None, *, name_pad=0x00):
+def build_trainer_card(link_player, wonder_card_id=0, mon_species=None, *, name_pad=0x00,
+                       quote=None):
     """Reuses the LinkPlayer OT/trainerId/version so CopyTrainerCardData sees them aligned with the LinkPlayerBlock."""
     card = bytearray(TRAINER_CARD_BLOCK_SIZE)
     card[TC_OFF_GENDER] = link_player.gender & 0xFF
@@ -99,6 +101,11 @@ def build_trainer_card(link_player, wonder_card_id=0, mon_species=None, *, name_
         (link_player.trainer_id & 0xFFFF).to_bytes(2, "little")
     card[TC_OFF_PLAYER_NAME:TC_OFF_PLAYER_NAME + 8] = \
         charmap.encode(link_player.name, width=8, pad=name_pad)
+    # The profile quote. All zeros is word 0, which CopyEasyChatWord rejects and prints as "???"
+    # -- that is what the console showed for our card in u08-u11 [easychat.py].
+    for i, w in enumerate(easychat.resolve_quote(quote)):
+        o = TC_OFF_EASY_CHAT + i * 2
+        card[o:o + 2] = (w & 0xFFFF).to_bytes(2, "little")
     # TrainerCard.version is the raw gGameVersion byte, not the 0x4000-tagged LinkPlayer.version
     card[TC_OFF_VERSION] = link_player.version & 0xFF
     if mon_species:

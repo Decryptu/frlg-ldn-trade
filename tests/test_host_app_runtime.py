@@ -287,7 +287,7 @@ def test_runtime_keeps_ticking_without_participant_through_close_grace():
     assert app.run() is True
     assert peer.ticks == 4
     assert session.leave_calls == 0
-    assert any("15-second host grace period" in line for line in log)
+    assert any("settling for a moment" in line for line in log)
     assert network.stopped == injector.stopped == 1
 
 
@@ -365,3 +365,46 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(value):
             value()
     print("host application runtime tests: OK")
+
+
+class _FakeActivity:
+    def __init__(self, close_confirmed=False, done=False):
+        self.close_confirmed = close_confirmed
+        self.done = done
+
+
+def _absence_app(**activity):
+    app = HostApplication.__new__(HostApplication)
+    app._absence_logged = False
+    app._absence_since = None
+    app.info = lambda *a: None
+    act = _FakeActivity(**activity)
+    app._activity = lambda: act
+    return app, act
+
+
+def test_a_console_that_never_confirmed_a_room_exit_stops_the_host_at_once():
+    app, _ = _absence_app()
+    assert "stopping host peer traffic" in app._absence_stop_reason(0.0)
+
+
+def test_a_confirmed_close_settles_briefly_and_then_stops():
+    """0 of 356 host logs ever reached this completion: the host waited for an activity `done`
+    that cannot arrive once the console is gone, and every clean close ended in a SIGTERM."""
+    app, _ = _absence_app(close_confirmed=True)
+    assert app._absence_stop_reason(100.0) is None          # first sighting: start settling
+    assert app._absence_stop_reason(100.0 + host_app.HOST_CLOSE_SETTLE_SECONDS / 2) is None
+    reason = app._absence_stop_reason(100.0 + host_app.HOST_CLOSE_SETTLE_SECONDS)
+    assert reason is not None and "stopped cleanly" in reason
+
+
+def test_an_activity_that_finished_on_its_own_stops_without_settling():
+    app, _ = _absence_app(close_confirmed=True, done=True)
+    assert "stopping host peer traffic" in app._absence_stop_reason(0.0)
+
+
+def test_the_settle_clock_starts_at_the_first_absence_not_at_the_run_start():
+    app, _ = _absence_app(close_confirmed=True)
+    assert app._absence_stop_reason(500.0) is None
+    assert app._absence_since == 500.0
+    assert app._absence_stop_reason(500.0 + host_app.HOST_CLOSE_SETTLE_SECONDS) is not None

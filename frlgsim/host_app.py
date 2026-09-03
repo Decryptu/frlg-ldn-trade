@@ -14,6 +14,10 @@ from .host_support import resolve_keys
 
 
 HOST_CONTROL_POLL_SECONDS = 0.05
+# Settle time after the console has left LDN following a confirmed room exit. It is not the
+# 15-second post-exit grace: that grace keeps Pia traffic alive while the Switch fades and
+# warps, and the console leaving LDN is that finishing.
+HOST_CLOSE_SETTLE_SECONDS = 2.0
 CHAT_FILE_POLL_SECONDS = 0.25
 
 
@@ -81,6 +85,7 @@ class HostApplication:
         self._saved_commits = 0
         self._last_trade_state = None
         self._absence_logged = False
+        self._absence_since = None
         self.interrupted = False
         self.idle_timed_out = False
 
@@ -208,7 +213,28 @@ class HostApplication:
 
     def _close_grace_message(self):
         return ("The console left LDN after confirming room exit; "
-                "finishing the 15-second host grace period.")
+                "settling for a moment before the host stops.")
+
+    def _absence_stop_reason(self, now):
+        """The console is gone from LDN. Returns the message to stop on, or None to keep going.
+
+        Waiting here for the activity's own `done` deadlocks. `done` is set from the session's
+        disconnect path, whose timer only advances inside `activity.tick()`, and the hole guard
+        stops calling that as soon as the departed console's acks stop arriving -- so the clock
+        that would release the guard is itself behind the guard. Zero of 356 host logs ever
+        reached this completion; every clean close so far ended in a SIGTERM.
+        """
+        activity = self._activity()
+        if not activity.close_confirmed or activity.done:
+            return "The console left the LDN network; stopping host peer traffic."
+        if not self._absence_logged:
+            self._absence_logged = True
+            self._absence_since = now
+            self.info(self._close_grace_message())
+            return None
+        if now - self._absence_since >= HOST_CLOSE_SETTLE_SECONDS:
+            return self._completion_message()
+        return None
 
     def _completion_message(self):
         return "Room-exit grace period complete; host peer traffic stopped cleanly."
@@ -296,14 +322,10 @@ class HostApplication:
                     self.peer.on_participant_joined()
                     self.info("Switch joined the Linux LDN host successfully.")
                 if joined_once and not self.network.participants:
-                    activity = self._activity()
-                    if activity.close_confirmed and not activity.done:
-                        if not self._absence_logged:
-                            self._absence_logged = True
-                            self.info(self._close_grace_message())
-                    else:
+                    reason = self._absence_stop_reason(time.monotonic())
+                    if reason is not None:
                         self.session.on_ldn_leave()
-                        self.info("The console left the LDN network; stopping host peer traffic.")
+                        self.info(reason)
                         break
 
                 received = self.network.recv()

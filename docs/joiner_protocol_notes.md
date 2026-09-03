@@ -738,6 +738,41 @@ DEDUCTION: the chat-exit fix is 2/2 on hardware (u14, u15). Round-trip latency i
 console's on-screen keyboard, not by the link: our reply lands ~1.7s after the file is written
 (one chat_message_gap_frames wait plus the block send).
 
+## Two host-side defects found offline (2026-09-03)
+
+### The host never stopped on its own after a successful close
+
+FACT: of 356 host logs on disk, not one reached `_completion_message` ("Room-exit grace period
+complete"). 124 stopped by themselves, every one of them through the branch taken when the console
+leaves LDN *without* having confirmed a room exit -- early deaths and failed joins. Every clean
+close in the project's history ended in a SIGTERM, which is why the notes carried "the host does
+not exit on its own" as a fact about the host rather than as the bug it is.
+
+DEDUCTION: the runtime waited for the activity's `done`, and `done` cannot arrive once the console
+is gone. `done` is set from the session's disconnect path, which is gated on
+`disconnect_requested`; that flag is set by `_tick_close_link`, which only runs inside
+`activity.tick()`; and `HostSession.tick` returns before calling `activity.tick()` while the hole
+guard holds. A departed console stops acking, so the guard latches within a few frames and the
+clock that would release it never advances. The guard's own comment says the close path must never
+be gated -- it is the close *decision* that was.
+
+Fixed at the runtime: once the console has left LDN after a confirmed exit, the host settles
+briefly and stops. The 15-second post-exit grace was for keeping Pia traffic alive while the Switch
+fades and warps, and the console leaving LDN is that finishing.
+
+UNKNOWN, not fixed: a console that is still in LDN but has stopped acking will also stall the close
+timer behind the guard. No run has shown it -- u14 and u15 both had the console send its own 'D'
+and leave -- so the transport hot path is left alone.
+
+### The trainer card's profile quote read "??? ???"
+
+FACT: an all-zero `easyChatProfile` is word 0, which is group EC_GROUP_POKEMON_2 index 0
+(SPECIES_NONE). `IsECWordInvalid` rejects it and `CopyEasyChatWord` substitutes
+gText_ThreeQuestionMarks [easy_chat.c:166-171], which is what the console displayed for our card in
+u08-u11. A word is `(group & 0x7F) << 9 | (index & 0x1FF)` [EC_WORD, easy_chat.h:1089] and the card
+holds four [trainer_card.h:28]. The card now carries a real phrase; a short one pads with
+EC_WORD_UNDEFINED (0xFFFF), which prints nothing rather than "???".
+
 ## The console's ack lag is a 512 ms metronome, not congestion (2026-09-03)
 
 The ident-25 work left an UNKNOWN: what makes the console's cumulative ack fall behind in the first

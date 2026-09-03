@@ -195,7 +195,9 @@ class HostTradeEngine:
         self._host_cancel_ready = False
         self._child_cancel_requested = False
         self._select_cancels = 0        # consecutive console CANCELs at the select screen
-        self._close_retry_wait = None
+        # Every entry into H_CLOSE resets this; a real value rather than None keeps the type stable
+        # for _tick_close_link, which is the only reader.
+        self._close_retry_wait = self.timing.close_retry_frames
         self._close_confirmed = False
         self._close_grace_wait = None
         # Room entry is a real held-key movement route, not a static READY flag; omitting it strands
