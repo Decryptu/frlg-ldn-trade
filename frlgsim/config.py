@@ -227,6 +227,8 @@ class HostOptions:
     # Accept the room's "Tchat" instead of declining it, and the lines to send once the chat opens.
     union_room_chat: bool = False
     chat_messages: tuple = ()
+    # A file the running host tails: every line appended to it is sent into a live chat.
+    chat_file: str | None = None
 
     def __post_init__(self):
         # LDN channels: 2.4 GHz 1/6/11 and 5 GHz 36/40/44/48 [kinnay LDN wiki, WLAN Channels].

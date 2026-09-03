@@ -224,3 +224,86 @@ def test_the_chat_exit_grace_is_not_stretched_by_the_consoles_own_close():
         if h.disconnect_requested:
             break
     assert h.disconnect_requested
+
+
+# --- live input ------------------------------------------------------------------------------
+
+def _open_chat(**kw):
+    h = _engine(union_room_chat=True, **kw)
+    h.feed_child_slot(_packet_slot(0x45))
+    h._after_child_block(trade.COUNT_RIBBON,
+                         uroom_chat.build(uroom_chat.JOIN, "SWITCH", multiplayer_id=1))
+    h._blocks.clear()
+    h._chat_send_wait = 0
+    return h
+
+
+def test_a_line_can_be_queued_while_the_chat_is_live():
+    h = _open_chat()
+    assert h.queue_chat_message("BONJOUR") is True
+    h._tick_chat_outbox()
+    assert [uroom_chat.parse(b)["text"] for b, _ in h._blocks] == ["BONJOUR"]
+
+
+def test_a_line_queued_after_the_outbox_drained_still_goes_out():
+    """_chat_send_wait is None once every queued line has been sent; a new line must restart it."""
+    h = _open_chat()
+    for _ in range(3 * h.timing.chat_message_gap_frames):
+        h._tick_chat_outbox()
+    assert h._chat_send_wait is None
+    assert h.queue_chat_message("ENCORE") is True
+    h._blocks.clear()
+    h._tick_chat_outbox()
+    assert [uroom_chat.parse(b)["text"] for b, _ in h._blocks] == ["ENCORE"]
+
+
+def test_queueing_is_refused_before_the_chat_opens_and_after_it_closes():
+    h = _engine(union_room_chat=True)
+    assert h.queue_chat_message("TOO EARLY") is False       # still at the prompt
+    h.feed_child_slot(_packet_slot(0x45))
+    assert h.queue_chat_message("STILL EARLY") is False     # accepted, but no JOIN yet
+    h._after_child_block(trade.COUNT_RIBBON,
+                         uroom_chat.build(uroom_chat.JOIN, "SWITCH", multiplayer_id=1))
+    assert h.queue_chat_message("NOW") is True
+    h._after_child_block(trade.COUNT_RIBBON,
+                         uroom_chat.build(uroom_chat.LEAVE, "SWITCH", multiplayer_id=1))
+    assert h.queue_chat_message("TOO LATE") is False
+
+
+def test_a_bad_live_line_raises_instead_of_being_sent_as_dots():
+    h = _open_chat()
+    with pytest.raises(ValueError):
+        h.queue_chat_message("A" * 40)
+    assert not h._chat_outbox
+
+
+def test_the_chat_file_watcher_yields_only_whole_lines(tmp_path):
+    from frlgsim.host_app import ChatFileWatcher
+    path = tmp_path / "chat.txt"
+    path.write_text("SALUT\nCA VA\npartial")
+    w = ChatFileWatcher(str(path))
+    assert w.lines(0.0) == ["SALUT", "CA VA"]        # "partial" is held back
+    assert w.lines(1.0) == []                         # nothing new
+    with open(path, "a") as fh:
+        fh.write(" LINE\nDERNIER\n")
+    assert w.lines(2.0) == ["partial LINE", "DERNIER"]
+
+
+def test_the_chat_file_watcher_survives_a_missing_or_truncated_file(tmp_path):
+    from frlgsim.host_app import ChatFileWatcher
+    path = tmp_path / "chat.txt"
+    w = ChatFileWatcher(str(path))
+    assert w.lines(0.0) == []                         # not created yet
+    path.write_text("UN\nDEUX\n")
+    assert w.lines(1.0) == ["UN", "DEUX"]
+    path.write_text("TROIS\n")                        # rewritten shorter
+    assert w.lines(2.0) == ["TROIS"]
+
+
+def test_the_chat_file_watcher_paces_its_polls():
+    from frlgsim.host_app import CHAT_FILE_POLL_SECONDS, ChatFileWatcher
+    w = ChatFileWatcher("/nonexistent")
+    assert w.due(0.0)
+    w.lines(0.0)
+    assert not w.due(CHAT_FILE_POLL_SECONDS / 2)
+    assert w.due(CHAT_FILE_POLL_SECONDS)

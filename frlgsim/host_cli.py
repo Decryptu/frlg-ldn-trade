@@ -175,6 +175,7 @@ def build_host_config(parser, args):
             union_room_board_level=getattr(args, "board_level", None),
             union_room_chat=getattr(args, "union_room_chat", False),
             chat_messages=tuple(getattr(args, "chat_message", None) or ()),
+            chat_file=getattr(args, "chat_file", None),
         )
     except ValueError as exc:
         parser.error(str(exc))

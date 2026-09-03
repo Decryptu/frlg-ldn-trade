@@ -62,6 +62,10 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help="Union Room: accept the console's 'Tchat' instead of declining it. Both sides send a "
              "JOIN block, then the console's keyboard opens and every line it types is logged")
     parser.add_argument(
+        "--chat-file", default=None, metavar="PATH",
+        help="Union Room chat: tail this file while the host runs and send every line appended to "
+             "it, so the chat can be answered live instead of queued at launch")
+    parser.add_argument(
         "--chat-message", action="append", default=None, metavar="TEXT",
         help="Union Room chat: a line to send once the chat opens, repeatable. Up to 30 Gen-3 "
              "charmap characters each; they go out one at a time, 1.5s apart")

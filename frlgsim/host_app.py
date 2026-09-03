@@ -14,6 +14,46 @@ from .host_support import resolve_keys
 
 
 HOST_CONTROL_POLL_SECONDS = 0.05
+CHAT_FILE_POLL_SECONDS = 0.25
+
+
+class ChatFileWatcher:
+    """Tails a file so lines appended to it while the host runs are sent into a live Union Room
+    chat. Only whole lines are taken, so a half-written line is never sent."""
+
+    def __init__(self, path, log=print):
+        self.path = path
+        self.log = log
+        self.info = getattr(log, "info", log)
+        self.offset = 0
+        self._partial = ""
+        self._next_poll = 0.0
+
+    def due(self, now):
+        return now >= self._next_poll
+
+    def lines(self, now):
+        self._next_poll = now + CHAT_FILE_POLL_SECONDS
+        try:
+            size = os.path.getsize(self.path)
+        except OSError:
+            return []
+        if size < self.offset:            # truncated or replaced: start over
+            self.offset, self._partial = 0, ""
+        if size == self.offset:
+            return []
+        try:
+            with open(self.path, "r", encoding="utf-8", errors="replace") as fh:
+                fh.seek(self.offset)
+                chunk = fh.read()
+                self.offset = fh.tell()
+        except OSError as exc:
+            self.info(f"Union Room chat: cannot read {self.path}: {exc}")
+            return []
+        text = self._partial + chunk
+        parts = text.split("\n")
+        self._partial = parts.pop()
+        return [line.strip() for line in parts if line.strip()]
 
 
 class HostApplication:
@@ -36,6 +76,8 @@ class HostApplication:
         self.tracer = None
         self.session = None
         self.peer = None
+        chat_file = getattr(self.options, "chat_file", None)
+        self.chat_watcher = ChatFileWatcher(chat_file, log=log) if chat_file else None
         self._saved_commits = 0
         self._last_trade_state = None
         self._absence_logged = False
@@ -180,6 +222,24 @@ class HostApplication:
     def _activity_succeeded(self):
         return bool(getattr(self._activity(), "gift_sent", False))
 
+    def _poll_chat_file(self, now):
+        """Send whatever has been appended to --chat-file into a live chat."""
+        if self.chat_watcher is None or not self.chat_watcher.due(now):
+            return
+        activity = self._activity()
+        if not hasattr(activity, "queue_chat_message"):
+            return
+        for line in self.chat_watcher.lines(now):
+            try:
+                sent = activity.queue_chat_message(line)
+            except ValueError as exc:
+                self.info(f"Union Room chat: skipping {line!r}: {exc}")
+                continue
+            if sent:
+                self.info(f"Union Room chat: queued {line!r} from {self.chat_watcher.path}.")
+            else:
+                self.info(f"Union Room chat: dropped {line!r}; the chat is not open.")
+
     def _log_activity_progress(self):
         activity = self._activity()
         state = activity.state
@@ -262,6 +322,7 @@ class HostApplication:
                     break
                 self._send_pending(self.peer.tick(now))
                 self._log_activity_progress()
+                self._poll_chat_file(now)
                 if self.session.rfu.ni_complete and not rfu_ni_logged:
                     rfu_ni_logged = True
                     self.info(self._rfu_ready_message())

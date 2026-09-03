@@ -928,6 +928,16 @@ class HostTradeEngine:
         self.info("Union Room chat: the console left the chat; sending our DROP, then closing "
                   "the link it is waiting on.")
 
+    def queue_chat_message(self, text):
+        """Add a line while the chat is live, so the operator can answer instead of queueing every
+        line at launch. Returns False once the chat is over or has not opened."""
+        if self.state != H_UROOM_CHAT or self._chat_exiting or not self._chat_joined:
+            return False
+        self._chat_outbox.append(uroom_chat.check_text(text))
+        if self._chat_send_wait is None:
+            self._chat_send_wait = 0          # the outbox had drained; send on the next tick
+        return True
+
     def _tick_chat_exit(self):
         """Hold in the chat until our DROP has drained, then take the room's close-link path with
         a short grace of our own: the leaver is already parked waiting for the link to go, so the
