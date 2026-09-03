@@ -550,6 +550,7 @@ class LiveTransport:
         tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         tx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         tx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        tx.setblocking(False)             # never freeze the frame loop on a jammed adapter queue
         tx.bind(("0.0.0.0", PIA_PORT))
         self._tx = tx
         rx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_IP))
@@ -1090,6 +1091,14 @@ class HostTransport:
             self.tracer.write("udp_out", dst=dst, hex=bytes(datagram).hex())
         try:
             self._tx.sendto(datagram, (dst, PIA_PORT))
+        except BlockingIOError:
+            # 2026-09-03 (lg129/lg133): when the console stops acking for ~0.5s (its flash save after
+            # accepting the card) the adapter's queue fills with hardware-retried frames and a blocking
+            # sendto froze this whole host process for 6-11s. The socket is non-blocking now; a frame
+            # that cannot be queued is dropped (Reliable re-sends it) and the frame loop keeps running.
+            self.tx_dropped = getattr(self, "tx_dropped", 0) + 1
+            if self.tx_dropped in (1, 10, 100, 1000):
+                self.log(f"[host] sendto would block; dropped {self.tx_dropped} datagram(s) so far")
         except OSError as e:                              # pragma: no cover
             self.log(f"[host] sendto failed: {e}")
 

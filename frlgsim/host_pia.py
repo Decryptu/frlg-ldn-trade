@@ -399,10 +399,25 @@ class HostPeerProtocol:
         self.carried_frames = getattr(self, "carried_frames", 0) + len(carried)
         return carried + outputs
 
+    def _console_quiet(self, now):
+        """True while the console has sent nothing for FRLG_QUIET_GATE_MS (default 250ms; 0 = off).
+        2026-09-03: the console goes silent ~0.5s after accepting the card (its save); retransmits
+        and carry-forward pushed into that silence pile up in the adapter as hardware-retried frames
+        and either freeze the host (blocking sendto) or flood the console when it returns."""
+        gate = _env_int("FRLG_QUIET_GATE_MS", 250) / 1000.0
+        last = getattr(self, "_last_rx", None)
+        return bool(gate) and last is not None and (now - last) > gate
+
     def _send_reliable(self, outputs):
         if not outputs or self.pia_crypto is None or self.guest_var is None or self.guest_ip is None:
             return
-        outputs = self._apply_carry_forward(list(outputs))
+        if self._console_quiet(time.monotonic()):
+            # keep only fresh (non-retransmitted) frames; no carry-forward
+            outputs = [o for o in outputs if not getattr(o, "retransmitted", False)]
+            if not outputs:
+                return
+        else:
+            outputs = self._apply_carry_forward(list(outputs))
         for chunk in reliable_output_batches(outputs):
             messages = [(pia_connect.PROTO_RELIABLE, item.serialize(), item.message_flags)
                         for item in chunk]
@@ -421,6 +436,7 @@ class HostPeerProtocol:
 
     def receive(self, datagram, src_ip, now=None):
         now = time.monotonic() if now is None else now
+        self._last_rx = now
         if self.pia_crypto is None:
             self.log("[host] UDP arrived before the Pia probe was initialized; ignoring it")
             return []
