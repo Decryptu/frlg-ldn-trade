@@ -605,3 +605,26 @@ retransmitted seq 419-422 and the console retransmitted 847-850 for four seconds
 'D' and left. dmesg has `rtw88_8822bu: failed to get tx report from firmware` at 18:23:50, the
 same second. The adapter stopped transmitting; the console never saw our ACKs. Not a protocol
 event. The same driver line appears 79 times in this machine's log; u06 survived one at 18:17:04.
+
+### u08-u11: the Union Room greet loop, end to end
+
+FACT (u08, u10, u11; u09 lost to the same one-way loss as u07): with `--union-room
+--union-room-keepalive 120` the console connects, waits its 480 frames, exchanges LinkPlayer blocks
+and trainer cards, and shows its menu. Salut sends SEND_PACKET 0x48; our ACCEPT (0x51) makes the
+console show our trainer card, which reads as expected (type NORMALE, Pokedex 0, time 00:00, 0
+battles, 0 trades; the easy-chat quote line shows "??? ???" because we leave it blank), then it
+runs a standby barrier and returns to the menu. A second Salut works (u10, after fixing a
+dedup that swallowed identical repeated requests in u08). Retour sends SEND_PACKET 0x40, then
+READY_CLOSE_LINK; once we answer with our own READY_CLOSE_LINK (u11) the console sends the normal
+'D', leaves LDN, and the player is back in the room with no error.
+
+UNKNOWN: the one-way loss in u07/u09 (our frames stop reaching the console 1-3 s after the
+keepalive ends, its frames keep reaching us, no send errors, steady packet rate). The dmesg
+tx-report line came 10 s after the u09 stall, at teardown, so the adapter-wedge reading of u07 is
+retracted. The launcher now records an air capture and station counters for every run; u10/u11
+did not reproduce it.
+
+NEXT: trading from the room. The console's trading board lists partners whose advertisement
+carries tradeSpecies / tradeType / tradeLevel [union_room.c:3400]; only tradeSpecies [record
+22:24] is located in the 24-byte record. Then `Task_StartUnionRoomTrade` [union_room.c:1936] on
+the console side, unread.
