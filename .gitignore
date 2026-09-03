@@ -56,3 +56,9 @@ frlgsim/POKEMON_FIRE_BPRE01.sav
 
 # built injector tool (comradesean pokemon-gen3-mysterygift-tool clone)
 tools/
+
+# md files
+CLAUDE.md
+NOTES.history.local.md
+NOTES.local.md
+REFERENCES.local.md
