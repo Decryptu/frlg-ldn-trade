@@ -77,7 +77,11 @@ NAMES = {
 
 # The seven commands whose handler emits a BUFFER_B reply as well as the ack
 # [sPlayerBufferCommands, battle_controller_player.c:110]. Everything else is display-only.
-NEEDS_REPLY = frozenset({GETMONDATA, CHOOSEACTION, CHOOSEMOVE, CHOOSEPOKEMON, OPENBAG, EXPUPDATE,
+# EXPUPDATE is deliberately NOT here: PlayerHandleExpUpdate [battle_controller_player.c:2513] runs
+# the exp bar and completes with no BUFFER_B, and only replies TWORETURNVALUES(RET_VALUE_LEVELED_UP)
+# from inside Task_GiveExpToMon when the mon actually levels up. Answering it unprompted would write
+# a value the master reads back as a level-up decision.
+NEEDS_REPLY = frozenset({GETMONDATA, CHOOSEACTION, CHOOSEMOVE, CHOOSEPOKEMON, OPENBAG,
                          GETRAWMONDATA})
 
 # Actions for a CHOOSEACTION reply [include/battle.h:34].

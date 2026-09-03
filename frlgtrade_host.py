@@ -71,6 +71,11 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help="Union Room battle: pick FIGHT with the first move instead of forfeiting at the first "
              "action prompt. Only the forfeit path has been proven on hardware")
     parser.add_argument(
+        "--battle-move", type=int, default=0, metavar="N", choices=(0, 1, 2, 3),
+        help="Union Room battle with --battle-fight: which of the active Pokemon's four move slots "
+             "to use. The default 0 is whatever move slot one holds, which for the tracked party is "
+             "REFRESH and does no damage")
+    parser.add_argument(
         "--chat-file", default=None, metavar="PATH",
         help="Union Room chat: tail this file while the host runs and send every line appended to "
              "it, so the chat can be answered live instead of queued at launch")

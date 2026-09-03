@@ -128,7 +128,8 @@ class HostApplication:
             union_room_chat=bool(getattr(self.options, "union_room_chat", False)),
             chat_messages=tuple(getattr(self.options, "chat_messages", ()) or ()),
             union_room_battle=bool(getattr(self.options, "union_room_battle", False)),
-            battle_forfeit=bool(getattr(self.options, "battle_forfeit", True)))
+            battle_forfeit=bool(getattr(self.options, "battle_forfeit", True)),
+            battle_move_slot=int(getattr(self.options, "battle_move_slot", 0) or 0))
         if union_room:
             trade_board = None
             board_type = getattr(self.options, "union_room_board_type", None)

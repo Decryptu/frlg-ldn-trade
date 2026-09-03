@@ -176,6 +176,7 @@ def build_host_config(parser, args):
             union_room_chat=getattr(args, "union_room_chat", False),
             union_room_battle=getattr(args, "union_room_battle", False),
             battle_forfeit=not getattr(args, "battle_fight", False),
+            battle_move_slot=getattr(args, "battle_move", 0) or 0,
             chat_messages=tuple(getattr(args, "chat_message", None) or ()),
             chat_file=getattr(args, "chat_file", None),
         )

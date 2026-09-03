@@ -98,10 +98,13 @@ class BattleController:
     battle_link.NEEDS_REPLY also want a BUFFER_B reply, and only for our own battler.
     """
 
-    def __init__(self, mons, *, multiplayer_id=0, forfeit=True, log=None):
+    def __init__(self, mons, *, multiplayer_id=0, forfeit=True, move_slot=0, log=None):
         self.mons = list(mons)
         self.multiplayer_id = multiplayer_id
         self.forfeit = forfeit
+        if not 0 <= move_slot < 4:
+            raise ValueError("move slot must be 0..3")
+        self.move_slot = move_slot
         self.log = log
         self.our_battler = bl.OUR_BATTLER
         self.active_index = 0       # gBattlerPartyIndexes[our battler]; slot 0 at battle start
@@ -139,6 +142,12 @@ class BattleController:
             return []
         battler, cmd = rec["active_battler"], rec["cmd"]
         self.commands.append((battler, cmd))
+        if cmd == bl.SWITCHINANIM and battler == self.our_battler:
+            # payload[1] is the party slot coming in [BtlController_EmitSwitchInAnim, :652]. This is
+            # the only place the master tells us which of our mons is now active, and CHOOSEPOKEMON
+            # after a faint needs it.
+            self.active_index = rec["payload"][1]
+            self._info(f"Union Room battle: our party slot {self.active_index} is now out.")
         out = []
         if battler == self.our_battler and cmd in bl.NEEDS_REPLY:
             reply = self._reply(rec)
@@ -163,12 +172,17 @@ class BattleController:
                 return bl.two_return_values(battler, bl.B_ACTION_RUN, 0)
             return bl.two_return_values(battler, bl.B_ACTION_USE_MOVE, 0)
         if cmd == bl.CHOOSEMOVE:
-            # move slot 0 at the opposing battler [battle_controller_player.c:342].
-            return bl.two_return_values(battler, bl.RET_CHOSEN_MOVE, 0 | (bl.MASTER_BATTLER << 8))
+            # ret16 is the move slot in the low byte and the target battler in the high one
+            # [battle_controller_player.c:342]; in a single battle the target is gActiveBattler ^
+            # BIT_SIDE, i.e. the master's mon.
+            return bl.two_return_values(battler, bl.RET_CHOSEN_MOVE,
+                                        self.move_slot | (bl.MASTER_BATTLER << 8))
         if cmd == bl.CHOOSEPOKEMON:
-            return bl.chosen_mon_return_value(battler, self.active_index)
+            # A faint: send out the other one. Two mons a side, so "not the active one" is the whole
+            # decision [union_room_battle.c:47].
+            slot = 1 if self.active_index == 0 else 0
+            self._info(f"Union Room battle: sending out our party slot {slot}.")
+            return bl.chosen_mon_return_value(battler, slot)
         if cmd == bl.OPENBAG:
             return bl.one_return_value(battler, 0)      # ITEM_NONE: we carry no bag
-        if cmd == bl.EXPUPDATE:
-            return bl.two_return_values(battler, 0, 0)  # not levelled up
         return None

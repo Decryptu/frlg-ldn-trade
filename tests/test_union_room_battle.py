@@ -411,3 +411,49 @@ def test_the_echo_gate_does_not_touch_the_proven_paths():
     h._queue_block(b"\x00" * 40, "host:test")
     h._next_parent_words()
     assert h._sender is not None
+
+
+def test_fighting_uses_the_chosen_move_slot_against_the_masters_mon():
+    """ret16 is the move slot low, the target battler high [battle_controller_player.c:342]; in a
+    single battle the target is gActiveBattler ^ BIT_SIDE, the master's mon."""
+    c = _controller(forfeit=False, move_slot=2)
+    out = c.feed(bl.build(bl.BUFFER_A, bl.OUR_BATTLER, bytes([bl.CHOOSEMOVE, 0, 0, 0])))
+    p = bl.parse(out[0])["payload"]
+    assert p[:2] == bytes([bl.TWORETURNVALUES, bl.RET_CHOSEN_MOVE])
+    assert p[2] == 2 and p[3] == bl.MASTER_BATTLER
+
+
+def test_an_impossible_move_slot_is_refused_at_construction():
+    with pytest.raises(ValueError):
+        _controller(move_slot=4)
+
+
+def test_switch_in_anim_tracks_which_of_our_mons_is_out():
+    """The only place the master tells us [BtlController_EmitSwitchInAnim, battle_controllers.c:652];
+    CHOOSEPOKEMON after a faint has to answer with the other one."""
+    c = _controller()
+    assert c.active_index == 0
+    c.feed(bl.build(bl.BUFFER_A, bl.OUR_BATTLER, bytes([bl.SWITCHINANIM, 1, 0, 5])))
+    assert c.active_index == 1
+    # a switch-in for the console's own mon is not ours to track
+    c.feed(bl.build(bl.BUFFER_A, bl.MASTER_BATTLER, bytes([bl.SWITCHINANIM, 0, 0, 5])))
+    assert c.active_index == 1
+
+
+def test_a_faint_sends_out_the_other_mon():
+    c = _controller()
+    out = c.feed(bl.build(bl.BUFFER_A, bl.OUR_BATTLER, bytes([bl.CHOOSEPOKEMON, 0, 0, 0])))
+    assert bl.parse(out[0])["payload"][:2] == bytes([bl.CHOSENMONRETURNVALUE, 1])
+    c.active_index = 1
+    out = c.feed(bl.build(bl.BUFFER_A, bl.OUR_BATTLER, bytes([bl.CHOOSEPOKEMON, 0, 0, 0])))
+    assert bl.parse(out[0])["payload"][:2] == bytes([bl.CHOSENMONRETURNVALUE, 0])
+
+
+def test_exp_update_is_acked_but_never_answered():
+    """PlayerHandleExpUpdate [battle_controller_player.c:2513] runs the bar and completes; only
+    Task_GiveExpToMon replies, and only on a real level-up. An unprompted reply would be read back
+    as a level-up decision."""
+    assert bl.EXPUPDATE not in bl.NEEDS_REPLY
+    c = _controller()
+    out = c.feed(bl.build(bl.BUFFER_A, bl.OUR_BATTLER, bytes([bl.EXPUPDATE, 0, 0, 0])))
+    assert [bl.parse(b)["buffer_id"] for b in out] == [bl.EXEC_CLEAR]

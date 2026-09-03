@@ -230,6 +230,7 @@ class HostOptions:
     # Accept the room's Combat instead of declining it, and whether to forfeit at the first prompt.
     union_room_battle: bool = False
     battle_forfeit: bool = True
+    battle_move_slot: int = 0
     # A file the running host tails: every line appended to it is sent into a live chat.
     chat_file: str | None = None
 

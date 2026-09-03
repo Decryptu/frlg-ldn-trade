@@ -127,7 +127,7 @@ class HostTradeEngine:
     def __init__(self, party, trade_slot=0, *, offered_slots=None, trades=1,
                  link_player=None, profile=None, anim_delay=1935, trust_pia=True, timing=None,
                  union_room=False, union_room_chat=False, chat_messages=None,
-                 union_room_battle=False, battle_forfeit=True,
+                 union_room_battle=False, battle_forfeit=True, battle_move_slot=0,
                  log=lambda *a: None):
         self.party = list(party)
         if not 1 <= len(self.party) <= 6:
@@ -158,6 +158,7 @@ class HostTradeEngine:
             raise ValueError("a Union Room battle needs two party Pokemon; pass a second with "
                              "PARTY2= or --party")
         self.battle_forfeit = bool(battle_forfeit)
+        self.battle_move_slot = int(battle_move_slot)
         self.battle = None                 # the BattleController, once the battle starts
         self.echo_backlog = 0              # set by HostSession each poll; see _echo_owed
         self._battle_party_block = 0
@@ -990,7 +991,8 @@ class HostTradeEngine:
         self._expected = "battle_link"
         self._set_state(H_UROOM_BATTLE_LINK)
         self.battle = uroom_battle.BattleController(
-            self.party[:2], multiplayer_id=0, forfeit=self.battle_forfeit, log=self.info)
+            self.party[:2], multiplayer_id=0, forfeit=self.battle_forfeit,
+            move_slot=self.battle_move_slot, log=self.info)
         self.info("Union Room battle: parties exchanged; the console is master and drives the "
                   "battle from here. " + ("We forfeit at the first action prompt."
                                           if self.battle_forfeit else "We fight."))
