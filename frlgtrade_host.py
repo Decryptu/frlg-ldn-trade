@@ -62,6 +62,15 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help="Union Room: accept the console's 'Tchat' instead of declining it. Both sides send a "
              "JOIN block, then the console's keyboard opens and every line it types is logged")
     parser.add_argument(
+        "--union-room-battle", action="store_true",
+        help="Union Room: accept the console's Combat instead of declining it. The console needs "
+             "two non-egg party mons at level 30 or lower or it refuses on its own screen; it is "
+             "master and runs the battle, we answer its controller commands")
+    parser.add_argument(
+        "--battle-fight", action="store_true",
+        help="Union Room battle: pick FIGHT with the first move instead of forfeiting at the first "
+             "action prompt. Only the forfeit path has been proven on hardware")
+    parser.add_argument(
         "--chat-file", default=None, metavar="PATH",
         help="Union Room chat: tail this file while the host runs and send every line appended to "
              "it, so the chat can be answered live instead of queued at launch")

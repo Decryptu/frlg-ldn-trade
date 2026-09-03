@@ -126,7 +126,9 @@ class HostApplication:
             party, plan=self.plan, profile=self.profile, log=self.log,
             rfu_kwargs=rfu_kwargs, union_room=union_room,
             union_room_chat=bool(getattr(self.options, "union_room_chat", False)),
-            chat_messages=tuple(getattr(self.options, "chat_messages", ()) or ()))
+            chat_messages=tuple(getattr(self.options, "chat_messages", ()) or ()),
+            union_room_battle=bool(getattr(self.options, "union_room_battle", False)),
+            battle_forfeit=bool(getattr(self.options, "battle_forfeit", True)))
         if union_room:
             trade_board = None
             board_type = getattr(self.options, "union_room_board_type", None)

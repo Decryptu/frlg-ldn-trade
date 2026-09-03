@@ -5,7 +5,8 @@ CONFIRM and every cancel decision, so the follower engine in frlgsim.trade canno
 from collections import Counter, deque
 from dataclasses import dataclass
 
-from . import block, linkplayer, mon as monmod, rfu, trade, uroom_chat
+from . import (battle_link as bl, block, linkplayer, mon as monmod, rfu, trade, uroom_battle,
+               uroom_chat)
 
 
 STATUS_REPORT_FRAMES = 30   # 0.5s; the H_LINK_PLAYER stall window is only ~2s
@@ -22,6 +23,13 @@ H_UROOM_TRADE = "H_UROOM_TRADE"
 # Union Room only: a chat request was accepted. Both members SendBlock a JOIN, then one 0x28
 # block per line typed, until the leader DISBANDs or the child LEAVEs [union_room_chat.c:429].
 H_UROOM_CHAT = "H_UROOM_CHAT"
+# Union Room only: a battle request was accepted. Both sides send a 0x20 selection block, two link
+# standbys pass, then a 31-byte LinkBattlerHeader and the party three blocks at a time
+# [CB2_UnionRoomBattle, CB2_HandleStartBattle battle_main.c:934].
+H_UROOM_BATTLE = "H_UROOM_BATTLE"
+# ...and then the battle proper: the console is master and runs the whole engine, we answer its
+# controller commands [InitLinkBtlControllers, battle_controllers.c:141].
+H_UROOM_BATTLE_LINK = "H_UROOM_BATTLE_LINK"
 H_ENTRY_SEAT = "H_ENTRY_SEAT"
 H_PARTY = "H_PARTY"
 H_SELECT = "H_SELECT"
@@ -119,6 +127,7 @@ class HostTradeEngine:
     def __init__(self, party, trade_slot=0, *, offered_slots=None, trades=1,
                  link_player=None, profile=None, anim_delay=1935, trust_pia=True, timing=None,
                  union_room=False, union_room_chat=False, chat_messages=None,
+                 union_room_battle=False, battle_forfeit=True,
                  log=lambda *a: None):
         self.party = list(party)
         if not 1 <= len(self.party) <= 6:
@@ -141,6 +150,16 @@ class HostTradeEngine:
         self.trust_pia = trust_pia
         self.union_room = bool(union_room)
         self.union_room_chat = bool(union_room_chat)
+        self.union_room_battle = bool(union_room_battle)
+        if self.union_room_battle and len(self.party) < 2:
+            # SetUpPartiesAndStartBattle keeps exactly two mons a side [union_room_battle.c:47];
+            # with one, the console's gEnemyParty[1] stays zero and the battle has nothing to send
+            # out second. Fail at start-up, not three blocks into a hardware run.
+            raise ValueError("a Union Room battle needs two party Pokemon; pass a second with "
+                             "PARTY2= or --party")
+        self.battle_forfeit = bool(battle_forfeit)
+        self.battle = None                 # the BattleController, once the battle starts
+        self._battle_party_block = 0
         self.uroom_requests = []
         self.uroom_trade_request = None
         self.chat_received = []            # parsed blocks from the console, in arrival order
@@ -425,7 +444,16 @@ class HostTradeEngine:
             "uroom_mon": trade.COUNT_TRAINER_CARD,     # one 100-byte Pokemon
             "uroom_mail": trade.COUNT_MAIL,
             "uroom_chat": trade.COUNT_RIBBON,          # the 0x28-byte chat block
-        }.get(expected, trade.COUNT_PARTY if expected and expected.startswith("party:") else None)
+            "battle_accept": uroom_battle.COUNT_ACCEPT,
+            "battle_header": uroom_battle.COUNT_HEADER,
+        }.get(expected, trade.COUNT_PARTY
+              if expected and (expected.startswith("party:") or expected.startswith("battle_party:"))
+              else None)
+        if expected == "battle_link":
+            # Link buffer records are sized by their payload, from 12 bytes to over 100, so there is
+            # no fixed count to check here [PrepareBufferDataTransferLink, battle_controllers.c:412].
+            self._on_battle_block(data)
+            return
         if expected_count is None:
             self.trace.append(("unexpected_child_block", count))
             return
@@ -447,6 +475,15 @@ class HostTradeEngine:
             return
         if expected == "uroom_chat":
             self._on_chat_block(data)
+            return
+        if expected == "battle_accept":
+            self._on_battle_accept(data)
+            return
+        if expected == "battle_header":
+            self._on_battle_header(data)
+            return
+        if expected and expected.startswith("battle_party:"):
+            self._on_battle_party(int(expected.split(":", 1)[1]), data)
             return
         if expected == "uroom_mon":
             # Task_StartUnionRoomTrade case 0/1: both sides SendBlock their registered mon, no
@@ -695,6 +732,12 @@ class HostTradeEngine:
                     "JOIN and the console opens its chat keyboard")
             self._set_state(H_UROOM_CHAT)
             self._expected = "uroom_chat"
+        elif request == self.UR_BATTLE and self.union_room_battle:
+            reply = self.UR_ACCEPT
+            what = ("a battle; accepting. It picks two mons, then both sides send a 0x20 selection "
+                    "block and the link battle starts")
+            self._set_state(H_UROOM_BATTLE)
+            self._expected = "battle_accept"
         elif request in (self.UR_BATTLE, self.UR_CHAT):
             reply, what = self.UR_DECLINE, "a battle or chat; declining, the console closes the link"
         elif request == self.UR_IN_ROOM:
@@ -755,6 +798,7 @@ class HostTradeEngine:
         repeats = (self.timing.startup_standby_echo_frames
                    if self.state in (H_LINK_PLAYER, H_ENTRY_CARD, H_ENTRY_SEAT,
                                      H_UROOM_PROMPT, H_UROOM_TRADE, H_UROOM_CHAT,
+                                     H_UROOM_BATTLE, H_UROOM_BATTLE_LINK,
                                      H_CANCEL, H_RETURN_FIELD)
                    else 1)
         for _ in range(repeats):
@@ -897,6 +941,66 @@ class HostTradeEngine:
         if self.state == H_UROOM_CHAT:
             self._tick_chat_exit() if self._chat_exiting else self._tick_chat_outbox()
         return self._next_parent_words()
+
+    # --- the Union Room battle ------------------------------------------------------------------
+
+    def _on_battle_accept(self, data):
+        """CB2_UnionRoomBattle case 3/4 [union_room_battle.c:139]: each side sends a 0x20 block
+        whose first byte is 0x51, and the console closes the link unless BOTH read 0x51. It sends
+        after its own party menu, so we answer rather than lead."""
+        if not uroom_battle.read_accept_block(data):
+            self.info("Union Room battle: the console backed out of its party selection; it closes "
+                      "the link now.")
+            self._expected = None
+            self._set_state(H_UROOM_PROMPT)
+            return
+        self._queue_block(uroom_battle.accept_block(), "host:battle_accept")
+        self._expected = "battle_header"
+        self.info("Union Room battle: the console picked its two Pokemon; sending our accept. "
+                  "Two link standbys, then the battler header.")
+
+    def _on_battle_header(self, data):
+        """CB2_HandleStartBattle state 1/2 [battle_main.c:962]. We answer with version signature
+        0x200 on purpose: LinkBattleComputeBattleTypeFlags [:886] then makes the CONSOLE master, so
+        it runs the whole battle engine and we only have to answer its controller commands."""
+        version = data[0] | (data[1] << 8)
+        self._queue_block(uroom_battle.battler_header(), "host:battle_header")
+        self._battle_party_block = 0
+        self._expected = "battle_party:0"
+        self.info(f"Union Room battle: console version signature 0x{version:03x}; sending ours as "
+                  f"0x{uroom_battle.VERSION_NON_MASTER:03x} so it takes the master role. "
+                  "Three party blocks next.")
+
+    def _on_battle_party(self, i, data):
+        """States 3/7/11: the six party slots two at a time, the same 200-byte transfer the trade
+        already does. Only the first block carries the two mons that fight; the console zeroed the
+        rest in SetUpPartiesAndStartBattle [union_room_battle.c:51]."""
+        self.child_party[i * 200:(i + 1) * 200] = data[:200]
+        blocks = uroom_battle.party_blocks(self.party[:2])
+        self._queue_block(blocks[i], f"host:battle_party:{i}")
+        if i + 1 < uroom_battle.PARTY_BLOCK_COUNT:
+            self._expected = f"battle_party:{i + 1}"
+            self.info(f"Union Room battle: party block {i + 1}/3 exchanged.")
+            return
+        self._expected = "battle_link"
+        self._set_state(H_UROOM_BATTLE_LINK)
+        self.battle = uroom_battle.BattleController(
+            self.party[:2], multiplayer_id=0, forfeit=self.battle_forfeit, log=self.info)
+        self.info("Union Room battle: parties exchanged; the console is master and drives the "
+                  "battle from here. " + ("We forfeit at the first action prompt."
+                                          if self.battle_forfeit else "We fight."))
+
+    def _on_battle_block(self, data):
+        """One link buffer record. Every BUFFER_A command must be acked, for BOTH battlers, or the
+        master waits on gBattleControllerExecFlags forever [battle_util.c:185]."""
+        rec = bl.parse(data)
+        self.trace.append(("battle_recv", rec["buffer_id"], rec["active_battler"], rec["cmd"]))
+        self.info(f"Union Room battle: <- {bl.describe(rec)}")
+        for out in self.battle.feed(data):
+            self._queue_block(out, f"host:battle:{bl.describe(bl.parse(out))}")
+        if self.battle.done:
+            self._expected = None
+            self.info("Union Room battle: over; waiting for the console to close the link.")
 
     def _on_chat_block(self, data):
         """One inbound 0x28 chat block. `_expected` stays "uroom_chat": members send blocks for as

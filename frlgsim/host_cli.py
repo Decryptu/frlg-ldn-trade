@@ -174,6 +174,8 @@ def build_host_config(parser, args):
             union_room_board_type=config.resolve_board_type(getattr(args, "board_type", None)),
             union_room_board_level=getattr(args, "board_level", None),
             union_room_chat=getattr(args, "union_room_chat", False),
+            union_room_battle=getattr(args, "union_room_battle", False),
+            battle_forfeit=not getattr(args, "battle_fight", False),
             chat_messages=tuple(getattr(args, "chat_message", None) or ()),
             chat_file=getattr(args, "chat_file", None),
         )
