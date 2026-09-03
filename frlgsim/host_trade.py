@@ -63,8 +63,9 @@ class HostTradeTiming:
     # would overwrite gBlockRecvBuffer before it reads. A typed line is seconds apart natively.
     chat_message_gap_frames: int = 90
     # ChatEntryRoutine_ExitChat runs SetCloseLinkCallback and then waits on
-    # !gReceivedRemoteLinkPlayers: the leaver never answers with a READY_CLOSE_LINK of its own, so
-    # the leader's close is bounded by its own timer, not by the child [union_room_chat.c:665].
+    # !gReceivedRemoteLinkPlayers [union_room_chat.c:665]. u14: the leaver DOES answer with its own
+    # READY_CLOSE_LINK (0.1s) and its 'D' right after, so this bound is only the fallback for a
+    # leaver that stays silent; it must stay short, since it is the console's whole wait.
     chat_exit_close_frames: int = 120
 
 
@@ -723,12 +724,15 @@ class HostTradeEngine:
         if not self._close_confirmed:
             self._close_confirmed = True
             if not self._chat_exiting:
-                # The chat exit is already on its own bounded grace; do not stretch it to 15s.
+                # The chat exit runs its own short grace: the leaver is parked on
+                # !gReceivedRemoteLinkPlayers and 15s of it is 15s of a frozen prompt (u13).
                 self._close_grace_wait = self.timing.post_client_close_grace_frames
             self.trace.append(("child_close_confirmed",
                                rec.get("count", 0),
                                self.timing.post_client_close_grace_frames))
             self.info(
+                "Switch confirmed it left the chat; closing now."
+                if self._chat_exiting else
                 "Switch confirmed it left the trade room; keeping peer traffic active "
                 "for 15 seconds before disconnecting.")
 
@@ -925,8 +929,9 @@ class HostTradeEngine:
                   "the link it is waiting on.")
 
     def _tick_chat_exit(self):
-        """Hold in the chat until our DROP has drained, then take the room's close-link path. The
-        console answers no READY_CLOSE_LINK here, so the grace is our own bounded timer."""
+        """Hold in the chat until our DROP has drained, then take the room's close-link path with
+        a short grace of our own: the leaver is already parked waiting for the link to go, so the
+        room's 15-second post-exit buffer must not apply here."""
         if self._sender is not None or self._blocks or self._words:
             return
         self._set_state(H_CLOSE)

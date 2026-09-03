@@ -686,5 +686,34 @@ the requester here, so its own parental-control setting can turn its request int
 we ever see it — a silent refusal at the prompt is that, not a protocol fault.
 
 Shipped: `frlgsim/uroom_chat.py` (block build/parse/validate), `H_UROOM_CHAT` in `host_trade.py`,
-`--union-room-chat` and repeatable `--chat-message TEXT` on `frlgtrade_host.py`. 21 new tests,
-suite 341 -> 362. UNTESTED on hardware.
+`--union-room-chat` and repeatable `--chat-message TEXT` on `frlgtrade_host.py`.
+
+### u13, u14: Union Room chat works both ways
+
+FACT (u13 and u14, `--union-room --union-room-keepalive 120 --union-room-chat`): the console
+accepts our ACCEPT for 0x45, runs the START_ACTIVITY standby and opens its chat keyboard; its JOIN
+block arrives, our JOIN lists us as a member on its screen, our queued lines appear in order at the
+90-frame spacing, and every line it types reaches us decoded. u13 read back `SALUT` and `ÇA VA?`,
+u14 `0123456789`: letters, the accented-Latin range, punctuation and digits all round-trip through
+`charmap`. A 30-character line (the full field) sent from our side displayed correctly.
+
+FACT (u13): the leader must actively close on a LEAVE. u13 marked the activity done and stopped
+there; the console sat on its "quit the chat?" yes/no prompt with the network icon spinning for 70
+seconds until the host was killed, because `ChatEntryRoutine_AskQuitChatting` case 5 parks the
+leaver on `!gReceivedRemoteLinkPlayers`. The host loop only ends on `done` once the console has
+already left LDN, so both sides waited for each other.
+
+FACT (u14, with the fix): our DROP goes out 0.1 s after its LEAVE, we run the close-link handshake,
+and the console answers with its own READY_CLOSE_LINK at +0.1 s and its normal 'D' at +0.2 s, then
+leaves LDN 4 s later and the user is back in the room with no error.
+
+CORRECTION: the comment shipped with the fix said the leaver never sends a READY_CLOSE_LINK of its
+own. u14 shows it does. The bounded chat-exit grace stays, now as the fallback for a silent leaver
+rather than as the expected path; what matters is that it is short, since the console is frozen on
+its prompt for exactly as long as we wait.
+
+UNKNOWN: on both runs the console's cumulative ack fell 6 frames behind on a strikingly regular
+cycle even with the link otherwise idle -- u13 deltas 16.9, 16.9, 16.8, 16.9, 16.9, 16.9, 16.9,
+8.7, 8.7, 8.7, 9.3, 16.9, 16.8, 17.0 s. The 8.7s gaps are half of 16.9, so the fundamental is
+~8.45 s with holds sometimes skipped. A period that stable on an idle link is a clock, not load.
+This is the same UNKNOWN left open by the ident-25 work, on a much cleaner sample.

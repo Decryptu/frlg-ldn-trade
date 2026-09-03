@@ -207,9 +207,10 @@ def test_the_console_leaving_the_chat_sends_our_drop_then_closes(cmd):
     assert any(entry[0] == "chat_exit_close" for entry in h.trace)
 
 
-def test_the_chat_exit_grace_is_not_stretched_by_a_late_close_from_the_console():
-    """The room path waits 15s after the console's own READY_CLOSE_LINK; the chat leaver never
-    sends one, and a stray one must not push our disconnect past its own bounded timer."""
+def test_the_chat_exit_grace_is_not_stretched_by_the_consoles_own_close():
+    """u14: the leaver does send its own READY_CLOSE_LINK, 0.1s after ours. The room path answers
+    one with a 15-second buffer before disconnecting; here that would be 15 seconds of the frozen
+    yes/no prompt u13 showed, so the chat exit keeps its own short grace."""
     h = _engine(union_room_chat=True)
     h.feed_child_slot(_packet_slot(0x45))
     h._after_child_block(trade.COUNT_RIBBON,
