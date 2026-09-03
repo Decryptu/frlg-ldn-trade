@@ -179,9 +179,28 @@ Two causes were found, in order:
    Switch's other beacon and association elements (DTIM 2, ERP, capability 0x411, the Nintendo vendor
    element, HT/HE, WMM) are not needed. `vendor/LDN/ldn/wlan.py` sends the full set unconditionally.
 
-Why the emulator's watchdog is satisfied by the fuller rate set is not proven. HYPOTHESIS: the
-console builds its operational rate set from the association response and, with 6/9/12 missing, its
-link-quality logic declares the link bad ~3s after association.
+Why the emulator's watchdog is satisfied by the fuller rate set is not proven. Measured offline on
+2026-09-03 from the air captures of the experiment (`scratchpad/rates3s.py`, walled lg96/98/102/105
+against passed lg95/117 bare and lg106/112/113/114 with the Switch set, first 2.9-4s after association):
+
+- FACT: the console copies our advertised rates into its association request. Bare set: it lists
+  exactly `1 2 5.5 11 18 24 36 54`. Switch set in the probe response: it lists `24 36 48 54`, our
+  extended-rates element alone. That list is what `wlan.py` hands nl80211 as the station's rates, so
+  it bounds our own unicast TX rates; level 4 passed the wall with the bare-looking list (lg106), so
+  our TX rate mask is not the lever.
+- FACT: nothing else on the air differs. Console data at 54M or HT MCS, retries 0-5%, RTS before
+  every data frame at 24M, ACKs to us at 24M, the deauth at 3.06-3.63s reason 3 with the same frame
+  mix before it. The sampled `tx bitrate` of our station entry is 18M or 54M in both sets.
+- FACT: the console accepted every reliable Pia frame we sent before it left. `first3s.py` shows 0
+  Pia-level retransmits in either direction and 0 decode failures inside the first 2.9s of every
+  walled run. The leave is not caused by data loss; the Pia session is healthy when the console
+  decides to go.
+
+DEDUCTION: the trigger lives inside the console's wlan/LDN layer, takes the advertised rate set as its
+only input, and is not visible on the wire. HYPOTHESIS (untested): the console's driver checks link
+statistics on a ~3s timer after association, and with a rate table that lacks the mandatory OFDM
+rates 6/12 the check fails on whichever runs had a retry that fell back below 18M. Which of 6, 9, 12
+is required is UNKNOWN; each candidate needs ~8 hardware runs against the 40-60% baseline.
 
 Two things that looked like the wall and were not:
 
