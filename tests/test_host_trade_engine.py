@@ -593,3 +593,35 @@ def test_child_cancel_at_select_is_answered_with_partner_cancel_not_silence():
     assert h.state == H_SELECT
     h._on_child_linkcmd(trade.READY_TO_TRADE, 0)
     assert h.state == H_CONFIRM
+
+
+def test_second_child_cancel_at_select_makes_both_cancel():
+    """h6: every REQUEST_CANCEL at SELECT answered with PARTNER_CANCEL_TRADE looped the console on
+    "your friend wants to trade". A second consecutive CANCEL is the console wanting out: the leader
+    cancels too, LINKCMD_BOTH_CANCEL_TRADE (trade.c:1715-1722), and the exit path runs."""
+    h = HostTradeEngine([_mon(1), _mon(2)], anim_delay=0)
+    h._words.clear()
+    h._blocks.clear()
+    h._sender = None
+    h._set_state(H_SELECT)
+
+    h._on_child_linkcmd(trade.REQUEST_CANCEL, 0)
+    assert h.state == H_SELECT
+    h._on_child_linkcmd(trade.REQUEST_CANCEL, 0)
+
+    queued = [x[1] for x in h.trace if x[0] == "queue_block"]
+    assert queued[-1:] == ["BOTH_CANCEL_TRADE"], queued
+    assert ("both_cancel_at_select",) in h.trace
+    assert h.state == H_CANCEL
+
+
+def test_child_selection_resets_the_select_cancel_count():
+    h = HostTradeEngine([_mon(1), _mon(2)], anim_delay=0)
+    h._words.clear()
+    h._blocks.clear()
+    h._sender = None
+    h._set_state(H_SELECT)
+    h._on_child_linkcmd(trade.REQUEST_CANCEL, 0)
+    h._on_child_linkcmd(trade.READY_TO_TRADE, 0)
+    assert h.state == H_CONFIRM
+    assert h._select_cancels == 0
