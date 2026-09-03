@@ -5,10 +5,13 @@ CONFIRM and every cancel decision, so the follower engine in frlgsim.trade canno
 from collections import Counter, deque
 from dataclasses import dataclass
 
-from . import (battle_link as bl, block, linkplayer, mon as monmod, rfu, trade, uroom_battle,
-               uroom_chat)
+from . import (battle_link as bl, block, linkplayer, mon as monmod, rfu, rfu_leader,
+               trade, uroom_battle, uroom_chat)
 
 
+# Only a deadlock guard: the console re-sends a fragment until it sees the echo, so this
+# should never fire. It is logged when it does.
+ECHO_WAIT_MAX_POLLS = 240
 STATUS_REPORT_FRAMES = 30   # 0.5s; the H_LINK_PLAYER stall window is only ~2s
 LEAVE_MENU_REPORT_FRAMES = 300
 H_LINK_PLAYER = "H_LINK_PLAYER"
@@ -117,6 +120,7 @@ ENTRY_LEFT_CHAIR_ROUTE = (
 
 
 class HostTradeEngine:
+    ECHO_WAIT_MAX_POLLS = ECHO_WAIT_MAX_POLLS
     """Call feed_child_slot(cmd14) for each *new* child UNI command and tick() once per VBlank; after
     disconnect_requested, queue 'D' only after Reliable has delivered the final close-link poll."""
 
@@ -162,7 +166,10 @@ class HostTradeEngine:
         self.battle = None                 # the BattleController, once the battle starts
         self.echo_backlog = 0              # set by HostSession each poll; see _echo_owed
         self.echo_progress = 0             # monotonic count of echoes that have left the queue
-        self._echo_deadline = 0            # progress we must reach before answering the last block
+        self.last_echo_cmd = None          # the child slot the leader most recently mirrored back
+        self._child_slot = None            # the slot currently being fed to us
+        self._echo_wait_slot = None        # the slot that must be mirrored before we answer
+        self._echo_wait_polls = 0
         self._battle_party_block = 0
         self.uroom_requests = []
         self.uroom_trade_request = None
@@ -551,6 +558,7 @@ class HostTradeEngine:
 
     def feed_child_slot(self, slot):
         """Consume one child gSendCmd row (14 bytes, rolling tag permitted)."""
+        self._child_slot = rfu_leader._normalize_child_cmd(slot)
         self._child_frames += 1
         is_idle = bytes(slot) == rfu.idle_slot()
         self._record_child_slot_run(slot, is_idle)
@@ -1003,9 +1011,10 @@ class HostTradeEngine:
         """One link buffer record. Every BUFFER_A command must be acked, for BOTH battlers, or the
         master waits on gBattleControllerExecFlags forever [battle_util.c:185]."""
         rec = bl.parse(data)
-        # Everything still queued for echo when this block landed includes this block's own last
-        # fragment; our answer waits for exactly that much to be mirrored back. See _echo_owed.
-        self._echo_deadline = self.echo_progress + self.echo_backlog
+        # The slot that completed this block is the one the console must see returned before it will
+        # set the exec-flag bit our answer clears. Wait for that exact slot. See _echo_owed.
+        self._echo_wait_slot = self._child_slot
+        self._echo_wait_polls = 0
         self.trace.append(("battle_recv", rec["buffer_id"], rec["active_battler"], rec["cmd"]))
         self.info(f"Union Room battle: <- {bl.describe(rec)}")
         for out in self.battle.feed(data):
@@ -1152,17 +1161,34 @@ class HostTradeEngine:
         the console clears a bit that is not set yet, then sets it, and waits forever for an ack that
         already came. That stalled u18.
 
-        u20: the first version of this waited for the echo queue to be EMPTY, but the console sends a
-        command every poll, so the queue almost never empties and our turnaround went from ~0.3 s to
-        5-8 s -- a single Double Slap turn took the user four or five minutes. Wait instead for the
-        echoes that were queued when the block landed, and no more: `_echo_deadline` is
-        `echo_progress + echo_backlog` at that moment, and `echo_progress` counts entries that have
-        left the queue.
+        u20: waiting for the echo queue to be EMPTY was correct but cost 5-8 s per command, because
+        the console sends one every poll and the queue almost never empties.
+
+        u23: waiting for a COUNT of entries to leave the queue was fast but wrong again, and stalled
+        the same way. ECHO_MAX drops fragments when the queue overflows and the console re-sends
+        them, so a counter reports "echoed" for a fragment that has not gone out; the ack overtook
+        the re-sent last fragment of a PLAYSE and the console stopped mid-animation. The user saw our
+        attack freeze half-played with the music still going.
+
+        So wait for the block's own last fragment to come back out of the echo, by content. The
+        safety valve is not a tuned delay: it exists only so a fragment the console somehow never
+        re-sends cannot deadlock us for ever, and it says so in the log when it fires.
 
         Scoped to the battle. The trade, Mystery Gift and chat paths are proven on hardware with the
         old timing and nothing in them acks a block the console has to see returned first."""
-        return (self.state == H_UROOM_BATTLE_LINK
-                and self.echo_progress < self._echo_deadline)
+        if self.state != H_UROOM_BATTLE_LINK or self._echo_wait_slot is None:
+            return False
+        if self.last_echo_cmd == self._echo_wait_slot:
+            self._echo_wait_slot = None
+            return False
+        self._echo_wait_polls += 1
+        if self._echo_wait_polls > self.ECHO_WAIT_MAX_POLLS:
+            self.info("Union Room battle: the console never took back its own last fragment after "
+                      f"{self._echo_wait_polls} polls; answering anyway. If it stalls here, that "
+                      "wait is the thing to look at.")
+            self._echo_wait_slot = None
+            return False
+        return True
 
     def _next_parent_words(self):
         if self._words:

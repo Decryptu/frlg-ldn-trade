@@ -385,39 +385,57 @@ def test_a_linkcmd_sized_block_is_still_a_linkcmd_outside_a_battle():
 
 
 def test_our_ack_waits_for_the_console_to_see_its_own_block_returned():
-    """u18: our parent command and the child-slot echo share a frame, one echo per poll, so a short
-    ack can overtake the echo of the block it acks. On the console MarkBattlerReceivedLinkData only
-    SETS the exec-flag bit when its own block comes back [battle_util.c:193], so an early ack clears
-    a bit that is not set yet and the battler stays flagged forever. Measured in u18: the echo led
-    our ack on all sixteen commands before the stall and trailed it on the seventeenth."""
+    """u18: our parent command and the child-slot echo share a frame, so a short ack can overtake
+    the echo of the block it acks. On the console MarkBattlerReceivedLinkData only SETS the exec-flag
+    bit when its own block comes back [battle_util.c:193], so an early ack clears a bit that is not
+    set yet and the battler stays flagged for ever."""
     h = _into_the_battle()
     h._words.clear()
-    h.echo_backlog, h.echo_progress = 2, 10
+    h._child_slot = b"\xaa" * 14
+    h.last_echo_cmd = None
     h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
                                    bytes([bl.PRINTSTRING, 0, 0, 0])))
     assert h._blocks, "the ack must be queued"
-    assert h._next_parent_words() == [0] * 7, "but not sent while the echo is still owed"
+    assert h._next_parent_words() == [0] * 7, "but not sent while that slot is unechoed"
     assert h._sender is None
-    h.echo_progress = 11                      # one of the two queued echoes has gone out
+    h.last_echo_cmd = b"\xbb" * 14           # some other slot going back does not count
     assert h._next_parent_words() == [0] * 7
-    h.echo_progress = 12                      # both have; the console has seen its own block
+    h.last_echo_cmd = b"\xaa" * 14           # the block's own last fragment is back out
     h._next_parent_words()
-    assert h._sender is not None, "and sent as soon as the console has seen its own block"
+    assert h._sender is not None
 
 
-def test_the_echo_gate_does_not_wait_on_traffic_that_arrived_later():
-    """u20: waiting for the queue to EMPTY held every answer for 5-8 s, because the console sends a
-    command every poll and the queue almost never empties. Only the echoes queued when the block
-    landed are owed."""
+def test_the_echo_gate_matches_the_block_not_a_count():
+    """u23: counting entries out of the echo queue was fast but wrong. ECHO_MAX drops fragments and
+    the console re-sends them, so a count reports "echoed" for a fragment still to go; our ack
+    overtook a re-sent PLAYSE fragment and the console froze mid-animation."""
     h = _into_the_battle()
     h._words.clear()
-    h.echo_backlog, h.echo_progress = 1, 100
+    h._child_slot = b"\xcc" * 14
+    h.last_echo_cmd, h.echo_progress, h.echo_backlog = None, 0, 0
     h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
-                                   bytes([bl.PRINTSTRING, 0, 0, 0])))
-    h.echo_progress = 101                     # our block is mirrored back...
-    h.echo_backlog = 2                        # ...and two unrelated commands have since arrived
+                                   bytes([bl.PLAYSE, 0, 0, 0])))
+    h.echo_progress = 999                     # a counter would call this echoed
+    assert h._next_parent_words() == [0] * 7, "content, not a count, decides"
+    h.last_echo_cmd = b"\xcc" * 14
     h._next_parent_words()
-    assert h._sender is not None, "a later command must not delay the answer to this one"
+    assert h._sender is not None
+
+
+def test_the_echo_wait_cannot_deadlock_for_ever():
+    """Only a deadlock guard: the console re-sends until it sees the echo, so it should never fire.
+    It logs when it does, so a run that needed it says so."""
+    said = []
+    h = _into_the_battle(log=said.append)
+    h._words.clear()
+    h._child_slot = b"\xdd" * 14
+    h.last_echo_cmd = None
+    h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
+                                   bytes([bl.PLAYSE, 0, 0, 0])))
+    for _ in range(h.ECHO_WAIT_MAX_POLLS + 1):
+        h._next_parent_words()
+    assert h._sender is not None
+    assert any("never took back its own last fragment" in m for m in said)
 
 
 def test_the_echo_gate_does_not_touch_the_proven_paths():

@@ -82,6 +82,11 @@ class RFULeader:
         # `echo_progress + echo_backlog` when a block lands and wait for progress to reach it: that
         # is the point at which everything queued behind that block has been mirrored back.
         self.echo_progress = 0
+        # The last child command actually mirrored back into row one. u23: counting entries out of
+        # the queue is not enough, because ECHO_MAX drops fragments and the console re-sends them,
+        # so a counter says "echoed" for a fragment that has not gone out yet. Callers that must not
+        # answer before the console has seen its own block compare against this.
+        self.last_echo_cmd = None
         self.child_game_data = None
         self.k_acks = 0
         self.uni_in = 0
@@ -255,6 +260,7 @@ class RFULeader:
             if self._echo_queue:
                 self._echo_cmd = self._echo_queue.popleft()
                 self.echo_progress += 1
+                self.last_echo_cmd = self._echo_cmd
             table = rfu.pack_recv_cmds([parent_cmd, self._echo_cmd])
             self.uni_out += 1
             return self._wrap_parent_t(rfu.parent_uni_slot(table, self.bm_slot))
