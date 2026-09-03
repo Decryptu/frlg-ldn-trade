@@ -59,6 +59,15 @@ def _parent_ni_fields(slot):
             (value >> rfu.PARENT_LLSF_PHASE_SHIFT) & 3)
 
 
+def _echo_max():
+    import os
+    try:
+        v = int(os.environ.get("FRLG_ECHO_MAX", "") or 2)
+    except ValueError:
+        v = 2
+    return max(1, v)
+
+
 def _normalize_child_cmd(slot):
     """Return the native parent's tag-free child command representation."""
     cmd = bytearray(bytes(slot)[:rfu.COMM_SLOT_LENGTH].ljust(
@@ -96,6 +105,7 @@ class RFULeader:
         self._echo_queue = deque()
         self._echo_cmd = rfu.idle_slot()
         self.echo_backlog_peak = 0
+        self.echo_dropped = 0
         self.child_game_data = None
         self.k_acks = 0
         self.uni_in = 0
@@ -231,6 +241,14 @@ class RFULeader:
         self.child_cmd = _normalize_child_cmd(rec["cmd"])
         self._echo_queue.append(self.child_cmd)
         self.echo_backlog_peak = max(self.echo_backlog_peak, len(self._echo_queue))
+        # 2026-09-03 (lg122 and every other transmission death): the console emits ~60.4 slots/s,
+        # this host echoes ~58.7/s, so an unbounded FIFO echo lags ~1.7 slots/s - half a second
+        # after 17s. The native parent publishes the LATEST child command within one frame
+        # (gRecvCmds). A stale echo makes the console's SendLastBlock re-send fragments we already
+        # hold, and its retry loop ends in an RFU error. Bound the backlog: FRLG_ECHO_MAX (default 2).
+        while len(self._echo_queue) > _echo_max():
+            self._echo_queue.popleft()
+            self.echo_dropped += 1
         self.uni_in += 1
         return "uni"
 

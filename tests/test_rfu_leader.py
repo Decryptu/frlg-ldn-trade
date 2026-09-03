@@ -196,8 +196,10 @@ def _complete_ni_handshake():
     return leader
 
 
-def test_every_child_command_is_echoed_even_when_they_arrive_in_a_burst():
-    """Row 1 reflects every child command rather than only the newest one."""
+def test_every_child_command_is_echoed_even_when_they_arrive_in_a_burst(monkeypatch):
+    """Row 1 reflects every child command rather than only the newest one (with the 2026-09-03
+    backlog bound lifted; the bound exists because a lagging echo kills the console's block send)."""
+    monkeypatch.setenv("FRLG_ECHO_MAX", "1000")
     leader = _complete_ni_handshake()
     builder = rfu.SlotBuilder()
     expected = [rfu.serialize(rfu.send_block_words(i, bytes([i]) * 12))
