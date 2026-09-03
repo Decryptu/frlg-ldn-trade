@@ -172,6 +172,8 @@ def build_host_config(parser, args):
                 getattr(args, "union_room_activity", None)),
             hold_beacon=getattr(args, "hold_beacon", False),
             union_room_keepalive=getattr(args, "union_room_keepalive", 0),
+            union_room_board_type=config.resolve_board_type(getattr(args, "board_type", None)),
+            union_room_board_level=getattr(args, "board_level", None),
         )
     except ValueError as exc:
         parser.error(str(exc))

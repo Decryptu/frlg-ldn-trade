@@ -237,3 +237,65 @@ def test_hold_beacon_keeps_the_pre_join_advertisement():
 def test_hold_beacon_is_off_for_the_trade_centre():
     inactive, active = _advertisements(False, hold_beacon=False)
     assert active != inactive
+
+
+# One console's record before and after registering Chansey lv26 asking for FEU (2026-09-03).
+# Byte 10 is its RFU session id, which it re-rolled when it re-initialised the link.
+CONSOLE_BASELINE = bytes.fromhex("65dfc1cfccd0bbc8ff00805d00000000401c030100000000")
+CONSOLE_REGISTERED = bytes.fromhex("65dfc1cfccd0bbc8ff00815d00000000401c2b3500007100")
+
+
+def test_trade_board_registration_reproduces_the_console_diff():
+    ours = bytearray(beacon.set_trade_board(CONSOLE_BASELINE, 113, 26, beacon.TYPE_NAMES["fire"]))
+    ours[10] = CONSOLE_REGISTERED[10]
+    assert bytes(ours) == CONSOLE_REGISTERED
+
+
+def test_trade_board_leaves_the_unknown_bits_alone():
+    rec = beacon.set_trade_board(CONSOLE_BASELINE, 300, 100, 3)
+    assert rec[18] & 0x03 == CONSOLE_BASELINE[18] & 0x03
+    assert rec[19] & 0x01 == CONSOLE_BASELINE[19] & 0x01
+    assert int.from_bytes(rec[22:24], "little") == 300 and rec[19] >> 1 == 100 and rec[18] >> 2 == 3
+
+
+def _record(app_data):
+    return transport._b85_decode(bytes(app_data)[beacon.PIA_HDR:])[:beacon.RECORD_SIZE]
+
+
+def test_host_app_registers_the_offered_mon_on_the_board():
+    """The offered slot (1) is PARTY2.pk3, Chansey lv26 on this machine."""
+    from frlgsim import host_app as host_app_module
+    seen = {}
+
+    class FakeTransport:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+    class FakePeer:
+        def __init__(self, *args, **kwargs):
+            pass
+
+    run = config.TradeRunConfig(
+        DEFAULT_TRAINER,
+        config.TradePlan(party_paths=("PARTY1.pk3", "PARTY2.pk3"), trade_slot=1,
+                         offered_slots=(1,), trust_pia=True),
+        config.LdnConfig(phy="phy7", keys_path=__file__),
+        config.HostOptions(union_room=True, union_room_board_type=beacon.TYPE_NAMES["normal"]))
+    original = host_app_module.HostPeerProtocol
+    host_app_module.HostPeerProtocol = FakePeer
+    try:
+        app = HostApplication(run, transport_factory=FakeTransport, log=lambda *_a: None,
+                              injector_factory=lambda **unused: None)
+        app._build_components()
+    finally:
+        host_app_module.HostPeerProtocol = original
+    rec = _record(seen["app_data"])
+    assert int.from_bytes(rec[22:24], "little") == 113
+    assert rec[19] >> 1 == 26 and rec[18] >> 2 == 0
+    assert _search_word(seen["app_data"]) & beacon.SEARCH_ACTIVITY_MASK == beacon.IN_UNION_ROOM
+
+
+def test_no_board_type_means_no_registration():
+    inactive, _ = _advertisements(True, hold_beacon=False)
+    rec = _record(inactive)
+    assert rec[22:24] == b"\x00\x00" and rec[19] >> 1 == 0

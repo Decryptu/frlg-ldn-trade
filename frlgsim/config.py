@@ -222,6 +222,11 @@ class HostOptions:
     # before the first UNI frame. The console mirrors NI_STARTs in the room (u03, u04); the 'D' came
     # after exactly five parent frames it left unanswered (u03, u04, u05). 0 = straight to UNI.
     union_room_keepalive: int = 0
+    # Trading board: the type we ask for in return (beacon.TYPE_NAMES value). None = no
+    # registration, so the console's board does not list us. Species and level come from the
+    # offered party mon unless union_room_board_level overrides the level.
+    union_room_board_type: int | None = None
+    union_room_board_level: int | None = None
 
     def __post_init__(self):
         # LDN channels: 2.4 GHz 1/6/11 and 5 GHz 36/40/44/48 [kinnay LDN wiki, WLAN Channels].
@@ -246,6 +251,15 @@ UNION_ROOM_ACTIVITIES = {
     "in-room-trade": beacon.IN_UNION_ROOM | beacon.ACTIVITY_TRADE,
     "in-room-chat": beacon.IN_UNION_ROOM | 5,                 # ACTIVITY_CHAT
 }
+
+
+def resolve_board_type(name):
+    if name is None:
+        return None
+    try:
+        return beacon.TYPE_NAMES[name]
+    except KeyError:
+        raise ValueError("board type must be one of " + ", ".join(sorted(beacon.TYPE_NAMES)))
 
 
 def resolve_union_room_activity(name):

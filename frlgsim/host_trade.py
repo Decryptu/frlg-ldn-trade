@@ -15,6 +15,10 @@ H_ENTRY_CARD = "H_ENTRY_CARD"
 # Union Room only: cards are exchanged, the console is at its "do something" prompt and every
 # choice arrives as a SEND_PACKET [union_room.c:2928, :2955].
 H_UROOM_PROMPT = "H_UROOM_PROMPT"
+# Union Room only: a trading-board request was accepted; Task_StartUnionRoomTrade exchanges one
+# Pokemon block then one mail block, then CB2_LinkTrade with the mons preselected
+# [union_room.c:1713].
+H_UROOM_TRADE = "H_UROOM_TRADE"
 H_ENTRY_SEAT = "H_ENTRY_SEAT"
 H_PARTY = "H_PARTY"
 H_SELECT = "H_SELECT"
@@ -123,6 +127,7 @@ class HostTradeEngine:
         self.trust_pia = trust_pia
         self.union_room = bool(union_room)
         self.uroom_requests = []
+        self.uroom_trade_request = None
         self._last_uroom_packet = None
         self._last_uroom_frame = 0
         self.timing = timing if timing is not None else DEFAULT_HOST_TRADE_TIMING
@@ -395,6 +400,8 @@ class HostTradeEngine:
             "card": trade.COUNT_TRAINER_CARD,
             "mail": trade.COUNT_MAIL,
             "ribbons": trade.COUNT_RIBBON,
+            "uroom_mon": trade.COUNT_TRAINER_CARD,     # one 100-byte Pokemon
+            "uroom_mail": trade.COUNT_MAIL,
         }.get(expected, trade.COUNT_PARTY if expected and expected.startswith("party:") else None)
         if expected_count is None:
             self.trace.append(("unexpected_child_block", count))
@@ -414,6 +421,30 @@ class HostTradeEngine:
             self._expected = "warp0"
             self._queue_block(self._link_player_block, "host:link_player")
             self.info(f"Console identified as {lp.name!r}; sending the host LinkPlayer block now.")
+            return
+        if expected == "uroom_mon":
+            # Task_StartUnionRoomTrade case 0/1: both sides SendBlock their registered mon, no
+            # request first [union_room.c:1721]. Ours goes out once theirs is in, like LinkPlayer.
+            self.child_party = bytearray(600)
+            self.child_party[0:monmod.PARTY_MON_SIZE] = data[:monmod.PARTY_MON_SIZE]
+            self.child_cursor = 0
+            slot = self.offered_slots[self.round]
+            host_party = monmod.build_player_party(self.party)
+            self._queue_block(host_party[slot * monmod.PARTY_MON_SIZE:
+                                         (slot + 1) * monmod.PARTY_MON_SIZE], "host:uroom_mon")
+            self._expected = "uroom_mail"
+            self.info("Union Room trade: console Pokemon block received; sending ours, "
+                      "mail blocks next.")
+            return
+        if expected == "uroom_mail":
+            # case 2/3: mail both ways, then CB2_LinkTrade with the mons preselected. From here the
+            # trade-centre animation path applies: READY_FINISH from the console, our CONFIRM.
+            self._queue_block(trade.empty_mail_block(), "host:uroom_mail")
+            self._expected = None
+            self._child_finish = False
+            self._set_state(H_ANIM)
+            self._anim_wait = self.anim_delay
+            self.info("Union Room trade: mail exchanged; the trade animation runs now.")
             return
         if expected == "card":
             self.child_card = bytes(data[:100])
@@ -510,6 +541,13 @@ class HostTradeEngine:
                 >= self.timing.save_final_standby_quiet_frames):
             self.trace.append(("save_final_standby_complete",
                                self._save_last_count))
+            if self.union_room:
+                # CB2_SaveAndEndTrade case 8: the room's savedCallback is CB2_ReturnToField, so the
+                # console calls SetCloseLinkCallback instead of another standby [trade_scene.c:2722].
+                self.done = True
+                self.info("Union Room trade: save barriers complete; the console closes the link "
+                          "and returns to the room.")
+                return
             self._begin_party_exchange()
 
     def _idle_entry_final_standby(self):
@@ -620,8 +658,11 @@ class HostTradeEngine:
             reply, what = self.UR_ACCEPT, "greetings (trainer cards); accepting, a standby barrier follows"
         elif request == self.UR_TRADE:
             reply = self.UR_ACCEPT
-            what = (f"a trade from the trading board (species {packet[1]}, level {packet[2]}); "
-                    "accepting. UNTESTED beyond this point: Task_StartUnionRoomTrade is next")
+            what = (f"a trade from the trading board (it offers species {packet[1]} level "
+                    f"{packet[2]}); accepting. It sends its Pokemon block after a standby barrier")
+            self.uroom_trade_request = (packet[1], packet[2])
+            self._set_state(H_UROOM_TRADE)
+            self._expected = "uroom_mon"
         elif request in (self.UR_BATTLE, self.UR_CHAT):
             reply, what = self.UR_DECLINE, "a battle or chat; declining, the console closes the link"
         elif request == self.UR_IN_ROOM:
@@ -636,7 +677,7 @@ class HostTradeEngine:
         self.info(f"Union Room: the console asked for {what}.")
 
     def _child_ready_close_link(self, rec):
-        if self.union_room and self.state in (H_ENTRY_CARD, H_UROOM_PROMPT):
+        if self.union_room and self.state not in (H_CLOSE, H_DONE):
             # Exit at the prompt, or a declined request: the console runs SetCloseLinkCallback and
             # waits for every player's READY_CLOSE_LINK [WaitAllReadyToCloseLink, link_rfu_2.c:1471]
             # before it disconnects itself. u10: without our half it sat on the prompt text.
@@ -676,7 +717,8 @@ class HostTradeEngine:
         # save/cancel barriers are already multi-round handshakes and keep a single echo.
         repeats = (self.timing.startup_standby_echo_frames
                    if self.state in (H_LINK_PLAYER, H_ENTRY_CARD, H_ENTRY_SEAT,
-                                     H_UROOM_PROMPT, H_CANCEL, H_RETURN_FIELD) else 1)
+                                     H_UROOM_PROMPT, H_UROOM_TRADE, H_CANCEL, H_RETURN_FIELD)
+                   else 1)
         for _ in range(repeats):
             self._queue_words(rfu.exit_standby_words(count), f"STANDBY:{count}")
         self._last_child_standby = count

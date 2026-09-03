@@ -120,3 +120,47 @@ def test_close_link_outside_the_room_prompt_is_still_ignored():
     h = _engine(union_room=False)
     h.feed_child_slot(rfu.serialize(rfu.close_link_words(2)))
     assert h.state == H_ENTRY_CARD and not h._words
+
+
+def test_trading_board_request_runs_mon_mail_animation_save_and_close():
+    """Task_StartUnionRoomTrade [union_room.c:1713]: after our ACCEPT and a standby barrier the
+    console sends its Pokemon (100 B) and mail (220 B) blocks with no request, then CB2_LinkTrade
+    with the mons preselected, whose READY_FINISH / CONFIRM_FINISH and save barriers are the
+    trade-centre ones; the room then closes the link [trade_scene.c:2722]. UNTESTED on hardware."""
+    from frlgsim import mon as monmod
+    from frlgsim.host_trade import H_ANIM, H_CLOSE, H_SAVE, H_UROOM_TRADE
+    h = HostTradeEngine([_mon(1)], union_room=True, anim_delay=1)
+    h._words.clear()
+    h._begin_card_exchange()
+    h._words.clear(); h._blocks.clear()
+    h._expected = "card"
+    h._after_child_block(trade.COUNT_TRAINER_CARD, bytes(100))
+    h.feed_child_slot(_packet_slot(0x44, 113, 26))
+    assert h.state == H_UROOM_TRADE and h._expected == "uroom_mon"
+    assert h.uroom_trade_request == (113, 26)
+    assert _queued_packets(h) == [0x51] * HostTradeEngine.UR_PACKET_REPEAT
+    h._words.clear()
+    h.feed_child_slot(rfu.serialize(rfu.exit_standby_words(1)))       # START_ACTIVITY_LINK barrier
+    assert all(w[0] == rfu.READY_EXIT_STANDBY for w in h._words)
+    theirs = bytes([7]) + bytes(99)
+    h._after_child_block(trade.COUNT_TRAINER_CARD, theirs)
+    assert h._expected == "uroom_mail"
+    assert [b[1] for b in h._blocks] == ["host:uroom_mon"] and len(h._blocks[0][0]) == 100
+    assert bytes(h.child_party[:100]) == theirs and h.child_cursor == 0
+    h._blocks.clear()
+    h._after_child_block(trade.COUNT_MAIL, bytes(220))
+    assert h.state == H_ANIM and [b[1] for b in h._blocks] == ["host:uroom_mail"]
+    assert len(h._blocks[0][0]) == 220
+    h.feed_child_slot(rfu.serialize(rfu.init_words(trade.COUNT_LINKCMD)))
+    h._on_child_linkcmd(trade.READY_FINISH_TRADE, 0)
+    for _ in range(3):
+        h.tick()
+    assert h.state == H_SAVE and h.received_mons and h.received_mons[0].raw == theirs
+    # Save barriers done: the room closes the link instead of re-exchanging parties.
+    h._save_final_standby_seen = True
+    for _ in range(h.timing.save_final_standby_quiet_frames + 1):
+        h.feed_child_slot(rfu.idle_slot())
+    assert h.done and h.state == H_SAVE
+    h._words.clear()
+    h.feed_child_slot(rfu.serialize(rfu.close_link_words(5)))
+    assert h.state == H_CLOSE and any(w[0] == rfu.READY_CLOSE_LINK for w in h._words)

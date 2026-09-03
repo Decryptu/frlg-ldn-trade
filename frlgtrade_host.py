@@ -16,7 +16,7 @@ BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
-from frlgsim import config as configmod, host_cli, trade_runtime  # noqa: E402
+from frlgsim import beacon as beaconmod, config as configmod, host_cli, trade_runtime  # noqa: E402
 from frlgsim.host_app import HostApplication  # noqa: E402
 
 
@@ -58,6 +58,13 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help="Union Room probe: after the child's name NI, re-present a parent NI_START for N "
              "VBlanks (the console mirrors those in the room) before the first UNI frame; the 'D' "
              "in u03-u05 came after exactly five unanswered parent frames")
+    parser.add_argument(
+        "--board-type", choices=sorted(beaconmod.TYPE_NAMES), default=None,
+        help="Union Room trading board: register the offered Pokemon (its species and level) and "
+             "ask for this type in return, so the console's board lists us. The console must have "
+             "a Pokemon of that type to start the trade")
+    parser.add_argument("--board-level", type=int, default=None, metavar="N",
+                        help="override the level shown on the trading board")
     parser.add_argument("--anim-delay", type=int, default=None,
                         help="override the proven trade-animation frame delay")
     parser.add_argument(

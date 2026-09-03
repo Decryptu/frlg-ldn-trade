@@ -89,7 +89,7 @@ def build_trade_app_data(profile, host_session_id):
     return inactive, activate_trade_app_data(inactive, host_session_id)
 
 
-def build_union_room_app_data(profile, host_session_id, activity=None):
+def build_union_room_app_data(profile, host_session_id, activity=None, trade_board=None):
     """Advertisement for the Union Room NPC (the middle NPC on Pokemon Center 2F).
 
     The trade and Wonder Card beacons are invisible there: the searching console runs
@@ -125,6 +125,11 @@ def build_union_room_app_data(profile, host_session_id, activity=None):
                      | beacon.SEARCH_STARTED_ACTIVITY)
     search_word |= activity & beacon.SEARCH_ACTIVITY_MASK
     record[offset:offset + 2] = search_word.to_bytes(2, "little")
+    if trade_board is not None:
+        # (species, level, wanted_type): what the console's trading board lists us with
+        # [union_room.c:3400]. IsPartnerActivityIncompatible compares all three at connect time
+        # [link_rfu_2.c:2949], so they must not change while we host.
+        record = bytearray(beacon.set_trade_board(record, *trade_board))
 
     inactive = bytes(app_data[:beacon.PIA_HDR]) + beacon.b85_encode(bytes(record))
     return inactive, activate_trade_app_data(inactive, host_session_id)

@@ -35,6 +35,33 @@ SEARCH_LANGUAGE_SHIFT = 11
 SEARCH_HAS_CARD = 0x4000
 SEARCH_STARTED_ACTIVITY = 1 << 15
 
+# Trading-board registration in the record. Hardware-proven 2026-09-03 by diffing one console's
+# advertisement before and after it registered a Chansey lv26 asking for FEU (TYPE_FIRE = 10):
+#   byte 22  0x00 -> 0x71   tradeSpecies low byte (113)
+#   byte 19  0x01 -> 0x35   gender:1 | tradeLevel:7, the RfuGameData byte [include/link_rfu.h:112]
+#   byte 18  0x03 -> 0x2b   tradeType:6 << 2; bits 0-1 unchanged (meaning unknown)
+# Byte 23 as the species high byte is inferred from RfuGameData's tradeSpecies:10, not proven.
+TRADE_BOARD_TYPE_OFFSET = 18
+TRADE_BOARD_LEVEL_OFFSET = 19
+TRADE_BOARD_SPECIES_OFFSET = 22
+# include/constants/pokemon.h; 9 is TYPE_MYSTERY, unused for a request.
+TYPE_NAMES = {
+    "normal": 0, "fighting": 1, "flying": 2, "poison": 3, "ground": 4, "rock": 5, "bug": 6,
+    "ghost": 7, "steel": 8, "fire": 10, "water": 11, "grass": 12, "electric": 13, "psychic": 14,
+    "ice": 15, "dragon": 16, "dark": 17,
+}
+
+
+def set_trade_board(record, species, level, wanted_type):
+    """Register (species, level) on the trading board, asking for wanted_type in return."""
+    rec = bytearray(record)
+    if not 0 <= species < 1024 or not 0 <= level < 128 or not 0 <= wanted_type < 64:
+        raise ValueError("trade board fields out of range")
+    rec[TRADE_BOARD_SPECIES_OFFSET:TRADE_BOARD_SPECIES_OFFSET + 2] = species.to_bytes(2, "little")
+    rec[TRADE_BOARD_LEVEL_OFFSET] = (rec[TRADE_BOARD_LEVEL_OFFSET] & 0x01) | ((level & 0x7F) << 1)
+    rec[TRADE_BOARD_TYPE_OFFSET] = (rec[TRADE_BOARD_TYPE_OFFSET] & 0x03) | ((wanted_type & 0x3F) << 2)
+    return bytes(rec)
+
 
 # Pia 6.16-6.41 system header (NintendoClients wiki LDN-Application-Data-(Pia)), big-endian; values confirmed from a
 # real FRLG beacon. A zero-filled header is rejected by the console's Pia layer.

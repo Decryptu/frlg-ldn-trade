@@ -79,9 +79,20 @@ class HostApplication:
             party, plan=self.plan, profile=self.profile, log=self.log,
             rfu_kwargs=rfu_kwargs, union_room=union_room)
         if union_room:
+            trade_board = None
+            board_type = getattr(self.options, "union_room_board_type", None)
+            if board_type is not None:
+                offered = party[self.plan.offered_slots[0]]
+                level = getattr(self.options, "union_room_board_level", None)
+                if level is None:
+                    level = offered.decode()["level"]
+                trade_board = (offered.species, int(level), int(board_type))
+                self.info(f"Union Room trading board: offering {offered.species_name} lv{level}, "
+                          f"asking for type {board_type}.")
             inactive, active = build_union_room_app_data(
                 self.profile, self.session.rfu.host_session_id,
-                activity=getattr(self.options, "union_room_activity", None))
+                activity=getattr(self.options, "union_room_activity", None),
+                trade_board=trade_board)
         else:
             inactive, active = build_trade_app_data(
                 self.profile, self.session.rfu.host_session_id)
