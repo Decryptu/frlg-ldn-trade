@@ -120,9 +120,13 @@ class HostApplication:
         if "child_ni_complete" in events:
             self.info("Received the Switch RFU identity; sending join-status NI.")
         if "disconnect" in events:
-            state = getattr(self._activity(), "state", None)
-            self.info(f"Switch sent the RFU disconnect frame (D) while the host is in {state}; "
-                      "it leaves LDN next. What the host sent just before this is the cause.")
+            activity = self._activity()
+            state = getattr(activity, "state", None)
+            if getattr(activity, "close_confirmed", False):
+                self.info(f"Switch sent the RFU disconnect frame (D) in {state}: the normal close.")
+            else:
+                self.info(f"Switch sent the RFU disconnect frame (D) while the host is in {state}; "
+                          "it leaves LDN next. What the host sent just before this is the cause.")
 
     def _activity(self):
         activity = getattr(self.session, "activity", None)
