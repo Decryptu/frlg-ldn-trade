@@ -57,6 +57,14 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
              "a Pokemon of that type to start the trade")
     parser.add_argument("--board-level", type=int, default=None, metavar="N",
                         help="override the level shown on the trading board")
+    parser.add_argument(
+        "--union-room-chat", action="store_true",
+        help="Union Room: accept the console's 'Tchat' instead of declining it. Both sides send a "
+             "JOIN block, then the console's keyboard opens and every line it types is logged")
+    parser.add_argument(
+        "--chat-message", action="append", default=None, metavar="TEXT",
+        help="Union Room chat: a line to send once the chat opens, repeatable. Up to 30 Gen-3 "
+             "charmap characters each; they go out one at a time, 1.5s apart")
     parser.add_argument("--anim-delay", type=int, default=None,
                         help="override the proven trade-animation frame delay")
     parser.add_argument(

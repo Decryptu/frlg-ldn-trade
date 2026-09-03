@@ -77,7 +77,9 @@ class HostApplication:
                           "keepalive_frames": int(getattr(self.options, "union_room_keepalive", 0))}
         self.session = host_session.HostSession(
             party, plan=self.plan, profile=self.profile, log=self.log,
-            rfu_kwargs=rfu_kwargs, union_room=union_room)
+            rfu_kwargs=rfu_kwargs, union_room=union_room,
+            union_room_chat=bool(getattr(self.options, "union_room_chat", False)),
+            chat_messages=tuple(getattr(self.options, "chat_messages", ()) or ()))
         if union_room:
             trade_board = None
             board_type = getattr(self.options, "union_room_board_type", None)

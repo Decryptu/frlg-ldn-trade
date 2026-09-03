@@ -5,7 +5,7 @@ CONFIRM and every cancel decision, so the follower engine in frlgsim.trade canno
 from collections import Counter, deque
 from dataclasses import dataclass
 
-from . import block, linkplayer, mon as monmod, rfu, trade
+from . import block, linkplayer, mon as monmod, rfu, trade, uroom_chat
 
 
 STATUS_REPORT_FRAMES = 30   # 0.5s; the H_LINK_PLAYER stall window is only ~2s
@@ -19,6 +19,9 @@ H_UROOM_PROMPT = "H_UROOM_PROMPT"
 # Pokemon block then one mail block, then CB2_LinkTrade with the mons preselected
 # [union_room.c:1713].
 H_UROOM_TRADE = "H_UROOM_TRADE"
+# Union Room only: a chat request was accepted. Both members SendBlock a JOIN, then one 0x28
+# block per line typed, until the leader DISBANDs or the child LEAVEs [union_room_chat.c:429].
+H_UROOM_CHAT = "H_UROOM_CHAT"
 H_ENTRY_SEAT = "H_ENTRY_SEAT"
 H_PARTY = "H_PARTY"
 H_SELECT = "H_SELECT"
@@ -56,6 +59,9 @@ class HostTradeTiming:
     # Keep Pia traffic alive after READY_CLOSE_LINK while the Switch completes its fade/warp.
     post_client_close_grace_frames: int = 15 * 60
     close_retry_frames: int = 60
+    # Task_ReceiveChatMessage latches one block per player and scrolls it in; back-to-back sends
+    # would overwrite gBlockRecvBuffer before it reads. A typed line is seconds apart natively.
+    chat_message_gap_frames: int = 90
 
 
 DEFAULT_HOST_TRADE_TIMING = HostTradeTiming()
@@ -71,6 +77,7 @@ FINAL_MENU_READY_FRAMES = DEFAULT_HOST_TRADE_TIMING.final_menu_ready_frames
 POST_CANCEL_EXIT_WAIT_FRAMES = DEFAULT_HOST_TRADE_TIMING.post_cancel_exit_wait_frames
 POST_CLIENT_CLOSE_GRACE_FRAMES = DEFAULT_HOST_TRADE_TIMING.post_client_close_grace_frames
 CLOSE_RETRY_FRAMES = DEFAULT_HOST_TRADE_TIMING.close_retry_frames
+CHAT_MESSAGE_GAP_FRAMES = DEFAULT_HOST_TRADE_TIMING.chat_message_gap_frames
 HOST_NAME_PAD = linkplayer.HOST_NAME_PAD
 
 # Native leader route from the cable-club entrance to the LEFT trade chair as (LINK_KEY_CODE low byte,
@@ -105,7 +112,8 @@ class HostTradeEngine:
 
     def __init__(self, party, trade_slot=0, *, offered_slots=None, trades=1,
                  link_player=None, profile=None, anim_delay=1935, trust_pia=True, timing=None,
-                 union_room=False, log=lambda *a: None):
+                 union_room=False, union_room_chat=False, chat_messages=None,
+                 log=lambda *a: None):
         self.party = list(party)
         if not 1 <= len(self.party) <= 6:
             raise ValueError("party must contain 1..6 Pokémon")
@@ -126,8 +134,13 @@ class HostTradeEngine:
         self.anim_delay = anim_delay
         self.trust_pia = trust_pia
         self.union_room = bool(union_room)
+        self.union_room_chat = bool(union_room_chat)
         self.uroom_requests = []
         self.uroom_trade_request = None
+        self.chat_received = []            # parsed blocks from the console, in arrival order
+        self._chat_outbox = deque(uroom_chat.check_text(t) for t in (chat_messages or ()))
+        self._chat_joined = False
+        self._chat_send_wait = None
         self._last_uroom_packet = None
         self._last_uroom_frame = 0
         self.timing = timing if timing is not None else DEFAULT_HOST_TRADE_TIMING
@@ -402,6 +415,7 @@ class HostTradeEngine:
             "ribbons": trade.COUNT_RIBBON,
             "uroom_mon": trade.COUNT_TRAINER_CARD,     # one 100-byte Pokemon
             "uroom_mail": trade.COUNT_MAIL,
+            "uroom_chat": trade.COUNT_RIBBON,          # the 0x28-byte chat block
         }.get(expected, trade.COUNT_PARTY if expected and expected.startswith("party:") else None)
         if expected_count is None:
             self.trace.append(("unexpected_child_block", count))
@@ -421,6 +435,9 @@ class HostTradeEngine:
             self._expected = "warp0"
             self._queue_block(self._link_player_block, "host:link_player")
             self.info(f"Console identified as {lp.name!r}; sending the host LinkPlayer block now.")
+            return
+        if expected == "uroom_chat":
+            self._on_chat_block(data)
             return
         if expected == "uroom_mon":
             # Task_StartUnionRoomTrade case 0/1: both sides SendBlock their registered mon, no
@@ -663,6 +680,12 @@ class HostTradeEngine:
             self.uroom_trade_request = (packet[1], packet[2])
             self._set_state(H_UROOM_TRADE)
             self._expected = "uroom_mon"
+        elif request == self.UR_CHAT and self.union_room_chat:
+            reply = self.UR_ACCEPT
+            what = ("a chat; accepting. A standby barrier follows, then both members SendBlock a "
+                    "JOIN and the console opens its chat keyboard")
+            self._set_state(H_UROOM_CHAT)
+            self._expected = "uroom_chat"
         elif request in (self.UR_BATTLE, self.UR_CHAT):
             reply, what = self.UR_DECLINE, "a battle or chat; declining, the console closes the link"
         elif request == self.UR_IN_ROOM:
@@ -717,7 +740,8 @@ class HostTradeEngine:
         # save/cancel barriers are already multi-round handshakes and keep a single echo.
         repeats = (self.timing.startup_standby_echo_frames
                    if self.state in (H_LINK_PLAYER, H_ENTRY_CARD, H_ENTRY_SEAT,
-                                     H_UROOM_PROMPT, H_UROOM_TRADE, H_CANCEL, H_RETURN_FIELD)
+                                     H_UROOM_PROMPT, H_UROOM_TRADE, H_UROOM_CHAT,
+                                     H_CANCEL, H_RETURN_FIELD)
                    else 1)
         for _ in range(repeats):
             self._queue_words(rfu.exit_standby_words(count), f"STANDBY:{count}")
@@ -856,7 +880,49 @@ class HostTradeEngine:
             self._tick_close_link()
         if self.state == H_ANIM and self._anim_wait is not None:
             self._tick_anim()
+        if self.state == H_UROOM_CHAT:
+            self._tick_chat_outbox()
         return self._next_parent_words()
+
+    def _on_chat_block(self, data):
+        """One inbound 0x28 chat block. `_expected` stays "uroom_chat": members send blocks for as
+        long as the chat lives, with no request from us [union_room_chat.c:1451]."""
+        msg = uroom_chat.parse(data)
+        self.chat_received.append(msg)
+        self.trace.append(("uroom_chat_recv", msg["cmd"], msg["name"]))
+        self.info(f"Union Room chat: {uroom_chat.describe(msg)}")
+        if msg["cmd"] == uroom_chat.JOIN and not self._chat_joined:
+            self._chat_joined = True
+            self._queue_block(uroom_chat.build(uroom_chat.JOIN, self.lp.name, multiplayer_id=0),
+                              "host:chat_join")
+            self._chat_send_wait = self.timing.chat_message_gap_frames
+            self.info("Union Room chat: sending our JOIN; the console lists us as a member.")
+        elif msg["cmd"] in (uroom_chat.LEAVE, uroom_chat.DROP, uroom_chat.DISBAND):
+            # The child parks on !gReceivedRemoteLinkPlayers until the parent drops the link, then
+            # saves and walks back into the room [union_room_chat.c:657].
+            self.done = True
+            self.info("Union Room chat: the console left the chat; closing the link.")
+
+    def _tick_chat_outbox(self):
+        """One queued line at a time, spaced: the console latches a single block per player and
+        scrolls it in before it reads the next. None means the outbox is drained or the chat has
+        not opened yet."""
+        if self._chat_send_wait is None or self._sender is not None or self._blocks:
+            return
+        if self._chat_send_wait > 0:
+            self._chat_send_wait -= 1
+            return
+        if not self._chat_outbox:
+            self._chat_send_wait = None
+            self.info("Union Room chat: every queued line has been sent; the chat stays open "
+                      "until the console leaves it.")
+            return
+        text = self._chat_outbox.popleft()
+        self._queue_block(uroom_chat.build(uroom_chat.CHAT, self.lp.name, text=text),
+                          "host:chat_msg")
+        self._chat_send_wait = self.timing.chat_message_gap_frames
+        self.trace.append(("uroom_chat_send", text))
+        self.info(f"Union Room chat: sending {text!r}.")
 
     def _tick_status_report(self):
         self._status_countdown -= 1

@@ -640,3 +640,51 @@ DEDUCTION: the record bytes for the trading board (18: type<<2, 19: gender|level
 species) are correct for a lv26 species-113 registration; the species high byte (23) is still
 inferred. The Union Room trade path needs no party exchange, no menu, no room-entry route: it is
 the shortest trade the host does.
+
+### Union Room chat, read from the decomp (offline, no run spent)
+
+The room's "Tchat" was declined by the host until now. Read end to end in `src/union_room_chat.c`
+and `src/union_room.c`; nothing about it needs a hardware run to specify.
+
+FACT: chat rides the ordinary `SendBlock` path, not `Rfu_SendPacket`. Every member calls
+`SendBlock(0, sendMessageBuffer, 0x28)` unsolicited — there is no `BLOCK_REQ` first
+[`ChatEntryRoutine_Join`, union_room_chat.c:429; `ChatEntryRoutine_SendMessage`, :823]. A 0x28-byte
+block is `count` 4, the same as the trade path's giftRibbons block.
+
+FACT: the block layout, from `PrepareSendBuffer_*` [union_room_chat.c:1256-1281] and
+`ProcessReceivedChatMessage` [:1283]:
+
+    [0]      command: 0 NULL, 1 CHAT, 2 JOIN, 3 LEAVE, 4 DROP, 5 DISBAND
+    [1..8]   player name, PLAYER_NAME_LENGTH + 1 bytes, EOS-terminated
+    [9]      multiplayer id            (JOIN / LEAVE / DROP / DISBAND)
+    [9..39]  message text, EOS-terminated (CHAT)
+
+`messageEntryBuffer` is `2 * MESSAGE_BUFFER_NCHAR + 1` = 31 bytes [union_room_chat.c:21, :67], so a
+full line plus its terminator is exactly the block's tail: a CHAT block is never truncated by the
+0x28 limit.
+
+FACT: entry is the same shape as the room trade. The console asks with `SEND_PACKET 0x45`
+(`ACTIVITY_CHAT | IN_UNION_ROOM`); on our `ACCEPT` (0x51) it prints the start message, runs
+`SetLinkStandbyCallback` [UR_STATE_START_ACTIVITY_LINK, union_room.c:3096], fades, and enters
+`Task_StartActivity`'s chat branch [union_room.c:1938]. As the child (multiplayer id 1) it calls
+`LinkRfu_StopManagerBeforeEnteringChat` — `rfu_LMAN_stopManager(FALSE)`, which only stops accepting
+NEW connections — then `SetHostRfuGameData(ACTIVITY_CHAT | IN_UNION_ROOM, 0, TRUE)` and
+`EnterUnionRoomChat`. The existing link is untouched, so the host has nothing to rebuild.
+
+FACT: both members send JOIN on entry, independently and with no wait for a peer
+[`ChatEntryRoutine_Join` case 0 falls straight into the send]. Reacting to the console's JOIN with
+ours is therefore safe and avoids racing its fade.
+
+FACT: the leader (multiplayer id 0, the parent — us) sends DISBAND when it quits; a child sends
+LEAVE, then parks on `!gReceivedRemoteLinkPlayers` waiting for the parent to drop the link before it
+saves and walks back into the room [`ChatEntryRoutine_AskQuitChatting` cases 2/4/5,
+union_room_chat.c:596-660]. So the host must disconnect when the console's LEAVE arrives.
+
+FACT: on the Switch build the accepting side also gates on
+`svc_CommsAllowedByParentalControls()` [union_room.c:3159, :3037, REVISION >= 0xA]. The console is
+the requester here, so its own parental-control setting can turn its request into a DECLINE before
+we ever see it — a silent refusal at the prompt is that, not a protocol fault.
+
+Shipped: `frlgsim/uroom_chat.py` (block build/parse/validate), `H_UROOM_CHAT` in `host_trade.py`,
+`--union-room-chat` and repeatable `--chat-message TEXT` on `frlgtrade_host.py`. 21 new tests,
+suite 341 -> 362. UNTESTED on hardware.

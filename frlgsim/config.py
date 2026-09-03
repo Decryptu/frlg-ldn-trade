@@ -4,7 +4,8 @@ from pathlib import Path
 import tomllib
 from typing import Any, Mapping
 
-from . import beacon, charmap, gift_registry, linkplayer, ni, stamp_rally, wonder_card
+from . import (beacon, charmap, gift_registry, linkplayer, ni, stamp_rally,
+               uroom_chat, wonder_card)
 
 
 VERSIONS = {
@@ -223,6 +224,9 @@ class HostOptions:
     # offered party mon unless union_room_board_level overrides the level.
     union_room_board_type: int | None = None
     union_room_board_level: int | None = None
+    # Accept the room's "Tchat" instead of declining it, and the lines to send once the chat opens.
+    union_room_chat: bool = False
+    chat_messages: tuple = ()
 
     def __post_init__(self):
         # LDN channels: 2.4 GHz 1/6/11 and 5 GHz 36/40/44/48 [kinnay LDN wiki, WLAN Channels].
@@ -233,6 +237,8 @@ class HostOptions:
         if self.scene_id is not None and (
                 type(self.scene_id) is not int or not 0 <= self.scene_id <= 0xFFFF):
             raise ValueError("scene_id must fit in 16 bits")
+        for text in self.chat_messages:
+            uroom_chat.check_text(text)
 
 
 # --union-room-activity names, resolved to the packed activity field.
