@@ -407,3 +407,12 @@ rate set is the minimal change found so far.
   140-330 frame burst, absent from every successful run; the host process never paused (udp_out
   timestamps continuous). rtw88 usb.c queues without back-pressure. Open.
 
+### ident-25 STALL — mitigated 2026-09-03 (session 13)
+The residual after the wall was closed: on the LeafGreen the console sometimes went idle after our
+last delivery-script (ident 25 / MG_LINKID_RAM_SCRIPT) block and never sent ident 20 (READY_END),
+then left. The console never reflects a parent block, so which fragment was lost is not observable
+from the Pia capture. Proactive 3x redundancy on JUST ident 25 (`--ram-script-block-repeat 3`,
+host_mystery_gift) took it from a frequent stall to 5/5 deliveries on the console that was stalling,
+and is now the run_mg_fast default. Not proven to be pure air loss vs the console's post-Pia
+RFU->game handoff dropping a fragment; the redundancy covers both.
+
