@@ -172,6 +172,7 @@ class HostTradeEngine:
         self._child_slot = None            # the slot currently being fed to us
         self._echo_wait_slot = None        # the slot that must be mirrored before we answer
         self._echo_wait_polls = 0
+        self._send_history = deque(maxlen=16)
         self._battle_party_block = 0
         self.uroom_requests = []
         self.uroom_trade_request = None
@@ -306,6 +307,11 @@ class HostTradeEngine:
     def _queue_words(self, words, label):
         self._words.append(list(words))
         self.trace.append(("queue", label))
+
+    def recent_sends(self, n=8):
+        """The last few things we put on the wire, newest last. The disconnect message claims what
+        the host sent is the cause; u21/u22/u25 died mid-party-exchange with no idea what that was."""
+        return list(self._send_history)[-n:]
 
     def _queue_block(self, data, label):
         self._blocks.append((bytes(data), label))
@@ -1209,6 +1215,7 @@ class HostTradeEngine:
             data, label = self._blocks.popleft()
             self._sender = block.BlockSender(data, owner=0, trust_pia=self.trust_pia)
             self.trace.append(("send_block", label, len(data)))
+            self._send_history.append(f"{self._parent_polls}: block {label} ({len(data)} B)")
         if self._sender is not None:
             words = self._sender.tick(None)
             if self._sender.done:

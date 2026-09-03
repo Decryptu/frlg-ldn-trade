@@ -209,8 +209,15 @@ class HostApplication:
                           f"(outcome {battle.outcome}): the normal close for a link battle. It "
                           "returns to the room on its own; relaunch the host to appear there again.")
             else:
+                recent = getattr(activity, "recent_sends", lambda: [])()
                 self.info(f"Switch sent the RFU disconnect frame (D) while the host is in {state}; "
                           "it leaves LDN next. What the host sent just before this is the cause.")
+                if recent:
+                    self.info("  our last blocks, oldest first: " + " | ".join(recent))
+                sender = getattr(activity, "_sender", None)
+                if sender is not None:
+                    self.info(f"  a block send was IN FLIGHT when it left: {sender.state} "
+                              f"frag {getattr(sender, 'index', '?')}")
 
     def _activity(self):
         activity = getattr(self.session, "activity", None)
