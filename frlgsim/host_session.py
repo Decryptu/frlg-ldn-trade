@@ -7,6 +7,20 @@ from .host_trade import DEFAULT_HOST_TRADE_TIMING, HostTradeEngine
 from .rfu_leader import RFULeader, UNI
 
 
+
+def _host_rtx_limit():
+    """HOST_RTX_LIMIT: max Reliable retransmits per VBlank (default None = unlimited, the historical
+    behaviour). 2026-09-03 (lg100/lg120): a ~250ms adapter TX hiccup starves the acks, every unacked
+    frame comes due at once and the host pushed 70 datagrams in 0.25s; the console never recovered
+    from that flood ("erreur de connexion" 5s later). The joiner already caps its retransmits
+    (sim.RTX_GAP_LIMIT). 2 = gap-targeted, gentle recovery."""
+    import os
+    try:
+        v = int(os.environ.get("HOST_RTX_LIMIT", "") or 0)
+    except ValueError:
+        v = 0
+    return v if v > 0 else None
+
 class HostSession:
     """Transport-independent, single-child leader stack below Pia framing.
 
@@ -30,7 +44,7 @@ class HostSession:
                 player_ids_repeat_frames = plan.player_ids_repeat_frames
             if link_player_idle_frames is None:
                 link_player_idle_frames = plan.link_player_idle_frames
-        self.reliable = reliable.HostReliableSession(**(reliable_kwargs or {}))
+        self.reliable = reliable.HostReliableSession(retransmit_limit=_host_rtx_limit(), **(reliable_kwargs or {}))
         self.rfu = RFULeader(**(rfu_kwargs or {}))
         if engine is not None:
             if party is not None or plan is not None:
