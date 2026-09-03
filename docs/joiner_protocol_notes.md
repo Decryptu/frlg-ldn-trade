@@ -461,3 +461,28 @@ HYPOTHESIS, untested on hardware: with the parent NI skipped and UNI entered dir
 child's NI completes, the union-room console proceeds to the player exchange. Implemented as
 `RFULeader(skip_parent_ni=True)`, enabled by `--union-room`. The 'G' link-state 1 frame is still sent;
 only the NI is skipped. Next run tag u05.
+
+### u05: the NI was not the last gate
+
+FACT (u05, one run): with `skip_parent_ni` the host reaches UNI, which u03/u04 never did. The log
+line changes from the NI stall to "RFU NI handshake complete; parent UNI and trade-room startup are
+active", and the decode shows the child's NI completing, our 'G' link-state 1, then
+`T UNI ts=6..10 mp0:SEND_PLAYER_IDS`. So the parent join-status NI really was rejected, and skipping
+it advances the connection by one layer.
+
+FACT: the console still disconnects ~0.1s later, and it never sends one UNI frame. It answers our
+SEND_PLAYER_IDS with K frames only (kseq 8, 9; mid 2, 3) and then `type44` 'D'. On the user's screen
+this is unchanged: "Communication avec PkCamp" then "erreur de connexion".
+
+UNKNOWN: why the child never enters its own UNI send. Candidates, none tested:
+  1. It has not reached RFUSTATE_UR_PLAYER_EXCHANGE. That transition is driven by the LMAN
+     connection callback, which on the Switch is emulator-internal, so it may want something from us
+     that the trade-centre join provides implicitly.
+  2. `rfu_LMAN_establishConnection(MODE_P_C_SWITCH, ...)` [link_rfu_2.c:523] is parent/child
+     SWITCHABLE, unlike the trade centre's fixed MODE_CHILD. `LinkRfu_ForceChangeSpParent` and
+     `rfu_LMAN_forceChangeSP(TRUE)` are called on both sides of this flow. The role may still be
+     under negotiation when we start driving SEND_PLAYER_IDS as a fixed parent.
+  3. Our SEND_PLAYER_IDS content or slot assignment is wrong for this flow.
+
+Candidate 2 is the one to read next: nothing in the trade-centre path exercises MODE_P_C_SWITCH, and
+it is the clearest structural difference between the two flows.
