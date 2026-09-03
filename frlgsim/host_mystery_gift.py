@@ -303,7 +303,23 @@ class HostMysteryGiftEngine:
     def _drain_recv_blocks(self):
         """Feed buffered child blocks to the receiver. True once a message completed."""
         while self._recv_blocks and self._receiver.active:
-            payload = self._receiver.feed_block(self._recv_blocks.popleft())
+            block = self._recv_blocks.popleft()
+            try:
+                payload = self._receiver.feed_block(block)
+            except mg_link.MysteryGiftLinkError as exc:
+                # 2026-09-03 (lg135): the console re-sent an already-consumed message (its ident-17
+                # game data arrived again while we were expecting the ident-19 toss response). The
+                # RFU reassembler dedups whole blocks by (count, owner) epoch, but a genuine console
+                # retransmit of the PREVIOUS message still surfaces here as a stale header. Drop the
+                # stale block and re-arm the SAME expected ident rather than crashing the host; the
+                # console re-sends the message we are waiting for. Previously this raised and killed
+                # the whole host process ("nobody is up").
+                want = self._receiver.expected_ident
+                self.trace.append(("recv_resync", want, str(exc)))
+                self.info(f"[mg] ignoring a stale/duplicate child block while awaiting ident "
+                          f"{want} ({exc}); re-arming.")
+                self._receiver.expect(want)
+                continue
             if payload is None:
                 continue
             ident = self._receiver.ident
