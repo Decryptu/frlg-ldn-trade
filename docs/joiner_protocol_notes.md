@@ -576,3 +576,32 @@ its prompt; the parent then waits for the next packet. The trade path needs our 
 carry tradeSpecies/tradeType/tradeLevel so the console's trading board lists us
 [union_room.c:3400]; where tradeType and tradeLevel sit in the 24-byte record is still UNKNOWN
 (only tradeSpecies in [22:24] is proven).
+
+### u07: why the keepalive works, and why u07 still died
+
+DEDUCTION (decomp + u06 timing): the console reaches `RFUSTATE_UR_PLAYER_EXCHANGE` promptly and
+sits in `Task_UnionRoomListen` retrying `rfu_UNI_setSendData` every frame [link_rfu_2.c:533]. That
+call fails with ERR_SUBFRAME_SIZE while our NI_START is pending on its receive slot: the receive
+control takes 2 of the child's 16 LL-frame bytes [rfu_STC_NI_initSlot_asRecvControllData,
+librfu_rfu.c:2262], and the child's UNI subframe needs all 16 [rfu_STC_setSendData_org,
+librfu_rfu.c:1449]. The pending receive is released only by the LMAN's NI fail counter,
+`NI_failCounter_limit` 480 frames [link_rfu_2.c:139] after our last NI_START, via
+`rfu_NI_stopReceivingData` [AgbRfu_LinkManager.c:1328]. In u06 the console's first UNI frame came
+on the very frame after its last NI_START ack (ts 177963 -> 177964), 482 frames after our last
+NI_START. While the receive is pending the child has an ack subframe to send every frame, which is
+what keeps the five-frame rule from firing.
+
+DEDUCTION: releasing the receive early is not an option. An NI body frame makes the child's
+`rfu_STC_NI_initSlot_asRecvDataEntity` fail with ERR_RECV_BUFF_OVER (no game buffer, size 0)
+[librfu_rfu.c:2300], which sets `recvErrorFlag`, which turns `rfu_REQ_recvData` into a REQ error,
+which `LinkManagerCB_UnionRoom` handles as `LMAN_MSG_REQ_API_ERROR` -> `RfuSetErrorParams` ->
+the "erreur de connexion, rapprochez-vous" screen [link_rfu_2.c:2585]. That is also what u03/u04
+showed after their NI body frames. So the sequence stays: NI_START keepalive, then ~8 s of the
+console's own re-acks, then UNI. The user sees "Communication avec PkCamp" for about ten seconds.
+
+FACT (u07, one run, same flags as u06): the console connected, the keepalive ran, and at 17.0 s
+(5 s into the console's 480-frame wait) both Pia reliable windows stopped advancing at once: we
+retransmitted seq 419-422 and the console retransmitted 847-850 for four seconds, then it sent
+'D' and left. dmesg has `rtw88_8822bu: failed to get tx report from firmware` at 18:23:50, the
+same second. The adapter stopped transmitting; the console never saw our ACKs. Not a protocol
+event. The same driver line appears 79 times in this machine's log; u06 survived one at 18:17:04.
