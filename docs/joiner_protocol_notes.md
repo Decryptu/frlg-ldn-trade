@@ -1096,3 +1096,34 @@ looks like a retry counter giving up. u19 completed a whole battle with it reach
 
 UNKNOWN. The next step is offline and costs no runs: diff a failing capture against a succeeding one
 across the whole party exchange with `scratchpad/battle_blocks.py` and `scratchpad/host_decode.py`.
+
+### The battle disconnect: our transmit path stalls (session 20, offline)
+
+FACT (u21, u22, u25 host captures + station logs + air captures): every "erreur de connexion" during
+the party exchange begins with OUR datagrams being held below the UDP socket for 0.1-0.75 s. The
+console's Pia window froze, it kept retransmitting its own frames and we received every one of them;
+the adapter's per-station `tx packets` counter (mac80211 `tx_stats`, counted at `ieee80211_tx_dequeue`)
+did not move for the whole blackout while the host kept emitting ~90 datagrams/s with monotonic Pia
+header nonces; the air capture shows our frames absent for the blackout and released as one burst
+(u22: 71 frames in 200 ms). The console's power-management bit was never set. u22's console resumed
+receiving us for 70 ms and disconnected anyway: the game had already taken the link-loss path
+(`LMAN_MSG_LINK_LOSS_DETECTED_AND_DISCONNECTED` -> `RfuSetErrorParams`, link_rfu_2.c:2312), which on
+the Switch path always prints "rapprochez-vous" (`CB2_PrintErrorMessage`, link.c:1521).
+
+FACT: mac80211's monitor loopback of our own frames (emitted at TX status = the rtw88 USB URB
+completion) lags sendto by a median 594 ms, quantised at ~610 ms multiples, in every run, while the
+console acknowledges the same frame within 15 ms and the console's frames align to the host clock
+within 1 ms. TX completions are reported late and in batches; the transmitter is not.
+
+DEDUCTION, from the 7.0 mac80211 source: `ieee80211_tx_dequeue` holds a station's frames only for the
+AQL airtime check (inert for rtw88: `HAS_RATE_CONTROL` and no rate with count>0 is ever reported, so
+no airtime is charged), a queue stop reason (rtw88 sets one only for a hardware scan; our RX never
+gapped) or `IEEE80211_TXQ_STOP` from block-ack session setup (no ADDBA request exists in any air
+capture although the station is registered HT-capable and rtw88 asks for one). Which gate, or whether
+the driver's own `rtw_tx_work` is what stops dequeuing, is UNKNOWN and is what `scratchpad/txq_sampler.sh`
+(started by run_host.sh) records at 50 ms during the next run.
+
+The console-side re-send mechanics seen in u25 are the decomp's, not a fault: the child re-enqueues
+every fragment missing from its own echo bitmask (`HandleSendFailure`, link_rfu_2.c:1015) and the
+receiver ORs fragments into a bitmask (`receivedFlags |= 1 << index`), so duplicated or reordered
+echoes are harmless. What is not harmless is the 0.1 s hole that started it.
