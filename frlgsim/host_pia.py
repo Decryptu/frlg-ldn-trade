@@ -13,8 +13,11 @@ PIA_HOST_VAR = 0x00C6
 NET_RETRY_SECONDS = 0.5
 SESSION_ACCEPT_RETRY_SECONDS = 0.25
 HOST_RTT_PERIOD_SECONDS = 0.315
-# The console silently drops a large share of our datagrams inside its own stack and dedups
-# reliable frames by seq, so unacked data frames are re-offered in the next few datagrams.
+# Unacked data frames are re-offered in the next HOST_CARRY_DEPTH datagrams (the console dedups by seq). Air
+# loss is ~1-2% and bursty; Pia delivers in order, so a hole holds the later parent slots back and the child's
+# 8-deep RFU queue overflows when it fills. h5 at depth 0: seq 954 lost with its 68ms retransmit, the 137ms
+# one landed, the console received ten slots at once and disconnected 300ms later (LEAVE reason 3). h3/h4 at
+# depth 4 and unlimited: clean. Costs ~0.5 copies per frame.
 HOST_CARRY_DEPTH = 4
 # The console goes silent ~0.5s after accepting the card (its save); traffic pushed into that
 # silence piles up in the adapter and either freezes the host (blocking sendto) or floods the console.
@@ -282,6 +285,8 @@ class HostPeerProtocol:
 
     def _apply_carry_forward(self, outputs):
         """Ctrl (pure-ack) frames are never carried."""
+        if HOST_CARRY_DEPTH <= 0:
+            return outputs
         _rel = getattr(self.session, "reliable", None)
         _link = getattr(_rel, "link", _rel)
         unacked = getattr(_link, "unacked", {}) or {}

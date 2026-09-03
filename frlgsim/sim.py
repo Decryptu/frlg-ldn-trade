@@ -21,8 +21,11 @@ RELIABLE_BATCH_MAX = 9
 PACE_MIN_GAP_MS = 34
 # A datagram sent within ~2ms after a console frame is dropped ~40% of the time; 20ms+ after, ~6%.
 REPLY_HOLDOFF_MS = 6
-# Every reliable data frame is repeated in the next CARRY_DEPTH datagrams: the console drops ~40% of our datagrams inside
-# its stack regardless of timing, and Pia delivers in order, so one hole stalls the game stream for an RTO.
+# Every reliable data frame is repeated in the next CARRY_DEPTH datagrams. Air loss is ~1-2% and bursty (h5: an
+# original and its 68ms retransmit both lost), and Pia delivers in order, so one hole holds every later frame back
+# and the console's RFU queue (8 deep) overflows when the hole fills; the console then drops the link. The
+# ~40% "silent drop" this was first written against was the random header nonce (see _next_nonce); with the
+# counter nonce the carry costs ~0.4 copies per frame (j89). j90 ran at 0 but saw no trade-phase loss at all.
 CARRY_DEPTH = 4
 
 # LIVE cap on new standby frames per count: the reference child sends each ~3-4x then stops; emitting every VBlank
