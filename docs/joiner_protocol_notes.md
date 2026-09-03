@@ -718,6 +718,26 @@ cycle even with the link otherwise idle -- u13 deltas 16.9, 16.9, 16.8, 16.9, 16
 ~8.45 s with holds sometimes skipped. A period that stable on an idle link is a clock, not load.
 This is the same UNKNOWN left open by the ident-25 work, on a much cleaner sample.
 
+### u15: a live two-way conversation through the Union Room chat
+
+FACT (u15, `--union-room-chat --chat-message "HELLO FROM LINUX" --chat-file <path>`): lines
+appended to the chat file while the host was already running reached the console, so the chat is
+genuinely interactive rather than a queue played out at launch.
+
+    28.8s  us      HELLO FROM LINUX        (queued at launch)
+    40.0s  GURVAN  HEY CLAUDE
+    54.5s  us      HEY GURVAN! I READ YOU  (written to the file mid-run)
+    74.3s  GURVAN  WATS 2 PLUS 6
+    82.8s  us      2 PLUS 6 IS 8
+    92.4s  GURVAN  THX
+    99.0s  us      ANYTIME. THIS IS ON LDN
+   104.6s  GURVAN  [LEAVE] -> our DROP +0.1s, its READY_CLOSE_LINK +0.2s, its 'D' +0.3s, LDN leave
+                   +4.3s, back in the room with no error
+
+DEDUCTION: the chat-exit fix is 2/2 on hardware (u14, u15). Round-trip latency is dominated by the
+console's on-screen keyboard, not by the link: our reply lands ~1.7s after the file is written
+(one chat_message_gap_frames wait plus the block send).
+
 ## The console's ack lag is a 512 ms metronome, not congestion (2026-09-03)
 
 The ident-25 work left an UNKNOWN: what makes the console's cumulative ack fall behind in the first
