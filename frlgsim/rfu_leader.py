@@ -92,6 +92,13 @@ class RFULeader:
         # matched the previous battler's -- so a caller pairs the content with a mark taken when its
         # block landed and requires an emission after it.
         self.echo_emissions = 0
+        # u26: one record per console block whose SEND_BLOCK_INIT we have echoed, with the set of
+        # fragment indices actually EMITTED for it (re-sends included, drops excluded). A block is
+        # returned to the console only when every index 0..count-1 is in the set; the last fragment
+        # alone is not enough, because ECHO_MAX can have dropped an earlier one that the console
+        # re-sends later, and answering before that re-send is echoed clears an exec-flag bit that
+        # is not set yet. Consecutive INIT echoes with no fragment between them are one block.
+        self.echo_blocks = []
         self.child_game_data = None
         self.k_acks = 0
         self.uni_in = 0
@@ -267,10 +274,22 @@ class RFULeader:
                 self.echo_progress += 1
                 self.echo_emissions += 1
                 self.last_echo_cmd = self._echo_cmd
+                self._record_echo(self._echo_cmd)
             table = rfu.pack_recv_cmds([parent_cmd, self._echo_cmd])
             self.uni_out += 1
             return self._wrap_parent_t(rfu.parent_uni_slot(table, self.bm_slot))
         return None
+
+    def _record_echo(self, cmd):
+        w0 = int.from_bytes(cmd[0:2], "little")
+        if (w0 & rfu.RFUCMD_MASK) == rfu.SEND_BLOCK_INIT:
+            count = int.from_bytes(cmd[2:4], "little")
+            if self.echo_blocks and not self.echo_blocks[-1]["indices"]:
+                self.echo_blocks[-1]["count"] = count
+            else:
+                self.echo_blocks.append({"count": count, "indices": set()})
+        elif (w0 & rfu.RFUCMD_MASK) == rfu.SEND_BLOCK and self.echo_blocks:
+            self.echo_blocks[-1]["indices"].add(w0 & rfu.FRAG_INDEX_MASK)
 
     @property
     def echo_backlog(self):

@@ -169,6 +169,9 @@ class HostTradeEngine:
         self.last_echo_cmd = None          # the child slot the leader most recently mirrored back
         self.echo_emissions = 0            # echoes actually emitted; drops excluded
         self._echo_wait_mark = 0
+        self.echo_blocks = []              # per-block echo records, pushed by HostSession (u26)
+        self._child_blocks_landed = 0     # every console block assembled in UNI, in order
+        self._echo_wait_block = None      # index into echo_blocks of the block we must return first
         self._child_slot = None            # the slot currently being fed to us
         self._echo_wait_slot = None        # the slot that must be mirrored before we answer
         self._echo_wait_polls = 0
@@ -802,6 +805,7 @@ class HostTradeEngine:
                 "for 15 seconds before disconnecting.")
 
     def _on_child_block(self, count, data):
+        self._child_blocks_landed += 1
         # u17: a battle link buffer record with a 4-byte payload is 16 bytes, which is exactly
         # COUNT_LINKCMD, so every ack and every short command was being read as a trade LINKCMD and
         # silently dropped. There are no trade LINKCMDs inside a battle: let the state decide, not
@@ -1023,6 +1027,7 @@ class HostTradeEngine:
         # set the exec-flag bit our answer clears. Wait for that exact slot. See _echo_owed.
         self._echo_wait_slot = self._child_slot
         self._echo_wait_mark = self.echo_emissions
+        self._echo_wait_block = self._child_blocks_landed - 1
         self._echo_wait_polls = 0
         self.trace.append(("battle_recv", rec["buffer_id"], rec["active_battler"], rec["cmd"]))
         self.info(f"Union Room battle: <- {bl.describe(rec)}")
@@ -1192,8 +1197,7 @@ class HostTradeEngine:
         old timing and nothing in them acks a block the console has to see returned first."""
         if self.state != H_UROOM_BATTLE_LINK or self._echo_wait_slot is None:
             return False
-        if (self.last_echo_cmd == self._echo_wait_slot
-                and self.echo_emissions > self._echo_wait_mark):
+        if self._echo_block_returned():
             self._echo_wait_slot = None
             return False
         self._echo_wait_polls += 1
@@ -1204,6 +1208,18 @@ class HostTradeEngine:
             self._echo_wait_slot = None
             return False
         return True
+
+    def _echo_block_returned(self):
+        """u26: every fragment index of the console's block has been echoed at least once. The
+        last-fragment test passed while an earlier fragment (dropped by ECHO_MAX) was still owed;
+        the console re-sent it and our echo of the re-send shared a frame with our ack, which the
+        console reads first. "Mais cela échoue!" stayed on screen with the link alive."""
+        k = self._echo_wait_block
+        if k is None or k >= len(self.echo_blocks):
+            return False
+        rec = self.echo_blocks[k]
+        count = rec.get("count") or 0
+        return count > 0 and set(range(count)) <= rec["indices"]
 
     def _next_parent_words(self):
         if self._words:

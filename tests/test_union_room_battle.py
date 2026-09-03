@@ -384,23 +384,29 @@ def test_a_linkcmd_sized_block_is_still_a_linkcmd_outside_a_battle():
     assert _sent(h) == []
 
 
+def _landed(h, cmd, count=3, echoed=()):
+    """A console block of `count` fragments lands; `echoed` says which of its indices our echo has
+    already emitted (HostSession pushes the leader's per-block records into h.echo_blocks)."""
+    h._words.clear()
+    h._child_slot = b"\xaa" * 14
+    h._child_blocks_landed = 0
+    h.echo_blocks = [{"count": count, "indices": set(echoed)}]
+    h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER, bytes([cmd, 0, 0, 0])))
+
+
 def test_our_ack_waits_for_the_console_to_see_its_own_block_returned():
     """u18: our parent command and the child-slot echo share a frame, so a short ack can overtake
     the echo of the block it acks. On the console MarkBattlerReceivedLinkData only SETS the exec-flag
     bit when its own block comes back [battle_util.c:193], so an early ack clears a bit that is not
     set yet and the battler stays flagged for ever."""
     h = _into_the_battle()
-    h._words.clear()
-    h._child_slot = b"\xaa" * 14
-    h.last_echo_cmd = None
-    h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
-                                   bytes([bl.PRINTSTRING, 0, 0, 0])))
+    _landed(h, bl.PRINTSTRING, count=3, echoed=())
     assert h._blocks, "the ack must be queued"
-    assert h._next_parent_words() == [0] * 7, "but not sent while that slot is unechoed"
+    assert h._next_parent_words() == [0] * 7, "but not sent while the block is unechoed"
     assert h._sender is None
-    h.last_echo_cmd, h.echo_emissions = b"\xbb" * 14, 1   # another slot going back does not count
+    h.echo_blocks[0]["indices"] = {0, 1}                   # not the whole block yet
     assert h._next_parent_words() == [0] * 7
-    h.last_echo_cmd, h.echo_emissions = b"\xaa" * 14, 2   # the block's own last fragment is out
+    h.echo_blocks[0]["indices"] = {0, 1, 2}                # every fragment has gone back
     h._next_parent_words()
     assert h._sender is not None
 
@@ -410,33 +416,52 @@ def test_the_echo_gate_matches_the_block_not_a_count():
     the console re-sends them, so a count reports "echoed" for a fragment still to go; our ack
     overtook a re-sent PLAYSE fragment and the console froze mid-animation."""
     h = _into_the_battle()
-    h._words.clear()
-    h._child_slot = b"\xcc" * 14
-    h.last_echo_cmd, h.echo_progress, h.echo_backlog = None, 0, 0
-    h.echo_emissions = 0
-    h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
-                                   bytes([bl.PLAYSE, 0, 0, 0])))
-    h.echo_progress = 999                     # a counter would call this echoed
-    assert h._next_parent_words() == [0] * 7, "content, not a count, decides"
-    h.last_echo_cmd, h.echo_emissions = b"\xcc" * 14, 1
+    _landed(h, bl.PLAYSE, count=2, echoed=())
+    h.echo_progress, h.echo_emissions = 999, 999           # counters would call this echoed
+    assert h._next_parent_words() == [0] * 7, "the block's own fragments decide"
+    h.echo_blocks[0]["indices"] = {0, 1}
     h._next_parent_words()
     assert h._sender is not None
 
 
 def test_a_stale_identical_fragment_does_not_open_the_gate():
-    """u24: two CHOOSEMOVE blocks for identical Chansey end in the same bytes, so last_echo_cmd
-    still held the PREVIOUS battler's final fragment and the gate opened at once. The emission mark
-    is what separates "that same fragment, earlier" from "this block's, now"."""
+    """u24: two CHOOSEMOVE blocks for identical Chansey end in the same bytes. Records are per
+    block, so the previous block's complete echo says nothing about this one."""
     h = _into_the_battle()
     h._words.clear()
     h._child_slot = b"\xee" * 14
-    h.last_echo_cmd, h.echo_emissions = b"\xee" * 14, 7   # identical content, already echoed
-    h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
-                                   bytes([bl.CHOOSEMOVE, 0, 0, 0])))
-    assert h._next_parent_words() == [0] * 7, "a match from before the block landed is stale"
-    h.echo_emissions = 8                                  # now one has gone out since
+    h._child_blocks_landed = 1                             # one earlier block, fully returned
+    h.echo_blocks = [{"count": 2, "indices": {0, 1}}]
+    h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER, bytes([bl.CHOOSEMOVE, 0, 0, 0])))
+    assert h._next_parent_words() == [0] * 7, "this block has no record yet"
+    h.echo_blocks.append({"count": 2, "indices": {0, 1}})  # now its own echo is complete
     h._next_parent_words()
     assert h._sender is not None
+
+
+def test_a_dropped_earlier_fragment_holds_the_ack_until_its_resend_is_echoed():
+    """u26: the last fragment had gone back but ECHO_MAX had dropped fragment 1; the console re-sent
+    it and our echo of the re-send shared a frame with our ack, which the console reads first.
+    "Mais cela echoue!" stayed on screen with the link alive."""
+    h = _into_the_battle()
+    _landed(h, bl.PRINTSTRING, count=7, echoed={0, 2, 3, 4, 5, 6})
+    assert h._next_parent_words() == [0] * 7, "index 1 is still owed"
+    h.echo_blocks[0]["indices"].add(1)                     # the re-send went back
+    h._next_parent_words()
+    assert h._sender is not None
+
+
+def test_the_leader_keeps_one_echo_record_per_console_block():
+    """SEND_BLOCK_INIT opens a record (repeated INITs with no fragment between are one block); each
+    emitted SEND_BLOCK adds its index; drops add nothing."""
+    from frlgsim import rfu, rfu_leader
+    rec = rfu_leader.RFULeader.__new__(rfu_leader.RFULeader)
+    rec.echo_blocks = []
+    init = (rfu.SEND_BLOCK_INIT).to_bytes(2, "little") + (3).to_bytes(2, "little") + bytes(10)
+    frag = lambda i: (rfu.SEND_BLOCK | i).to_bytes(2, "little") + bytes(12)
+    for cmd in (init, init, frag(0), frag(2), frag(2), init, frag(0)):
+        rec._record_echo(cmd)
+    assert rec.echo_blocks == [{"count": 3, "indices": {0, 2}}, {"count": 3, "indices": {0}}]
 
 
 def test_the_echo_wait_cannot_deadlock_for_ever():
@@ -445,10 +470,7 @@ def test_the_echo_wait_cannot_deadlock_for_ever():
     said = []
     h = _into_the_battle(log=said.append)
     h._words.clear()
-    h._child_slot = b"\xdd" * 14
-    h.last_echo_cmd = None
-    h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
-                                   bytes([bl.PLAYSE, 0, 0, 0])))
+    _landed(h, bl.PLAYSE, count=2, echoed={0})
     for _ in range(h.ECHO_WAIT_MAX_POLLS + 1):
         h._next_parent_words()
     assert h._sender is not None

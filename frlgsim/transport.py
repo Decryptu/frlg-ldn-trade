@@ -478,6 +478,7 @@ class LiveTransport:
         except OSError as e:
             self.log(f"[live] could not enlarge rx SO_RCVBUF: {e}")
         self._rx = rx
+        self._pinned_neighbours = set()
 
     def send(self, datagram, dst_ip):
         dst = self.broadcast if dst_ip in (self.broadcast, "255.255.255.255") else dst_ip
@@ -934,6 +935,7 @@ class HostTransport:
         except OSError as e:                              # pragma: no cover
             self.log(f"[host] could not enlarge rx SO_RCVBUF: {e}")
         self._rx = rx
+        self._pinned_neighbours = set()
 
     def send(self, datagram, dst_ip):
         dst = self.broadcast if dst_ip in (self.broadcast, "255.255.255.255") else dst_ip
@@ -969,10 +971,28 @@ class HostTransport:
             if self._rx_seen <= 10:
                 self.log(f"[host] RX #{self._rx_seen}: {src_ip} -> {dst_ip}:{dst_port} "
                          f"len={len(payload)} {payload[:4].hex()}")
+            if src_ip not in self._pinned_neighbours:
+                self._pin_neighbour(src_ip, data[6:12])
             if self.tracer is not None:
                 self.tracer.write("udp_in", src=src_ip, dst=dst_ip, hex=payload.hex())
             out.append((payload, src_ip))
         return out
+
+    def _pin_neighbour(self, ip, mac):
+        """Install a PERMANENT ARP entry for the console (session 20, u21/u22/u25/u26). The console answers our ARP
+        probes late (1-2 s) and by broadcast, so the kernel's neighbour entry cycles STALE -> PROBE -> FAILED ->
+        INCOMPLETE and, while unresolved, queues every datagram to it (unres_qlen) and flushes them in a burst when
+        the reply lands: a 0.1-1.1 s hole in which the console sees no parent frame, and its game declares link loss.
+        A permanent entry never expires, so the kernel never probes and never queues.
+        """
+        self._pinned_neighbours.add(ip)
+        mac_s = ":".join(f"{b:02x}" for b in mac)
+        cmd = ["ip", "neigh", "replace", ip, "lladdr", mac_s, "dev", self.iface, "nud", "permanent"]
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=2)
+            self.log(f"[host] pinned ARP {ip} -> {mac_s} on {self.iface} (permanent); no neighbour probing for the console")
+        except Exception as e:                            # pragma: no cover
+            self.log(f"[host] could not pin ARP for {ip}: {e}")
 
     def wait_readable(self, timeout):
         """select() on the AF_PACKET socket so the leader reacts as soon as a packet lands while still returning periodically
