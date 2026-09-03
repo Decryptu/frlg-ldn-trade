@@ -628,3 +628,20 @@ NEXT: trading from the room. The console's trading board lists partners whose ad
 carries tradeSpecies / tradeType / tradeLevel [union_room.c:3400]; only tradeSpecies [record
 22:24] is located in the 24-byte record. Then `Task_StartUnionRoomTrade` [union_room.c:1936] on
 the console side, unread.
+
+### u12: a Pokemon traded through the Union Room
+
+FACT (u12, one run, `--union-room --union-room-keepalive 120 --board-type normal`): the console's
+trading board listed PkCamp with Chansey lv26 wanting NORMAL. The user picked it, offered their
+own Chansey, the console connected (usual ten seconds), sent `SEND_PACKET 0x44 113 26`, took our
+ACCEPT, ran the START_ACTIVITY standby, then Task_StartUnionRoomTrade exactly as read: its Pokemon
+block (count 9), ours back, its mail block (count 19), ours back, then the animation, its
+READY_FINISH, our CONFIRM_FINISH, the save barriers, its READY_CLOSE_LINK, ours, its normal 'D'.
+The user saw the trade animation, "saving", and was back in the room with PkCamp still there. We
+received their Chansey lv26 (OT Tops, checksum valid) in received.pk3. Timeline: board pick to
+back in the room in ~45 s, of which ~10 s is the keepalive wait and ~32 s the animation.
+
+DEDUCTION: the record bytes for the trading board (18: type<<2, 19: gender|level<<1, 22:
+species) are correct for a lv26 species-113 registration; the species high byte (23) is still
+inferred. The Union Room trade path needs no party exchange, no menu, no room-entry route: it is
+the shortest trade the host does.
