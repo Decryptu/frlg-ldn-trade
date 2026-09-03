@@ -197,8 +197,16 @@ class HostApplication:
         if "disconnect" in events:
             activity = self._activity()
             state = getattr(activity, "state", None)
+            battle = getattr(activity, "battle", None)
             if getattr(activity, "close_confirmed", False):
                 self.info(f"Switch sent the RFU disconnect frame (D) in {state}: the normal close.")
+            elif battle is not None and battle.done:
+                # u19: a finished link battle ends this way. CB2_ReturnFromCableClubBattle takes the
+                # console back to the room through its score screen and save, and it drops LDN on
+                # the way; nothing the host sent caused it.
+                self.info("Switch sent the RFU disconnect frame (D) after the battle ended "
+                          f"(outcome {battle.outcome}): the normal close for a link battle. It "
+                          "returns to the room on its own; relaunch the host to appear there again.")
             else:
                 self.info(f"Switch sent the RFU disconnect frame (D) while the host is in {state}; "
                           "it leaves LDN next. What the host sent just before this is the cause.")

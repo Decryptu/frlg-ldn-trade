@@ -1019,3 +1019,63 @@ LinkOpponent controller [link_opponent.c:444], and its reply loops back to it, s
 duplicate write of identical bytes into `gBattleBufferB[0]`. Skipping is strictly less traffic;
 sending is the reference-faithful choice but needs us to model the console's party as well.
 Falsified if the intro stalls at the first GETMONDATA.
+
+### u17-u19: the Union Room battle, proven on hardware
+
+FACT (u19): a complete Union Room link battle. `SEND_PACKET` 0x41 accepted, both 0x20 selection
+blocks, our LinkBattlerHeader at signature 0x200 against the console's 0x201, three 200-byte party
+blocks, the whole intro, `CHOOSEACTION` for both battlers answered with `B_ACTION_RUN`, the
+`STRINGID_BATTLEEND` print carrying `gBattleOutcome` 3 (`B_OUTCOME_DREW`, both sides ran), then
+`CONTROLLER_ENDLINKBATTLE`, and on the console the score screen, the save and the walk back into
+the room. Every activity the Union Room offers now works.
+
+Both hypotheses from the decomp read held:
+
+  1. CONFIRMED (u17 reached the vs screen, u19 ran the battle): advertising version signature 0x200
+     makes the console elect ITSELF master. It ran the entire engine -- turn order, the outcome, the
+     battle scripts -- and we never computed a single battle mechanic.
+  2. CONFIRMED (u18, u19): we may skip the BUFFER_B replies for the console's own battler. It
+     answers its own GETMONDATA locally from `gEnemyParty` and its reply loops back to it; ours
+     would be a duplicate. u19's log shows its `bufferB battler 0 DATATRANSFER` arriving with no
+     reply of ours, and the battle proceeding.
+
+Two bugs, both ours, both invisible from the decomp and found only by replaying the captures.
+
+FACT (u17): `_on_child_block` routed any block of `trade.COUNT_LINKCMD` (2 fragments) into the trade
+LINKCMD path. A link buffer record with a 4-byte payload is exactly 16 bytes -- every ack and every
+short command, including the first `GETMONDATA` -- so they were parsed as trade link commands and
+dropped. The only record that reached the controller was the 104-byte `DATATRANSFER`, which is
+exactly the one line the log showed. Inside a battle the state decides which path a block takes, not
+its size.
+
+FACT (u18), and the subtler one: **an ack must never overtake the echo of the block it acks.** The
+parent's own command and the child-slot echo share a frame, one echo per poll
+[`rfu_leader.tick`], so a 2-fragment ack can pass a 7-fragment echo. On the console the exec-flag
+bit is only SET when its own block returns (`MarkBattlerReceivedLinkData` [battle_util.c:193]) and
+our ack CLEARS it [battle_controllers.c:585]. In u18 the echo led our ack for all sixteen commands
+and trailed it on the seventeenth:
+
+    104.268 console bufferA battler 0 PRINTSTRING (72 B)
+    104.366 US      ack battler 0                     <-- ours first
+    104.383 echo    bufferA battler 0 PRINTSTRING
+
+so the ack cleared a bit that was not set yet, the echo then set it, and the console waited forever
+for an ack it had already received. It froze on the battle-end message with its network icon still
+animating -- the game loop and the link both alive, the battle script blocked on
+`gBattleControllerExecFlags == 0`, which gates `Cmd_waitmessage` [battle_script_commands.c:2041] and
+every script command after it [HandleEndTurn_FinishBattle:3855]. `HostTradeEngine._echo_owed` now
+holds a new block while any child command is still waiting to be mirrored back.
+
+DEDUCTION: the user's report that the network logo was still animated is what made this tractable.
+It separated "the console crashed" from "the console is alive and waiting on us", and only the
+second is worth replaying a capture for.
+
+Tool: `scratchpad/battle_blocks.py <host capture> [lo] [hi]` reassembles three streams -- the
+console's blocks, ours, and our echo of the console's own commands -- and prints each as a link
+buffer record with which side still owes an ack. It found both bugs. Run it on every battle capture.
+
+UNKNOWN, and the next piece of work: a real turn. `--battle-fight` answers `CHOOSEACTION` with
+`B_ACTION_USE_MOVE` and then `CHOOSEMOVE` with slot 0 at the opposing battler. Everything up to the
+action prompt is proven; the turn itself -- `MOVEANIMATION`, `HEALTHBARUPDATE`, damage, fainting,
+`CHOOSEPOKEMON` on a faint, `EXPUPDATE` -- has never run. The console computes all of it; we still
+only answer, so this should be runs rather than redesign.
