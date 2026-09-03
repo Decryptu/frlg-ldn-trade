@@ -1132,3 +1132,7 @@ FACT (u27, 2026-09-04): a complete Union Room battle with the per-block echo gat
 Machamp, `FAINTINGCRY`, `FAINTANIMATION`, `CHOOSEPOKEMON`, `DRAWPARTYSTATUSSUMMARY`, `SWITCHINANIM`,
 then `ENDLINKBATTLE` outcome 2, the console's save and the normal close. No hole-guard event in the
 run and no transmit hold longer than 220 ms in the 50 ms debugfs sampler.
+FACT (u28): the losing side too. Two level-5 mons of ours, both knocked out by the console's Chansey:
+`CHOOSEPOKEMON` for our battler answered with the other party slot, `SWITCHINANIM`, the second faint,
+`ENDLINKBATTLE` outcome 1 and the normal close. Every controller command a two-mon link battle can
+emit has now run on hardware in both directions.
