@@ -40,7 +40,9 @@ SEARCH_STARTED_ACTIVITY = 1 << 15
 #   byte 22  0x00 -> 0x71   tradeSpecies low byte (113)
 #   byte 19  0x01 -> 0x35   gender:1 | tradeLevel:7, the RfuGameData byte [include/link_rfu.h:112]
 #   byte 18  0x03 -> 0x2b   tradeType:6 << 2; bits 0-1 unchanged (meaning unknown)
-# Byte 23 as the species high byte is inferred from RfuGameData's tradeSpecies:10, not proven.
+# Byte 23 proven u16b: we registered species 277 (Treecko), whose low byte alone is 21 (Spearow),
+# and the console's board listed ARCKO -- so 22:24 is the little-endian tradeSpecies:10
+# [include/link_rfu.h:107]. The same entry read "NORMAL" and "26", so all three fields are proven.
 TRADE_BOARD_TYPE_OFFSET = 18
 TRADE_BOARD_LEVEL_OFFSET = 19
 TRADE_BOARD_SPECIES_OFFSET = 22

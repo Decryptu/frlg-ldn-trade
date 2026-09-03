@@ -773,6 +773,28 @@ u08-u11. A word is `(group & 0x7F) << 9 | (index & 0x1FF)` [EC_WORD, easy_chat.h
 holds four [trainer_card.h:28]. The card now carries a real phrase; a short one pads with
 EC_WORD_UNDEFINED (0xFFFF), which prints nothing rather than "???".
 
+### u16b: the trading board's species is 10 bits, the card quote reads, the host stops itself
+
+One run, three closures, no trade started.
+
+FACT: the trading board takes a full 10-bit species. We registered species 277 (Treecko) from our
+own party file -- its low byte alone is 21, which is Spearow -- and the console's board listed
+"PkCamp / NORMAL / ARCKO / 26". So record bytes 22:24 are the little-endian tradeSpecies:10 of
+RfuGameData [include/link_rfu.h:107], and byte 23 stops being inferred. The same line proves the
+type and level fields beside it.
+
+FACT: the trainer card's profile quote renders. With a real easyChatProfile the console showed
+"SALUT AMIS ECHANGER POKEMON" -- our HELLO / FRIEND / TRADE / POKEMON word ids, drawn from the
+console's own French easy-chat table -- in place of the "??? ???" of u08-u11.
+
+FACT: the host now stops on its own after a clean close, which no run had ever done:
+
+    117.9s  console's 'D', the normal close
+    120.1s  console left LDN; settling
+    122.1s  Room-exit grace period complete; host peer traffic stopped cleanly
+
+That is the 357th host log and the first to reach the completion message.
+
 ## The console's ack lag is a 512 ms metronome, not congestion (2026-09-03)
 
 The ident-25 work left an UNKNOWN: what makes the console's cumulative ack fall behind in the first
