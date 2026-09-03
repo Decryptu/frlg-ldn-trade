@@ -254,6 +254,13 @@ class RFULeader:
             return self._wrap_parent_t(rfu.parent_uni_slot(table, self.bm_slot))
         return None
 
+    @property
+    def echo_backlog(self):
+        """Child commands received but not yet mirrored back into row one. While this is non-zero
+        the console has not seen its own last block returned, so anything we say about that block
+        would arrive before the block itself [u18, see host_trade._next_parent_words]."""
+        return len(self._echo_queue)
+
     def disconnect_frame(self):
         if self.connect_id is None:
             return None

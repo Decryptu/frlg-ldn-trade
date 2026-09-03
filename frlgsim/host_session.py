@@ -91,6 +91,7 @@ class HostSession:
             if event == "connect" and self.connect_seq is None:
                 self.connect_seq = delivery.seq
             if event == "uni":
+                self.activity.echo_backlog = getattr(self.rfu, "echo_backlog", 0)
                 self.activity.feed_child_slot(self.rfu.child_cmd)
         return events
 
@@ -101,6 +102,7 @@ class HostSession:
         """At most one RFU slot per call."""
         if self.stopped:
             return []
+        self.activity.echo_backlog = getattr(self.rfu, "echo_backlog", 0)
         out = list(self.reliable.poll(now_ms))
         for emission in out:
             if emission.flagsA != reliable.FLAGSA_CTRL:

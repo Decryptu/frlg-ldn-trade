@@ -382,3 +382,32 @@ def test_a_linkcmd_sized_block_is_still_a_linkcmd_outside_a_battle():
     h = _engine()
     h._on_child_block(trade.COUNT_LINKCMD, bytes(24))
     assert _sent(h) == []
+
+
+def test_our_ack_waits_for_the_console_to_see_its_own_block_returned():
+    """u18: our parent command and the child-slot echo share a frame, one echo per poll, so a short
+    ack can overtake the echo of the block it acks. On the console MarkBattlerReceivedLinkData only
+    SETS the exec-flag bit when its own block comes back [battle_util.c:193], so an early ack clears
+    a bit that is not set yet and the battler stays flagged forever. Measured in u18: the echo led
+    our ack on all sixteen commands before the stall and trailed it on the seventeenth."""
+    h = _into_the_battle()
+    h._words.clear()
+    h.echo_backlog = 1
+    h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
+                                   bytes([bl.PRINTSTRING, 0, 0, 0])))
+    assert h._blocks, "the ack must be queued"
+    assert h._next_parent_words() == [0] * 7, "but not sent while the echo is still owed"
+    assert h._sender is None
+    h.echo_backlog = 0
+    h._next_parent_words()
+    assert h._sender is not None, "and sent as soon as the console has seen its own block"
+
+
+def test_the_echo_gate_does_not_touch_the_proven_paths():
+    """The trade, Mystery Gift and chat paths are proven on hardware with the old timing."""
+    h = _engine()
+    h._words.clear()
+    h.echo_backlog = 5
+    h._queue_block(b"\x00" * 40, "host:test")
+    h._next_parent_words()
+    assert h._sender is not None

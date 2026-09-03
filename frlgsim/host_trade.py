@@ -159,6 +159,7 @@ class HostTradeEngine:
                              "PARTY2= or --party")
         self.battle_forfeit = bool(battle_forfeit)
         self.battle = None                 # the BattleController, once the battle starts
+        self.echo_backlog = 0              # set by HostSession each poll; see _echo_owed
         self._battle_party_block = 0
         self.uroom_requests = []
         self.uroom_trade_request = None
@@ -1135,13 +1136,28 @@ class HostTradeEngine:
         elif self._child_finish:
             self._commit()
 
+    def _echo_owed(self):
+        """u18: hold a new block while child commands are still waiting to be mirrored back.
+
+        Our echo of the console's own block is what makes MarkBattlerReceivedLinkData run over there
+        [battle_util.c:193] and SET the exec-flag bit our ack then clears. Our parent command and the
+        echo share a frame, one echo per poll, so a 2-fragment ack overtakes a 7-fragment echo
+        backlog: the console clears a bit that is not set yet, then sets it, and waits forever for an
+        ack that already came. That is exactly what stalled u18 -- and only there: the echo led our
+        ack for all sixteen commands before it and trailed it on the seventeenth, a 72-byte
+        PRINTSTRING behind a hole-guard hold.
+
+        Scoped to the battle. The trade, Mystery Gift and chat paths are proven on hardware with the
+        old timing and nothing in them acks a block the console has to see returned first."""
+        return self.state == H_UROOM_BATTLE_LINK and self.echo_backlog > 0
+
     def _next_parent_words(self):
         if self._words:
             return self._words.popleft()
         held_words = self._next_held_words()
         if held_words is not None:
             return held_words
-        if self._sender is None and self._blocks:
+        if self._sender is None and self._blocks and not self._echo_owed():
             data, label = self._blocks.popleft()
             self._sender = block.BlockSender(data, owner=0, trust_pia=self.trust_pia)
             self.trace.append(("send_block", label, len(data)))
