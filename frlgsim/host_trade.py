@@ -124,6 +124,7 @@ class HostTradeEngine:
         self.union_room = bool(union_room)
         self.uroom_requests = []
         self._last_uroom_packet = None
+        self._last_uroom_frame = 0
         self.timing = timing if timing is not None else DEFAULT_HOST_TRADE_TIMING
         self.log = log
         self.info = getattr(log, "info", log)
@@ -607,9 +608,12 @@ class HostTradeEngine:
             self.trace.append(("uroom_packet_ignored", self.state, request))
             return
         key = tuple(packet)
-        if key == self._last_uroom_packet:
+        # Reliable already drops retransmits; this only guards a packet echoed in consecutive frames.
+        # The same choice made again later (a second Salut, u08) is a new request and must be answered.
+        if key == self._last_uroom_packet and self._child_frames - self._last_uroom_frame <= 4:
             return
         self._last_uroom_packet = key
+        self._last_uroom_frame = self._child_frames
         self.uroom_requests.append(key)
         self._set_state(H_UROOM_PROMPT)
         if request == self.UR_CARD:

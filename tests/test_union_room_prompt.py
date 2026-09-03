@@ -62,9 +62,14 @@ def test_greetings_request_is_accepted_and_the_standby_echoed():
     h.feed_child_slot(_packet_slot(0x48))
     assert _queued_packets(h) == [0x51] * HostTradeEngine.UR_PACKET_REPEAT
     assert h.uroom_requests == [(0x48, 0, 0, 0, 0, 0)]
-    # Reliable dedups retransmits; a repeated identical packet must not answer twice.
+    # Reliable dedups retransmits; the same packet in the very next frame must not answer twice.
     h.feed_child_slot(_packet_slot(0x48))
     assert len(_queued_packets(h)) == HostTradeEngine.UR_PACKET_REPEAT
+    # But a second Salut chosen later is a new request (u08: the console hung on our silence).
+    for _ in range(30):
+        h.feed_child_slot(rfu.idle_slot())
+    h.feed_child_slot(_packet_slot(0x48))
+    assert len(_queued_packets(h)) == 2 * HostTradeEngine.UR_PACKET_REPEAT
     # Both sides SetLinkStandbyCallback after the card message [union_room.c:2995].
     h._words.clear()
     h.feed_child_slot(rfu.serialize(rfu.exit_standby_words(1)))
