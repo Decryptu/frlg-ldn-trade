@@ -540,13 +540,9 @@ the child's name, and the room's list compares `startedActivity` when deciding w
 changed [union_room.c:4157]. The trade-centre child never looks at beacons, so h8 could not have
 shown this. It does not explain the five-frame count by itself.
 
-Two probes, one variable each, both untested (tags u06, u07):
-  --hold-beacon             keep the pre-join app_data after the join (tests the flip)
-  --union-room-keepalive N  re-present the first parent NI_START for N VBlanks before UNI; the
-                            console mirrors it, so if the five-frame rule is real the link survives
-                            the keepalive and the D moves to five frames after the first UNI. If
-                            the D still comes ~130 ms after the NULL, the rule is time-based and
-                            game-side after all.
+Probe (tag u06): --union-room-keepalive N re-presents the first parent NI_START for N VBlanks
+before UNI; the console mirrors it, so if the five-frame rule is real the link survives the
+keepalive. A second probe that held the pre-join beacon was dropped after u06 connected without it.
 
 ### u06: the keepalive carries the Union Room connect all the way to the prompt
 
@@ -561,8 +557,7 @@ host was stopped, 65 s later, with no disconnect from its side.
 
 DEDUCTION: the five-frame rule was real, and it was the only gate left. With the child kept busy
 for two seconds it had all the time it needed to reach RFUSTATE_UR_PLAYER_EXCHANGE; the exact
-delay it needs is still unmeasured (somewhere between 5 and ~120 frames). The beacon flip
-(`--hold-beacon`) played no part: u06 ran with the default flip and connected.
+delay it needs is still unmeasured (somewhere between 5 and ~120 frames).
 
 FACT (u06): the hole guard fired every ~8 s during the idle prompt (ack 6 behind, 1-8 held ticks)
 and recovered each time; same behaviour as the Mystery Gift host.
@@ -602,9 +597,9 @@ console's own re-acks, then UNI. The user sees "Communication avec PkCamp" for a
 FACT (u07, one run, same flags as u06): the console connected, the keepalive ran, and at 17.0 s
 (5 s into the console's 480-frame wait) both Pia reliable windows stopped advancing at once: we
 retransmitted seq 419-422 and the console retransmitted 847-850 for four seconds, then it sent
-'D' and left. dmesg has `rtw88_8822bu: failed to get tx report from firmware` at 18:23:50, the
-same second. The adapter stopped transmitting; the console never saw our ACKs. Not a protocol
-event. The same driver line appears 79 times in this machine's log; u06 survived one at 18:17:04.
+'D' and left. Its frames kept reaching us and our socket kept sending at a steady rate with no
+errors, so our frames stopped reaching it. The dmesg line `failed to get tx report from firmware`
+is the teardown symptom (u09 logged it 10 s after its stall), not the cause. Cause UNKNOWN.
 
 ### u08-u11: the Union Room greet loop, end to end
 

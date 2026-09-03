@@ -49,11 +49,6 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
              "value for a console already STANDING in the room: it runs Task_RunUnionRoom and its "
              "search accepts IN_UNION_ROOM | activity instead")
     parser.add_argument(
-        "--hold-beacon", action="store_true",
-        help="Union Room probe: keep the pre-join advertisement after the console joins instead of "
-             "switching to the started-activity form (a real Union Room parent only sets "
-             "startedActivity at RFUSTATE_UR_FINALIZE, after the child's name)")
-    parser.add_argument(
         "--union-room-keepalive", type=int, default=0, metavar="N",
         help="Union Room probe: after the child's name NI, re-present a parent NI_START for N "
              "VBlanks (the console mirrors those in the room) before the first UNI frame; the 'D' "

@@ -170,7 +170,6 @@ def build_host_config(parser, args):
             union_room=getattr(args, "union_room", False),
             union_room_activity=config.resolve_union_room_activity(
                 getattr(args, "union_room_activity", None)),
-            hold_beacon=getattr(args, "hold_beacon", False),
             union_room_keepalive=getattr(args, "union_room_keepalive", 0),
             union_room_board_type=config.resolve_board_type(getattr(args, "board_type", None)),
             union_room_board_level=getattr(args, "board_level", None),

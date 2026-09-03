@@ -186,7 +186,7 @@ if __name__ == "__main__":
             print("ok", name)
 
 
-def _advertisements(union_room, hold_beacon):
+def _advertisements(union_room):
     """Drive the real HostApplication._build_components; return (pre-join app_data, the app_data
     handed to HostPeerProtocol for the post-join session update)."""
     from frlgsim import host_app as host_app_module
@@ -206,7 +206,7 @@ def _advertisements(union_room, hold_beacon):
         config.TradePlan(party_paths=("PARTY1.pk3", "PARTY2.pk3"), trade_slot=1,
                          offered_slots=(1,), trust_pia=True),
         config.LdnConfig(phy="phy7", keys_path=__file__),
-        config.HostOptions(union_room=union_room, hold_beacon=hold_beacon))
+        config.HostOptions(union_room=union_room))
     original = host_app_module.HostPeerProtocol
     host_app_module.HostPeerProtocol = FakePeer
     try:
@@ -219,24 +219,11 @@ def _advertisements(union_room, hold_beacon):
 
 
 def test_post_join_advertisement_sets_started_activity_by_default():
-    inactive, active = _advertisements(True, hold_beacon=False)
+    inactive, active = _advertisements(True)
     assert active != inactive
     assert _search_word(inactive) & beacon.SEARCH_STARTED_ACTIVITY == 0
     assert _search_word(active) & beacon.SEARCH_STARTED_ACTIVITY
 
-
-def test_hold_beacon_keeps_the_pre_join_advertisement():
-    """--hold-beacon: the post-join session update carries the same app_data as the beacon, so the
-    console never sees startedActivity flip. A real Union Room parent sets it only at
-    RFUSTATE_UR_FINALIZE [src/link_rfu_2.c:554]. HYPOTHESIS, untested on hardware."""
-    inactive, active = _advertisements(True, hold_beacon=True)
-    assert active == inactive
-    assert _search_word(active) & beacon.SEARCH_STARTED_ACTIVITY == 0
-
-
-def test_hold_beacon_is_off_for_the_trade_centre():
-    inactive, active = _advertisements(False, hold_beacon=False)
-    assert active != inactive
 
 
 # One console's record before and after registering Chansey lv26 asking for FEU (2026-09-03).
@@ -296,6 +283,6 @@ def test_host_app_registers_the_offered_mon_on_the_board():
 
 
 def test_no_board_type_means_no_registration():
-    inactive, _ = _advertisements(True, hold_beacon=False)
+    inactive, _ = _advertisements(True)
     rec = _record(inactive)
     assert rec[22:24] == b"\x00\x00" and rec[19] >> 1 == 0

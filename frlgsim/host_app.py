@@ -96,8 +96,6 @@ class HostApplication:
         else:
             inactive, active = build_trade_app_data(
                 self.profile, self.session.rfu.host_session_id)
-        if getattr(self.options, "hold_beacon", False):
-            active = inactive
         self.tracer = (ldntrace.Tracer(self.ldn.capture_path, log=self.log)
                        if self.ldn.capture_path else None)
         self.network = self.transport_factory(
