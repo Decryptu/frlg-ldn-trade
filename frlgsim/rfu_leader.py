@@ -49,13 +49,19 @@ class RFULeader:
     """``bm_slot=1`` seats the child in RFU slot zero / multiplayer id 1."""
 
     def __init__(self, host_session_id=None, *, bm_slot=1,
-                 join_status=ni.RFU_STATUS_JOIN_GROUP_OK, start_ts=1):
+                 join_status=ni.RFU_STATUS_JOIN_GROUP_OK, start_ts=1,
+                 skip_parent_ni=False):
         if host_session_id is None:
             # Native leaders use parent-id high byte 0xf1 with a varying low byte; beacon and A store it LE.
             host_session_id = secrets.token_bytes(1) + b"\xf1"
         self.host_session_id = bytes(host_session_id)[:2].ljust(2, b"\x00")
         self.bm_slot = bm_slot & 0xF
         self.join_status = join_status & 0xFF
+        # Union Room: the child reaches RFUSTATE_UR_PLAYER_EXCHANGE and goes straight to UNI via
+        # rfu_UNI_setSendData + Task_PlayerExchange [link_rfu_2.c:533], so it never waits for the
+        # parent's join-status NI. Presenting one leaves us re-sending a subframe the child will
+        # never mirror (u03, u04). HYPOTHESIS, untested on hardware.
+        self.skip_parent_ni = bool(skip_parent_ni)
         self.ts = start_ts & 0xFFFFFFFF
         self.state = WAIT_CONNECT
         self.connect_id = None
@@ -169,9 +175,12 @@ class RFULeader:
             if (llsf["state"] == rfu.LCOM_NULL
                     and self._child_ni.complete and self.state == CHILD_NI):
                 self.child_game_data = self._child_ni.game_data
+                self._pending.append(gbaframe.build_link_state(1))
+                if self.skip_parent_ni:
+                    self.state = UNI
+                    return "child_ni_complete_no_parent_ni"
                 self._parent_ni = ni.ParentNISender(self.join_status, self.bm_slot)
                 self.state = PARENT_NI
-                self._pending.append(gbaframe.build_link_state(1))
                 return "child_ni_complete"
             return "child_ni"
 

@@ -156,6 +156,55 @@ def test_link_state_frames_mirror_the_real_parent():
     assert gbaframe.parse_in(leader.tick())["ni"]["state"] == rfu.LCOM_NI_START
 
 
+def test_union_room_leader_skips_the_parent_join_status_ni():
+    """Union Room: the child reaches RFUSTATE_UR_PLAYER_EXCHANGE and goes straight to UNI via
+    rfu_UNI_setSendData + Task_PlayerExchange [src/link_rfu_2.c:533], so it never waits for the
+    parent's join-status NI. On hardware (u03, u04) the console mirrored both our NI_STARTs, then
+    stopped mirroring the NI body and disconnected 80ms later.
+
+    With skip_parent_ni the leader still sends the 'G' link-state 1 frame, then goes straight to
+    UNI instead of presenting an NI. UNTESTED on hardware."""
+    leader = RFULeader(skip_parent_ni=True)
+    leader.receive(gbaframe.build_connect(b"\x67\x79"))
+    assert gbaframe.parse_in(leader.tick())["type"] == "A"
+    leader.tick()                                      # G link-state 0
+    assert leader.tick() is None
+    child = ni.NISender(ni.build_game_data(5, 0x2288, "EMU"))
+    ts = 1
+    while not child.done:
+        slot = child.next_slot()
+        event = leader.receive(_child_t(slot, ts))
+        ts += 1
+        if rfu.parse_llsf_child(slot)["state"] != rfu.LCOM_NULL:
+            leader.tick()
+    assert event == "child_ni_complete_no_parent_ni"
+    # The 'G' link-state 1 frame is still sent: it is not part of the NI.
+    assert leader.tick() == bytes.fromhex("5747040001000000")
+    # Next frame is UNI, not an NI_START.
+    parsed = gbaframe.parse_in(leader.tick())
+    assert parsed.get("ni") is None, parsed
+    assert leader.state == "UNI"
+
+
+def test_default_leader_still_sends_the_parent_ni():
+    """Guards the trade centre path, which is hardware-proven and must not change."""
+    leader = RFULeader()
+    leader.receive(gbaframe.build_connect(b"\x67\x79"))
+    leader.tick()
+    leader.tick()
+    child = ni.NISender(ni.build_game_data(5, 0x2288, "EMU"))
+    ts = 1
+    while not child.done:
+        slot = child.next_slot()
+        event = leader.receive(_child_t(slot, ts))
+        ts += 1
+        if rfu.parse_llsf_child(slot)["state"] != rfu.LCOM_NULL:
+            leader.tick()
+    assert event == "child_ni_complete"
+    assert leader.tick() == bytes.fromhex("5747040001000000")
+    assert gbaframe.parse_in(leader.tick())["ni"]["state"] == rfu.LCOM_NI_START
+
+
 def test_ldn_leave_immediately_silences_queued_output():
     leader = RFULeader()
     leader.receive(gbaframe.build_connect(b"\x67\x79"))

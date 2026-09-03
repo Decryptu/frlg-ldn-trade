@@ -432,3 +432,32 @@ Step 2 (trainer card) and step 3 (trade request) are unwritten.
 Also FACT, free observations: the avatar tracks our beacon live (it walked out and back in when the
 host was restarted mid-session) and it animates/walks. The room's player list is not a snapshot taken
 at entry.
+
+### Why the Union Room console rejects our NI (u03/u04 analysis, offline)
+
+Ruled out first, so they are not re-investigated: the NI framing is NOT anomalous. The
+`NI_S/NI/NI_E -> 0x47 -> second NI_START` shape and the `n=1 sz=5` + `n=2 sz=2` pair are identical in
+h8, the proven trade-centre run. The rising `mid` in the K frames before the 'D' is also normal
+(h8 uses mid 1-8 throughout). Both looked like leads and are not.
+
+FACT, from `host_decode.py` on u03 against h8 at the same point: the handover is correct (child's
+terminal NULL -> 'G' link-state 1 -> parent NI). The console mirrors both our NI_STARTs
+(`T NI_START ack=1 n=1`, then `n=2`). It then **never mirrors a single NI body frame**: we re-present
+`T NI n=1 ph=0 sz=1` at ts=8,9,10,11,12 and the console answers only with K frames, then sends 'D'.
+In h8 the console mirrors each NI body frame with `T NI ack=1 n=1 sz=0` within ~17ms.
+
+DEDUCTION: the union-room child is not listening for a parent join-status NI at all.
+`Task_UnionRoomListen` [src/link_rfu_2.c:505] reaches `RFUSTATE_UR_PLAYER_EXCHANGE` [:533], which does
+
+    rfu_UNI_setSendData(1 << gRfu.childSlot, gRfu.childSendBuffer, sizeof(gRfu.childSendBuffer))
+    gRfu.parentChild = MODE_CHILD;
+    CreateTask(Task_PlayerExchange, 5);
+
+i.e. it switches straight to UNI and starts the player exchange. The join-status NI belongs to the
+group-join flow the trade centre uses, not to this one. The mirrored NI_STARTs are the RFU library
+answering below the game; the game never consumes the transfer, and the console gives up.
+
+HYPOTHESIS, untested on hardware: with the parent NI skipped and UNI entered directly after the
+child's NI completes, the union-room console proceeds to the player exchange. Implemented as
+`RFULeader(skip_parent_ni=True)`, enabled by `--union-room`. The 'G' link-state 1 frame is still sent;
+only the NI is skipped. Next run tag u05.

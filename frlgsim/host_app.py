@@ -70,9 +70,11 @@ class HostApplication:
         party = self._load_party()
         phy, keys = self._resolve_phy_and_keys()
         link_player = self.profile.to_link_player()
+        union_room = bool(getattr(self.options, "union_room", False))
         self.session = host_session.HostSession(
-            party, plan=self.plan, profile=self.profile, log=self.log)
-        if getattr(self.options, "union_room", False):
+            party, plan=self.plan, profile=self.profile, log=self.log,
+            rfu_kwargs={"skip_parent_ni": True} if union_room else None)
+        if union_room:
             inactive, active = build_union_room_app_data(
                 self.profile, self.session.rfu.host_session_id,
                 activity=getattr(self.options, "union_room_activity", None))
