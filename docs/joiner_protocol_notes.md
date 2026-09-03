@@ -1079,3 +1079,20 @@ UNKNOWN, and the next piece of work: a real turn. `--battle-fight` answers `CHOO
 action prompt is proven; the turn itself -- `MOVEANIMATION`, `HEALTHBARUPDATE`, damage, fainting,
 `CHOOSEPOKEMON` on a faint, `EXPUPDATE` -- has never run. The console computes all of it; we still
 only answer, so this should be runs rather than redesign.
+
+### Open: an intermittent disconnect during the battle's party exchange
+
+FACT (u21, u22, u25 against u19, u20, u23, u24): about half of battle runs end with the console
+showing "erreur de connexion, rapprochez-vous" at the vs screen, during the three 200-byte party
+blocks of CB2_HandleStartBattle states 3/7/11. It is not the party data: u25 failed with the same
+party that u19, u20, u23 and u24 completed with.
+
+FACT (u25 wire at the disconnect): we were 11 fragments into sending our own 17-fragment party block
+3, the console had gone quiet apart from K frames, we had just echoed its own last fragment
+(mp1 SEND_BLOCK index 16), and it sent 'D' 0.4 s later.
+
+NOT THE CAUSE, checked: the console's K-frame `mid` field climbing 1,2,3,4 before the disconnect
+looks like a retry counter giving up. u19 completed a whole battle with it reaching 5.
+
+UNKNOWN. The next step is offline and costs no runs: diff a failing capture against a succeeding one
+across the whole party exchange with `scratchpad/battle_blocks.py` and `scratchpad/host_decode.py`.
