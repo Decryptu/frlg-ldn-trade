@@ -87,6 +87,11 @@ class RFULeader:
         # so a counter says "echoed" for a fragment that has not gone out yet. Callers that must not
         # answer before the console has seen its own block compare against this.
         self.last_echo_cmd = None
+        # Echoes actually EMITTED, drops excluded. `last_echo_cmd` alone is ambiguous: two blocks
+        # can end in a byte-identical fragment -- u24 died on a CHOOSEMOVE whose last fragment
+        # matched the previous battler's -- so a caller pairs the content with a mark taken when its
+        # block landed and requires an emission after it.
+        self.echo_emissions = 0
         self.child_game_data = None
         self.k_acks = 0
         self.uni_in = 0
@@ -260,6 +265,7 @@ class RFULeader:
             if self._echo_queue:
                 self._echo_cmd = self._echo_queue.popleft()
                 self.echo_progress += 1
+                self.echo_emissions += 1
                 self.last_echo_cmd = self._echo_cmd
             table = rfu.pack_recv_cmds([parent_cmd, self._echo_cmd])
             self.uni_out += 1

@@ -398,9 +398,9 @@ def test_our_ack_waits_for_the_console_to_see_its_own_block_returned():
     assert h._blocks, "the ack must be queued"
     assert h._next_parent_words() == [0] * 7, "but not sent while that slot is unechoed"
     assert h._sender is None
-    h.last_echo_cmd = b"\xbb" * 14           # some other slot going back does not count
+    h.last_echo_cmd, h.echo_emissions = b"\xbb" * 14, 1   # another slot going back does not count
     assert h._next_parent_words() == [0] * 7
-    h.last_echo_cmd = b"\xaa" * 14           # the block's own last fragment is back out
+    h.last_echo_cmd, h.echo_emissions = b"\xaa" * 14, 2   # the block's own last fragment is out
     h._next_parent_words()
     assert h._sender is not None
 
@@ -413,11 +413,28 @@ def test_the_echo_gate_matches_the_block_not_a_count():
     h._words.clear()
     h._child_slot = b"\xcc" * 14
     h.last_echo_cmd, h.echo_progress, h.echo_backlog = None, 0, 0
+    h.echo_emissions = 0
     h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
                                    bytes([bl.PLAYSE, 0, 0, 0])))
     h.echo_progress = 999                     # a counter would call this echoed
     assert h._next_parent_words() == [0] * 7, "content, not a count, decides"
-    h.last_echo_cmd = b"\xcc" * 14
+    h.last_echo_cmd, h.echo_emissions = b"\xcc" * 14, 1
+    h._next_parent_words()
+    assert h._sender is not None
+
+
+def test_a_stale_identical_fragment_does_not_open_the_gate():
+    """u24: two CHOOSEMOVE blocks for identical Chansey end in the same bytes, so last_echo_cmd
+    still held the PREVIOUS battler's final fragment and the gate opened at once. The emission mark
+    is what separates "that same fragment, earlier" from "this block's, now"."""
+    h = _into_the_battle()
+    h._words.clear()
+    h._child_slot = b"\xee" * 14
+    h.last_echo_cmd, h.echo_emissions = b"\xee" * 14, 7   # identical content, already echoed
+    h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
+                                   bytes([bl.CHOOSEMOVE, 0, 0, 0])))
+    assert h._next_parent_words() == [0] * 7, "a match from before the block landed is stale"
+    h.echo_emissions = 8                                  # now one has gone out since
     h._next_parent_words()
     assert h._sender is not None
 

@@ -167,6 +167,8 @@ class HostTradeEngine:
         self.echo_backlog = 0              # set by HostSession each poll; see _echo_owed
         self.echo_progress = 0             # monotonic count of echoes that have left the queue
         self.last_echo_cmd = None          # the child slot the leader most recently mirrored back
+        self.echo_emissions = 0            # echoes actually emitted; drops excluded
+        self._echo_wait_mark = 0
         self._child_slot = None            # the slot currently being fed to us
         self._echo_wait_slot = None        # the slot that must be mirrored before we answer
         self._echo_wait_polls = 0
@@ -1014,6 +1016,7 @@ class HostTradeEngine:
         # The slot that completed this block is the one the console must see returned before it will
         # set the exec-flag bit our answer clears. Wait for that exact slot. See _echo_owed.
         self._echo_wait_slot = self._child_slot
+        self._echo_wait_mark = self.echo_emissions
         self._echo_wait_polls = 0
         self.trace.append(("battle_recv", rec["buffer_id"], rec["active_battler"], rec["cmd"]))
         self.info(f"Union Room battle: <- {bl.describe(rec)}")
@@ -1170,6 +1173,11 @@ class HostTradeEngine:
         the re-sent last fragment of a PLAYSE and the console stopped mid-animation. The user saw our
         attack freeze half-played with the music still going.
 
+        u24: content alone is ambiguous. Two blocks can end in a byte-identical fragment -- both
+        CHOOSEMOVEs carry the same ChooseMoveStruct tail for two identical Chansey -- so
+        `last_echo_cmd` still held the previous battler's final fragment and the gate opened at once.
+        Pair the content with a mark taken when the block landed and require an emission after it.
+
         So wait for the block's own last fragment to come back out of the echo, by content. The
         safety valve is not a tuned delay: it exists only so a fragment the console somehow never
         re-sends cannot deadlock us for ever, and it says so in the log when it fires.
@@ -1178,7 +1186,8 @@ class HostTradeEngine:
         old timing and nothing in them acks a block the console has to see returned first."""
         if self.state != H_UROOM_BATTLE_LINK or self._echo_wait_slot is None:
             return False
-        if self.last_echo_cmd == self._echo_wait_slot:
+        if (self.last_echo_cmd == self._echo_wait_slot
+                and self.echo_emissions > self._echo_wait_mark):
             self._echo_wait_slot = None
             return False
         self._echo_wait_polls += 1

@@ -95,6 +95,7 @@ class HostSession:
                 self.activity.echo_backlog = getattr(self.rfu, "echo_backlog", 0)
                 self.activity.echo_progress = getattr(self.rfu, "echo_progress", 0)
                 self.activity.last_echo_cmd = getattr(self.rfu, "last_echo_cmd", None)
+                self.activity.echo_emissions = getattr(self.rfu, "echo_emissions", 0)
                 self.activity.feed_child_slot(self.rfu.child_cmd)
         return events
 
@@ -108,6 +109,7 @@ class HostSession:
         self.activity.echo_backlog = getattr(self.rfu, "echo_backlog", 0)
         self.activity.echo_progress = getattr(self.rfu, "echo_progress", 0)
         self.activity.last_echo_cmd = getattr(self.rfu, "last_echo_cmd", None)
+        self.activity.echo_emissions = getattr(self.rfu, "echo_emissions", 0)
         out = list(self.reliable.poll(now_ms))
         for emission in out:
             if emission.flagsA != reliable.FLAGSA_CTRL:
