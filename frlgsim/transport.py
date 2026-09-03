@@ -182,7 +182,8 @@ def free_radio(phys, log=print):
             _iw_del(vif)
             _run(["ip", "link", "del", vif])
             log(f"[live] freed radio: removed stale LDN vif {vif}")
-    _run(["pkill", "-x", "wpa_supplicant"])
+    # wpa_supplicant is not killed: the interfaces above are already unmanaged and down, and a global kill
+    # would drop any other adapter's connection. If a join still fails with EBUSY, stop it by hand.
     time.sleep(0.3)
 
 

@@ -147,6 +147,10 @@ class Sim:
         # Pia packet ids are per-channel counters keyed by header dst var (dst=0 establishing, 0x0001 session/RTT, host-var
         # reliable); a single global counter skips reliable pktids.
         self._pktid_by_dst = {}
+        # Pia header nonce: one big-endian u64 counter, +1 per datagram, never 0. The peer drops a datagram
+        # whose nonce is not strictly above the last one it accepted on that channel, so a random nonce is
+        # silently discarded about half the time.
+        self._nonce = int.from_bytes(os.urandom(8), "big") or 1
         self.last_in_seq = 0
         self._recv_hi = None
         self.rel = reliable.ReliableLink(start=RELIABLE_SEQ_START, max_inflight=MAX_INFLIGHT,
@@ -333,6 +337,11 @@ class Sim:
         if ((seq - self.last_in_seq) & 0xFFFF) < 0x8000:
             self.last_in_seq = seq
 
+    def _next_nonce(self):
+        nonce = self._nonce.to_bytes(8, "big")
+        self._nonce = ((self._nonce + 1) & 0xFFFFFFFFFFFFFFFF) or 1
+        return nonce
+
     def _next_pktid(self, dv):
         pktid = self._pktid_by_dst.get(dv, 1)
         self._pktid_by_dst[dv] = pktid + 1 if pktid < 0xFFFF else 1
@@ -389,7 +398,7 @@ class Sim:
         flags = (1 if do_zstd else 0) | (2 if establishing else 0)
         if pktid is None:
             pktid = self._next_pktid(dv)
-        hdr = cryptomod.PiaHeader(dst=dv, src=sv, pktid=pktid, nonce8=os.urandom(8),
+        hdr = cryptomod.PiaHeader(dst=dv, src=sv, pktid=pktid, nonce8=self._next_nonce(),
                                   flags=(pad << 4) | flags, footer=fsize)
         dg = self.crypto.encrypt(body, self.our_ip, hdr)
         dst = self.host_ip if unicast else self.broadcast

@@ -79,6 +79,7 @@ TRAINER_CARD_SIZE = 0x60                 # sizeof(struct TrainerCard) = 96
 TRAINER_CARD_BLOCK_SIZE = 100            # BLOCK_REQ_SIZE_100 buffer [link.c:187]
 TC_OFF_GENDER = 0x00
 TC_OFF_STARS = 0x01
+TC_OFF_HAS_POKEDEX = 0x02                # TrainerCardRSE.hasPokedex (bool8)
 TC_OFF_TRAINER_ID = 0x0E                 # TrainerCardRSE.trainerId (u16)
 TC_OFF_PLAYER_NAME = 0x30                # TrainerCardRSE.playerName[PLAYER_NAME_LENGTH+1]
 TC_OFF_VERSION = 0x38                    # TrainerCard.version (u8)
@@ -90,6 +91,9 @@ def build_trainer_card(link_player, wonder_card_id=0, mon_species=None, *, name_
     """Reuses the LinkPlayer OT/trainerId/version so CopyTrainerCardData sees them aligned with the LinkPlayerBlock."""
     card = bytearray(TRAINER_CARD_BLOCK_SIZE)
     card[TC_OFF_GENDER] = link_player.gender & 0xFF
+    # A LinkPlayer claiming the National Dex (progressFlags & 0x0F) owns a Pokedex [trainer_card.c:
+    # hasPokedex = FLAG_SYS_POKEDEX_GET]; the partner displays this card after the exchange.
+    card[TC_OFF_HAS_POKEDEX] = 1 if link_player.progress_flags & 0x0F else 0
     # the card's trainerId is the low 16 bits of the OT id
     card[TC_OFF_TRAINER_ID:TC_OFF_TRAINER_ID + 2] = \
         (link_player.trainer_id & 0xFFFF).to_bytes(2, "little")
