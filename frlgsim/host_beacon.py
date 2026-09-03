@@ -9,8 +9,7 @@ import time
 from . import beacon, transport
 
 
-# Captured from a native FireRed Direct Corner leader. Unknown record fields are
-# intentionally preserved; only documented identity/session fields are changed.
+# Captured from a native FireRed Direct Corner leader; undocumented record fields must stay verbatim.
 CAPTURED_TRADE_BEACON = bytes.fromhex(
     "005c160058000000000000000000000000000000000101000000050143686173650000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000686c5a68656c76623476354358455a232323232368642323232323232323"
 )
@@ -38,7 +37,6 @@ def read_interface_mac(interface):
 
 
 def _apply_profile_to_search_word(record, profile):
-    """Apply only documented version/language fields to an RFU search record."""
     offset = beacon.SEARCH_WORD_OFFSET
     word = int.from_bytes(record[offset:offset + 2], "little")
     player = profile.to_link_player()
@@ -73,7 +71,6 @@ def build_wifi_beacon(bssid, channel, sequence, ssid_length=32, dtim_period=3):
 
 
 def build_trade_app_data(profile, host_session_id):
-    """Build inactive and active discovery records for one host session."""
     app_data = bytearray(beacon.mutate_beacon(
         CAPTURED_TRADE_BEACON, name=profile.discovery_name,
         trainer_id=profile.discovery_trainer_id))
@@ -93,12 +90,6 @@ def build_trade_app_data(profile, host_session_id):
 
 
 def build_wonder_card_app_data(profile, host_session_id):
-    """Build the hardware-proven Friend-path Wonder Card advertisement.
-
-    The inactive record advertises activity 21 with both wonder flags and the
-    started-activity bit clear. The active record changes only the normal
-    post-connect fields.
-    """
     app_data = bytearray(beacon.mutate_beacon(
         CAPTURED_TRADE_BEACON, name=profile.discovery_name,
         trainer_id=profile.discovery_trainer_id))
@@ -125,7 +116,6 @@ def build_wonder_card_app_data(profile, host_session_id):
 
 
 def activate_trade_app_data(app_data, host_session_id):
-    """Apply only the native post-connect activity and RFU-session changes."""
     app_data = bytearray(app_data)
     active_header = bytearray(app_data[:beacon.PIA_HDR])
     if len(active_header) > 0x16:
@@ -139,7 +129,7 @@ def activate_trade_app_data(app_data, host_session_id):
 
 
 class BeaconInjector:
-    """Own the userspace beacon thread required by affected Wi-Fi drivers."""
+    """Some Wi-Fi drivers never beacon the AP themselves; this thread injects 802.11 beacons from userspace."""
 
     def __init__(self, monitor="ldn-mon", ap="ldn", channel=1,
                  ssid_length=32, dtim_period=3, log=print):

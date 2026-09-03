@@ -1,5 +1,3 @@
-"""Capability-aware catalog for legacy and composed Mystery Gifts."""
-
 import argparse
 from dataclasses import dataclass
 
@@ -25,8 +23,6 @@ class GiftCatalogEntry:
 
 
 class _FlagIdAction(argparse.Action):
-    """Keep the legacy visible default while recording an explicit override."""
-
     def __call__(self, parser, namespace, values, option_string=None):
         setattr(namespace, self.dest, values)
         setattr(namespace, "_flag_id_explicit", True)
@@ -47,8 +43,6 @@ def resolve_flag_id(args, registry=None):
 
 
 class GiftRegistry:
-    """Registry whose entries declare where a gift can be distributed."""
-
     def __init__(self):
         self._entries = {}
 
@@ -75,10 +69,7 @@ class GiftRegistry:
             builder=build))
 
     def register_definition(self, definition):
-        """Validate and register one ordinary definition or all rally slots."""
         validate_definition(definition)
-        # Compile once at registration so size and relocation errors fail before
-        # the definition can appear in a CLI choice list.
         compiled = compile_definition(definition)
         if not isinstance(definition, WonderGift):
             raise TypeError("definition must be a WonderGift")
@@ -105,13 +96,10 @@ class GiftRegistry:
                         compile_definition(definition, flag_id=flag_id)[slug],
                     definition=definition)
                 for slot in rally.slots)
-            # Touch the registration-time result so every advertised slug is
-            # guaranteed to have been produced by the rally compiler.
             for candidate in candidates:
                 compiled[candidate.slug]
 
-        # Registration is atomic: a collision in a later rally slot cannot
-        # leave earlier slots partially visible in the catalog.
+        # Registration is atomic: no slot becomes visible if any slug collides.
         for candidate in candidates:
             if candidate.slug in self._entries:
                 raise ValueError(f"duplicate Mystery Gift slug {candidate.slug!r}")
@@ -154,7 +142,6 @@ class GiftRegistry:
         return self.entry(slug).description
 
     def format_live_gift_help(self):
-        """Return the live catalog in a formatter-friendly CLI help block."""
         entries = tuple(entry for entry in self._entries.values() if entry.live)
         width = max(len(entry.slug) for entry in entries)
         lines = [

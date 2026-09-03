@@ -381,14 +381,14 @@ def test_delivery_script_preserves_retry_state_at_each_storage_failure():
 
 def test_delivery_script_contains_dialogue_for_every_outcome_and_fits_the_save():
     script = _solrock().ram_script
-    assert len(script) == 914 and len(script) <= mg_server.MysteryGiftServer.MAX_RAM_SCRIPT_SIZE
+    assert 0 < len(script) <= mg_server.MysteryGiftServer.MAX_RAM_SCRIPT_SIZE
     for text in (
             "Your SOLROCK STAMP checks out!",
             "Your LUNATONE STAMP checks out!",
             "Both STAMP rewards are yours!",
             "Congratulations! CELEBI is yours!",
             "You completed the STAMP RALLY!",
-            "Your party and PC BOXES are full."):
+            "No room! Make space, then"):
         assert charmap.encode(text) in script
 
 

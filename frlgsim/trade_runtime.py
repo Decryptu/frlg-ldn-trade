@@ -7,8 +7,6 @@ from . import mon as monmod
 
 
 class ConsoleLog:
-    """Two-level console logger used by both joiner and host applications."""
-
     def __init__(self, verbose, prefix="", *, start=None, output=print):
         self.verbose = bool(verbose)
         self.prefix = prefix
@@ -31,7 +29,6 @@ class ConsoleLog:
 
 
 def parse_slots(spec, trades, party_len):
-    """Parse a comma-separated list of distinct, zero-based party slots."""
     if not spec:
         return None
     try:
@@ -48,7 +45,6 @@ def parse_slots(spec, trades, party_len):
 
 
 def load_party(paths, log=lambda *parts: None):
-    """Load and describe a sequence of .pk3/.ek3 files."""
     party = [monmod.Mon.from_file(path) for path in paths]
     for index, pokemon in enumerate(party):
         log(f"  party slot {index}: {pokemon.describe()}")
@@ -56,7 +52,6 @@ def load_party(paths, log=lambda *parts: None):
 
 
 def received_paths(mons, output_path, output_format, trades):
-    """Return deterministic output paths for received Pokemon."""
     if trades == 1:
         return [output_path] if mons else []
     stem, _ = os.path.splitext(output_path)
@@ -70,7 +65,6 @@ def received_paths(mons, output_path, output_format, trades):
 
 def save_received_mons(mons, *, output_path, output_size, output_format, trades,
                        log=lambda *parts: None, output=print):
-    """Persist received Pokemon and return the number written."""
     mons = list(mons)
     if not mons:
         return 0

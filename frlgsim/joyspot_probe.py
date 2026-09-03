@@ -1,10 +1,4 @@
-"""Runtime for the experimental JoySpot discovery-only hardware probe.
-
-The supported distributor is the Friend-path ``frlgmg_host.py``. This probe is
-kept solely to investigate the unresolved Wireless Communication serial mapping.
-It intentionally stops at LDN advertisement and association: it does not
-instantiate Pia, Reliable, RFU, LinkPlayer, or Mystery Gift state.
-"""
+"""Discovery-only probe: stops at LDN advertisement and association; no Pia, Reliable, RFU or Mystery Gift state."""
 
 from dataclasses import dataclass
 import os
@@ -29,8 +23,6 @@ PROBE_POLL_SECONDS = 0.25
 
 @dataclass(frozen=True)
 class JoySpotProbeConfig:
-    """OS and radio settings for one controlled discovery candidate."""
-
     candidate: JoySpotCandidate
     phy: str = "auto"
     keys_path: str = "~/.switch/prod.keys"
@@ -59,8 +51,6 @@ class JoySpotProbeConfig:
 
 
 class JoySpotProbeApplication:
-    """Own one research advertisement until interruption or a sweep decision."""
-
     def __init__(self, config, profile, *, log=print,
                  transport_factory=transport.HostTransport,
                  injector_factory=BeaconInjector,
@@ -165,9 +155,7 @@ class JoySpotProbeApplication:
                 "No higher protocol is running, so the game may time out normally.")
 
     def _drain_ignored_traffic(self):
-        # Drain the TAP receive queue without parsing or answering Pia.
-        # Otherwise the readable socket stays hot after a join and the
-        # discovery-only loop spins until the game's expected timeout.
+        # Drain the TAP queue without answering Pia; otherwise the socket stays hot after a join and the loop spins.
         for _datagram, _source in self.network.recv():
             self.ignored_datagrams += 1
             if self.ignored_datagrams == 1:
@@ -176,13 +164,8 @@ class JoySpotProbeApplication:
                     "at the Stage 1 discovery boundary.")
 
     def run(self, *, decision_prompt=None):
-        """Run one candidate and return whether a console joined its LDN network.
-
-        With no prompt, advertise until Ctrl-C (the original one-candidate
-        workflow).  A sweep supplies a zero-argument prompt callback; it runs
-        only after the AP and beacon injector are live, and returning from it
-        ends this candidate cleanly.
-        """
+        """Returns whether a console joined. Without a prompt, advertises until Ctrl-C; a sweep passes a zero-arg
+        prompt that runs once the AP and injector are live, and returning from it ends the candidate."""
         self.joined_once = False
         try:
             self._build_components()

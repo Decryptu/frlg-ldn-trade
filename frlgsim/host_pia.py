@@ -1,8 +1,5 @@
-"""Pia host framing and the single-Switch Net/Session/RTT peer controller.
-
-This module ends at encrypted UDP datagrams.  It does not own sockets, LDN
-interfaces, beacon threads, Pokémon files, or process cleanup.
-"""
+"""Pia host framing and the single-Switch Net/Session/RTT peer controller; ends at encrypted UDP
+datagrams and owns no sockets, interfaces or threads."""
 
 from dataclasses import dataclass
 import os
@@ -15,48 +12,13 @@ from . import crypto, pia_connect, reliable
 PIA_HOST_VAR = 0x00C6
 NET_RETRY_SECONDS = 0.5
 SESSION_ACCEPT_RETRY_SECONDS = 0.25
-# frlg-ldn-trade session 12 (2026-09-02): the first capture from INSIDE a real Mystery Gift host's
-# session (scratchpad/mc1, frlgmg_client.py) showed that a console SHARING a Wonder Card does NOT
-# accept the Pia Session join the way a trade host (j84) does: it sends NO type 2 Join Response at
-# all, sends the type 5 Update Session only 2.03s after the join request, and originates RTT
-# requests every 316ms from 0.25s after the join, BEFORE the session is finalized. Our host answers
-# in 2ms with type 2 + type 5 and starts RTT only after finalization. These three switches make the
-# host mimic the real Mystery Gift host's timing, for an A/B against the 3-second wall.
-#   FRLG_ACCEPT_DELAY_MS=2030   delay the session acceptance this long after the join request
-#   FRLG_NO_TYPE2=1             never send the type 2 Join Response (type 5 only, like mc1)
-#   FRLG_EARLY_RTT=1            originate RTT probes from join+0.25s, before finalization
-EARLY_RTT_FIRST_SECONDS = 0.25
-
-
-def _env_int(name, default=0):
-    try:
-        return int(os.environ.get(name, "") or default)
-    except ValueError:
-        return default
-
-
-def _env_flag(name):
-    return os.environ.get(name, "") not in ("", "0")
-
-
-def synth_rtt_request_template(host_var, random4=None):
-    """A host-originated RTT request in the layout the real Mystery Gift host uses (mc1):
-    type(1) 00 00 01 | 4 constant bytes | 8-byte systime | 00 00 00 | sender var (2, BE)."""
-    rnd = bytes(random4 or os.urandom(4))
-    return (bytes([0, 0, 0, 1]) + rnd + bytes(8) + bytes(3)
-            + (host_var & 0xFFFF).to_bytes(2, "big"))
 HOST_RTT_PERIOD_SECONDS = 0.315
-# frlg-ldn-trade session 11: FRLG_LIVENESS_SCALE scales the RTT / Net-property keepalive cadence to
-# test whether feeding the emulator's svc_51 watchdog FASTER pushes the 3s wall out. 1.0 = the real
-# host's rate (default, no change). 0.5 = twice as fast. Applied to the RTT period and the Net
-# property/keepalive interval only (NOT the one-shot session-accept retry). Env-gated so default
-# behaviour is byte-identical.
-def _liveness_scale():
-    try:
-        v = float(os.environ.get("FRLG_LIVENESS_SCALE", "1") or 1)
-    except ValueError:
-        v = 1.0
-    return v if 0.1 <= v <= 4.0 else 1.0
+# The console silently drops a large share of our datagrams inside its own stack and dedups
+# reliable frames by seq, so unacked data frames are re-offered in the next few datagrams.
+HOST_CARRY_DEPTH = 4
+# The console goes silent ~0.5s after accepting the card (its save); traffic pushed into that
+# silence piles up in the adapter and either freezes the host (blocking sendto) or floods the console.
+QUIET_GATE_SECONDS = 0.25
 HOST_VBLANK_SECONDS = 1.0 / 59.727
 RELIABLE_BATCH_MAX = 9
 PIA_COMPRESS_MIN = 62
@@ -70,8 +32,6 @@ class OutboundDatagram:
 
 
 class PiaNonceSequence:
-    """Session-wide native counter, with random mode retained for diagnostics."""
-
     def __init__(self, native=False, initial=None):
         self.native = bool(native)
         if initial is None:
@@ -141,7 +101,6 @@ def build_message(network, pia_crypto, proto, payload, **kwargs):
 
 
 def build_net_probe(network, sequence_id=2, nonce_source=None, pia_crypto=None):
-    """Build the leader's establishing Net 0x11 broadcast datagram."""
     station_ips = [network.our_ip] + [p[1] for p in network.participants]
     network_id = zlib.crc32(bytes(network.ssid)[1:16]) & 0xFFFFFFFF
     net = pia_connect.build_net_conn_request(
@@ -159,7 +118,6 @@ def build_net_probe(network, sequence_id=2, nonce_source=None, pia_crypto=None):
 
 
 def build_net_property_update(network, app_data, sequence_id=1):
-    """Build the native leader's Net 0x50 application-property payload."""
     app_data = bytes(app_data)
     network_id = zlib.crc32(bytes(network.ssid)[1:16]) & 0xFFFFFFFF
     system_len = min(PIA_APPLICATION_HEADER_SIZE, len(app_data))
@@ -180,7 +138,6 @@ def build_net_property_update(network, app_data, sequence_id=1):
 
 def build_session_acceptance(network, pia_crypto, join, host_name,
                              nonce_source=None, update_pktid=1):
-    """Build the native type-5 update/type-2 response acceptance pair."""
     host_constant = pia_connect.ldn_constant_id(network.our_mac)
     host_var, guest_var = join["destination_var"], join["source_var"]
     update = pia_connect.build_session_update(
@@ -202,7 +159,6 @@ def build_session_acceptance(network, pia_crypto, join, host_name,
 
 def build_host_rtt(network, pia_crypto, payload, guest_var, packet_id,
                    nonce_source=None):
-    """Frame one host RTT message on Pia's reserved Session channel."""
     return build_message(
         network, pia_crypto, pia_connect.PROTO_RTT, payload,
         dst_var=pia_connect.SESSION_VAR, src_var=PIA_HOST_VAR,
@@ -229,8 +185,6 @@ def reliable_output_batches(outputs, limit=RELIABLE_BATCH_MAX):
 
 
 class HostPeerProtocol:
-    """Own all Pia state for the one supported Switch peer."""
-
     def __init__(self, network, profile, host_session, active_app_data, *,
                  native_nonce_sequence=False, session_response_first=False,
                  tracer=None, log=lambda *a: None):
@@ -239,14 +193,8 @@ class HostPeerProtocol:
         self.session = host_session
         self.active_app_data = bytes(active_app_data)
         self.response_first = bool(session_response_first)
-        self._liveness_scale = _liveness_scale()
         self.log = log
         self.info = getattr(log, "info", log)
-        # Session-layer trace. The per-datagram detail below is on self.log, which is
-        # --verbose-gated and banned on live runs, so a decoded session timeline was
-        # unavailable exactly when it mattered. The emulator can close the link with no
-        # game-level cause (swi 0x51, docs/joiner_protocol_notes.md), which makes THIS
-        # layer the one worth recording. Writing to the capture costs no frame time.
         self.tracer = tracer
         self.nonces = PiaNonceSequence(native=native_nonce_sequence)
 
@@ -279,24 +227,7 @@ class HostPeerProtocol:
         self.reliable_messages_in = 0
         self.reliable_messages_out = 0
         self._out = []
-        # frlg-ldn-trade session 11: proactive carry-forward for the HOST reliable stream, mirroring the
-        # JOINER's CARRY_DEPTH (sim.py). The console silently drops ~40% of our datagrams inside its own
-        # stack; the joiner survives that by repeating each reliable data frame in the next few
-        # datagrams (one of the three fixes that made the joiner work), but the host only ever sent each
-        # once and relied on reactive Reliable retransmit. HOST_CARRY_DEPTH>0 prepends the still-unacked
-        # data frames of the last N datagrams to each new one (console dedups by seq). Default 0 = off.
-        try:
-            self._host_carry_depth = max(0, min(6, int(os.environ.get("HOST_CARRY_DEPTH", "0") or 0)))
-        except ValueError:
-            self._host_carry_depth = 0
         self._reliable_carry = []
-        # session-12 real-MG-host timing switches (see the constants above)
-        self.accept_delay = _env_int("FRLG_ACCEPT_DELAY_MS", 0) / 1000.0
-        self.no_type2 = _env_flag("FRLG_NO_TYPE2")
-        self.early_rtt = _env_flag("FRLG_EARLY_RTT")
-        if self.accept_delay or self.no_type2 or self.early_rtt:
-            self.info(f"[mg-host-timing] accept_delay={self.accept_delay:.3f}s "
-                      f"no_type2={self.no_type2} early_rtt={self.early_rtt}")
 
     def drain(self):
         result, self._out = self._out, []
@@ -320,24 +251,12 @@ class HostPeerProtocol:
         return build_net_property_update(self.network, self.active_app_data)
 
     def _session_pair(self):
-        # The type 5 rides the shared Session channel (dst 0x0001) with the RTT probes. lg86: with
-        # early RTT the probes had used pktids 2..7 before the type 5 went out as pktid 1, and the
-        # console ignored all four copies and left at 3.0s - it drops a session-channel packet id
-        # that runs backwards. A real host numbers its type 5 after its probes (mc1: pktid 8).
-        pktid = 1
-        if self.early_rtt:
-            pktid = self.session_packet_id
-            self.session_packet_id = ((self.session_packet_id + 1) & 0xFFFF) or 1
         return build_session_acceptance(
             self.network, self.pia_crypto, self.session_join,
-            self.profile.session_name, self.nonces, update_pktid=pktid)
+            self.profile.session_name, self.nonces, update_pktid=1)
 
     def _send_session_acceptance(self):
         update, response = self._session_pair()
-        if self.no_type2:
-            self._send(update, self.network.broadcast)
-            self._unicast_session_update(update)
-            return "type 5 Update Session only (broadcast + unicast; FRLG_NO_TYPE2)"
         if self.response_first:
             self._send(response, self.session_join["ip"])
             self._send(update, self.network.broadcast)
@@ -349,14 +268,8 @@ class HostPeerProtocol:
         return "type 5 Update Session (broadcast + unicast), then type 2 Join Response (unicast)"
 
     def _unicast_session_update(self, update):
-        # The console receives only ~1 in 5 of our BROADCAST data frames, and the type 5 Update
-        # Session is the one Pia handshake message still sent broadcast-only. It is what the console
-        # must receive before it answers with the type 6 ACK that finalizes its Pia session; a run
-        # that never finalizes (lg59) never even reaches the RFU layer. So repeat it UNICAST to each
-        # joined station, exactly as the Net 0x11 probe already does (the Pia nonce depends on the
-        # source, not the destination, and the console de-duplicates by packet id). Unproven against
-        # the semi-random 3s quit - dead and delivered runs finalize identically - but it makes
-        # finalization reliable and follows the one fix pattern that has worked on this console.
+        # The console receives only ~1 in 5 broadcast data frames and must see the type 5 before it
+        # sends the finalizing type 6; unicast copies are safe (nonce depends on source, dedup by pktid).
         seen = set()
         targets = [p[1] for p in self.network.participants]
         if self.session_join is not None:
@@ -368,13 +281,7 @@ class HostPeerProtocol:
             self._send(update, ip)
 
     def _apply_carry_forward(self, outputs):
-        """Prepend the still-unacked data frames of the last HOST_CARRY_DEPTH datagrams (newest first),
-        so a datagram the console dropped is re-offered immediately instead of only on the Reliable RTO.
-        The console dedups by seq, so re-sent frames are harmless. Ctrl (pure-ack) frames are never
-        carried. No-op when HOST_CARRY_DEPTH is 0."""
-        depth = self._host_carry_depth
-        if depth <= 0:
-            return outputs
+        """Ctrl (pure-ack) frames are never carried."""
         _rel = getattr(self.session, "reliable", None)
         _link = getattr(_rel, "link", _rel)
         unacked = getattr(_link, "unacked", {}) or {}
@@ -387,32 +294,24 @@ class HostPeerProtocol:
                 if seq in have or entry is None or entry[reliable._E_ACKED]:
                     continue
                 have.add(seq); carried.append(it)
-        # record THIS datagram's data frames for future carry (exclude pure-ack ctrl frames)
         self._reliable_carry.append([it for it in outputs
                                      if getattr(it, "seq", None) is not None
                                      and it.flagsA != reliable.FLAGSA_CTRL])
-        self._reliable_carry = self._reliable_carry[-depth:]
+        self._reliable_carry = self._reliable_carry[-HOST_CARRY_DEPTH:]
         if not carried:
             return outputs
-        # oldest-seq first, then the fresh outputs (matches sim ordering)
         carried.sort(key=lambda it: (it.seq - (min(have) if have else 0)) & 0xFFFF)
         self.carried_frames = getattr(self, "carried_frames", 0) + len(carried)
         return carried + outputs
 
     def _console_quiet(self, now):
-        """True while the console has sent nothing for FRLG_QUIET_GATE_MS (default 250ms; 0 = off).
-        2026-09-03: the console goes silent ~0.5s after accepting the card (its save); retransmits
-        and carry-forward pushed into that silence pile up in the adapter as hardware-retried frames
-        and either freeze the host (blocking sendto) or flood the console when it returns."""
-        gate = _env_int("FRLG_QUIET_GATE_MS", 250) / 1000.0
         last = getattr(self, "_last_rx", None)
-        return bool(gate) and last is not None and (now - last) > gate
+        return last is not None and (now - last) > QUIET_GATE_SECONDS
 
     def _send_reliable(self, outputs):
         if not outputs or self.pia_crypto is None or self.guest_var is None or self.guest_ip is None:
             return
         if self._console_quiet(time.monotonic()):
-            # keep only fresh (non-retransmitted) frames; no carry-forward
             outputs = [o for o in outputs if not getattr(o, "retransmitted", False)]
             if not outputs:
                 return
@@ -498,19 +397,6 @@ class HostPeerProtocol:
                           f"player={join['players'][0]['name']!r}.")
             self.session_join = join
             self.guest_var, self.guest_ip = join["source_var"], src_ip
-            if self.early_rtt and self.rtt_template is None:
-                self.rtt_template = synth_rtt_request_template(PIA_HOST_VAR)
-                self.next_rtt_send = now + EARLY_RTT_FIRST_SECONDS
-                self.info(f"[mg-host-timing] originating RTT probes from join+{EARLY_RTT_FIRST_SECONDS}s")
-            if not self.session_finalized and self.accept_delay > 0 and self.session_accepts == 0 \
-                    and self.next_session_accept_send is None:
-                self.next_session_accept_send = now + self.accept_delay
-                self.info(f"[mg-host-timing] holding the Session acceptance for {self.accept_delay:.2f}s "
-                          "(a real Mystery Gift host waits 2.03s, mc1)")
-                return
-            if not self.session_finalized and self.accept_delay > 0 \
-                    and self.next_session_accept_send is not None and now < self.next_session_accept_send:
-                return                          # still inside the deliberate hold
             if not self.session_finalized:
                 order = self._send_session_acceptance()
                 self.session_accepts += 1
@@ -557,14 +443,11 @@ class HostPeerProtocol:
         if self.joined and not self.net_acked and now >= self.next_net_send:
             probe = self._build_net_probe()
             self._send(probe, self.network.broadcast)
-            # The console receives only ~1 in 5 of our BROADCAST data frames (2026-09-02, lg42-lg49:
-            # it answered the 2nd, 4th, 5th, 5th and 6th 0x11), which delays its Pia session join by
-            # up to 2.7s, while every UNICAST frame to it is acked. So repeat the same datagram
-            # unicast to each joined station; the Pia nonce depends on the source, not the
-            # destination, and the console de-duplicates by packet id.
+            # The console receives only ~1 in 5 broadcast data frames but acks every unicast one;
+            # the Pia nonce depends on the source only and the console dedups by packet id.
             for participant in self.network.participants:
                 self._send(probe, participant[1])
-            self.next_net_send = now + NET_RETRY_SECONDS * self._liveness_scale
+            self.next_net_send = now + NET_RETRY_SECONDS
         if (self.session_join is not None and not self.session_finalized
                 and self.next_session_accept_send is not None
                 and now >= self.next_session_accept_send):
@@ -572,7 +455,7 @@ class HostPeerProtocol:
             self.session_accepts += 1
             self.next_session_accept_send = now + SESSION_ACCEPT_RETRY_SECONDS
             self.log(f"[host] Session acceptance retry #{self.session_accepts}: {order}")
-        if ((self.session_finalized or self.early_rtt) and self.rtt_template is not None
+        if (self.session_finalized and self.rtt_template is not None
                 and self.guest_var is not None and self.next_rtt_send is not None
                 and now >= self.next_rtt_send):
             self.rtt_systime = (self.rtt_systime + 1) & 0xFFFFFFFFFFFFFFFF
@@ -588,7 +471,7 @@ class HostPeerProtocol:
             self.rtt_requests_out += 1
             if self.rtt_requests_out == 1:
                 self.info("Stage 2.3 RTT liveness active: originated the first host type 0 probe.")
-            self.next_rtt_send = now + HOST_RTT_PERIOD_SECONDS * self._liveness_scale
+            self.next_rtt_send = now + HOST_RTT_PERIOD_SECONDS
         if (self.session_finalized and self.next_protocol_tick is not None
                 and now >= self.next_protocol_tick):
             self._send_reliable(self.session.tick(now * 1000.0))
@@ -606,7 +489,7 @@ class HostPeerProtocol:
                 dst_var=0, src_var=PIA_HOST_VAR, pktid=0, compress=True,
                 establishing=True, nonce_source=self.nonces)
             self._send(data, self.guest_ip)
-            self.next_property_send = now + NET_RETRY_SECONDS * self._liveness_scale
+            self.next_property_send = now + NET_RETRY_SECONDS
         return self.drain()
 
     def next_deadline(self, now, default):
@@ -616,7 +499,7 @@ class HostPeerProtocol:
         if self.session_join is not None and not self.session_finalized \
                 and self.next_session_accept_send is not None:
             deadlines.append(self.next_session_accept_send)
-        if (self.session_finalized or self.early_rtt) and self.next_rtt_send is not None:
+        if self.session_finalized and self.next_rtt_send is not None:
             deadlines.append(self.next_rtt_send)
         if self.session_finalized and self.next_protocol_tick is not None:
             deadlines.append(self.next_protocol_tick)

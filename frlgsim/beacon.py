@@ -1,43 +1,23 @@
-"""FRLG Mystery-Gift host beacon encoder - the LDN advertisement `application_data` we broadcast so
-the console's Mystery Gift -> Receive Gift -> Friend list shows us and lets the player pick us (one
-A-press). This is the ENCODE side; transport._dump_beacon / _b85_decode is the matching DECODE side
-(validated against real host beacons on the join path), and this module is its inverse.
-
-Layout (a real FRLG host's advertisement, as decoded by transport._dump_beacon):
-
-    application_data = <Pia system header, 0x5C bytes> <custom-base85( 24-byte RFU search record )>
-
-The 24-byte RFU search record (little-endian), per the _dump_beacon decoder:
-    [0:2]   playerTrainerId (u16)
-    [2:10]  in-game name (uname, 8 bytes, FRLG charset, 0xFF-terminated)
-    [10:12] RFU session id (u16)
-    [12:20] partnerInfo (8 bytes)
-    [20:24] game data (u32): high u16 = tradeSpecies; low u16 = the RfuGameData compatibility word
-            (language/version) plus the activity/hasCard bits that route us to the friend/MG list.
-
-!! LIVE-TUNED !! The Switch LDN glue is not in the pokefirered decomp: the exact Pia-header contents
-and the precise bit positions of `activity`/`hasCard` inside the game-data word are INFERRED. The
-decoder only proves the four fields it reads back (trainer id, name, session id, tradeSpecies), so the
-round-trip test only guards those. Everything else is a first cut to calibrate at the console. The
-pragmatic path to "console lists us" is mutate_beacon(): capture a REAL host's application_data (the
-join path already dumps it) and tweak only the fields you need, so the Pia header is known-good.
+"""Encoder for the host's advertisement application_data = <Pia system header, 0x5C> <custom-base85(24-byte RFU record)>,
+the inverse of transport._dump_beacon / _b85_decode. Record (LE): [0:2] trainer id, [2:10] name (FRLG charset,
+0xFF-padded), [10:12] RFU session id, [12:20] partnerInfo, [20:24] game data (high u16 tradeSpecies, low u16 the
+RfuGameData compatibility word). Only trainer id, name, session id and tradeSpecies are proven by the decoder; the
+activity/hasCard bit positions are inferred.
 """
 
 from . import charmap
 
-PIA_HDR = 0x5C                      # transport._PIA_HDR - the Pia 6.16-6.41 system header length
-RECORD_SIZE = 24                    # the base85-encoded RFU search record
+PIA_HDR = 0x5C
+RECORD_SIZE = 24
 
-# --- friend / Mystery-Gift beacon field defaults (link_rfu.h RfuGameData) --------------------------
-RFU_SERIAL_GAME = 0x0002            # the serial the friend path relies on (the emulator synthesizes it)
-ACTIVITY_TRADE = 4                  # gRfuGameData.activity for Direct Corner trading [union_room.h]
-ACTIVITY_WONDER_CARD = 21          # gRfuGameData.activity for the Mystery Gift card list [union_room]
-LANGUAGE_ENGLISH = 2               # compatibility.language
-VERSION_FIRE_RED = 4               # gGameVersion FireRed (5 = LeafGreen)
-HASCARD_BIT = 0x20                 # gname[0] |= 0x20 marks "has a Wonder Card to give" [plan/union_room]
+RFU_SERIAL_GAME = 0x0002
+ACTIVITY_TRADE = 4
+ACTIVITY_WONDER_CARD = 21
+LANGUAGE_ENGLISH = 2
+VERSION_FIRE_RED = 4
+HASCARD_BIT = 0x20                 # gname[0] |= 0x20 [union_room]
 
-# Packed search word in the 24-byte LDN bridge record. These positions are
-# hardware-proven by the Friend-path Mystery Gift discovery sweep.
+# Packed search-word positions in the record; hardware-proven.
 SEARCH_WORD_OFFSET = 16
 SEARCH_ACTIVITY_MASK = 0x007F
 SEARCH_UNKNOWN_BIT7 = 0x0080
@@ -49,28 +29,23 @@ SEARCH_HAS_CARD = 0x4000
 SEARCH_STARTED_ACTIVITY = 1 << 15
 
 
-# --- Pia 6.16-6.41 system header (sysCommVer 21-22), BIG-ENDIAN -----------------------------------
-# [NintendoClients wiki: LDN-Application-Data-(Pia); see LDN/wiki/]. This 0x5C-byte header precedes
-# the game's app data (our base85 RFU record). Previously we zero-filled it, which the console's Pia
-# layer rejects. Values below are CONFIRMED from a real FRLG beacon capture (2026-08-07): sysCommVer
-# 22, appCommVer 88 (0x58), user password all-zero, name encoding UTF-8, name = the Switch nickname.
-PIA_SYS_COMM_VERSION = 22          # Pia 6.39-6.41 (from capture; wiki: 21=6.16-6.30, 22=6.39-6.41)
-PIA_APP_COMM_VERSION = 88          # 0x58 - FRLG application communication version (from capture)
+# Pia 6.16-6.41 system header (NintendoClients wiki LDN-Application-Data-(Pia)), big-endian; values confirmed from a
+# real FRLG beacon. A zero-filled header is rejected by the console's Pia layer.
+PIA_SYS_COMM_VERSION = 22
+PIA_APP_COMM_VERSION = 88
 PIA_NAME_UTF8, PIA_NAME_UTF16 = 1, 2
 
 
 def _encode_pia_name(nickname, encoding):
     if encoding == PIA_NAME_UTF16:
-        return (nickname or "").encode("utf-16-be")     # Pia 6.x header is big-endian (name endianness TBC)
+        return (nickname or "").encode("utf-16-be")
     return (nickname or "").encode("utf-8")
 
 
 def build_pia_header(*, sys_comm_ver=PIA_SYS_COMM_VERSION, app_comm_ver=PIA_APP_COMM_VERSION,
                      user_password=b"", player_limit_enabled=True, num_players=1, nickname="EMU",
                      name_encoding=PIA_NAME_UTF8):
-    """Build the 92-byte Pia system header (big-endian) per the NintendoClients wiki. Everything after
-    it (offset 0x5C) is the game's application data. Defaults are sensible; `app_comm_ver`, the
-    `user_password`, `sys_comm_ver`, and `name_encoding` are the values worth confirming live."""
+    """92-byte big-endian Pia system header; everything after offset 0x5C is the game's application data."""
     name = _encode_pia_name(nickname, name_encoding)[:64]
     h = bytearray(PIA_HDR)
     h[0x00:0x02] = PIA_HDR.to_bytes(2, "big")                       # system property data size (0x5C)
@@ -86,8 +61,6 @@ def build_pia_header(*, sys_comm_ver=PIA_SYS_COMM_VERSION, app_comm_ver=PIA_APP_
 
 
 def decode_pia_header(header):
-    """Decode a captured 0x5C Pia header into its fields (big-endian) for cross-referencing a real
-    beacon against the wiki spec."""
     h = bytes(header)[:PIA_HDR].ljust(PIA_HDR, b"\x00")
     name_size = int.from_bytes(h[0x17:0x1B], "big")
     enc = h[0x1B]
@@ -109,49 +82,42 @@ def decode_pia_header(header):
     }
 
 
-# --- custom base85 (inverse of transport._b85_decode) ----------------------------------------------
 def _b85_char(digit):
-    """Map a base85 digit (0..84) to its alphabet byte: 0x23.. skipping 0x5C ('\\')."""
+    """Digit 0..84 -> alphabet byte 0x23.., skipping 0x5C."""
     c = 0x23 + (digit % 85)
-    return c + 1 if c >= 0x5C else c               # skip 0x5C, matching the decoder's `c - 0x24` branch
+    return c + 1 if c >= 0x5C else c
 
 
 def b85_encode(data):
-    """Encode 4-byte little-endian groups as 5 base85 chars each, LOW digit first - the exact inverse
-    of transport._b85_decode. `data` length should be a multiple of 4 (the RFU record is 24 bytes)."""
+    """4-byte LE groups -> 5 base85 chars each, LOW digit first (inverse of transport._b85_decode)."""
     data = bytes(data)
     if len(data) % 4:
         data = data.ljust(len(data) + (4 - len(data) % 4), b"\x00")
     out = bytearray()
     for i in range(0, len(data), 4):
         v = int.from_bytes(data[i:i + 4], "little")
-        for _ in range(5):                         # first char = least-significant digit (decoder reverses)
+        for _ in range(5):
             out.append(_b85_char(v % 85))
             v //= 85
     return bytes(out)
 
 
 def encode_name(name, width=8):
-    """Encode an in-game name to the beacon's FRLG charset field (0xFF-terminated/padded), matching
-    what transport._frlg_name renders back."""
     return charmap.encode(name or "", width=width, pad=0xFF)
 
 
 def game_data_word(*, trade_species=0, activity=ACTIVITY_WONDER_CARD, has_card=True,
                    language=LANGUAGE_ENGLISH, version=VERSION_FIRE_RED):
-    """Compose the [20:24] game-data u32: high u16 = tradeSpecies, low u16 = the RfuGameData
-    compatibility word (language:4 | version:4 ...) with the activity + hasCard bits.
-
-    !! LIVE-TUNED !! The low-u16 bit packing (where exactly `activity` and `hasCard` sit) is the
-    inferred part; calibrate at the console. Kept in one place so tuning is a single edit."""
+    """[20:24]: high u16 = tradeSpecies, low u16 = language:4 | version:4 | activity<<8 | hasCard. The low-u16 bit packing
+    is inferred, not proven.
+    """
     compat = (language & 0xF) | ((version & 0xF) << 4) | ((activity & 0x7F) << 8)
     if has_card:
-        compat |= HASCARD_BIT                      # gname[0] |= 0x20
+        compat |= HASCARD_BIT
     return ((trade_species & 0xFFFF) << 16) | (compat & 0xFFFF)
 
 
 def build_record(*, trainer_id, name, rfu_session_id, partner_info=b"", **game_data_kwargs):
-    """Build the 24-byte RFU search record (pre-base85). `game_data_kwargs` -> game_data_word()."""
     rec = bytearray(RECORD_SIZE)
     rec[0:2] = (trainer_id & 0xFFFF).to_bytes(2, "little")
     rec[2:10] = encode_name(name, width=8)
@@ -165,14 +131,7 @@ def build_beacon(*, trainer_id=0x2288, name="EMU", rfu_session_id=0x0002, pia_he
                  partner_info=b"", nickname="EMU", sys_comm_ver=PIA_SYS_COMM_VERSION,
                  app_comm_ver=PIA_APP_COMM_VERSION, user_password=b"", name_encoding=PIA_NAME_UTF8,
                  **game_data_kwargs):
-    """Build a full `application_data` beacon: <Pia 0x5C header> <base85(24-byte RFU record)>.
-
-    The Pia header is now built per the wiki spec (build_pia_header) instead of zero-filled. Pass
-    `pia_header` to override it with a captured real header verbatim (the surest option). `nickname`
-    and the sys/app-comm/password/encoding kwargs feed build_pia_header.
-
-    `rfu_session_id` default 0x0002 = RFU_SERIAL_GAME (the friend-path serial). Game-data kwargs
-    (trade_species/activity/has_card/language/version) flow to game_data_word()."""
+    """`pia_header` overrides the built header with a captured real one verbatim (the surest option)."""
     if pia_header is not None:
         header = bytes(pia_header)[:PIA_HDR].ljust(PIA_HDR, b"\x00")
     else:
@@ -186,10 +145,9 @@ def build_beacon(*, trainer_id=0x2288, name="EMU", rfu_session_id=0x0002, pia_he
 
 def mutate_beacon(captured_app_data, *, name=None, trainer_id=None, rfu_session_id=None,
                   **game_data_kwargs):
-    """PRAGMATIC HW-A PATH: clone a REAL captured host `application_data` (keeping its known-good Pia
-    header verbatim) and re-encode only the RFU record with the fields you override. Everything not
-    overridden is preserved from the capture. `captured_app_data` = the bytes the join path's
-    _dump_beacon logged for a genuine FRLG host. Returns new `application_data`."""
+    """Clone a captured real host application_data, keeping its Pia header verbatim, and re-encode only the overridden
+    record fields.
+    """
     from .transport import _b85_decode
     captured = bytes(captured_app_data)
     header = captured[:PIA_HDR]

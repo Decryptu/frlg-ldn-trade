@@ -1,5 +1,3 @@
-"""Composable Wonder Gift definitions shipped by the shared gift registry."""
-
 from .gift_composer import (
     AnyOf,
     AllOf,
@@ -167,9 +165,7 @@ LEGENDARY_BEAST_GIFT = WonderGift(
     completed_message="Please enjoy another encounter!",
 )
 
-# Same card and script, but the receiving game keeps the Wonder Card shareable, so a console that
-# received it can pass it on to another console with Mystery Gift -> Wonder Cards -> SEND. Built for
-# sniffing two real consoles talking to each other (2026-09-02).
+# Same card and script, but the receiving console may pass it on (Mystery Gift -> Wonder Cards -> SEND).
 LEGENDARY_BEAST_GIFT_SHARE = dataclasses.replace(
     LEGENDARY_BEAST_GIFT,
     slug="beast-cutscene-share",
@@ -305,9 +301,6 @@ WORLDS_XP_GIFT = WonderGift(
     ),
     intro_message=(
         "Thank you for using the MYSTERY\nGIFT System."),
-        #     intro_message=(
-        # "Come to Pokemon Worlds in San Francisco!\n"
-        # "See what LEGENDARY gift awaits."),
     event=GiftSpec(repeatable=True, shareable="always"),
     delivery=DeliveryPlan(delivery=(
         DeliveryStage(

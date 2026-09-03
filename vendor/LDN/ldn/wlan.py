@@ -1,11 +1,4 @@
 
-"""
-This module implements WLAN functions using NL80211.
-
-This module is used internally by the main LDN module and is not meant to be
-exposed to the user directly.
-"""
-
 from __future__ import annotations
 
 from Crypto.Cipher import AES
@@ -46,9 +39,7 @@ ETH_P_IP = 0x800
 ETH_P_ARP = 0x806
 ETH_P_OUI = 0x88B7
 
-# Radiotap's historical "WEP" flag means that mac80211 should encrypt the
-# injected frame using the interface's configured key.  The selected key may
-# use CCMP (as LDN does); it is not limited to the WEP cipher.
+# The radiotap "WEP" flag asks mac80211 to encrypt an injected frame with the interface key (any cipher).
 IEEE80211_RADIOTAP_F_WEP = 0x04
 IEEE80211_RADIOTAP_F_FCS = 0x10
 
@@ -114,16 +105,13 @@ Channels = {
 Frequencies = {v: k for k, v in Channels.items()}
 
 def map_frequency(freq: int) -> int:
-    """Returns the channel number for a given frequency."""
     return Frequencies[freq]
 
 def is_valid_channel(channel: int) -> bool:
-    """Returns whether the given value is a valid channel number."""
     return channel in Channels
 
 
 def encode_elements(elements: dict[int, bytes]) -> bytes:
-    """Encodes the given information elements (TLVs)."""
     stream = streams.StreamOut("<")
     for id in sorted(elements):
         stream.u8(id)
@@ -132,7 +120,6 @@ def encode_elements(elements: dict[int, bytes]) -> bytes:
     return stream.get()
 
 def decode_elements(data: bytes) -> dict[int, bytes]:
-    """Decodes the given data into information elements (TLVs)"""
     elements = {}
     stream = streams.StreamIn(data, "<")
     while not stream.eof():
@@ -143,16 +130,9 @@ def decode_elements(data: bytes) -> dict[int, bytes]:
 
 
 class MACAddress:
-    """Represents a MAC address."""
-
     _address: list[int]
 
     def __init__(self, address: str | bytes | int | None = None):
-        """
-        Creates a new MAC address. If an address is given, the MAC address is
-        parsed from the given string, bytes or integer object.
-        """
-
         if address is None:
             self._address = [0] * 6
         
@@ -173,37 +153,26 @@ class MACAddress:
             raise ValueError("Invalid MAC address: %s" %address)
     
     def __eq__(self, other: object) -> bool:
-        """Checks whether two MAC addresses are equal."""
         if isinstance(other, MACAddress):
             return self._address == other._address
         return super().__eq__(other)
     
     def __hash__(self) -> int:
-        """
-        Returns a hash so that a MAC address can be used in sets and dictionary
-        keys.
-        """
         return hash(str(self))
     
     def __bytes__(self) -> bytes:
-        """Returns a bytes representation of the MAC address."""
         return bytes(self._address)
 
     def __str__(self) -> str:
-        """Returns a string representation of the MAC address."""
         return ":".join(f"{value:02X}" for value in self._address)
     
     def __repr__(self) -> str:
-        """Returns a string representation of the MAC address."""
         return f"MACAddress('{self}')"
     
     def encode(self) -> bytes:
-        """Returns a bytes representation of the MAC address."""
         return bytes(self._address)
     
     def _parse(self, text: str) -> list[int]:
-        """Parses the given MAC address string."""
-
         fields = text.split(":")
         if len(fields) != 6:
             raise ValueError("Invalid MAC address: %s" %text)
@@ -345,9 +314,7 @@ class RadiotapFrame:
         stream.seek(length)
         self.data = stream.readall()
 
-        # The radiotap flags field explicitly reports whether the captured
-        # 802.11 frame includes its trailing FCS.  The FCS is not part of the
-        # MAC payload and must not be presented to the frame decoders.
+        # A trailing FCS is not part of the MAC payload and must not reach the frame decoders.
         if self.flags is not None and self.flags & IEEE80211_RADIOTAP_F_FCS:
             if len(self.data) < 4:
                 raise ValueError("Radiotap frame is shorter than its FCS")
@@ -458,7 +425,7 @@ class AssociationResponse:
     aid: int = 0
 
     elements: dict[int, bytes] = field(default_factory=dict)
-    extra: bytes = b""  # frlg-ldn-trade: raw elements appended after `elements` (keeps order, allows duplicate ids)
+    extra: bytes = b""  # raw elements appended after `elements`: keeps order, allows duplicate ids
 
     def decode(self, data: bytes) -> None:
         stream = streams.StreamIn(data, "<")
@@ -542,7 +509,7 @@ class ProbeResponse:
     capability_information: int = 0
 
     elements: dict[int, bytes] = field(default_factory=dict)
-    extra: bytes = b""  # frlg-ldn-trade: raw elements appended after `elements` (keeps order, allows duplicate ids)
+    extra: bytes = b""  # raw elements appended after `elements`: keeps order, allows duplicate ids
 
     def decode(self, data: bytes) -> None:
         stream = streams.StreamIn(data, "<")
@@ -589,7 +556,7 @@ class BeaconFrame:
     capability_information: int = 0
 
     elements: dict[int, bytes] = field(default_factory=dict)
-    extra: bytes = b""  # frlg-ldn-trade: raw elements appended after `elements` (keeps order, allows duplicate ids)
+    extra: bytes = b""  # raw elements appended after `elements`: keeps order, allows duplicate ids
 
     def decode(self, data: bytes) -> None:
         stream = streams.StreamIn(data, "<")
@@ -809,11 +776,8 @@ class DataFrame:
     nonce: int = 0
     keyid: int = 0
 
-    # frlg-ldn-trade (2026-09-03): QoS data (subtype 8) support. A Switch switches to QoS data
-    # frames as soon as the AP's beacon carries a WMM element (LDN_SWITCH_IES=1: lg79/lg80 sent
-    # 563/263 QoS data frames and this decoder rejected every one, so the host saw zero datagrams
-    # and the runs were misread as "the Switch elements stall our TX"). QoS-null / null frames
-    # (subtypes 4, 12) carry no payload and are still rejected.
+    # The Switch switches to QoS data frames (subtype 8) once the AP advertises WMM;
+    # null / QoS-null frames (subtypes 4, 12) carry no payload and are rejected.
     qos: bool = False
     tid: int = 0
 
@@ -842,8 +806,7 @@ class DataFrame:
         self.source = header.address2
         self.bssid = header.address3
 
-        # This is a bit ugly, but apparently the driver may decrypt the frame
-        # without clearing the protected bit?
+        # Some drivers decrypt the frame without clearing the Protected bit.
         if stream.peek(3) == b"\xAA\xAA\x03":
             self.protected = False
         
@@ -880,8 +843,6 @@ class DataFrame:
         return stream.get()
 
     def decrypt(self, key: bytes) -> None:
-        """Decrypts the frame if it is protected."""
-
         if not self.protected:
             return
         
@@ -895,16 +856,8 @@ class DataFrame:
         self.protected = False
 
     def accept_decrypted_ccmp(self) -> bool:
-        """Accepts a hardware-decrypted frame with retained CCMP metadata.
-
-        Some monitor drivers leave the Protected bit, CCMP header and MIC in
-        place after replacing the ciphertext with plaintext.  ``decode`` has
-        already consumed the CCMP header when this method is called.  The
-        opt-in caller trusts the driver's completed decryption and discards the
-        retained MIC before exposing the plaintext to higher layers.
-
-        Returns whether the frame matched the retained-metadata layout.
-        """
+        """Some monitor drivers deliver hardware-decrypted frames with the Protected bit, CCMP header
+        and MIC still in place; decode consumed the header, this strips the MIC. Returns whether it matched."""
 
         if not self.protected or not self.payload.startswith(RFC1042_SNAP_PREFIX):
             return False
@@ -930,16 +883,12 @@ class DataFrame:
         self.payload = ciphertext + mac
     
     def _nonce(self) -> bytes:
-        """Returns the nonce that is used for the AES-CCMP algorithm."""
         nonce = bytes([self.tid if self.qos else 0]) # Priority = TID for QoS data
         nonce += self.source.encode()
         nonce += struct.pack(">Q", self.nonce)[2:]
         return nonce
     
     def _aad(self) -> bytes:
-        """
-        Returns the additional authenticated data for the AES-CCMP algorithm.
-        """
         frame_control = IEEE80211_FTYPE_DATA << 2
         if self.qos:
             frame_control |= 8 << 4
@@ -1046,8 +995,6 @@ type EventType = AssociationEvent | DisassociationEvent | ActionFrameEvent | \
 
 
 class Interface:
-    """Class that provides common operations for WLAN interfaces."""
-
     _wlan: nl80211.NL80211
     _router: route.RouteController
 
@@ -1074,7 +1021,6 @@ class Interface:
         self._socket = trio.socket.socket()
     
     def disable_ipv6(self) -> None:
-        """Disables IPv6 on the interface."""
         filename = f"/proc/sys/net/ipv6/conf/{self._name}/disable_ipv6"
         with open(filename, "w") as f:
             f.write("1")
@@ -1091,7 +1037,6 @@ class Interface:
         return self._address
     
     async def up(self) -> None:
-        """Marks the interface as 'up', changing it to a running state."""
         await self._router.update_link(
             socket.AF_UNSPEC, 0, self._index, IFF_UP, IFF_UP, {}
         )
@@ -1135,8 +1080,6 @@ class Interface:
         )
     
     async def set_channel(self, channel: int) -> None:
-        """Changes the channel on which the monitor is active."""
-
         if channel not in Channels:
             raise ValueError("Invalid channel: %i" %channel)
         
@@ -1147,7 +1090,6 @@ class Interface:
         await self._wlan.request(nl80211.NL80211_CMD_SET_CHANNEL, attrs)
     
     async def _register_frame(self, type: int, match: bytes = b"") -> None:
-        """Tells the driver to start listening for a specific frame type."""
         type = (type << 4) | (IEEE80211_FTYPE_MGMT << 2)
         attrs = {
             nl80211.NL80211_ATTR_IFINDEX: self.index(),
@@ -1158,12 +1100,6 @@ class Interface:
 
 
 class Monitor(Interface):
-    """
-    Represents an interface in monitor mode. This class can be used to send and
-    receive raw IEEE 802.11 frames. It also provides utilities such as changing
-    channels and filtering based on the BSSID.
-    """
-
     _socket: trio.socket.SocketType
 
     _filter: MACAddress | None
@@ -1183,28 +1119,18 @@ class Monitor(Interface):
         self._lock = trio.Lock()
     
     def set_filter(self, filter: MACAddress | str | None) -> None:
-        """This method can be used to filter incoming frames on BSSID."""
         if isinstance(filter, str):
             filter = MACAddress(filter)
         
         self._filter = filter
     
     async def activate(self) -> None:
-        """
-        Ensures that the raw socket is bound to the underlying interface. This
-        method must be called exactly once before radiotap frames can be
-        received.
-        """
+        """Must be called exactly once before radiotap frames can be received."""
         await self.up()
         await self._socket.bind((self.name(), 0))
     
     async def recv(self) -> RadiotapFrame:
-        """
-        Waits until a radiotap frame arrives and returns it.
-
-        Note: these frames are not filtered on BSSID. Use recv_frame if you want
-        to use filtering.
-        """
+        """Frames are not filtered on BSSID here; use recv_frame for that."""
         while True:
             data = await self._socket.recv(4096)
             radiotap = RadiotapFrame()
@@ -1215,13 +1141,9 @@ class Monitor(Interface):
                 logger.debug("Ignoring invalid radiotap frame")
     
     async def send(self, frame: RadiotapFrame) -> None:
-        """Sends a radiotap frame through the underlying interface."""
         await self._socket.send(frame.encode())
     
     async def recv_frame(self) -> FrameType:
-        """
-        Waits until an IEEE 802.11 frame arrives, parses it and returns it.
-        """
         while True:
             radiotap = await self.recv()
             try:
@@ -1232,13 +1154,8 @@ class Monitor(Interface):
                 logger.debug(f"Ignoring invalid frame: {e}")
     
     async def send_frame(self, frame: FrameType, *, encrypt: bool = False) -> None:
-        """Sends an IEEE 802.11 frame, optionally requesting kernel encryption.
-
-        Monitor injection is unencrypted by default.  Setting the radiotap
-        encryption flag delegates protection to mac80211 and the configured
-        interface key, avoiding a software-CCMP frame being encrypted again by
-        hardware-capable drivers.
-        """
+        """encrypt=True sets the radiotap flag that makes mac80211 protect the frame with the interface
+        key, so hardware-capable drivers do not encrypt a software-CCMP frame a second time."""
         async with self._lock:
             radiotap = RadiotapFrame(frame.encode())
             if encrypt:
@@ -1246,14 +1163,9 @@ class Monitor(Interface):
             await self.send(radiotap)
     
     def _parse_frame(self, data: bytes) -> FrameType | None:
-        """
-        Parses an IEEE 802.11 frame and returns it. Raises an exception if the
-        frame cannot be parsed.
-        """
         header = MACHeader()
         header.decode(data)
 
-        # Check BSSID filter
         bssid = header.address3
         if bssid != MACAddress("ff:ff:ff:ff:ff:ff") and \
            self._filter is not None and bssid != self._filter:
@@ -1273,8 +1185,6 @@ class Monitor(Interface):
 
 
 class Station(Interface):
-    """Represents an interface in station mode."""
-
     _ssid: str
     _channel: int
     _key: bytes | None
@@ -1299,11 +1209,9 @@ class Station(Interface):
         self._events = queue.create()
     
     async def next_event(self) -> EventType:
-        """Blocks until an interesting event occurs and returns it."""
         return await self._events.get()
     
     async def send_custom_frame(self, addr: MACAddress, frame: bytes) -> None:
-        """Sends a control port frame to the given address."""
         attrs = {
             nl80211.NL80211_ATTR_IFINDEX: self.index(),
             nl80211.NL80211_ATTR_FRAME: frame,
@@ -1315,11 +1223,6 @@ class Station(Interface):
     
     @contextlib.asynccontextmanager
     async def connect(self) -> AsyncIterator[None]:
-        """
-        Connects the interface to the network. Blocks until the connection is
-        complete, or raises an exception if the connection fails. Disconnects
-        from the network when the context manager exits.
-        """
         await self.up()
         self.disable_ipv6()
         async with self._connect_network():
@@ -1328,14 +1231,7 @@ class Station(Interface):
                 yield
     
     async def _register_key(self, key: bytes) -> None:
-        """
-        Adds the encryption key to the underlying driver:
-        * Key index 0 is used for direct frames
-        * Key index 1 is used for broadcast frames
-
-        TODO: figure out if direct frames are ever used by the Nintendo Switch,
-        and if yes, should we create a new key for each station separately?
-        """
+        """Key index 0 is used for direct frames, key index 1 for broadcast frames."""
         attrs = {
             nl80211.NL80211_ATTR_IFINDEX: self.index(),
             nl80211.NL80211_ATTR_MAC: self._host_address,
@@ -1359,14 +1255,6 @@ class Station(Interface):
     
     @contextlib.asynccontextmanager
     async def _connect_network(self) -> AsyncIterator[None]:
-        """
-        Joins the network through the underlying driver. Blocks until the
-        network has been joined. Raises an exception if the network could not be
-        joined.
-
-        The network is disconnected when the context manager exits.
-        """
-
         rsn = RSNElement(
             group_cipher_suite = WLAN_CIPHER_SUITE_CCMP,
             pairwise_cipher_suites = [WLAN_CIPHER_SUITE_CCMP],
@@ -1402,15 +1290,11 @@ class Station(Interface):
             attrs[nl80211.NL80211_ATTR_IE] = encode_elements(elements)
             attrs[nl80211.NL80211_ATTR_PRIVACY] = True
         else:
-            # If no key is provided, the frames are not encrypted.
             attrs[nl80211.NL80211_ATTR_PRIVACY] = False
 
         if os.environ.get("LDN_DISABLE_HT") == "1":
-            # frlg-ldn-trade: associate as a legacy (non-HT) station so mac80211 never opens an
-            # 802.11 BlockAck/A-MPDU session with the console. Measured on j77 (air capture): ~45% of
-            # our datagrams were MAC-acked by the console and then dropped inside it, with a BA
-            # session on TID 0 that our own driver opened at association; rtw88_8822bu gets no TX
-            # status back from its firmware, so its BA bookkeeping is blind.
+            # Associate as a legacy (non-HT) station so mac80211 never opens a BlockAck/A-MPDU session
+            # with the console; rtw88_8822bu gets no TX status from its firmware, so its BA bookkeeping is blind.
             from netlink import attributes as _nlattr
             nl80211.NL80211.ATTRIBUTES.setdefault(nl80211.NL80211_ATTR_DISABLE_HT, _nlattr.flag())
             attrs[nl80211.NL80211_ATTR_DISABLE_HT] = True
@@ -1436,10 +1320,6 @@ class Station(Interface):
             await self._wlan.request(nl80211.NL80211_CMD_DISCONNECT, attrs)
     
     async def _process_messages(self) -> None:
-        """
-        Processes messages from the underlying driver and adds interesting
-        events to the event queue.
-        """
         while True:
             message = await self._wlan.receive()
             if message.type == nl80211.NL80211_CMD_FRAME:
@@ -1456,12 +1336,6 @@ class Station(Interface):
                 await self._events.put(DisassociationEvent(mac))
     
     async def set_authorized(self) -> None:
-        """
-        Marks the interface as being authorized.
-
-        TODO: when there are more participants in the network, should we mark
-        them as authorized as well?
-        """
         flag = 1 << nl80211.NL80211_STA_FLAG_AUTHORIZED
         attrs = {
             nl80211.NL80211_ATTR_IFINDEX: self.index(),
@@ -1471,122 +1345,23 @@ class Station(Interface):
         await self._wlan.request(nl80211.NL80211_CMD_SET_STATION, attrs)
 
 
-# frlg-ldn-trade: LDN_SWITCH_IES=1 makes our beacon / probe response / association response carry the
-# same information elements a real Switch host sends (captured 2026-09-02, cc1_air.pcap: a Switch 2
-# hosting Mystery Gift on channel 6). Level 1 = legacy elements (ERP, extended rates, extended
-# capabilities, the Nintendo vendor element, WMM) and the real host's rate split, capability word
-# 0x411 and DTIM period 2. Level 2 adds the HT / HE elements and starts the AP as HT20.
-# Level 3 = ONLY the Nintendo vendor IE (session 11 isolation test).
-# Default (unset / 0) is the old bare frames: SSID, rates, DS, TIM, RSN and nothing else.
-def switch_ies_level() -> int:
-    try:
-        return int(os.environ.get("LDN_SWITCH_IES", "0") or 0)
-    except ValueError:
-        return 0
-
-SWITCH_SUPP_RATES = [0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24]   # 1 2 5.5 11 (basic) 6 9 12 18
-SWITCH_EXT_RATES = bytes([0x30, 0x48, 0x60, 0x6C])                     # 24 36 48 54
-SWITCH_HT_CAP = bytes.fromhex("0d0903ff00000000000000000000000100000000000000000000")
-SWITCH_HE_CAP = bytes.fromhex("230108001a000000200a000dc09f04000000fefffeff081c")
-SWITCH_HE_OP = bytes.fromhex("2400000081fcff")
-SWITCH_NINTENDO_VSIE = bytes.fromhex("0022aa100102")
-SWITCH_WMM_PARAM = bytes.fromhex("0050f2020101801003a4000027a4000042435e0062322f00")
+# The console leaves ~3s after associating unless the probe and association responses advertise
+# the mandatory OFDM rates 6/9/12; this is the real Switch host's rate split.
+SWITCH_SUPP_RATES = bytes([0x82, 0x84, 0x8B, 0x96, 0x0C, 0x12, 0x18, 0x24])   # 1 2 5.5 11 (basic) 6 9 12 18
+SWITCH_EXT_RATES = bytes([0x30, 0x48, 0x60, 0x6C])                            # 24 36 48 54
 
 def _ie(eid: int, body: bytes) -> bytes:
     return bytes([eid, len(body)]) + body
-
-def switch_like_elements(channel: int, rsn: bytes | None, *, assoc: bool = False) -> bytes:
-    """Elements after TIM in the order the real host uses (beacon / probe response), or the
-    association-response set when assoc=True. Empty when LDN_SWITCH_IES is unset."""
-    level = switch_ies_level()
-    if level <= 0:
-        return b""
-    # frlg-ldn-trade 2026-09-03: level 4 = level 1 WITHOUT the WMM parameter element. WMM makes the
-    # Switch send QoS data frames (lg79/lg80: 563/263 of them) which the DataFrame decoder rejected
-    # until today; level 4 keeps the console on plain data so the beacon/element richness is tested
-    # on its own. Level 1 is usable again now that QoS data decodes.
-    with_wmm = level != 4
-    if level == 4:
-        level = 1
-    # 2026-09-03 isolation: level 5 = the real host's beacon HEAD only (zeroed SSID, rate split, DS,
-    # cap 0x411, DTIM 2) with NO tail elements; level 6 = the bare head with the level-4 TAIL only.
-    if level == 7:
-        # 2026-09-03 isolation: level 7 = ONLY the Switch rate set in the probe/assoc responses
-        # (1B 2B 5.5B 11B 6 9 12 18 + ext 24 36 48 54); bare beacon, cap 0x511/0x411 unchanged, DTIM 3.
-        ext = _ie(WLAN_EID_EXT_SUPP_RATES, SWITCH_EXT_RATES)
-        return ext if assoc else ext + (_ie(WLAN_EID_RSN, rsn) if rsn is not None else b"")
-    if level == 5:
-        # the probe response pops its RSN and relies on the tail to re-emit it (level>0 path): a tail
-        # without RSN while the capability word advertises privacy leaves the console's association
-        # unanswered (lg107, and the session-11 level-3 runs fr39/fr40 - that was this, not the VSIE).
-        return b"" if assoc or rsn is None else _ie(WLAN_EID_RSN, rsn)
-    if level == 6:
-        level = 1
-        with_wmm = False
-    if level == 3:
-        # frlg-ldn-trade session 11: level 3 = ONLY the Nintendo vendor IE (the "I am a Switch" signal),
-        # none of the level-1 rate/ERP/WMM elements that stalled our TX. Isolates whether that one IE is
-        # what shifts the emulator's svc_51 death timer. Not in the assoc-resp (the real host's isn't).
-        rsn_ie = b"" if (assoc or rsn is None) else _ie(WLAN_EID_RSN, rsn)
-        return b"" if assoc else rsn_ie + _ie(WLAN_EID_VENDOR_SPECIFIC, SWITCH_NINTENDO_VSIE)
-    out = b""
-    if assoc:
-        out += _ie(WLAN_EID_EXT_SUPP_RATES, SWITCH_EXT_RATES)
-        out += _ie(42, bytes([0x04]))                       # ERP: use protection
-    else:
-        out += _ie(42, bytes([0x00]))                       # ERP
-        out += _ie(WLAN_EID_EXT_SUPP_RATES, SWITCH_EXT_RATES)
-        if rsn is not None:
-            out += _ie(WLAN_EID_RSN, rsn)
-    if level >= 2:
-        ht_info = bytes([channel, 0x00, 0x04 if assoc else 0x00]) + bytes(19)
-        out += _ie(WLAN_EID_HT_CAPABILITY, SWITCH_HT_CAP)
-        out += _ie(61, ht_info)
-    out += _ie(WLAN_EID_EXT_CAPABILITY, bytes([0x00]))
-    if level >= 2:
-        out += _ie(255, SWITCH_HE_CAP)
-        out += _ie(255, SWITCH_HE_OP)
-    if not assoc:
-        out += _ie(WLAN_EID_VENDOR_SPECIFIC, SWITCH_NINTENDO_VSIE)
-    if with_wmm:
-        wmm = bytearray(SWITCH_WMM_PARAM)
-        if assoc:
-            wmm[7] = 0x00
-        out += _ie(WLAN_EID_VENDOR_SPECIFIC, bytes(wmm))
-    return out
-
-
-# frlg-ldn-trade 2026-09-03: LDN_BASIC_RATES="11" (or "6", "1,2,5.5,11", ...) sets the BSS basic
-# rate set after START_AP via NL80211_CMD_SET_BSS. mac80211 sends every no-station frame (our
-# advertisement action frames, association responses, broadcast data) at the LOWEST basic rate,
-# and so does rtw88 for management frames (tx.c rtw_get_mgmt_rate: __ffs(basic_rates)); with the
-# kernel default (all four CCK rates basic) that is 1 Mbit/s. A real Switch host was measured
-# (mc1_air.pcap) sending its beacons at 11 Mbit/s and its data at 48-54 Mbit/s. NOTE: rtw88
-# builds beacons in a reserved page with ignore_rate=true, so the BEACON stays at 1 Mbit/s
-# unless the driver is patched (scratchpad notes); everything else follows this setting.
-def basic_rates_setting() -> bytes:
-    spec = os.environ.get("LDN_BASIC_RATES", "").strip()
-    if not spec:
-        return b""
-    out = bytearray()
-    for part in spec.split(","):
-        part = part.strip()
-        if not part:
-            continue
-        out.append(int(round(float(part) * 2)) & 0x7F)
-    return bytes(out)
 
 
 try:
     nl80211.NL80211.ATTRIBUTES.setdefault(
         nl80211.NL80211_ATTR_BSS_BASIC_RATES, attributes.binary())
-except Exception:   # the attribute table is best-effort; SET_BSS is opt-in
+except Exception:
     pass
 
 
 class AccessPoint(Interface):
-    """This class represents a access point interface."""
-
     _interface: Interface
 
     _ssid: str
@@ -1617,15 +1392,10 @@ class AccessPoint(Interface):
         self._events = queue.create()
 
     async def next_event(self):
-        """Blocks until an interesting event occurs and returns it."""
         return await self._events.get()
     
     @contextlib.asynccontextmanager
     async def create(self) -> AsyncIterator[None]:
-        """
-        Starts an access point on the underlying interface. The access point is
-        stopped when the context manager exits.
-        """
         await self.up()
         self.disable_ipv6()
         async with self._start_ap():
@@ -1642,7 +1412,6 @@ class AccessPoint(Interface):
                 yield
     
     async def send_custom_frame(self, addr: MACAddress, frame: bytes) -> None:
-        """Transmits a control port frame through the underlying interface."""
         attrs = {
             nl80211.NL80211_ATTR_IFINDEX: self.index(),
             nl80211.NL80211_ATTR_FRAME: frame,
@@ -1653,8 +1422,6 @@ class AccessPoint(Interface):
         await self._wlan.request(nl80211.NL80211_CMD_CONTROL_PORT_FRAME, attrs)
     
     async def remove_station(self, addr: MACAddress) -> None:
-        """Removes the station with the given address from the network."""
-
         if addr not in self._stations_by_address: return
         
         aid = self._stations_by_address.pop(addr)
@@ -1675,8 +1442,6 @@ class AccessPoint(Interface):
         await self._wlan.request(nl80211.NL80211_CMD_DEL_STATION, attrs)
 
     async def set_authorized(self, addr: MACAddress) -> None:
-        """Opens the userspace-controlled port for an authenticated station."""
-
         flag = 1 << nl80211.NL80211_STA_FLAG_AUTHORIZED
         attrs = {
             nl80211.NL80211_ATTR_IFINDEX: self.index(),
@@ -1686,24 +1451,18 @@ class AccessPoint(Interface):
         await self._wlan.request(nl80211.NL80211_CMD_SET_STATION, attrs)
     
     def _create_beacon_head(self) -> bytes:
-        """Creates and encodes a beacon frame for transmission."""
         frame = BeaconFrame()
         frame.source = self.address()
         frame.beacon_interval = 100
         frame.capability_information = 0x511
-        if switch_ies_level() > 0 and switch_ies_level() not in (6, 7):
-            # Real Switch host: cap 0x0411 (no short preamble), zeroed 32-byte SSID, its rate split.
-            frame.capability_information = 0x411
-            frame.extra = (_ie(WLAN_EID_SSID, bytes(32))
-                           + _ie(WLAN_EID_SUPP_RATES, bytes(SWITCH_SUPP_RATES))
-                           + _ie(WLAN_EID_DS_PARAMS, bytes([self._channel])))
         return frame.encode()
     
     def _create_beacon_tail(self) -> bytes:
-        """Returns the beacon tail (everything after the TIM)."""
-        if switch_ies_level() > 0:
-            return switch_like_elements(self._channel, self._rsn_body())
-        return b"" # No beacon tail by default
+        return self._rate_tail(self._rsn_body())
+
+    def _rate_tail(self, rsn: bytes | None) -> bytes:
+        tail = _ie(WLAN_EID_EXT_SUPP_RATES, SWITCH_EXT_RATES)
+        return tail if rsn is None else tail + _ie(WLAN_EID_RSN, rsn)
     
     def _rsn_body(self) -> bytes | None:
         if self._key is None:
@@ -1716,12 +1475,7 @@ class AccessPoint(Interface):
         ).encode()
     
     def _create_probe_response(self, address: MACAddress) -> bytes:
-        """Creates and encodes a probe response frame for the given address."""
-
-        supported_rates = [0x82, 0x84, 0x8B, 0x96, 0x24, 0x30, 0x48, 0x6C]
-
         ssid = SSIDElement(self._ssid)
-        rates = SuppRatesElement(supported_rates)
         dsparams = DSParamsElement(self._channel)
 
         rsn = RSNElement(
@@ -1738,32 +1492,17 @@ class AccessPoint(Interface):
         response.capability_information = 0x501
         response.elements = {
             WLAN_EID_SSID: ssid.encode(),
-            WLAN_EID_SUPP_RATES: rates.encode(),
+            WLAN_EID_SUPP_RATES: SWITCH_SUPP_RATES,
             WLAN_EID_DS_PARAMS: dsparams.encode(),
         }
         if self._key is not None:
             response.capability_information |= 0x10
-            response.elements[WLAN_EID_RSN] = rsn.encode()
-        if switch_ies_level() > 0:
-            if switch_ies_level() != 7:
-                response.capability_information = 0x411
-            response.elements[WLAN_EID_SUPP_RATES] = bytes(SWITCH_SUPP_RATES)
-            response.elements.pop(WLAN_EID_RSN, None)   # re-emitted in the real host's position
-            response.extra = switch_like_elements(self._channel, self._rsn_body())
+        response.extra = self._rate_tail(self._rsn_body())
         return response.encode()
     
     def _create_association_response(
         self, address: MACAddress, aid: int
     ) -> bytes:
-        """
-        Creates and encodes an association response frame with the given address
-        and association id. The association response indicates success.
-        """
-
-        supported_rates = [0x82, 0x84, 0x8B, 0x96, 0x24, 0x30, 0x48, 0x6C]
-        
-        rates = SuppRatesElement(supported_rates)
-        
         response = AssociationResponse()
         response.source = self.address()
         response.target = address
@@ -1771,20 +1510,14 @@ class AccessPoint(Interface):
         response.status_code = WLAN_STATUS_SUCCESS
         response.aid = aid | 0xC000
         response.elements = {
-            WLAN_EID_SUPP_RATES: rates.encode()
+            WLAN_EID_SUPP_RATES: SWITCH_SUPP_RATES
         }
-        if switch_ies_level() > 0:
-            response.elements[WLAN_EID_SUPP_RATES] = bytes(SWITCH_SUPP_RATES)
-            response.extra = switch_like_elements(self._channel, None, assoc=True)
+        response.extra = self._rate_tail(None)
         return response.encode()
     
     def _create_association_error(
         self, address: MACAddress, error: int
     ) -> bytes:
-        """
-        Creates and encodes an association response frame with the given address
-        for an error situation.
-        """
         response = AssociationResponse()
         response.source = self.address()
         response.target = address
@@ -1803,10 +1536,6 @@ class AccessPoint(Interface):
     
     @contextlib.asynccontextmanager
     async def _start_ap(self) -> AsyncIterator[None]:
-        """
-        Sends the nl80211 messages that are required to create an IBSS.
-        The IBSS is destroyed when the context manager exits.
-        """
         beacon_head = self._create_beacon_head()
         beacon_tail = self._create_beacon_tail()
         
@@ -1818,7 +1547,7 @@ class AccessPoint(Interface):
             nl80211.NL80211_ATTR_BEACON_HEAD: beacon_head,
             nl80211.NL80211_ATTR_BEACON_TAIL: beacon_tail,
             nl80211.NL80211_ATTR_BEACON_INTERVAL: 100,
-            nl80211.NL80211_ATTR_DTIM_PERIOD: 2 if switch_ies_level() in (1, 2, 3, 4, 5) else 3,
+            nl80211.NL80211_ATTR_DTIM_PERIOD: 3,
             nl80211.NL80211_ATTR_HIDDEN_SSID:
                 nl80211.NL80211_HIDDEN_SSID_ZERO_CONTENTS,
             nl80211.NL80211_ATTR_CONTROL_PORT: True,
@@ -1828,25 +1557,12 @@ class AccessPoint(Interface):
             nl80211.NL80211_ATTR_SOCKET_OWNER: True
         }
 
-        if switch_ies_level() >= 2:
-            attrs[nl80211.NL80211_ATTR_WIPHY_CHANNEL_TYPE] = 1   # NL80211_CHAN_HT20
-        if switch_ies_level() > 0:
-            print(f"[ldn] AP management frames carry the Switch host's elements (LDN_SWITCH_IES={switch_ies_level()})")
         await self._wlan.request(nl80211.NL80211_CMD_START_AP, attrs)
 
-        # Wait until the AP is ready
         while True:
             message = await self._wlan.receive()
             if message.type == nl80211.NL80211_CMD_START_AP:
                 break
-        basic = basic_rates_setting()
-        if basic:
-            await self._wlan.request(nl80211.NL80211_CMD_SET_BSS, {
-                nl80211.NL80211_ATTR_IFINDEX: self.index(),
-                nl80211.NL80211_ATTR_BSS_BASIC_RATES: basic,
-            })
-            print(f"[ldn] BSS basic rates set to {[b / 2 for b in basic]} Mbit/s (LDN_BASIC_RATES)")
-
         if self._key is not None:
             attrs = {
                 nl80211.NL80211_ATTR_IFINDEX: self.index(),
@@ -1877,10 +1593,6 @@ class AccessPoint(Interface):
             await self._wlan.request(nl80211.NL80211_CMD_STOP_AP, attrs)
     
     async def _process_messages(self):
-        """
-        Processes messages from the underlying driver and adds interesting
-        events to the event queue.
-        """
         while True:
             message = await self._wlan.receive()
             if message.type == nl80211.NL80211_CMD_FRAME:
@@ -1888,7 +1600,7 @@ class AccessPoint(Interface):
                 try:
                     frame = self._parse_management_frame(data)
                 except Exception:
-                    continue # Ignore invalid frames
+                    continue
                 await self._process_frame(frame)
             elif message.type == nl80211.NL80211_CMD_CONTROL_PORT_FRAME:
                 address = MACAddress(message.attributes[nl80211.NL80211_ATTR_MAC])
@@ -1896,9 +1608,6 @@ class AccessPoint(Interface):
                 await self._events.put(CustomFrameEvent(address, data))
     
     async def _process_frame(self, frame: FrameType) -> None:
-        """
-        Handles an incoming management frame.
-        """
         if isinstance(frame, ProbeRequest):
             ssid = frame.elements.get(WLAN_EID_SSID)
             if ssid == self._ssid.encode():
@@ -1926,18 +1635,10 @@ class AccessPoint(Interface):
     async def _process_association_request(
         self, frame: AssociationRequest
     ) -> bytes:
-        """
-        Processes an incoming association request and returns the encoded
-        response.
-        """
-
-        # If the station is already connected, we simply return the existing
-        # association id.
         if frame.source in self._stations_by_address:
             aid = self._stations_by_address[frame.source]
             return self._create_association_response(frame.source, aid)
         
-        # Send an error if the network is full.
         if len(self._stations_by_id) >= self._max_stations:
             return self._create_association_error(
                 frame.source, WLAN_STATUS_AP_UNABLE_TO_HANDLE_NEW_STA
@@ -1948,7 +1649,6 @@ class AccessPoint(Interface):
                 frame.source, WLAN_STATUS_ASSOC_DENIED_UNSPEC
             )
         
-        # Allocate an association id and add the station to our internal table.
         aid = 1
         while aid in self._stations_by_id:
             aid += 1
@@ -1994,8 +1694,6 @@ class AccessPoint(Interface):
     async def _process_disassociation(
         self, frame: DisassociationFrame | DeauthenticationFrame
     ) -> None:
-        """Processes an incoming disassociation or deauthentication frame."""
-
         if frame.source not in self._stations_by_address: return
         
         aid = self._stations_by_address.pop(frame.source)
@@ -2020,7 +1718,6 @@ class AccessPoint(Interface):
         ))
     
     async def send_frame(self, data: bytes) -> None:
-        """Sends a management frame."""
         attrs = {
             nl80211.NL80211_ATTR_IFINDEX: self.index(),
             nl80211.NL80211_ATTR_FRAME: data
@@ -2046,8 +1743,6 @@ class Tap(Interface):
 
 
 class Factory:
-    """Acts as a factory for WLAN Interfaces"""
-
     _wlan: nl80211.NL80211
     _router: route.RouteController
     
@@ -2061,11 +1756,6 @@ class Factory:
     async def create_monitor(
         self, phyname: str, ifname: str, channel: int | None = None
     ) -> AsyncIterator[Monitor]:
-        """
-        Creates an interface in monitor mode on the given phy with the given
-        name. If a channel is provided, the phy is immediately switched to the
-        given channel.
-        """
         flags = {
             nl80211.NL80211_ATTR_MNTR_FLAGS: {
                 nl80211.NL80211_MNTR_FLAG_OTHER_BSS: True
@@ -2086,9 +1776,6 @@ class Factory:
         self, phyname: str, ifname: str, ssid: str, channel: int,
         key: bytes | None
     ) -> AsyncIterator[Station]:
-        """
-        Creates an interface in station mode and connects it to the given SSID.
-        """
         async with self._create_interface(
             phyname, ifname, nl80211.NL80211_IFTYPE_STATION
         ) as attributes:
@@ -2107,27 +1794,11 @@ class Factory:
         self, phyname: str, ifname: str, ssid: str, channel: int,
         key: bytes | None, max_stations: int
     ) -> AsyncIterator[AccessPoint]:
-        """
-        Creates an interface in IBSS mode with the given SSID.
-        """
         async with self._create_interface(
             phyname, ifname, nl80211.NL80211_IFTYPE_AP
         ) as attributes:
             index = attributes[nl80211.NL80211_ATTR_IFINDEX]
             address = MACAddress(attributes[nl80211.NL80211_ATTR_MAC])
-
-            # frlg-ldn-trade session 11: FRLG_SPOOF_MAC overrides the AP vif MAC (the host's Pia
-            # connection GUID and 802.11 BSSID) before the AP comes up, to test whether the console's
-            # svc_51 watchdog fingerprints its peer by OUI. The AP vif is down here; set it then.
-            _spoof = __import__("os").environ.get("FRLG_SPOOF_MAC", "")
-            if _spoof:
-                import subprocess as _sp
-                _sp.run(["ip", "link", "set", ifname, "down"], check=False)
-                _sp.run(["ip", "link", "set", ifname, "address", _spoof], check=False)
-                try:
-                    address = MACAddress(_spoof)
-                except Exception:
-                    pass
 
             ibss = AccessPoint(
                 self._wlan, self._router, ifname, index, address, ssid, channel,
@@ -2155,14 +1826,6 @@ class Factory:
         self, phyname: str, ifname: str, type: int,
         extra: dict[int, typing.Any] = {}
     ) -> AsyncIterator[dict[int, typing.Any]]:
-        """
-        Creates an interface on the given phy, with the given name, type and
-        additional attributes.
-
-        The interface is deleted when the context manager exits.
-
-        Returns the attributes of the newly created interface.
-        """
         wiphy = await self._get_wiphy_index(phyname)
 
         attrs = {
@@ -2184,7 +1847,6 @@ class Factory:
             await self._wlan.request(nl80211.NL80211_CMD_DEL_INTERFACE, attrs)
     
     async def _get_wiphy_index(self, name: str) -> int:
-        """Returns the PHY index with the given name."""
         messages = await self._wlan.request(
             nl80211.NL80211_CMD_GET_WIPHY, flags=netlink.NLM_F_DUMP
         )
@@ -2196,10 +1858,6 @@ class Factory:
 
 @contextlib.asynccontextmanager
 async def create_factory() -> AsyncIterator[Factory]:
-    """
-    Establishes an nl80211 connection with the kernel and returns a factory for
-    wireless interfaces.
-    """
     async with nl80211.connect() as wlan:
         async with route.connect() as router:
             yield Factory(wlan, router)

@@ -1,27 +1,6 @@
-"""Client scripts and link game data - what the server pushes, what it reads back.
-
-The console does not decide the Mystery Gift flow; the *server* does. The client
-boots with a two-instruction script [mystery_gift_scripts.c:15]::
-
-    {CLI_RECV, MG_LINKID_CLIENT_SCRIPT}
-    {CLI_COPY_RECV}
-
-and from then on runs whatever ``struct MysteryGiftClientCmd`` array we send it
-[mystery_gift_client.c:87].  This module assembles those arrays and the canned
-ones the decomp itself uses, plus the reader for the
-``struct MysteryGiftLinkGameData`` the client sends back.
-
-Two details the console enforces:
-
-* a script is executed one command per frame straight out of the 1024-byte recv
-  buffer, and ``CopyRecvScript`` copies the *whole* buffer.  Bytes past our
-  script are stale data from the previous message, so every script must end in
-  a command that stops execution (``CLI_RETURN``) or replaces the script
-  (``CLI_COPY_RECV``).  Native relies on the same property.
-* the message size for a client script is ``sizeof(the array)``
-  [mystery_gift_server.h:52 ``PTR_ARG``], i.e. 8 bytes per command - not the
-  full buffer.
-"""
+"""Mystery Gift client scripts the server pushes, and the link game data read back. Every script must
+end in CLI_RETURN or CLI_COPY_RECV: the console runs straight out of its 1024-byte recv buffer and bytes
+past the script are stale. A client script's declared size is 8 bytes per command, not the full buffer."""
 
 from dataclasses import dataclass
 
@@ -32,7 +11,7 @@ from .mystery_gift import (
     VERSION_CODE_LEAFGREEN,
 )
 
-# --- client script instruction ids [include/mystery_gift_client.h:18] -------------------------
+# [decomp:include/mystery_gift_client.h:18]
 CLI_NONE = 0
 CLI_RETURN = 1
 CLI_RECV = 2
@@ -56,7 +35,7 @@ CLI_SEND_STAT = 19
 CLI_SEND_READY_END = 20
 CLI_RUN_BUFFER_SCRIPT = 21
 
-# --- client result message ids [include/mystery_gift_client.h:45] -----------------------------
+# [decomp:include/mystery_gift_client.h:45]
 CLI_MSG_NOTHING_SENT = 0
 CLI_MSG_RECORD_UPLOADED = 1
 CLI_MSG_CARD_RECEIVED = 2
@@ -74,14 +53,11 @@ CLI_MSG_BUFFER_SUCCESS = 13
 CLI_MSG_BUFFER_FAILURE = 14
 
 CLIENT_CMD_SIZE = 8             # sizeof(struct MysteryGiftClientCmd): u32 instr + u32 parameter
-CLIENT_MAX_MSG_SIZE = 64        # CLI_PRINT_MSG / CLI_YES_NO dynamic message
+CLIENT_MAX_MSG_SIZE = 64
 
 
 def client_script(*commands):
-    """Assemble a ``struct MysteryGiftClientCmd[]`` from ``(instr, param)`` pairs.
-
-    A bare instruction id is accepted as shorthand for ``(instr, 0)``.
-    """
+    """A bare instruction id is shorthand for (instr, 0)."""
     out = bytearray()
     for command in commands:
         if isinstance(command, int):
@@ -94,16 +70,14 @@ def client_script(*commands):
     return bytes(out)
 
 
-# --- the decomp's own client scripts [src/mystery_gift_scripts.c] -----------------------------
-# Boot script the client starts with; we never send this one, but the server's
-# first message must be the CLIENT_SCRIPT it is sitting in CLI_RECV waiting for.
+# Boot script [decomp:src/mystery_gift_scripts.c:15]; never sent, but the server's first message must
+# be the CLIENT_SCRIPT it sits in CLI_RECV waiting for.
 CLIENT_SCRIPT_INIT = client_script(
     (CLI_RECV, MG_LINKID_CLIENT_SCRIPT),
     CLI_COPY_RECV,
 )
 
-# sClientScript_SendGameData [:20] - ask the console who it is, then wait for
-# our verdict as another client script.
+# sClientScript_SendGameData [decomp:src/mystery_gift_scripts.c:20]
 CLIENT_SCRIPT_SEND_GAME_DATA = client_script(
     CLI_LOAD_GAME_DATA,
     CLI_SEND_LOADED,
@@ -111,7 +85,7 @@ CLIENT_SCRIPT_SEND_GAME_DATA = client_script(
     CLI_COPY_RECV,
 )
 
-# sClientScript_SaveCard [:42] - the gift itself.
+# sClientScript_SaveCard [decomp:src/mystery_gift_scripts.c:42]
 CLIENT_SCRIPT_SAVE_CARD = client_script(
     (CLI_RECV, MG_LINKID_CARD),
     CLI_SAVE_CARD,
@@ -121,10 +95,8 @@ CLIENT_SCRIPT_SAVE_CARD = client_script(
     (CLI_RETURN, CLI_MSG_CARD_RECEIVED),
 )
 
-# Stamp-rally extension scripts.  The activation Mystery Event is deliberately
-# received and run only after CLI_SAVE_STAMP.  The server has already checked
-# that the stamp is new and that a slot is available, so duplicate/full-card
-# exits never touch the reward variables.
+# The activation Mystery Event runs only after CLI_SAVE_STAMP; the server has already rejected the
+# duplicate/full-card cases, so those exits never touch the reward variables.
 CLIENT_SCRIPT_INSTALL_CARD_AND_STAMP = client_script(
     (CLI_RECV, MG_LINKID_CARD),
     CLI_SAVE_CARD,
@@ -157,14 +129,13 @@ CLIENT_SCRIPT_NO_ROOM_STAMPS = client_script(
     (CLI_RETURN, CLI_MSG_NO_ROOM_STAMPS),
 )
 
-# sClientScript_HadCard [:82] - the console already holds this exact card.
+# sClientScript_HadCard [decomp:src/mystery_gift_scripts.c:82]
 CLIENT_SCRIPT_HAD_CARD = client_script(
     CLI_SEND_READY_END,
     (CLI_RETURN, CLI_MSG_HAD_CARD),
 )
 
-# sClientScript_AskToss [:69] - the console holds a *different* card; offer to
-# replace it and send the player's answer back as MG_LINKID_RESPONSE.
+# sClientScript_AskToss [decomp:src/mystery_gift_scripts.c:69]; the answer comes back as MG_LINKID_RESPONSE.
 CLIENT_SCRIPT_ASK_TOSS = client_script(
     CLI_ASK_TOSS,
     CLI_LOAD_TOSS_RESPONSE,
@@ -173,16 +144,15 @@ CLIENT_SCRIPT_ASK_TOSS = client_script(
     CLI_COPY_RECV,
 )
 
-# sClientScript_Canceled [:77] - the *News* cancel path. Kept for completeness;
-# the card path uses CLIENT_SCRIPT_DYNAMIC_ERROR below.
+# sClientScript_Canceled [decomp:src/mystery_gift_scripts.c:77] is the News cancel path; the card path
+# uses CLIENT_SCRIPT_DYNAMIC_ERROR.
 CLIENT_SCRIPT_CANCELED = client_script(
     CLI_SEND_READY_END,
     (CLI_RETURN, CLI_MSG_COMM_CANCELED),
 )
 
-# sClientScript_DynamicError [union_room_message.c:562] - what a player who
-# declines to toss their existing *card* actually runs. Unlike the News cancel
-# script it first receives a live 64-byte message to display.
+# sClientScript_DynamicError [decomp:src/union_room_message.c:562]: what a player who declines to toss
+# their card runs; it receives a 64-byte message to display first.
 CLIENT_SCRIPT_DYNAMIC_ERROR = client_script(
     (CLI_RECV, MG_LINKID_DYNAMIC_MSG),
     CLI_COPY_MSG,
@@ -190,22 +160,18 @@ CLIENT_SCRIPT_DYNAMIC_ERROR = client_script(
     (CLI_RETURN, CLI_MSG_BUFFER_FAILURE),
 )
 
-# sText_CanceledReadingCard [union_room_message.c:560], the message that script
-# displays. Encoded in the game's character set, EOS-terminated.
+# sText_CanceledReadingCard [decomp:src/union_room_message.c:560], EOS-terminated.
 TEXT_CANCELED_READING_CARD = charmap.encode("Canceled reading the Card.") + b"\xff"
 
-# sClientScript_CantAccept [:27] - the console's game data failed validation.
+# sClientScript_CantAccept [decomp:src/mystery_gift_scripts.c:27]
 CLIENT_SCRIPT_CANT_ACCEPT = client_script(
     CLI_SEND_READY_END,
     (CLI_RETURN, CLI_MSG_CANT_ACCEPT),
 )
 
 
-# --- struct MysteryGiftLinkGameData [include/mystery_gift.h:22] -------------------------------
-# Offsets follow agbcc's four-byte aggregate alignment.  In addition to the
-# padding after the u16 fields at 0x04/0x0C, the nested WonderCardMetadata is
-# aligned from 0x1E up to 0x20.  A hardware payload is therefore 0x64 bytes,
-# not the tempting packed-layout size of 0x60.
+# struct MysteryGiftLinkGameData [decomp:include/mystery_gift.h:22]; agbcc aligns the nested
+# WonderCardMetadata up to 0x20, so the payload is 0x64 bytes, not the packed 0x60.
 GAME_DATA_SIZE = 0x64
 GD_OFF_UNK_00 = 0x00            # magic, must be GAME_DATA_VALID_VAR
 GD_OFF_UNK_04 = 0x04
@@ -226,7 +192,7 @@ GD_OFF_EASY_CHAT = 0x50         # u16[EASY_CHAT_BATTLE_WORDS_COUNT]
 GD_OFF_GAME_CODE = 0x5C         # u8[GAME_CODE_LENGTH]
 GD_OFF_VERSION = 0x60           # RomHeaderSoftwareVersion
 
-# MysteryGift_CompareCardFlags [src/mystery_gift.c:388]
+# [decomp:src/mystery_gift.c:388]
 HAS_NO_CARD = 0
 HAS_SAME_CARD = 1
 HAS_DIFF_CARD = 2
@@ -236,8 +202,6 @@ _VERSION_NAMES = {VERSION_CODE_FIRERED: "FireRed", VERSION_CODE_LEAFGREEN: "Leaf
 
 @dataclass(frozen=True)
 class LinkGameData:
-    """The decoded ``MysteryGiftLinkGameData`` the console sends us."""
-
     raw: bytes
     magic: int
     unk_04: int
@@ -265,21 +229,13 @@ class LinkGameData:
 
     @property
     def stamps(self):
-        """The populated ``(species, id)`` pairs from the saved card metadata."""
         return tuple((species, stamp_id)
                      for species, stamp_id in zip(self.stamp_species, self.stamp_ids)
                      if species and stamp_id)
 
     @property
     def trainer_id_is_reliable(self):
-        """False when the console's name filled the field and clobbered the id.
-
-        ``MysteryGift_LoadLinkGameData`` copies the trainer id first and *then*
-        ``StringCopy``s the name [mystery_gift.c:364-365] into a 7-byte field with
-        no room for a terminator, so a full-length 7-character name writes its
-        0xFF one byte past, over ``playerTrainerId[0]``. Display only - nothing
-        the server decides depends on the trainer id.
-        """
+        """A full 7-character name's 0xFF terminator overwrites playerTrainerId[0] [decomp:src/mystery_gift.c:364]."""
         return len(self.raw[GD_OFF_PLAYER_NAME:GD_OFF_PLAYER_NAME + PLAYER_NAME_FIELD_SIZE]
                    .rstrip(b"\xff")) < PLAYER_NAME_FIELD_SIZE
 
@@ -292,7 +248,6 @@ class LinkGameData:
 
 
 def parse_link_game_data(payload):
-    """Decode the fields the server acts on. Short payloads raise ``ValueError``."""
     payload = bytes(payload)
     if len(payload) < GAME_DATA_SIZE:
         raise ValueError(
@@ -326,7 +281,7 @@ def parse_link_game_data(payload):
 
 
 def validate_link_game_data(data):
-    """Port of ``MysteryGift_ValidateLinkGameData`` [src/mystery_gift.c:373]."""
+    """Port of MysteryGift_ValidateLinkGameData [decomp:src/mystery_gift.c:373]."""
     if data.magic != GAME_DATA_VALID_VAR:
         return False
     if not data.unk_04 & 1:
@@ -341,7 +296,7 @@ def validate_link_game_data(data):
 
 
 def compare_card_flags(our_flag_id, data):
-    """Port of ``MysteryGift_CompareCardFlags`` [src/mystery_gift.c:388]."""
+    """Port of MysteryGift_CompareCardFlags [decomp:src/mystery_gift.c:388]."""
     if data.flag_id == 0:
         return HAS_NO_CARD
     if our_flag_id == data.flag_id:

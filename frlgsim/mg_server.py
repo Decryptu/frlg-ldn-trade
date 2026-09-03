@@ -1,26 +1,6 @@
-"""Mystery Gift server script engine [src/mystery_gift_server.c].
-
-We are the server: link player 0, RFU parent.  The console is the client and
-executes only what we hand it, so this engine owns the whole conversation.
-
-The engine is a small interpreter over the same ``SVR_*`` opcodes the decomp
-uses, so a flow written here can be read side by side with
-``src/mystery_gift_scripts.c``.  :data:`SCRIPT_SEND_WONDER_CARD` is a faithful
-transcription of ``gMysteryGiftServerScript_SendWonderCard``
-[mystery_gift_scripts.c:185] including its three-way existing-card branch;
-the Stamp Rally adds the native stamp operations and activation payloads.
-
-Transport independence: the interpreter never touches blocks or RFU.  It runs
-until it blocks on an action and publishes it as :attr:`action`::
-
-    ("send", ident, payload, size)   put this message on the wire
-    ("recv", ident)                  wait for this message from the console
-    ("done", server_msg_id)          the flow finished
-
-The caller acknowledges with :meth:`on_sent` / :meth:`on_received`.  This is the
-same shape as the native ``FUNC_SEND`` / ``FUNC_RECV`` / ``FUNC_RUN`` loop, one
-command per step.
-"""
+"""Mystery Gift server script interpreter [decomp:src/mystery_gift_server.c]; we are link player 0.
+run() advances until it blocks and publishes ``action`` as ("send", ident, payload, size), ("recv", ident)
+or ("done", server_msg_id); the caller acknowledges with on_sent()/on_received()."""
 
 from . import mg_script
 from .mystery_gift import (
@@ -30,7 +10,7 @@ from .mystery_gift import (
 )
 from .wonder_card import WONDER_CARD_SIZE
 
-# --- server script instruction ids [include/mystery_gift_server.h:17] -------------------------
+# [decomp:include/mystery_gift_server.h:17]
 SVR_RETURN = "SVR_RETURN"
 SVR_SEND = "SVR_SEND"
 SVR_RECV = "SVR_RECV"
@@ -49,7 +29,7 @@ SVR_CHECK_EXISTING_STAMPS = "SVR_CHECK_EXISTING_STAMPS"
 SVR_LOAD_STAMP = "SVR_LOAD_STAMP"
 SVR_LOAD_ACTIVATION = "SVR_LOAD_ACTIVATION"
 
-# --- server result message ids [include/mystery_gift_server.h:56] -----------------------------
+# [decomp:include/mystery_gift_server.h:56]
 SVR_MSG_NOTHING_SENT = 0
 SVR_MSG_RECORD_UPLOADED = 1
 SVR_MSG_CARD_SENT = 2
@@ -75,9 +55,8 @@ SERVER_RESULT_NAMES = {
     SVR_MSG_COMM_ERROR: "communication error",
 }
 
-# The RAM script and READY_END both travel as full 1024-byte buffer messages:
-# SVR_COPY_SAVED_RAM_SCRIPT sets svr->ramScript but never svr->ramScriptSize
-# [mystery_gift_server.c:275], so InitSend receives size 0 and expands it.
+# Native never sets ramScriptSize [decomp:src/mystery_gift_server.c:275], so the RAM script travels as
+# a full 1024-byte message.
 FULL_BUFFER = 0
 
 
@@ -85,8 +64,7 @@ class MysteryGiftServerError(Exception):
     """The console sent something the server script cannot proceed from."""
 
 
-# --- server scripts, transcribed from src/mystery_gift_scripts.c ------------------------------
-# sServerScript_CantSend [:98]
+# sServerScript_CantSend [decomp:src/mystery_gift_scripts.c:98]
 _SCRIPT_CANT_SEND = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_CANT_ACCEPT),
     (SVR_SEND,),
@@ -94,7 +72,7 @@ _SCRIPT_CANT_SEND = (
     (SVR_RETURN, SVR_MSG_CANT_SEND_GIFT_1),
 )
 
-# sServerScript_HasCard [:160]
+# sServerScript_HasCard [decomp:src/mystery_gift_scripts.c:160]
 _SCRIPT_HAS_CARD = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_HAD_CARD),
     (SVR_SEND,),
@@ -102,10 +80,8 @@ _SCRIPT_HAS_CARD = (
     (SVR_RETURN, SVR_MSG_HAS_CARD),
 )
 
-# gServerScript_ClientCanceledCard [union_room_message.c:569] - the player
-# declined to toss their old card. Note this one lives in union_room_message.c,
-# not mystery_gift_scripts.c, and unlike the News cancel path it pushes a live
-# message for the console to display before ending.
+# gServerScript_ClientCanceledCard [decomp:src/union_room_message.c:569]; unlike the News cancel path
+# it pushes a live message for the console to display before ending.
 _SCRIPT_CLIENT_CANCELED = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_DYNAMIC_ERROR),
     (SVR_SEND,),
@@ -115,7 +91,7 @@ _SCRIPT_CLIENT_CANCELED = (
     (SVR_RETURN, SVR_MSG_CLIENT_CANCELED),
 )
 
-# sServerScript_SendCard [:140] - the gift proper.
+# sServerScript_SendCard [decomp:src/mystery_gift_scripts.c:140]
 _SCRIPT_SEND_CARD = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SAVE_CARD),
     (SVR_SEND,),
@@ -176,10 +152,8 @@ _SCRIPT_STAMP_TOSS_PROMPT = (
     (SVR_GOTO, _SCRIPT_CLIENT_CANCELED),
 )
 
-# Python names for MysteryGift_CheckStamps' native result values.  The native
-# function checks full before duplicate; this host intentionally checks
-# duplicate first so a previously collected stamp is reported accurately even
-# on a completed two-slot card.
+# MysteryGift_CheckStamps results. Native checks full before duplicate; this host checks duplicate
+# first so a collected stamp is reported accurately on a full card.
 STAMPS_FULL = 1
 STAMP_NEW = 2
 STAMP_ALREADY_PRESENT = 3
@@ -200,26 +174,18 @@ SCRIPT_SEND_STAMP_EVENT = (
     (SVR_GOTO, _SCRIPT_SEND_STAMP_ONLY),
 )
 
-# sServerScript_TossPrompt [:151] - console holds a different card.
+# sServerScript_TossPrompt [decomp:src/mystery_gift_scripts.c:151]
 _SCRIPT_TOSS_PROMPT = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_ASK_TOSS),
     (SVR_SEND,),
     (SVR_RECV, MG_LINKID_RESPONSE),
     (SVR_READ_RESPONSE,),
-    (SVR_GOTO_IF_EQ, False, _SCRIPT_SEND_CARD),      # tossed the old card
-    (SVR_GOTO, _SCRIPT_CLIENT_CANCELED),             # kept the old card
+    (SVR_GOTO_IF_EQ, False, _SCRIPT_SEND_CARD),
+    (SVR_GOTO, _SCRIPT_CLIENT_CANCELED),
 )
 
-# gMysteryGiftServerScript_SendWonderCard [mystery_gift_scripts.c:185].
-#
-# The two leading SVR_COPY_SAVED_* commands are omitted: they load the *sender's
-# own saved* card and RAM script, which a distributor supplies from configuration
-# instead. One side effect goes with them - SVR_COPY_SAVED_CARD also runs
-# DisableWonderCardSending [mystery_gift_server.c:269], downgrading a
-# SEND_TYPE_ALLOWED card to SEND_TYPE_DISALLOWED so a player cannot keep passing
-# on a card they were given. That is a rule about re-sharing a *received* card,
-# not about what a distributor may hand out, so the configured sendType is left
-# alone here and is deliberate. (The shipped card is DISALLOWED regardless.)
+# gMysteryGiftServerScript_SendWonderCard [decomp:src/mystery_gift_scripts.c:185] minus its two leading
+# SVR_COPY_SAVED_* (card/script come from configuration; DisableWonderCardSending is deliberately not applied).
 SCRIPT_SEND_WONDER_CARD = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
     (SVR_SEND,),
@@ -230,22 +196,13 @@ SCRIPT_SEND_WONDER_CARD = (
     (SVR_CHECK_EXISTING_CARD,),
     (SVR_GOTO_IF_EQ, mg_script.HAS_DIFF_CARD, _SCRIPT_TOSS_PROMPT),
     (SVR_GOTO_IF_EQ, mg_script.HAS_NO_CARD, _SCRIPT_SEND_CARD),
-    (SVR_GOTO, _SCRIPT_HAS_CARD),                    # HAS_SAME_CARD
+    (SVR_GOTO, _SCRIPT_HAS_CARD),
 )
 
 
 class MysteryGiftServer:
-    """Run one gift conversation against a single console.
-
-    ``card`` is the 332-byte ``struct WonderCard``; ``ram_script`` is the raw
-    delivery bytecode (the console wraps and checksums it itself).  Both come
-    from :mod:`frlgsim.wonder_card`.
-    """
-
-    # CLI_SAVE_RAM_SCRIPT calls InitRamScript_NoObjectEvent [mystery_gift_client.c:234],
-    # which clamps to sizeof(RamScriptData.script) [script.c:578]. The message on
-    # the wire is 1024 bytes, but only this much of it ever reaches the save, so a
-    # longer delivery script would be truncated mid-bytecode on the console.
+    # The console saves only sizeof(RamScriptData.script) bytes of the 1024-byte message
+    # [decomp:src/script.c:578]; a longer delivery script is truncated mid-bytecode.
     MAX_RAM_SCRIPT_SIZE = 995
 
     def __init__(self, card, ram_script, *, stamp=None, activation_script=None,
@@ -286,8 +243,8 @@ class MysteryGiftServer:
         self.messages_received = 0
         self.trace = []
 
-        self._loaded = None          # (ident, payload, size) staged by an SVR_LOAD_*
-        self._received = b""         # the console's last message (svr->recvBuffer)
+        self._loaded = None
+        self._received = b""
 
     @property
     def done(self):
@@ -295,18 +252,14 @@ class MysteryGiftServer:
 
     @property
     def card_flag_id(self):
-        """The card's ``flagId``, which SVR_CHECK_EXISTING_CARD compares."""
         return int.from_bytes(self.card[0:2], "little")
 
-    # --- transport interface ------------------------------------------------------------------
     def run(self):
-        """Advance the script until it blocks, and return the pending action."""
         while self.action is None:
             self._step()
         return self.action
 
     def on_sent(self):
-        """Acknowledge that the pending ``send`` action reached the console."""
         if self.action is None or self.action[0] != "send":
             raise MysteryGiftServerError("on_sent called with no send in flight")
         self.messages_sent += 1
@@ -314,7 +267,6 @@ class MysteryGiftServer:
         self._loaded = None
 
     def on_received(self, ident, payload):
-        """Deliver the message the pending ``recv`` action was waiting for."""
         if self.action is None or self.action[0] != "recv":
             raise MysteryGiftServerError("on_received called with no recv in flight")
         expected = self.action[1]
@@ -325,7 +277,6 @@ class MysteryGiftServer:
         self._received = bytes(payload)
         self.action = None
 
-    # --- interpreter --------------------------------------------------------------------------
     def _step(self):
         if self.cmdidx >= len(self.script):
             raise MysteryGiftServerError("server script ran off the end without SVR_RETURN")
@@ -416,9 +367,8 @@ class MysteryGiftServer:
         self.trace.append(("existing_stamps", self.param))
 
     def _do_svr_read_response(self):
-        # svr->param = *(u32 *)svr->recvBuffer [mystery_gift_server.c:193] - the
-        # raw word, not a coerced bool. CLI_LOAD_TOSS_RESPONSE sends TRUE when
-        # the player KEPT their old card, so FALSE is the branch that gifts.
+        # The raw u32, not a bool [decomp:src/mystery_gift_server.c:193]; TRUE means the player KEPT
+        # the old card, so FALSE is the branch that gifts.
         self.param = int.from_bytes(self._received[:4], "little")
 
     def _do_svr_load_client_script(self, script):

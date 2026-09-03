@@ -1,17 +1,5 @@
-"""One-shot helper to try a Wonder Card in the emulator:
-
-    python3 -m frlgsim.emulate_wonder_card --gift worlds-xp
-
-Takes a gift from the Mystery Gift registry (`gift_registry.GIFT_REGISTRY`),
-exports it as the WonderCard/Script `.bin` pair comradesean's
-`pokemon-gen3-mysterygift-tool` reads, drops the pair into the injector app's
-`Tickets/` folder, and (re)launches the injector so you can inject it onto a
-save that you then load in the emulator.
-
-The injector only scans `Tickets/` at startup, so this always relaunches it.
-In the GUI: load the `.gba` + `.sav`, click **Edit** to unlock the preset
-dropdown, pick this gift, and Save to inject.
-"""
+"""Export a registry gift as the injector's .bin pair into Tickets/ and relaunch the injector (it scans
+Tickets/ only at startup)."""
 
 import glob
 import os
@@ -23,23 +11,17 @@ from .gift_to_bin import write_gift_bins
 from .mystery_gift import crc16
 from .save_inject import build_ram_script_struct
 
-# Where the built injector lives.  Override with MG_INJECTOR_APP; otherwise we
-# look next to the repo (tools/mgtool/build) and, as a last resort, sweep the
-# temp scratchpads an earlier session may have built it in.
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _APP_NAME = "Mystery_Gift_Injector.app"
 
 
 def _ticket_name(slug):
-    """Injector display label is the first underscore-token, title-cased, so keep
-    the slug in one token: 'worlds-xp' -> 'WORLDSXP_FRLG' -> 'Worldsxp - FRLG'.
-    The filename must contain a game code (FRLG) for the tool to load it."""
+    """The injector labels a ticket by its first underscore token and needs a game code (FRLG) in the name."""
     token = "".join(ch for ch in slug.upper() if ch.isalnum())
     return f"{token}_FRLG"
 
 
 def find_injector_app():
-    """Return the path to the injector .app bundle, or None if not built yet."""
     override = os.environ.get("MG_INJECTOR_APP")
     if override:
         return override if os.path.isdir(override) else None
@@ -59,7 +41,6 @@ def _tickets_dir(app_path):
 
 
 def launch_injector(app_path):
-    """Relaunch the injector so it re-scans Tickets/ (kills any running copy)."""
     subprocess.run(["pkill", "-f", "Mystery_Gift_Injector"],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(["open", app_path], check=True)

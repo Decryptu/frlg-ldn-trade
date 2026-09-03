@@ -1,20 +1,6 @@
 #!/usr/bin/env python3
-"""Distribute a FireRed/LeafGreen Wonder Card over LDN (Mystery Gift, Friend path).
-
-We advertise ACTIVITY_WONDER_CARD and act as the Mystery Gift *server*: the
-console picks us from Mystery Gift -> Wonder Cards -> Friend, and we push it the
-client script, the Wonder Card and the delivery RAM script. The player then
-collects the gift from the delivery man on the second floor of any Pokemon
-Center.
-
-The Wireless Communication ("wireless distributor") path is not reachable from a
-Switch - see docs/joyspot_discovery_findings.md - but it delivers the identical
-gift, so only the discovery step differs.
-
-Trainer identity starts from ``frlgsim.config.DEFAULT_TRAINER`` and may be
-overridden per run.
-
-Example::
+"""Distribute a FireRed/LeafGreen Wonder Card over LDN (Mystery Gift, Friend path): the console picks us
+from Mystery Gift -> Wonder Cards -> Friend and collects the gift from the delivery man in any Pokemon Center.
 
     sudo -E ./.venv/bin/python -u frlgmg_host.py --live
 """
@@ -27,8 +13,6 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Prefer the tracked vendored, host-capable LDN package just like
-# frlgtrade_host.py.
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
@@ -38,20 +22,7 @@ from frlgsim import (config as configmod, gift_artifact, gift_registry, host_cli
 from frlgsim.host_mg_app import MysteryGiftHostApplication  # noqa: E402
 from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
 
-# Compatibility snapshot for callers that imported the old constant. Parser
-# construction reads the registry dynamically so newly registered definitions
-# appear without re-importing this module.
 HOST_GIFT_CHOICES = gift_registry.GIFT_REGISTRY.live_choices
-
-
-def _gift_resend_idle_frames(value):
-    try:
-        frames = int(value, 10)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError("must be a decimal frame count") from exc
-    if not 0 <= frames <= 3600:
-        raise argparse.ArgumentTypeError("must be between 0 and 3600")
-    return frames
 
 
 def _client_ready_idle_frames(value):
@@ -95,19 +66,13 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               "message; raise it if a run stalls part-way through a message "
               "(default is the built-in timing)"))
     parser.add_argument(
-        "--gift-resend-idle-frames", type=_gift_resend_idle_frames,
-        default=None, metavar="N",
-        help=("diagnostic: re-send the in-flight gift message after this many "
-              "quiet child polls while awaiting its reply; 0 (default) never "
-              "re-sends"))
-    parser.add_argument(
         "--block-repeat", type=int, default=None, metavar="N", choices=range(1, 9),
-        help=("emit each block fragment N times (1-8, default 1 = send once); "
+        help=("emit each block fragment N times (1-8, default 2); "
               "bounded redundancy against the console's silent datagram drops"))
     parser.add_argument(
         "--ram-script-block-repeat", type=int, default=None, metavar="N", choices=range(1, 9),
-        help=("Extra fragment redundancy for JUST the ident-25 RAM/delivery script (the stall-prone "
-              "one); falls back to --block-repeat when unset. See NOTES.local.md ident-25 STALL."))
+        help=("fragment redundancy for the ident-25 delivery script alone (1-8, default 3); "
+              "the console never reflects gift blocks, so a lost fragment cannot be resent"))
     parser.add_argument(
         "--end-on-success", action=argparse.BooleanOptionalAction, default=False,
         help=("stop after the post-delivery RFU close sequence; used by the "
@@ -151,7 +116,6 @@ def build_run_config(parser, args):
             payload=payload, trust_pia=args.trust_pia,
             client_ready_idle_frames=args.client_ready_idle_frames,
             inter_block_gap_frames=args.inter_block_gap_frames,
-            gift_resend_idle_frames=args.gift_resend_idle_frames,
             block_repeat=args.block_repeat,
             ram_script_block_repeat=args.ram_script_block_repeat,
             end_on_success=args.end_on_success,
@@ -172,8 +136,6 @@ def main(argv=None):
         file_config, shared_path=shared_path, local_path=local_path)
     args = parser.parse_args(argv)
     if args.print_effective_config:
-        # Keep the no-hardware inspection path honest: it should reject the
-        # same malformed transport values a real host run would reject.
         host_cli.build_host_config(parser, args)
         print(host_cli.format_effective_config(args), end="")
         return 0

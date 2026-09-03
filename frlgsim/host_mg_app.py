@@ -1,11 +1,5 @@
-"""Application runtime for hosting one FRLG Mystery Gift distribution.
-
-Everything below the activity - LDN, Pia, Reliable, RFU bring-up, the beacon
-injector, the join/leave lifecycle - is the trade host's proven code, so this
-subclasses :class:`frlgsim.host_app.HostApplication` and replaces only the three
-trade-specific seams: what gets built, what gets logged at startup, and what
-counts as progress.
-"""
+"""Application runtime for hosting one FRLG Mystery Gift distribution; subclasses HostApplication
+and overrides only the build/startup-log/progress seams."""
 
 from . import (charmap, config as configmod, gift_registry, host_session,
                ldntrace, mystery_gift_attempts)
@@ -19,15 +13,12 @@ from .host_pia import HostPeerProtocol
 from .linkplayer import HOST_NAME_PAD
 from .mg_server import SERVER_RESULT_NAMES, SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT
 
-# Retain the original import location while keeping the models centralized.
 MysteryGiftPayload = configmod.MysteryGiftPayload
 MysteryGiftDistribution = configmod.MysteryGiftDistribution
 MysteryGiftRunConfig = configmod.MysteryGiftRunConfig
 
 
 class MysteryGiftHostApplication(HostApplication):
-    """Host one Wonder Card handout for a single console."""
-
     def __init__(self, config, *, distribution=None, **kwargs):
         super().__init__(config, **kwargs)
         self.card = None
@@ -38,11 +29,9 @@ class MysteryGiftHostApplication(HostApplication):
         self._result_logged = False
 
     def _build_payload(self):
-        """Preserve the original static ``(card, script)`` application seam."""
         return self.config.payload.build()
 
     def _build_distribution(self):
-        """Build the complete selected live-host conversation."""
         return (self._prepared_distribution if self._prepared_distribution is not None
                 else self.config.payload.build_distribution())
 
@@ -58,8 +47,6 @@ class MysteryGiftHostApplication(HostApplication):
             overrides["client_ready_idle_frames"] = self.config.client_ready_idle_frames
         if self.config.inter_block_gap_frames is not None:
             overrides["inter_block_gap_frames"] = self.config.inter_block_gap_frames
-        if self.config.gift_resend_idle_frames is not None:
-            overrides["gift_resend_idle_frames"] = self.config.gift_resend_idle_frames
         if self.config.block_repeat is not None:
             overrides["block_repeat"] = self.config.block_repeat
         if self.config.ram_script_block_repeat is not None:
@@ -114,9 +101,6 @@ class MysteryGiftHostApplication(HostApplication):
         if self.config.inter_block_gap_frames is not None:
             self.info("Mystery Gift timing override: "
                       f"inter_block_gap_frames={self.config.inter_block_gap_frames}")
-        if self.config.gift_resend_idle_frames is not None:
-            self.info("Mystery Gift timing override: "
-                      f"gift_resend_idle_frames={self.config.gift_resend_idle_frames}")
         if self.config.block_repeat is not None:
             self.info("Mystery Gift timing override: "
                       f"block_repeat={self.config.block_repeat}")
@@ -139,7 +123,6 @@ class MysteryGiftHostApplication(HostApplication):
         return "Mystery Gift close grace completed; host peer traffic stopped cleanly."
 
     def _log_activity_progress(self):
-        """Report Mystery Gift milestones through the activity-neutral runtime hook."""
         engine = self.session.activity
         state = engine.state
         if state != self._last_state:

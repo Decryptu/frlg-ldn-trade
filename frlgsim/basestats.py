@@ -1,10 +1,5 @@
-"""Gen-3 (FRLG) per-species base stats and growth rate.
-
-BASE_STATS maps the internal species index ->
-(baseHP, baseAttack, baseDefense, baseSpeed, baseSpAttack, baseSpDefense, growthRate).
-growthRate: 0=MediumFast 1=Erratic 2=Fluctuating 3=MediumSlow 4=Fast 5=Slow.
-The unused index gap (252-276) has no stats and is absent.
-"""
+"""BASE_STATS: internal species index -> (hp, atk, def, spe, spa, spd, growthRate); growthRate 0=MediumFast
+1=Erratic 2=Fluctuating 3=MediumSlow 4=Fast 5=Slow. Indices 252-276 are absent."""
 
 BASE_STATS = {
     1: (45, 49, 49, 45, 65, 65, 3),

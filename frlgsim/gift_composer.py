@@ -1,26 +1,5 @@
-"""Declarative, validated authoring for future FRLG Mystery Gifts.
-
-The hardware-proven legacy payloads remain in :mod:`wonder_card` and
-:mod:`stamp_rally`.  This module is the authoring surface for composed gifts:
-an immutable description is validated and compiled into the same Wonder Card,
-delivery RAM script, and optional stamp activation payloads consumed by the
-existing host.
-
-Saved-state layout used by compiled definitions::
-
-    VAR_MYSTERY_GIFT_1      ordinary stages / rally completion stages
-    VAR_MYSTERY_GIFT_2..7   rally stamp-slot stages (six slots maximum)
-    FLAG_MYSTERY_GIFT_DONE  overall one-shot completion
-
-Each variable is a u16 cursor.  Ordinary cursors equal the number of completed
-stages.  A stamp cursor is zero while absent, one when activated, and advances
-once for every completed delivery stage.
-
-``WonderGift`` is the single top-level authoring type.  ``GiftSpec`` and
-``StampRallySpec`` select ordinary or rally orchestration while the top-level
-delivery plan supplies the reusable middle stages.  Rally slot and completion
-plans wrap that middle with pre- and post-stages.
-"""
+"""Saved state used by compiled gifts: VAR_MYSTERY_GIFT_1 = ordinary/rally-completion stage cursor,
+VAR_MYSTERY_GIFT_2..7 = stamp-slot cursors (0 absent, 1 activated, +1 per stage), FLAG_MYSTERY_GIFT_DONE = one-shot."""
 
 from dataclasses import dataclass
 from typing import TypeAlias
@@ -86,9 +65,6 @@ MON_CANT_GIVE = 2
 PARTY_SIZE = 6
 LAST_PARTY_MON_INDEX = PARTY_SIZE + 1
 
-# One generic line covers a full party, PC boxes, or BAG. Keeping the three
-# names identical lets the message pool store the text once no matter how many
-# fallible gives a plan has.
 _DEFAULT_NO_ROOM_MESSAGE = "No room! Make space, then\ncome back."
 DEFAULT_BAG_FULL_MESSAGE = _DEFAULT_NO_ROOM_MESSAGE
 DEFAULT_STORAGE_FULL_MESSAGE = _DEFAULT_NO_ROOM_MESSAGE
@@ -98,8 +74,6 @@ DEFAULT_COMPLETED_MESSAGE = (
 
 
 class GiftValidationError(ValueError):
-    """A definition cannot be safely represented by an FRLG RAM script."""
-
     def __init__(self, path, message):
         self.path = str(path)
         self.message = str(message)
@@ -114,7 +88,7 @@ class WonderCardSpec:
     body: tuple[str, ...] = ()
     footer1: str = ""
     footer2: str = ""
-    # A value of 0 preserves the default ``flag_id % 100`` display number.
+    # 0 keeps the default ``flag_id % 100`` display number.
     id_number: int = 0
     bg_type: int = 0
     send_type: int = SEND_TYPE_DISALLOWED
@@ -261,7 +235,6 @@ class DeliveryStage:
         if actions is not None and positional_actions:
             raise TypeError("pass DeliveryStage actions positionally or by keyword, not both")
         selected = actions if actions is not None else positional_actions
-        # Also accept DeliveryStage((action1, action2)) for generated callers.
         if (actions is None and len(selected) == 1
                 and isinstance(selected[0], (tuple, list))):
             selected = selected[0]
@@ -283,8 +256,6 @@ class DeliveryPlan:
 
 @dataclass(frozen=True)
 class GiftSpec:
-    """Ordinary-gift behavior not shared by stamp rallies."""
-
     repeatable: bool = False
     shareable: str = SHARE_NEVER
 
@@ -353,8 +324,6 @@ def _validate_message(text, path):
     without_player = text.replace("{PLAYER}", "")
     if "{" in without_player or "}" in without_player:
         _fail(path, "the only supported message token is {PLAYER}")
-    # Newlines and the player-name expansion are field-script controls rather
-    # than printable characters. Validate every printable fragment exactly.
     for line in text.split("\n"):
         fragments = line.split("{PLAYER}")
         for fragment in fragments:
@@ -387,7 +356,7 @@ def _validate_position(position, path):
         _validate_int(position.dx, -0x8000, 0x7FFF, f"{path}.dx", "relative x")
         _validate_int(position.dy, -0x8000, 0x7FFF, f"{path}.dy", "relative y")
     elif isinstance(position, MapPosition):
-        # Script operands at 0x4000 and above are interpreted as variable IDs.
+        # Script operands >= 0x4000 are read as variable IDs.
         _validate_int(position.x, 0, 0x3FFF, f"{path}.x", "map x")
         _validate_int(position.y, 0, 0x3FFF, f"{path}.y", "map y")
     else:
@@ -486,7 +455,6 @@ def _plan_parts(plan):
 
 
 def _effective_stages(*parts):
-    """Return ``((stage, source_path), ...)`` for a composed execution path."""
     return tuple(entry for part in parts for entry in part)
 
 
@@ -550,11 +518,6 @@ def _validate_effective_plan(stages, path, *, allow_battle):
 
 
 def validate_definition(definition, *, flag_id=None):
-    """Validate a definition without mutating or compiling it.
-
-    ``flag_id`` applies the same per-run override used by the host and static
-    tools.  The definition's card default is used when it is omitted.
-    """
     if not isinstance(definition, WonderGift):
         _fail(type(definition).__name__, "expected WonderGift")
     path = definition.slug if isinstance(definition.slug, str) and definition.slug else "gift"
@@ -666,8 +629,8 @@ _OP_WAITBUTTONPRESS = 0x6D
 _OP_GIVEMON = 0x79
 _OP_GIVEEGG = 0x7A
 _OP_SETMONMOVE = 0x7B
-_OP_PLAYFANFARE = 0x31              # playfanfare <u16 song> (non-blocking)
-MUS_OBTAIN_ITEM = 258              # the "you received it!" jingle
+_OP_PLAYFANFARE = 0x31
+MUS_OBTAIN_ITEM = 258
 _OP_CREATEVOBJECT = 0xAA
 _OP_SETWILDBATTLE = 0xB6
 _OP_DOWILDBATTLE = 0xB7
@@ -742,8 +705,6 @@ class _FieldScriptBuilder:
 
     def finish(self, path):
         code = bytearray(self.code)
-        # Pool identical strings so a message reused across stages (e.g. a shared
-        # "party is full" failure line) is stored only once.
         message_offsets = []
         blobs = []
         pool = {}
@@ -915,8 +876,6 @@ def _emit_action(builder, action, *, sprite_id, failure_label, completed_label):
     elif isinstance(action, SetVar):
         builder.emit(_setvar(action.variable, action.value))
     elif isinstance(action, Exit):
-        # Exit is validated as terminal, so it doubles as the event's natural
-        # conclusion: route through the shared completed_message before ending.
         builder.vgoto(completed_label)
     else:  # pragma: no cover - validation prevents this path.
         raise AssertionError(type(action))
@@ -941,7 +900,6 @@ def _failure_message(action):
 def _emit_plan(builder, stages, cursor, prefix, finished_label, failures,
                sprite_counter, *, receipt_flag, completed_label,
                overall_completion=False, reset_on_terminal_battle=False):
-    """Emit stage bodies after a dispatch and return the next sprite id."""
     for stage_index, (stage, source_path) in enumerate(stages):
         builder.label(_stage_label(prefix, stage_index))
         stage_start = len(builder.code)
@@ -972,10 +930,8 @@ def _emit_plan(builder, stages, cursor, prefix, finished_label, failures,
                 failure_label=failure_label, completed_label=completed_label)
             if isinstance(action, ShowSprite):
                 sprite_counter += 1
-        # Battles are validated as the final action. End immediately so a
-        # conditional battle cannot fall through to later alternatives. This
-        # also makes BattleLegendary safe for saved RAM scripts: its special is
-        # followed by END rather than leaving the RAM-script pointer suspended.
+        # END after a battle: a conditional battle must not fall through, and a saved RAM
+        # script must not leave BattleLegendary's special as the suspended pointer.
         if has_battle:
             builder.emit(bytes([_OP_END]))
         builder.label(checkpoint_label)
@@ -1044,9 +1000,7 @@ def _compile_gift(definition, flag_id):
         builder.emit(bytes([_OP_CHECKFLAG]) + _u16(FLAG_MYSTERY_GIFT_DONE))
         builder.vgoto_if(_COMPARE_EQ, "completed")
     builder.message(definition.intro_message)
-    # Saving a replacement Wonder Card clears the card-scoped state above but
-    # not sReceivedGiftFlags. Incomplete/new composed gifts must therefore
-    # clear their mapped receipt flag before beginning delivery.
+    # A replacement Wonder Card clears the card-scoped vars but not sReceivedGiftFlags.
     builder.emit(_clearflag(receipt_flag))
     _emit_cursor_dispatch(
         builder, VAR_MYSTERY_GIFT_1, stages,
@@ -1065,9 +1019,6 @@ def _compile_gift(definition, flag_id):
         builder.emit(_setflag(FLAG_MYSTERY_GIFT_DONE))
         builder.emit(_setflag(receipt_flag))
     builder.vgoto("exit")
-    # Always emit the completion line: a non-repeatable gift reaches it from the
-    # FLAG_MYSTERY_GIFT_DONE check above, and any gift can reach it from a
-    # terminal Exit() action (e.g. a repeatable gift's own "done" state).
     builder.label("completed")
     builder.message(definition.completed_message)
     builder.vgoto("exit")
@@ -1120,7 +1071,6 @@ def _compile_rally(definition, flag_id):
             definition, slot.delivery,
             f"{definition.slug}.event.slots[{slot_index}].delivery")
         builder.label(f"slot_{slot_index}_dispatch")
-        # Zero means absent. final_cursor means this slot is already delivered.
         builder.emit(_compare(cursor, 0))
         builder.vgoto_if(_COMPARE_EQ, next_label)
         final_cursor = len(stages) + 1
@@ -1129,18 +1079,12 @@ def _compile_rally(definition, flag_id):
         for stage_index in range(len(stages)):
             builder.emit(_compare(cursor, stage_index + 1))
             builder.vgoto_if(_COMPARE_EQ, _stage_label(prefix, stage_index))
-        # Unknown/corrupt cursor values do not grant rewards.
         builder.vgoto(next_label)
         sprite_counter = _emit_plan(
             builder, stages, cursor, prefix, next_label,
             failures, sprite_counter, receipt_flag=receipt_flag,
             completed_label="completed")
-        # Slot cursor values have an activation offset of one. Patch the
-        # compiler-emitted post-stage setvar values in a simple explicit tail:
-        # rather than byte surgery, each stage label gets an overriding cursor
-        # write immediately after its actions via the helper below.
-        # _emit_plan wrote 1..N; activation needs 2..N+1. Locate the last setvar
-        # in every stage using the tracked labels and replace its immediate.
+        # Slot cursors are offset by one (1 = activated): rewrite checkpoints 1..N to 2..N+1.
         for stage_index in range(len(stages)):
             start = builder.labels[_stage_label(prefix, stage_index)]
             end = (builder.labels[_stage_label(prefix, stage_index + 1)]
@@ -1206,11 +1150,7 @@ def _compile_rally(definition, flag_id):
 
 
 def compile_definition(definition, *, flag_id=None):
-    """Compile an ordinary gift or rally into host-ready distributions.
-
-    Ordinary definitions return one :class:`MysteryGiftDistribution`.  Rally
-    definitions return ``{slot_slug: distribution}``, one entry per stamp.
-    """
+    """Returns one MysteryGiftDistribution for a GiftSpec, or ``{slot_slug: distribution}`` for a rally."""
     validate_definition(definition, flag_id=flag_id)
     actual_flag_id = definition.card.default_flag_id if flag_id is None else flag_id
     if isinstance(definition.event, GiftSpec):

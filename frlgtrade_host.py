@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """Host a FireRed/LeafGreen Direct Corner trade over LDN.
 
-Trainer identity starts from ``frlgsim.config.DEFAULT_TRAINER`` and may be
-overridden per run. This entry point only translates command-line options
-into the shared ``TradeRunConfig``.
-
-Example::
-
     sudo -E ./.venv/bin/python -u frlgtrade_host.py --live dummy.pk3 Lola.pk3
 """
 
@@ -18,9 +12,6 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Prefer the tracked vendored LDN package. It contains the host-side
-# compatibility modes used by the proven mt76x0u and rtw88_8822bu adapters
-# without requiring an untracked checkout or a system installation.
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
@@ -111,8 +102,6 @@ def main(argv=None):
         file_config, shared_path=shared_path, local_path=local_path)
     args = parser.parse_args(argv)
     if args.print_effective_config:
-        # Validate transport values without requiring party files, root, or
-        # Wi-Fi hardware so this is a trustworthy preflight inspection path.
         host_cli.build_host_config(parser, args)
         print(host_cli.format_effective_config(args), end="")
         return 0

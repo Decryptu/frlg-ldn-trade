@@ -1,37 +1,14 @@
-"""Byte/action tracer for the LDN HOSTING path - answers "what exactly went over the air?".
-
-attach(network, tracer, log) monkeypatches a live `ldn.APNetwork` INSTANCE (our code; no fork of the
-ldn package) so every hosting-relevant action is hex-logged to a JSONL trace file:
-
-    advert        the encoded LDN advertisement action frame (logged once + on every change, i.e.
-                  whenever the advert nonce bumps: application_data/accept-policy/participant change)
-    beacon_appdata  our raw application_data (the RFU beacon) for offline field-by-field comparison
-    auth_req      each authentication request custom-frame (source MAC + raw bytes) - the A-press
-    auth_resp     our authentication response (status code + bytes)
-    join / leave  participant registration events (index, ip, mac, name)
-    dataframe_in  data frames the monitor vif accepted for the TAP (first N + a running count)
-    dataframe_out data frames we transmit via the monitor vif (first N + count)
-    udp_in/out    the :12345 Pia datagrams over the TAP (wired via HostTransport, not the patch)
-
-Instance-level patching works because the library's nursery loops (`_send_advertisements`,
-`_receive_data_frames`, `_process_events`) resolve `self._send_advertisement` etc. per call, so
-rebinding the attribute on the instance takes effect immediately - and only for this network object.
-Every wrapper is defensive: a tracer bug must never break hosting, so failures degrade to a log line.
-
-Records mirror the existing --capture conventions: JSON per line, {"rec": "trace", "kind": ...,
-"ts": <unix float>, "hex"/fields...}.
+"""JSONL tracer for the LDN hosting path: attach() rebinds hooks on a live ldn.APNetwork INSTANCE (its nursery loops
+resolve self._send_advertisement etc. per call). Every wrapper degrades to a log line; a tracer bug must never break hosting.
 """
 
 import json
 import time
 
-DATAFRAME_HEX_LIMIT = 20        # hex-dump the first N data frames each way; count the rest
+DATAFRAME_HEX_LIMIT = 20
 
 
 class Tracer:
-    """Append-only JSONL trace writer (one JSON object per line, flushed per record so a crash or
-    Ctrl-C never loses the tail)."""
-
     def __init__(self, path, log=print):
         self.path = path
         self.log = log
@@ -43,7 +20,7 @@ class Tracer:
         rec.update(fields)
         try:
             self._f.write(json.dumps(rec) + "\n")
-        except (OSError, TypeError, ValueError) as e:       # pragma: no cover - never break hosting
+        except (OSError, TypeError, ValueError) as e:       # pragma: no cover
             self.log(f"[trace] write failed ({kind}): {e}")
         self.counts[kind] = self.counts.get(kind, 0) + 1
 
@@ -61,11 +38,6 @@ def _hex(b):
 
 
 def attach(network, tracer, log=print):
-    """Monkeypatch a live ldn.APNetwork instance so its hosting actions stream into `tracer`.
-    Safe to call once per network object, right after ldn.create_network yields it."""
-
-    # Record compatibility switches at the start of every trace so a failed
-    # hardware run can prove which receive/transmit paths were actually live.
     param = getattr(network, "_param", None)
     tracer.write(
         "network_config",
@@ -74,7 +46,6 @@ def attach(network, tracer, log=print):
             getattr(param, "accept_decrypted_ccmp", False)),
     )
 
-    # -- advertisement TX: log the encoded action frame once + on every nonce change --------------
     orig_send_advert = network._send_advertisement
     state = {"last_nonce": None}
 
@@ -88,13 +59,12 @@ def attach(network, tracer, log=print):
                 tracer.write("beacon_appdata", hex=_hex(network._network.application_data or b""))
                 log(f"[trace] advertisement updated (nonce {nonce.hex()}, "
                     f"{len(network._network.application_data or b'')}B app_data)")
-        except Exception as e:                              # noqa: BLE001 - tracing must not break TX
+        except Exception as e:                              # noqa: BLE001
             log(f"[trace] advert hook error: {e}")
         return await orig_send_advert()
 
     network._send_advertisement = send_advertisement
 
-    # -- authentication: the console's A-press arrives here as a custom frame ---------------------
     orig_auth = network._process_authentication_event
 
     async def process_authentication_event(event):
@@ -113,7 +83,6 @@ def attach(network, tracer, log=print):
 
     network._process_authentication_event = process_authentication_event
 
-    # -- participant registration (the JoinEvent source) ------------------------------------------
     orig_register = network._register_participant
 
     async def register_participant(address, name, app_version, platform):
@@ -126,7 +95,6 @@ def attach(network, tracer, log=print):
 
     network._register_participant = register_participant
 
-    # -- disassociation: retain the management subtype/reason behind LeaveEvent -----------------
     orig_disassociate = network._process_disassociation
 
     async def process_disassociation(address, reason=None, management_type=None):
@@ -139,7 +107,6 @@ def attach(network, tracer, log=print):
 
     network._process_disassociation = process_disassociation
 
-    # -- data plane: monitor vif <-> TAP ----------------------------------------------------------
     orig_data_in = network._process_data_frame
     orig_data_out = network._send_data_frame
 
@@ -156,7 +123,7 @@ def attach(network, tracer, log=print):
                              keyid=frame.keyid, tods=bool(frame.tods),
                              fromds=bool(frame.fromds), hex=_hex(frame.payload))
             else:
-                tracer.counts["dataframe_in"] = n + 1      # count silently past the limit
+                tracer.counts["dataframe_in"] = n + 1
         except Exception as e:                              # noqa: BLE001
             log(f"[trace] dataframe-in hook error: {e}")
         try:
@@ -195,9 +162,6 @@ def attach(network, tracer, log=print):
     network._process_data_frame = process_data_frame
     network._send_data_frame = send_data_frame
 
-    # Record the exact Ethernet frames that survived parsing/normalization and
-    # were handed to Linux.  This distinguishes successful 802.11 receive from
-    # a later ARP/IP/TAP failure.
     tap = getattr(network, "_tap", None)
     if tap is not None:
         orig_tap_write = tap.write

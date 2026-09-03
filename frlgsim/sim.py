@@ -1,15 +1,5 @@
-"""The per-VBlank orchestrator - wires transport <-> crypto <-> Pia <-> FSM.
-
-Two phases:
-  S0 (connection): the ConnectionManager completes Net + Session(new) + RTT so the host
-     registers us as a peer (this is what makes the "OK" prompt appear). Until then NO trade
-     traffic is emitted.
-  S1+ (trade): once connected, the TradeEngine's per-VBlank RFU slots ride Reliable(10).
-
-Station VAR IDs are LEARNED from the wire (Pia header = [dst_var][src_var]; footer = dest var):
-on each IN packet we record our id (= header dst) and the host's (= header src) and use them in
-every OUT header/footer. Addressing: RTT -> broadcast, Net/Session/Reliable -> unicast to host.
-A capture path mirrors every datagram to a .jsonl so it can be decrypted/analysed offline.
+"""The per-VBlank orchestrator: transport <-> crypto <-> Pia <-> trade engine. No trade traffic until the ConnectionManager
+is connected; station var-ids are learned from the wire (header = [dst_var][src_var], footer = dest var).
 """
 
 import json
@@ -21,225 +11,60 @@ from .reliable import _E_ACKED as _E_ACKED_IDX
 
 RELIABLE_SEQ_START = 0xFFF0
 
-# The reliable layer runs on a millisecond clock; the sim ticks once per VBlank, so convert the VBlank
-# counter to ms at the link boundary (timestamps for the RTO timer + RTT samples). 59.727 Hz VBlank.
+# The reliable layer runs on a millisecond clock; 59.727 Hz VBlank.
 MS_PER_VBLANK = 1000.0 / 59.727
 
-# Max Reliable messages packed into ONE Pia datagram (observed: the reference capture batches up to 9/datagram). We
-# coalesce a VBlank's retransmits + K acks + the T slot + the ctrl-ack into one datagram (chunked at
-# this size) instead of one datagram per frame - the prime BufferIsFull lever.
+# The reference host batches up to 9 Reliable messages per datagram.
 RELIABLE_BATCH_MAX = 9
-# Minimum spacing between two datagrams to the console, in ms (live only; 0 = off). Measured on the
-# air capture (j77/j78, scratchpad/air_match.py + spacing.py): the console MAC-acks our datagrams and
-# then DROPS ~40% of them inside its own stack, uniformly at random, whenever another datagram of ours
-# lands within ~20ms; a datagram with nothing of ours within ~33ms on either side is dropped <5% of the
-# time. Its receive path drains about once per 33ms and keeps one datagram per drain. So we hold
-# outgoing messages and emit ONE merged datagram per window - the lockstep then runs at ~30
-# exchanges/s with no loss instead of 11-20/s with a 45% retransmit rate and the in-order stalls
-# that starve the parent's child-slot poll (the trade-room deaths).
+# The console MAC-acks but drops ~40% of our datagrams inside its own stack when another of ours lands within ~20ms;
+# one merged datagram per ~33ms window is dropped <5% of the time.
 PACE_MIN_GAP_MS = 34
-# Do not transmit within this many ms AFTER receiving anything from the console. Measured pooled over
-# j58/j69/j73/j75/j77/j78/j79 (scratchpad/ctx.py): a datagram of ours sent 0-2ms after a console
-# frame is dropped 41-42% of the time (whether or not the console keeps streaming), one sent 20ms+
-# after its last frame 6%. We used to answer every frame within ~0.6ms, i.e. always inside the window.
+# A datagram sent within ~2ms after a console frame is dropped ~40% of the time; 20ms+ after, ~6%.
 REPLY_HOLDOFF_MS = 6
-# CARRY-FORWARD redundancy: every reliable data frame we send is repeated in the next CARRY_DEPTH
-# datagrams (the console de-duplicates by seq). Measured j77-j80: the console MAC-acks our datagrams and
-# drops ~40% of them inside its stack while its link loop streams, independent of spacing (j79, 34ms
-# pacing), reply timing (j80, 6ms hold-off), size, content or nonce - a Bernoulli loss we cannot
-# time around. Pia delivers in order, so one dropped datagram stalls the whole game stream for an
-# RTO (~100ms) and the parent's five-consecutive-bad-poll rule kills the room. Carrying each frame in
-# the next two datagrams turns a 40% hole rate into ~6% at the cost of bytes, not datagrams.
-CARRY_DEPTH = 4   # j83 died on a stall with depth 2; P(4 consecutive drops) ~2.5% at the measured 40%
+# Every reliable data frame is repeated in the next CARRY_DEPTH datagrams: the console drops ~40% of our datagrams inside
+# its stack regardless of timing, and Pia delivers in order, so one hole stalls the game stream for an RTO.
+CARRY_DEPTH = 4
 
-# LIVE-only cap on NEW standby (0x6600/0x5F00) frames emitted per count (live fix: standby flood
-# deadlock). The reference capture sends each standby ~3-4x then stops; emitting every VBlank keeps the host
-# in the same round forever (it sees continuous count=N) -> mutual deadlock + buffer flood. Bounding +
-# reliable retransmit (live) matches the reference capture. Offline keeps the unbounded cadence its MockHost depends on.
+# LIVE cap on new standby frames per count: the reference child sends each ~3-4x then stops; emitting every VBlank
+# keeps the host in the same round forever. Offline keeps the unbounded cadence its MockHost depends on.
 BARRIER_EMITS = 6
 
-# Pia reliable retransmit. The RTO lives entirely in ReliableLink: RTO = 33ms + 1.4*median(RTT), no clamp
-# and no exponential backoff, driven by RTT samples taken from the RTT protocol (see _drive_reliable /
-# the RTT feed in process_datagram). The retransmit is GAP-TARGETED (RTX_GAP_LIMIT) in the high-volume
-# block/trade phase and whole-window for the tiny NI/seat phase (so the few critical NI frames get through).
-RTX_GAP_LIMIT = 1          # block/trade phase: re-send only the gap (the peer buffers out-of-order)
-RTX_GAP_LIMIT_NI = 2       # NI/seat phase: a slightly longer tail (a few critical frames), still bounded
-# Pia reliable congestion control. The reliable layer (frlgsim/reliable.py) defaults to the console's
-# settings: a large window, RTO = 33ms + 1.4*median(RTT), and fast-retransmit on a single NACK. The console
-# earns those on a near-constant-latency local radio (median RTT ~= max RTT, and a NACK genuinely means
-# loss). This LINK is different - userspace Wi-Fi with a ~50ms MEDIAN RTT but a ~1s TAIL (~20x jitter) and
-# almost no real loss - so the console settings would collapse into a self-sustaining retransmit storm (a
-# NACK fires for a frame merely in flight; the resend adds air contention; contention raises the jitter;
-# the jitter creates more apparent gaps). So the driver overrides a few knobs, each a DOCUMENTED DIVERGENCE
-# that defaults to the console behavior in reliable.py and only matters because this link breaks the
-# console's assumptions:
-#
-#   MAX_INFLIGHT - the shared reliable send window. It must stay SMALL on this link: a larger window puts
-#     more frames in flight than the host's receive side tolerates, and it faults with an in-game
-#     Communication error (measured: both 18 and 128 fault shortly before the save; 6 is the ceiling and
-#     completes the trade). Emission is FREE-RUN (one datagram per VBlank, below) rather than paced to the
-#     host's poll arrivals, so in steady state in-flight self-limits well under the window - the window is
-#     the safety cap, not the pacer. (K_INFLIGHT_MAX bounds the K layer independently so a K-ack
-#     burst can never starve it.)
-#   RTT_JITTER_K - the RTO must cover the JITTER, not just the median, or every slow-but-not-lost frame in
-#     the 1s tail is retransmitted prematurely. rto() adds K * MAD(RTT) when this is > 0 (0 = console).
-#   DUP_NACK_THRESHOLD - require this many agreeing NACKs before fast-retransmitting a hole. One NACK means
-#     loss on the console; here it usually means the frame is still in flight (it lands ~50ms-1s later), so
-#     resending on a single NACK resends in-flight frames. (The console's dup-NACK field is off / 1; we
-#     turn it on for the bridge.)
-#   RTO_CEIL_MS - clamp the RTO so a hole recovers in bounded time. The link is fast (~18ms round-trip),
-#     so the RTO normally sits ~100ms; the clamp just bounds the worst case.
-#   RTO_BACKOFF - DISABLED (1.0 = console). Backoff was tried (the theory being that retransmits were
-#     futile resends of frames a slow host already had); it caused a MASSIVE regression - recovery latency
-#     blew up to multiple seconds and the post-party-block transfer crawled/deadlocked. So the retransmits
-#     are NEEDED, not futile: a stuck frame genuinely takes many sends to get through, and with a lean
-#     window one stuck hole blocks the whole window - which means recovery must be FAST, never slowed. Keep
-#     backoff off here.
-#   RTO_BOOTSTRAP_MS - the RTO used ONLY while we have NO RTT samples yet (the connect phase); NOT a floor.
-#     With no samples the console returns no RTO (no timer-driven retransmit) - fine on a clean radio, but on
-#     the bridge it LOSES the connect-phase reliable frames: our 'J' (metadata/Initialized) + 'C' (RFU connect)
-#     are sent the instant we go CONNECTED (~0.2s), BEFORE any round-trip, but the host's reliable side does
-#     not come up until ~2s in (it engages in RESPONSE to our J/C, observed in frlg2/frlg3). A one-shot J/C is
-#     simply lost -> the host never registers our connect -> 0 host proto-10 -> the pre-OK deadlock. A bootstrap
-#     RTO (~200ms) makes J/C RETRANSMIT until the host engages. It is NOT a floor (the floor was measured to
-#     ~2x the trade latency, p50 104->228ms): the instant the FIRST RTT sample arrives the pure formula
-#     (33 + 1.4*median + jitter, capped by RTO_CEIL_MS) takes over with no minimum -> trade stays fast
-#     (win2-slow-entry: p50 104ms / 5% NACK). So bootstrap fixes connect WITHOUT slowing the trade.
-MAX_INFLIGHT = 24         # shared reliable window. Throughput here is window/RTO, and the RTO sits at its
-                          # 670ms ceiling on this bridge, so 6 bought only ~9 reliable frames/s - far under
-                          # the ~120/s (one 'T' + one 'K' per VBlank) the child owes a console polling at
-                          # 60/s. Measured on hardware (j19): the window read 6/6 essentially the whole run
-                          # while the console polled at 60/s and the child answered at 3-8/s, so the join
-                          # handshake took ~9s and the console abandoned the room entry.
-                          #
-                          # 6 was chosen when 18 and 128 both comms-errored "shortly before the save". That
-                          # evidence does NOT carry over: back then the K layer queued one frame per host
-                          # poll and drained it oldest-first, so the generator could offer 4 frames/VBlank
-                          # (~240/s) and a bigger window simply let more of that flood through - which is
-                          # exactly "more frames in flight than the host's receive side tolerates". With K
-                          # superseded to one per VBlank the offered rate is bounded by the VBlank CLOCK, not
-                          # by the window, so the window can only ever release frames the child genuinely
-                          # owes. Swept offline against the captured host stream: 6 -> 15/s, 12 -> 33/s,
-                          # 24 -> 56/s, 48 -> 57/s at 120ms one-way / 10% loss. 24 is the knee - it reaches
-                          # the console's native poll rate, and past it the clock binds instead.
-# RTT_JITTER_K / RTO_CEIL_MS re-derived from Karn-clean measurements (j50/j57/j60): frames acked on
-# their FIRST transmission come back at median 18ms, p90 37ms. The old 4.0 / 670 pushed the RTO to
-# ~105ms - about 6x the round trip - so every lost datagram cost >=105ms before the first retry, and
-# 89% of our retransmits (174 of 196 in j57) were timer-driven rather than NACK-driven. The values
-# they were chosen against ("RTT ranges from ~50ms to ~1s") were measured BEFORE the selective-ack
-# mask origin was fixed, when a frozen ack base made every RTT sample look enormous; that link no
-# longer exists. 1.0 * MAD over a median of 18ms lands the RTO near 70ms, and the ceiling bounds the
-# worst case at 120ms instead of 670ms.
+RTX_GAP_LIMIT = 1
+RTX_GAP_LIMIT_NI = 2
+# RTO_BACKOFF stays 1.0 (off): backoff blew recovery latency up to seconds.
+MAX_INFLIGHT = 24         # window/RTO bounds throughput; 24 reaches the console's native 60/s poll rate
 RTT_JITTER_K = 1.0
 DUP_NACK_THRESHOLD = 1
 RTO_CEIL_MS = 120
 RTO_BACKOFF = 1.0
-RECV_NI_REACK_EVERY = 20  # re-ack the host's NI sub-frame every N repeats (it polls ~60/s)
-# DO NOT RAISE THESE - it has been tried and it is strictly worse. The whole child registration
-# must finish inside the parent's rfu_LMAN_establishConnection window of 240/360 frames = 4-6s
-# [link_rfu_2.c:340-345, 522-527], and on hardware (j21, healthy at 60 host polls/s) the host needed
-# TEN re-sends of one NI sub-frame over 2s before registering it, so one lost sub-frame eats half
-# the budget. The obvious response - re-send sooner and more often - was tried at 4/4 (~15/s): j22
-# died 0.7s after the host accepted us, against 6.6s at these values. The send window was not the
-# limit in either run (5 of 24 outstanding), so this is NOT congestion; the host's librfu NI
-# receiver is itself intolerant of the extra sub-frames. That reproduces the hazard already in
-# NOTES.local.md, where an every-poll re-send dropped the link in 0.9s - and it was reproduced here
-# even with the recv-NI ack given strict priority, so priority was not the explanation either.
-# A lost NI sub-frame does not get fixed by sending more of them.
-HOST_ACK_REPEAT_BEFORE_RESEND = 10   # repeats of one host ack before we assume a loss
-NULL_REEMIT_EVERY = 12    # re-send the terminator every N polls (~5/s), not every VBlank
-NI_ACK_WAIT_RESEND = 12   # while awaiting the host's ack of our current NI sub-frame, re-send it
-                          # this often (~5/s) - the same proven pacing, but aimed at the sub-frame
-                          # the host is actually waiting for instead of at a repeat-count guess.
-NULL_REEMIT_MAX = 30      # ~6s of paced re-sends before giving up on a stuck host
-RTO_BOOTSTRAP_MS = 200    # RTO while sampleless so the connect J/C retransmit until the host engages (NOT a floor)
-# K-ack pacing: the K-ack is the emulator's ack of a received host poll. The host polls ~60x/s, so
-# acking every poll offers ~60 reliable frames/s ON TOP of the per-VBlank 'T' - far more than this
-# bridge carries (throughput is window/RTO: MAX_INFLIGHT 6 over an RTO that climbs to its 670ms
-# ceiling is ~9 frames/s). Measured on hardware (joiner_entry_reference): the window filled with
-# obsolete K and the child emitted 0-3 slots/s against a console polling at 60-97/s.
-# So K SUPERSEDES rather than queues: only the NEWEST un-acked host ts is pending (K is a monotonic
-# ts ack and the host re-sends any 'T' we leave un-acked, so an older K carries nothing a newer one
-# does not), and at most ONE goes out per VBlank.
-# The count it carries is NOT droppable, though. `k_seq` is the running total of host 'T' frames we
-# have received, incremented on receipt, and the console's parent uses it as the DRAC ack that gates
-# RfuMain2_Parent's `(lman.parentAck_flag & parentSlots) == parentSlots` [link_rfu_2.c:867]. That gate
-# does nothing until the parent finalizes (RfuMain1_Parent takes the pre-FINALIZED branch), so an
-# under-reported k_seq is invisible right up to the trade-room entry and then wedges it: gSendCmd is
-# never cleared by MoveSendCmdToRecv, SEND_PLAYER_IDS never reaches the wire, and the parent stops
-# transmitting altogether. Measured (j23): 247 host 'T', k_seq 51, one UNI frame then silence for 125s.
-# K in-flight cap. This is now the ONLY bound on the K layer: a pending K goes out regardless of the
-# send window, exactly like the child-liveness override below and for the same reason - a full window
-# costs throughput, a withheld ack costs the link. Supersession makes that safe: at most ONE K is ever
-# pending, so we offer at most one per VBlank and never more than K_INFLIGHT_MAX unacked at a time.
-#
-# Measured (j24, hardware): with K gated a slot TIGHTER than the 'T' the entry phase ran at out=24/24
-# with k=0/s - our own idle UNI slots filled a window draining at ~2/s and locked the K out
-# permanently, so the console never learned we had received its finalize poll and went quiet. The
-# ordering was backwards: the K is not the droppable frame here, it is the frame the peer is blocked
-# on. (The older worry - that K crowds out the recv-NI ack during a host NI flood - was written when K
-# queued one frame per host poll. It cannot recur now that K supersedes to one pending frame.)
+RECV_NI_REACK_EVERY = 20
+# DO NOT RAISE THESE: child registration must finish inside the parent's establishConnection window of 240/360 frames
+# [link_rfu_2.c:340-345, 522-527], and the host's librfu NI receiver is intolerant of extra sub-frames - faster re-sends dropped the link.
+HOST_ACK_REPEAT_BEFORE_RESEND = 10
+NULL_REEMIT_EVERY = 12
+NI_ACK_WAIT_RESEND = 12
+NULL_REEMIT_MAX = 30
+RTO_BOOTSTRAP_MS = 200    # RTO while sampleless, so the connect J/C retransmit until the host's reliable side engages (~2s in); NOT a floor
+# K supersedes rather than queues (only the newest un-acked host ts is pending, one per VBlank) and is NOT window-gated:
+# the parent blocks its whole post-finalize sequence on the DRAC ack it carries [link_rfu_2.c:867]. k_seq is the running
+# count of host 'T' frames received; under-reporting it wedges the trade-room entry.
 K_INFLIGHT_MAX = 4
-# CHILD LIVENESS. Measured in joiner_entry_reference: the console polled at 60-97 'T'/s while the
-# child emitted 0-3/s, going quiet for 0.6s, 0.8s, 1.0s, 1.2s, 2.2s, 2.7s and 2.9s at a stretch -
-# because the Pia send window was full (see the K flood above) or _gba_frame() had nothing new to
-# say. The host's own NI took 11.6s to complete instead of ~0.2s, SEND_PLAYER_IDS did not arrive
-# until 22s after the host's 'A', and the LinkPlayer block exchange then died mid-stream.
-#
-# For scale, FRLG configures librfu with MC_TimerCount = 32 [link_rfu_2.c:129], documented as
-# "x16.7ms" [AgbRfu_LinkManager.h:122] = ~534ms, with linkRecovery_enable = FALSE
-# [link_rfu_2.c:136] - no recovery, straight to RFU_DISCONNECT_ERROR. Treat that as an ORDER OF
-# MAGNITUDE, not a proven bound on 'T' silence specifically: the reference capture has a real
-# console sending zero 'T' across the ~2.4s join-textbox gap, so the emulator's RFU wrapper clearly
-# keeps something alive below the game slot. What IS established is the shape - this codebase's most
-# frequent bug by far is our side going quiet while the console waits on us - so the per-VBlank
-# child slot is treated as a liveness obligation and not merely as data: the congestion window may
-# DELAY it, but it must not silence it indefinitely.
-CHILD_SILENCE_LIMIT = 20   # VBlanks (~335ms) without a child 'T' before we emit one regardless
+# The per-VBlank child slot is a liveness obligation (FRLG's MC_TimerCount = 32 ~ 534ms, linkRecovery disabled
+# [link_rfu_2.c:129,136]); the window may DELAY it, never silence it.
+CHILD_SILENCE_LIMIT = 20   # VBlanks (~335ms)
 
-# Ceiling on the liveness override, as a multiple of the send window. The override exists to outlast
-# a congested link, NOT to keep talking to a peer that has gone away: once the console stops
-# responding entirely, every forced slot goes unacked forever and `outstanding` grows without bound
-# (observed live at 74/24 and climbing, with rx frozen). Past this the peer is genuinely gone and
-# more slots cannot help, so the window resumes being a hard cap and the run's leave tail ends it.
-SILENCE_OVERRIDE_CEIL = 2  # allow outstanding up to SILENCE_OVERRIDE_CEIL * max_inflight
-# Poll credits. librfu's child readies a slot only when the parent's poll actually landed
-# [MscCallback_Child: rfu_UNI_readySendData under recv.newDataFlag], so one child slot per host 'T'
-# is the native cadence. Measured (j29, hardware): free-running at 60/s against a host polling at
-# 3/s pinned out=24/24 and the RTO at its 670ms ceiling, and the console's parent is stop-and-wait
-# on our K-ack - so every surplus idle slot directly delayed the one frame it was blocked on, and
-# its LinkPlayer block crawled at ~1 fragment/s until it gave up. Credits cap the burst; the
-# CHILD_SILENCE_LIMIT floor still guarantees we never go quiet on a host that has paused.
-SLOT_CREDIT_MAX = 2        # host polls we may owe a reply to at once
-# Slots we may spend per received poll WHILE WALKING TO THE SEAT. This is 1 and MUST STAY 1.
-# The parent keeps exactly ONE child slot per poll (`gRfu.childRecvBuffer[i]`, overwritten by the
-# adapter) and checks its rolling tag against the last one it kept: any tag that is not exactly
-# +1 mod 8 counts a child receive error, and the FIFTH one is fatal
-# [link_rfu_2.c:876-892, RfuMain2_Parent -> RfuSetErrorParams(F_RFU_ERROR_8 | F_RFU_ERROR_1)].
-# So a second slot inside one poll is not "faster", it is a guaranteed dropped tag, and five polls
-# later the console tears the link down. Survival in the trade room scales inversely with how far
-# past one-per-poll we go, measured off the captures:
-#     j43  free-running (~57/s vs its ~55/s polls)  console stopped 0.10s after the walk started
-#     j56  2 slots per poll                         console stopped 0.28s after the walk started
-#     j50  1 slot per poll                          console kept polling for 5.8s
-# j56 is also the counter-example to the runway argument this constant used to make: the console
-# polled its trade room at 43/s, not the 13-16/s of j50, so a credit-paced 112-frame route fits in
-# ~2.6s. The walk is not exempt from the pacer and cannot be made exempt.
+# Ceiling on the liveness override: once the peer is gone forced slots go unacked forever, so the window resumes as a hard cap.
+SILENCE_OVERRIDE_CEIL = 2
+# One child slot per host poll is librfu's native cadence [MscCallback_Child]; surplus idle slots delay the K-ack the
+# stop-and-wait parent is blocked on.
+SLOT_CREDIT_MAX = 2
+# MUST STAY 1: the parent keeps exactly one child slot per poll and treats any tag not +1 mod 8 as a receive error, fatal
+# on the fifth [link_rfu_2.c:876-892]; a second slot per poll is a guaranteed dropped tag.
 WALK_SLOTS_PER_POLL = 1
-ACK_PERIOD = 2             # delayed-ack interval: a standalone bulk-ack is owed at most every ~33ms (2
-                           # VBlanks). The ack piggybacks on a data datagram whenever one is being sent this
-                           # VBlank and goes out standalone only when one is owed (received data / a gap to
-                           # NACK) and the floor has elapsed. A faster ack frees the peer's send window
-                           # sooner; the correct RTT-driven RTO keeps this from flooding the half-duplex link.
-COMPRESS_MIN = 62          # zstd-compress an OUT datagram iff its message body is >= this many bytes - the
-                           # EXACT rule the real Switch host uses (measured across the reference captures IN: largest raw=61,
-                           # smallest compressed=62, zero overlap = a clean size threshold). Below it, frames
-                           # go raw. Combined with crypto.ZSTD_LEVEL=4 this makes our wire BYTE-IDENTICAL to a
-                           # real FRLG joiner. Small frames (single gba slot / ack ~16-37B) stay raw as on HW.
+ACK_PERIOD = 2             # delayed-ack interval in VBlanks (~33ms); the ack piggybacks on data datagrams and goes standalone only when owed
+COMPRESS_MIN = 62          # zstd-compress iff the body is >= 62 bytes: the real host's exact threshold (largest raw 61, smallest compressed 62)
 
-# The child 'T' timestamp (body[0:4], u32 LE) is a per-NEW-frame counter that must INCREASE per new
-# frame and be REUSED on a Pia retransmit. The reference capture's child seeded it ~0x362e; the host
-# appears to gate on monotonicity + rate, not an absolute base (uncertain on the live link), so we seed nonzero.
+# Per-new-frame 'T' counter, reused on a Pia retransmit; the host gates on monotonicity, so seed nonzero.
 TS_SEED = 0x0000362E
 
 
@@ -249,40 +74,25 @@ class Sim:
                  linkstate=None, connect_id=None, log=lambda *a: None,
                  pace_ms=0, pace_clock=None):
         self.t = transport
-        # TX pacer (see PACE_MIN_GAP_MS): pending [(framing_key, framing_kwargs, [messages])], the
-        # wall-clock ms of the last datagram actually sent, and the clock (time.monotonic unless a
-        # test injects one). pace_ms=0 disables it (offline replay/tests send immediately).
         self.pace_ms = pace_ms
         self._pace_clock = pace_clock or (lambda: time.monotonic() * 1000.0)
         self._pace_pending = []
         self._pace_last_ms = None
-        self._last_rx_ms = None          # wall-clock ms of the last datagram from the console
+        self._last_rx_ms = None
         self.reply_holdoff_ms = REPLY_HOLDOFF_MS if pace_ms else 0
-        self.paced_merges = 0            # messages that rode a datagram with earlier pending ones
-        self._carry = []                 # [[(seq, flagsA, inner)], ...] data frames of the last CARRY_DEPTH datagrams
-        self.carried = 0                 # frames re-sent by carry-forward (diagnostic)
+        self.paced_merges = 0
+        self._carry = []
+        self.carried = 0
         self.crypto = pia_crypto
         self.engine = engine
-        # Held-keys overworld link-state engine [frlgsim/linkstate.py]. When present, the sim emits a
-        # 0xBE00 SEND_HELD_KEYS keepalive on an idle VBlank ONLY while engine.in_seat_phase (the
-        # overworld/cable-seat phase, entry P0..P3) - mirroring SendKeysToRfu, which the real child
-        # runs ONLY while gRfu.callback == SendKeysToRfu [link_rfu_2.c:1069-1080,1089]. That callback
-        # is cleared the instant we warp out of the cable seat (Task_StartWirelessTrade case 0
-        # ClearLinkRfuCallback() -> gRfu.callback = NULL [cable_club.c:918]), BEFORE the trade menu's
-        # party exchange (BufferTradeParties [trade.c:935]) and the later gMain.callback1 =
-        # CB1_UpdateLink swap [trade.c:1085]. So from the party exchange (S4) through the trade FSM and
-        # the post-trade save an idle VBlank is a bare all-zero idle slot, NOT 0xBE00; held keys are
-        # only re-armed back in the overworld field [field_fadetransition.c:226]. Held keys NEVER
-        # override a real SEND_BLOCK/LINKCMD slot (we ask the engine first; held keys take an IDLE slot
-        # only) - and engine.in_seat_phase latches off at the party exchange (entry.seat_phase_over).
+        # Held keys (0xBE00) go out on an idle VBlank ONLY while engine.in_seat_phase, mirroring SendKeysToRfu, which runs only
+        # while gRfu.callback == SendKeysToRfu [link_rfu_2.c:1069-1089] - cleared on the warp out of the cable seat
+        # [cable_club.c:918]. Held keys never override a real slot.
         self.linkstate = linkstate
-        self.conn = conn                # ConnectionManager (None = trade-only, e.g. replay)
-        # LIVE (conn present): bound the engine's barrier standby burst per count so a never-completing
-        # round can't flood the host (offline keeps the every-VBlank cadence its MockHost timing needs).
+        self.conn = conn
         if conn is not None and hasattr(engine, "barrier"):
             engine.barrier.max_emits = BARRIER_EMITS
-        # LIVE: gate READY_TO_TRADE on the FULL BufferTradeParties (ribbons/settle) so we don't send it
-        # mid-exchange (the offline MockHost model has no mail/ribbons, so this stays off there).
+        # LIVE: gate READY_TO_TRADE on the full BufferTradeParties (the offline MockHost has no mail/ribbons).
         if conn is not None and hasattr(engine, "_live"):
             engine._live = True
         self.our_ip = our_ip
@@ -291,137 +101,77 @@ class Sim:
         self.compress = compress
         self.header_flags = header_flags
         self.log = log
-        self.info = getattr(log, "info", log)   # clean milestone sink (default-mode narration)
+        self.info = getattr(log, "info", log)
 
         self.slot = rfu.SlotBuilder()
-        # child 'T' frame counter (u32). One per NEW 'T' we emit; reused on a Pia retransmit (the
-        # retransmit re-offers the already-built frame bytes, so ts is baked in at build time).
         self.ts = TS_SEED
-        # emulator 'K' ack layer: the host sends a 'T' per VBlank and we ack it with a 'K' (the host
-        # sends us NO K). `k_seq` is a CUMULATIVE COUNT OF HOST 'T' FRAMES RECEIVED, not a counter of
-        # the K frames we send - it is incremented on RECEIPT of each unique host ts, and whichever K
-        # actually goes out carries the running total. Verified in joiner_entry_reference: only 96 K
-        # frames reached the console yet their k_seq ran 1..532 with large jumps (16->61, 138->259,
-        # 300->434), exactly tracking the host 'T' index, and the console accepted every one. So gaps
-        # in the K stream are fine; a k_seq that under-reports what we have received is not.
-        # `mid` (1-based position within the OUT Pia datagram) is assigned at flush.
-        self._k_seq = 0                  # host 'T' frames received so far = the value the next K carries
-        self._acked_ts = set()           # host T ts values already K-acked (dedup)
-        self._pending_k_ts = None        # NEWEST host ts still owing a K (older ones are superseded)
-        self._k_seqs = set()             # reliable seqs of OUR K-acks still in flight (for K_INFLIGHT_MAX)
-        # Emission counters for the live diagnostic: the joiner's whole failure mode is "we stopped
-        # talking", and it is invisible without a rate. host_t_in / t_out are host polls received and
-        # child slots emitted; k_out is K-acks emitted. [live] logging is verbose-gated and --verbose
-        # is banned on live runs, so these are reported on the INFO sink by frlgtrade.py.
-        self.host_t_in = 0               # host 'T' polls received (NI sub-frames, UNI and idle)
-        self._last_t_tick = 0            # VBlank of the last child 'T' queued (CHILD_SILENCE_LIMIT)
-        self.silence_forced = 0          # child slots emitted purely to satisfy the liveness bound
-        self.max_silence = 0             # worst run of VBlanks with no child 'T' (the run classifier)
-        self.t_out = 0                   # child 'T' frames queued (NEW frames, not retransmits)
-        self.k_out = 0                   # child 'K' acks queued
-        # NI sender machine: after the host accepts our 'C' (the 'A' frame), the child
-        # runs the librfu NI sender to deliver its RfuGameData before any UNI trade traffic. Built
-        # lazily once we know our identity (from the engine's LinkPlayer); None until the NI phase.
+        self._k_seq = 0
+        self._acked_ts = set()
+        self._pending_k_ts = None
+        self._k_seqs = set()
+        self.host_t_in = 0
+        self._last_t_tick = 0
+        self.silence_forced = 0
+        self.max_silence = 0
+        self.t_out = 0
+        self.k_out = 0
         self._ni = None
         self._ni_done = False
         self._ni_built = False
-        # librfu's NI transfer is STOP-AND-WAIT: the receiver takes one sub-frame, acks it, and only
-        # then accepts the next. This repo's own parent implements exactly that
-        # [rfu_leader.py _parent_waiting], but NISender did not - next_slot() advanced on every call,
-        # so the child dumped all six sub-frames in ~92ms. The host registered the first, acked it,
-        # and the rest arrived while its NI receiver was still on that one. Recovery then fell to the
-        # "host repeated its ack 10 times" guess at ~5/s, which measured ~2s PER sub-frame on
-        # hardware (j21) - roughly 10s for the transfer against the parent's 4-6s
-        # establishConnection budget, so the host disconnected every time. Sending faster made it
-        # worse (j22, dead in 0.7s) because that just puts more out-of-sequence sub-frames into the
-        # host's NI receiver. Gate on the ack instead: one sub-frame in flight, advance the moment
-        # the host acknowledges it, so a clean link finishes the transfer in ~6 round-trips.
-        self._ni_awaiting = None     # (state, n, phase) of the sub-frame awaiting the host's ack
-        self._ni_wait_ticks = 0      # polls spent awaiting it (paces the re-send)
-        # RECV-side NI: right after the host acks OUR send-NI it runs its OWN librfu NI
-        # sender (its connection/join-status data). The child must ACK every host NI sub-frame (ack=1,
-        # mirroring state/n/phase) or the host's NI transfer never completes and the host faults the
-        # link ("Communication error"). We DISCARD the host's NI data content (no reassembly needed).
+        # librfu's NI transfer is stop-and-wait: one sub-frame in flight, advance on the host's ack; sending them faster puts
+        # out-of-sequence sub-frames into the host's receiver and it disconnects.
+        self._ni_awaiting = None
+        self._ni_wait_ticks = 0
         self._ni_recv = ni.NIReceiver()
-        # recv-NI ack dedup: we hold the ack for the host's CURRENT NI sub-frame and re-emit it once per
-        # DISTINCT sub-frame (it updates when the host advances) - NOT a growing queue. An append-per-host-
-        # frame queue spammed hundreds of duplicate acks when the host re-sent a sub-frame under loss
-        # (observed: out NI_END x125); a single current-ack stays 1:1 with the host's sub-frames.
-        self._cur_ni_ack = None          # slot bytes for the latest host NI sub-frame's recv-ACK
-        # ONE recv-NI ack in flight per host sub-frame. The recv-NI ack is idempotent (the host needs only
-        # its CURRENT sub-frame acked) - so we queue at most one reliable ack for it and let the reliable
-        # layer retransmit that one under loss, instead of queuing a fresh ack every poll. Queuing one per
-        # poll piles a backlog of stale acks; in-order delivery then delays the host's needed ack until the
-        # backlog drains, so the host advances ever-slower and the NI handshake deadlocks (a latent race).
-        self._ni_ack_seq = None          # reliable seq of the recv-NI ack currently in flight (or None)
-        self._ni_ack_bytes = None        # the _cur_ni_ack bytes that seq carries (to detect a sub-frame change)
-        self._emitted_ni_ack = None      # set by _gba_frame when it returns a recv-NI ack, so _drive_reliable records its seq
-        self._host_uni_seen = False      # host sent its first UNI slot (state 4) => its NI is done -> UNI
-        # recv-NI must go QUIET at the host's NI NULL (observed Communication-error). The host re-sends
-        # NI_END until it sees our ack, THEN sends NULL; after NULL there is a ~2.4s join-textbox gap
-        # before UNI where the reference capture sends ZERO 'T'. We were re-emitting the stale NI_END ack right through
-        # that gap -> a malformed/out-of-protocol slot -> in-game "Communication error". Stop acking at
-        # NULL: emit _cur_ni_ack only until NULL is seen, then K/bulk-acks only until _host_uni_seen.
+        # One current recv-NI ack, re-emitted per DISTINCT host sub-frame; a per-frame queue spammed hundreds of duplicates under loss.
+        self._cur_ni_ack = None
+        # At most one reliable recv-NI ack in flight; queuing one per poll backlogs stale acks and deadlocks the handshake.
+        self._ni_ack_seq = None
+        self._ni_ack_bytes = None
+        self._emitted_ni_ack = None
+        self._host_uni_seen = False
+        # Stop acking at the host's NI NULL: re-emitting the stale NI_END ack through the ~2.4s join-textbox gap causes the
+        # in-game Communication error.
         self._host_ni_null_seen = False
-        self._host_ni_ack_state = None    # LLSF state of the host's most recent ack of OUR send-NI
-        self._host_ni_repeat = 0          # consecutive repeats of the host's current NI sub-frame
-        self._host_ni_ack_key = None      # (state,n,phase) of the host's last ack of OUR NI
-        self._host_ni_ack_repeat = 0      # how many times it has repeated that ack
-        self._host_ni_resend = None       # the sub-frame it is waiting for, to re-send
-        self._null_reemits = 0            # bounded re-sends of our NI terminator
-        self._null_ticks = 0              # polls spent waiting to re-send it
-        self._ni_status_logged = False    # logged the host's recv-NI join status once
-        self.ni_rejected = False          # host returned a non-JOIN_GROUP_OK status -> abort the trade
-        self.host_disconnected = False    # host sent a emulator 'D' (0x44) disconnect -> link closing
+        self._host_ni_ack_state = None
+        self._host_ni_repeat = 0
+        self._host_ni_ack_key = None
+        self._host_ni_ack_repeat = 0
+        self._host_ni_resend = None
+        self._null_reemits = 0
+        self._null_ticks = 0
+        self._ni_status_logged = False
+        self.ni_rejected = False
+        self.host_disconnected = False
         self.out_seq = RELIABLE_SEQ_START
-        # Pia packet id: PER-CHANNEL counters keyed by Pia-header dst var-id (observed: the reference capture keeps THREE
-        # independent pktid counters - dst=0x0000 establishing, dst=0x0001 session/RTT (1..960), dst=
-        # host-var reliable/data (1..4415)). A single global counter SKIPPED reliable pktids once RTT/
-        # Session interleaved, risking host-side drop/reorder of our reliable frames -> under-ack ->
-        # BufferIsFull. Each channel starts at 1 and skips 0 on rollover; establishing frames force 0.
+        # Pia packet ids are per-channel counters keyed by header dst var (dst=0 establishing, 0x0001 session/RTT, host-var
+        # reliable); a single global counter skips reliable pktids.
         self._pktid_by_dst = {}
         self.last_in_seq = 0
-        self._recv_hi = None              # highest host reliable seq seen (wrap-aware) for the cumulative ack
-        # Pia RELIABLE sliding-window connection. The peer ignores reliable DATA until we OPEN the stream
-        # with an Initialized frame (the metadata/title frame); the two sides then bulk-ACK each other.
-        # ReliableLink does the RETRANSMISSION (frames drop on this radio) + in-order delivery, with an
-        # RTT-driven RTO and selective-repeat recovery. GAP-TARGETED retransmit (RTX_GAP_LIMIT, in
-        # _drive_reliable) re-sends only the gap - the peer buffers out-of-order, so the gap alone drains
-        # its run. Live only (conn!=None); offline replay/tests keep the bare path.
+        self._recv_hi = None
         self.rel = reliable.ReliableLink(start=RELIABLE_SEQ_START, max_inflight=MAX_INFLIGHT,
                                          rtt_jitter_k=RTT_JITTER_K, dup_nack_threshold=DUP_NACK_THRESHOLD,
                                          rto_ceil_ms=RTO_CEIL_MS, rto_backoff=RTO_BACKOFF,
                                          rto_bootstrap_ms=RTO_BOOTSTRAP_MS)
         self._rel_opened = False
-        self._ack_owed = False           # received host reliable DATA we haven't bulk-acked yet
-        self._last_ack_tick = -100       # last tick we emitted a ctrl bulk-ack (steady-cadence floor)
-        self._tick = 0                   # VBlank counter, drives the retransmit timers
-        # emulator RFU connect ('C') frame: our OWN 2-byte RFU connection id, self-chosen. Any nonzero
-        # value works - the host does not match it, it just seats our slot - so a random nonzero id is
-        # passed in. None (offline replay/tests) => we do NOT send a 'C' (the host stays bulk-ack-only
-        # until it sees one).
+        self._ack_owed = False
+        self._last_ack_tick = -100
+        self._tick = 0
         self._connect_id = bytes(connect_id) if connect_id else None
         self._gba_conn_sent = False
-        self._gba_accepted = False        # have we seen the host's emulator connect accept ('A')
-        # Emission is POLL-PACED with a liveness floor: _drive_reliable spends one credit (one host
-        # 'T' received) per child slot, and emits regardless once CHILD_SILENCE_LIMIT VBlanks have
-        # passed with nothing sent. That is librfu's own child cadence, and it still keeps us fed
-        # across the NI->UNI seam - the earlier free-run version was written to fix silence there, but
-        # the floor is what actually fixes it; free-running only added congestion (see SLOT_CREDIT_MAX).
+        self._gba_accepted = False
         self._slot_credit = 0
-        self._last_seat_emit = -100      # last tick we emitted a seat/leave held-keys (keepalive floor)
+        self._last_seat_emit = -100
         self._seen_in = set()
         self.rx_count = self.tx_count = 0
-        self.rx_fail = 0                 # host datagrams that failed to decrypt (SSID/key mismatch)
-        self.rx_protos = {}              # proto id -> count of IN Pia messages seen
-        self._dbg = None                 # set to a list to capture per-VBlank block-send emission decisions
+        self.rx_fail = 0
+        self.rx_protos = {}
+        self._dbg = None
 
-        # our var id is SELF-CHOSEN and announced; the host's is LEARNED from incoming headers
-        # (the host's first packet has dst=0 until it knows ours, so only src is reliable).
+        # our var id is self-chosen; the host's is learned from incoming headers (its first packet has dst=0).
         self.our_var = our_var.to_bytes(2, "big")
         self.host_var = reliable.STATION_HOST.to_bytes(2, "big")
         self._learned = False
-        # keep the ConnectionManager's self-chosen var id in sync with ours (it stores an int)
         if conn is not None:
             conn.our_var = int.from_bytes(self.our_var, "big")
 
@@ -439,10 +189,8 @@ class Sim:
 
     @property
     def _now_ms(self):
-        """The VBlank counter as milliseconds - the clock the reliable layer runs on."""
         return self._tick * MS_PER_VBLANK
 
-    # ---- capture -----------------------------------------------------------
     def _capture(self, direction, datagram, src, dst):
         if not self._cap:
             return
@@ -454,13 +202,11 @@ class Sim:
             "len": len(datagram), "hex": datagram.hex(),
         }) + "\n")
 
-    # ---- RX ----------------------------------------------------------------
     def process_datagram(self, datagram, src_ip):
         if not cryptomod.is_pia(datagram):
             return False
         self._capture("in", datagram, f"{src_ip}:12345", f"{self.our_ip}:12345")
         hdr = cryptomod.PiaHeader.unpack(datagram)
-        # Pia header is [dst_var][src_var]; the host announces its own var id as src.
         if not self._learned and hdr.src != 0:
             self.host_var = hdr.src.to_bytes(2, "big")
             self._learned = True
@@ -485,26 +231,19 @@ class Sim:
                 rl = reliable.parse_reliable(m.payload)
                 if rl is None:
                     continue
-                if self.conn is None:                 # offline replay: feed frames as they arrive
+                if self.conn is None:
                     self._note_in_seq(rl.seq)
                     if rl.flagsA & 0x01 and rl.payload[:1] == b"\x57":
                         self._on_gba_in(rl.payload)
-                elif rl.flagsA & 0x01:                # live AppData: PROCESS AS IT ARRIVES (the emulator
-                    # is order-tolerant - it reassembles blocks by fragment index and re-pulls), so we
-                    # deliver each UNIQUE frame the instant it lands (never stall the synchronous RFU
-                    # exchange on a gap). The PIA ACK is an honest selective-repeat ack: note_received tracks
-                    # the contiguous recv_next + the out-of-order set, and ack_payload carries a selective
-                    # MASK so the peer fast-retransmits exactly its drops.
+                elif rl.flagsA & 0x01:                # live: deliver each unique frame as it lands (the emulator is order-tolerant), never stall the RFU exchange on a gap
                     self._ack_owed = True
                     if rl.seq not in self._seen_in:
                         self._note_in_seq(rl.seq)
                         if rl.payload[:1] == b"\x57":
                             self._on_gba_in(rl.payload)
-                    self.rel.note_received(rl.seq)       # contiguous recv_next + recv_ooo for the selective ack
-                else:                                 # live FLAGSA_CTRL: peer's bulk-ack of OUR sends
+                    self.rel.note_received(rl.seq)
+                else:
                     ackid, mask = reliable.parse_bulk_ack(rl.payload)
-                    # frees acked frames (cumulative + selective mask); now_ms lets it sample the
-                    # reliable round-trip (un-retransmitted frames) to drive the RTO.
                     self.rel.on_ack(ackid, mask, now_ms=self._now_ms)
             elif self.conn:
                 self.conn.on_message(m.proto, m.payload, tick=self._tick)
@@ -512,56 +251,36 @@ class Sim:
         return True
 
     def _on_gba_in(self, payload):
-        """Dispatch one IN emulator frame (host/parent) by type.
-          'A' (0x41): the host's emulator connect ACCEPT - the RFU link is up; arm the NI phase.
-          'T' (0x54): a host slot frame. EVERY unique host T ts is K-acked (incl. idle slot_len<=1).
-              UNI 'T' (the mpId rows) is fed to the trade engine; a host NI 'T' is the host's game-data
-              handshake which our recv side must (eventually) ack - it is consumed here (its slots are
-              not UNI, so the engine ignores them) and acked via the same per-ts K.
-          'K' (0x4b): the host never sends us K, so this is informational only."""
         rec = gbaframe.parse_in(payload)
         if rec is None:
             return
         typ = rec.get("type")
         if typ == "A" and not self._gba_accepted:
-            self._gba_accepted = True              # host's emulator connect ACCEPT (0x41)
+            self._gba_accepted = True
             self.log(f"[sim] host ACCEPTED emulator connect ('A' 0x41): {payload[:10].hex()} "
                      f"-> our slot is seated; RFU link up, starting the NI handshake")
             self.info("Host accepted the link.")
             return
         if typ == gbaframe.TYPE_D and not self.host_disconnected:
-            # host emulator DISCONNECT ('D' 0x44): the RFU link is going down. Surface it (a clean leave
-            # signal) instead of silently ignoring it and spinning on a dead link.
             self.host_disconnected = True
             self.log("[sim] host emulator DISCONNECT ('D' 0x44) - RFU link closing")
             return
         if typ != "T":
             return
-        # K-ack EVERY unique host T ts (one K per unique ts; host idle T is still acked).
         ts = rec.get("ts")
         self.host_t_in += 1
         if ts is not None and ts not in self._acked_ts:
             self._acked_ts.add(ts)
-            self._k_seq += 1                       # cumulative host-'T' receive count (see __init__)
-            self._pending_k_ts = ts                # supersede any older pending K (see K_INFLIGHT_MAX)
-            if len(self._acked_ts) > 8192:         # bound memory on a long session
+            self._k_seq += 1
+            self._pending_k_ts = ts
+            if len(self._acked_ts) > 8192:
                 self._acked_ts = set(list(self._acked_ts)[-2048:])
-        # RECV-side NI: a host NI-window 'T' (NI_START/NI/NI_END/NULL, NOT UNI) carries record['ni'].
-        # When it is the host's OWN outgoing NI (ack=0) enqueue a recv-NI ACK slot MIRRORING its
-        # (state, n, phase) with ack=1, sz=0 (the host's NI data content is discarded). NIReceiver
-        # marks the host's NI complete on the host NI_END (or NULL). This is ORTHOGONAL to the K layer
-        # above (the host NI 'T' is still K-acked); the ack rides a SEPARATE child 'T' (see _gba_frame).
         ni_rec = rec.get("ni")
         if ni_rec is not None:
             ack_slot = self._ni_recv.on_host_ni(ni_rec)
             if ack_slot is not None:
                 if ack_slot == self._cur_ni_ack:
-                    # The host is REPEATING the same sub-frame, which means it has not seen our
-                    # ack. Emitting the ack once per distinct sub-frame assumes reliable delivery;
-                    # observed on hardware: the host re-sent NI_START 480 times over 8s, timed out
-                    # its own NI, and the entry handshake never recovered. Periodically clear the
-                    # in-flight marker so the ack is re-emitted - every poll would spam hundreds of
-                    # duplicates (a documented past failure), so re-ack on a slow cadence.
+                    # The host repeating a sub-frame means it has not seen our ack; re-ack on a slow cadence (every poll spams duplicates).
                     self._host_ni_repeat += 1
                     if self._host_ni_repeat % RECV_NI_REACK_EVERY == 0:
                         self._ni_ack_bytes = None
@@ -569,11 +288,9 @@ class Sim:
                             self.info("Host is repeating its NI sub-frame; re-acking it.")
                 else:
                     self._host_ni_repeat = 0
-                self._cur_ni_ack = ack_slot         # latest host NI sub-frame -> the ack to re-emit
+                self._cur_ni_ack = ack_slot
             if ni_rec.get("ack") == 1:
-                # The host's ack of OUR send-NI names the last sub-frame it registered, so the one
-                # it is waiting for is the next one we emitted. A REPEATED ack means that next
-                # sub-frame was lost.
+                # A repeated host ack of OUR send-NI names the sub-frame it is waiting for: the next one we emitted was lost.
                 key = (ni_rec.get("state"), ni_rec.get("n"), ni_rec.get("phase"))
                 self._host_ni_ack_state = ni_rec.get("state")
                 if key == self._host_ni_ack_key:
@@ -588,10 +305,7 @@ class Sim:
                     self._null_reemits = 0
                     self._null_ticks = 0
             if ni_rec.get("state") == rfu.LCOM_NULL and ni_rec.get("ack") == 0:
-                self._host_ni_null_seen = True       # host's NI terminator -> stop acking, go quiet
-            # host join STATUS: log it once; a non-OK value means the host REJECTED us (full
-            # lobby / blacklist / version mismatch), so flag it - else we'd ack forever then hang on a
-            # UNI that never comes.
+                self._host_ni_null_seen = True
             st = self._ni_recv.status
             if st is not None and not self._ni_status_logged:
                 self._ni_status_logged = True
@@ -601,21 +315,13 @@ class Sim:
                     self.ni_rejected = True
                     self.log(f"[sim] WARNING: host NI join status = {st} (NOT JOIN_GROUP_OK=5) -> host "
                              f"REJECTED our join; the trade cannot proceed")
-        # The host's FIRST UNI slot (parent LLSF state 4) means its NI is finished and it has entered the
-        # UNI trade phase -> our recv-NI is done. This is the transition trigger (it guarantees we never
-        # send a UNI slot before the host itself is in UNI, which would fault its RFU link manager).
+        # The host's first UNI slot ends its NI; sending a UNI slot before the host itself is in UNI faults its link manager.
         if rec.get("llsf_state") == 4:
             self._host_uni_seen = True
-        # Count every host 'T' (NI sub-frame, NI ack, UNI, or idle keepalive) as one delivered host slot.
-        # _slot_credit is host slots delivered but not yet answered - the emission pacer spends it.
-        # The seat walk earns WALK_SLOTS_PER_POLL per poll (see the constant): its runway is short.
         _walk = self.linkstate is not None and self.linkstate.walking
         _per_poll = WALK_SLOTS_PER_POLL if _walk else 1
         self._slot_credit = min(self._slot_credit + _per_poll,
                                 SLOT_CREDIT_MAX * _per_poll)
-        # Feed the host's UNI slots (the mpId gRecvCmds) to the trade engine; the parse_in record's
-        # `positional` alias is exactly what the engine reads. A host idle/NI 'T' has no
-        # UNI slots, so feed_in_frame is a no-op for it (it still got K-acked + counted as a tick).
         self.engine.feed_in_frame(rec)
 
     def _note_in_seq(self, seq):
@@ -627,28 +333,20 @@ class Sim:
         if ((seq - self.last_in_seq) & 0xFFFF) < 0x8000:
             self.last_in_seq = seq
 
-    # ---- TX ----------------------------------------------------------------
     def _next_pktid(self, dv):
-        """Per-CHANNEL Pia packet id keyed by header dst var-id (observed: the reference capture keeps independent
-        counters per dst - dst=0x0001 session/RTT (1..960), dst=host-var reliable/data (1..4415)).
-        Each channel counts from 1, skipping 0 on rollover, so the reliable channel stays contiguous
-        even when RTT/Session frames interleave on their own dst. The establishing connection-exchange
-        frames (Net 0x12 / Session join) ride pktid 0 by passing pktid=0 explicitly to _send."""
         pktid = self._pktid_by_dst.get(dv, 1)
         self._pktid_by_dst[dv] = pktid + 1 if pktid < 0xFFFF else 1
         return pktid
 
     def flush_paced(self):
-        """Send the oldest pending paced group as ONE datagram if PACE_MIN_GAP_MS has elapsed since the
-        last datagram. Called from _send_messages, tick(), and by the live loop between ticks (so the
-        window is honoured at sub-VBlank resolution). Returns the datagram or None."""
+        """Called between ticks too, so PACE_MIN_GAP_MS and the reply hold-off are honoured at sub-VBlank resolution."""
         if not self._pace_pending:
             return None
         now = self._pace_clock()
         if self._pace_last_ms is not None and now - self._pace_last_ms < self.pace_ms:
             return None
         if self._last_rx_ms is not None and now - self._last_rx_ms < self.reply_holdoff_ms:
-            return None                   # the console just transmitted - stay out of its danger window
+            return None
         key, kw, msgs = self._pace_pending.pop(0)
         self._pace_last_ms = now
         return self._send_messages(msgs, _paced=True, **kw)
@@ -656,17 +354,10 @@ class Sim:
     def _send_messages(self, messages, *, dst_var=None, src_var=None, compress=False,
                        footer=True, establishing=False, unicast=True, pktid=None, footer_var=None,
                        _paced=False):
-        """Frame N Pia messages into ONE datagram and send it (observed: the reference capture BATCHES up to 9 reliable
-        messages per datagram; we used to emit one datagram per frame -> ~1.6x+ datagram flood ->
-        host SEND-buffer overflow (BufferIsFull)]. `messages` = [(proto, payload), ...] sharing one
-        header (same dst/src/pktid channel). The encrypted plaintext is:
-
-            [ message* , optionally zstd-compressed AS A WHOLE ]
-            [ footer: 2-byte recipient (destination) variable id, UNCOMPRESSED, only if footer ]
-            [ 0xFF padding so the total is a multiple of 16 ]
-
-        header byte5 = (padding_size << 4) | flags, flags = (1 if zstd) | (2 if establishing); the
-        footer-size byte = len(footer). One pktid per datagram (per-channel), NOT per message."""
+        """Frame N messages into ONE datagram: [messages, optionally zstd as a whole][2-byte recipient var-id footer,
+        uncompressed][0xFF pad to a multiple of 16]; header byte5 = (pad << 4) | (1 if zstd) | (2 if establishing). One pktid
+        per datagram, not per message.
+        """
         if not messages:
             return None
         if self.pace_ms and not _paced:
@@ -685,21 +376,15 @@ class Sim:
         sv = src_var if src_var is not None else int.from_bytes(self.our_var, "big")
         body = b"".join(reliable.build_message(m[0], m[1], m[2] if len(m) > 2 else None)
                         for m in messages)
-        # zstd-compress like a real FRLG joiner: the host compresses iff the message body is >= 62 bytes
-        # (COMPRESS_MIN), a pure size threshold. `compress=True` (the Session join) forces it regardless. At
-        # crypto.ZSTD_LEVEL=4 + the window-frame header this is byte-identical to the console. Auto-compress
-        # only when zstd is actually available (an explicit compress=True still raises if it isn't, as before).
         do_zstd = compress or (len(body) >= COMPRESS_MIN and cryptomod.HAVE_ZSTD)
         if do_zstd:
             body = cryptomod.compress(body)
         fsize = 0
         if footer:
-            # footer = the RECIPIENT var id, which is usually the header dst, but for RTT the header dst
-            # is the session pseudo-station 0x0001 while the recipient is still the host 0x7620.
             fv = footer_var if footer_var is not None else dv
             body += fv.to_bytes(2, "big")
             fsize = 2
-        pad = (-len(body)) % 16                      # 0xFF-pad the whole body to a multiple of 16
+        pad = (-len(body)) % 16
         body += b"\xff" * pad
         flags = (1 if do_zstd else 0) | (2 if establishing else 0)
         if pktid is None:
@@ -715,18 +400,12 @@ class Sim:
 
     def _send(self, proto, payload, *, dst_var=None, src_var=None, compress=False,
               footer=True, establishing=False, unicast=True, pktid=None, footer_var=None):
-        """Single-message convenience wrapper over _send_messages (one message per datagram) - used
-        for the connection handshake / RTT / a lone reliable frame. The reliable STREAM batches via
-        _send_messages directly (see _drive_reliable)."""
         return self._send_messages([(proto, payload)], dst_var=dst_var, src_var=src_var,
                                    compress=compress, footer=footer, establishing=establishing,
                                    unicast=unicast, pktid=pktid, footer_var=footer_var)
 
-    # ---- Pia Reliable sliding-window connection -----------------------------
     def _tx_reliable(self, seq, flagsA, inner):
-        """Wrap one inner payload in a Reliable(10) frame and send it. The header's "lowest pending
-        ack" = our send-window left edge; pure-ack (FLAGSA_CTRL) frames carry no sequence id of
-        their own, so they ride the window base seq (the reference capture reuses 0xFFF0)."""
+        """Pure-ack frames carry no seq of their own and ride the window base (the reference reuses 0xFFF0)."""
         s = RELIABLE_SEQ_START if seq is None else seq
         rel = reliable.build_reliable(s, self.rel.send_low(), inner, flagsA=flagsA)
         self._send(reliable.PROTO_RELIABLE, rel,
@@ -735,15 +414,9 @@ class Sim:
                    compress=False, footer=True, establishing=False)
 
     def _tx_reliable_batch(self, batch):
-        """Send a list of reliable frames as FEW datagrams as possible (<=RELIABLE_BATCH_MAX messages
-        each) (observed: the reference capture packs up to 9 Reliable messages per datagram - the prime BufferIsFull
-        lever). `batch` = [(seq, flagsA, inner), ...] already in wire order (retransmits, K*, T,
-        ctrl-ack). All ride the host channel (dst=host_var) so they share one per-channel pktid."""
         if not batch:
             return
-        # carry-forward (CARRY_DEPTH): prepend the still-unacked data frames of the previous datagrams,
-        # newest first so the batch cap drops the oldest copies. Ctrl-acks are never carried (each
-        # batch builds a fresh one when owed).
+        # carry-forward: prepend the still-unacked data frames of the previous datagrams, newest first; ctrl-acks are never carried
         if CARRY_DEPTH:
             have = {s for s, _, _ in batch if s is not None}
             carried = []
@@ -763,12 +436,8 @@ class Sim:
         for seq, flagsA, inner in batch:
             s = RELIABLE_SEQ_START if seq is None else seq
             rel = reliable.build_reliable(s, self.rel.send_low(), inner, flagsA=flagsA)
-            # Pia MESSAGE-flags 0x40 on standalone acks. The native client AND the Switch host set 0x40 on
-            # EVERY pure-ack (msgflags); we were the only party sending acks at msgflags=0. It's "unknown" in
-            # kinnay's wiki but universal on acks - the host honored our CUMULATIVE ack at 0 (its window freed
-            # early) yet never fast-retransmitted a hole, so 0x40 is almost certainly the bit that tells the
-            # host to act on the ack's SELECTIVE mask (SACK / fast-retransmit). The ctrl-ack is LAST in the
-            # batch so its 0x40 never leaks into a later message via msgflags inheritance. Data stays at 0.
+            # Pia message flag 0x40 on every pure ack: both native parties set it, and without it the host never fast-retransmitted
+            # a hole. The ctrl-ack is LAST so its 0x40 never leaks into a later message via msgflags inheritance.
             mf = 0x40 if flagsA == reliable.FLAGSA_CTRL else None
             msgs.append((reliable.PROTO_RELIABLE, rel, mf))
         dv = int.from_bytes(self.host_var, "big")
@@ -778,61 +447,30 @@ class Sim:
                                 compress=False, footer=True, establishing=False)
 
     def _drive_reliable(self):
-        """Per-VBlank Reliable traffic once Pia-connected, loss-tolerant via ReliableLink:
-          1. open the stream with the metadata frame (Initialized) - itself retransmitted until acked;
-          2. RETRANSMIT any unacked frame whose timer expired (the dropped INIT/block/data frames);
-          3. bulk-ack host data we've received (with a gap mask);
-          4. send a new emulator frame, unless the in-flight window is full (let retransmits drain).
-        Without the open frame the host never starts its Reliable stream; without retransmission a
-        single dropped frame stalls the whole stream (frames are known to drop)."""
-        tick = self._tick            # VBlank counter, for the ack/seat cadence floors
-        now_ms = self._now_ms        # the reliable layer's millisecond clock (RTO timer)
+        tick = self._tick
+        now_ms = self._now_ms
         if not self._rel_opened:
             seq = self.rel.queue(reliable.METADATA_FRAME, reliable.FLAGSA_INIT, now_ms)
             self._tx_reliable(seq, reliable.FLAGSA_INIT, reliable.METADATA_FRAME)
             self._rel_opened = True
-            return                        # the stream opens with the metadata ('J') frame alone
+            return
         if self._connect_id is not None and not self._gba_conn_sent:
-            # emulator RFU connect request ('C') - the host won't send its accept ('A') or start its
-            # slot ('T') stream until it sees this. `connect_id` is our self-chosen id; any nonzero
-            # value works.
             frame = gbaframe.build_connect(self._connect_id)
             seq = self.rel.queue(frame, reliable.FLAGSA_GBA, now_ms)
             self._tx_reliable(seq, reliable.FLAGSA_GBA, frame)
             self._gba_conn_sent = True
             return
-        # BATCH this VBlank's whole reliable output into ONE datagram (observed: the reference capture packs up to 9
-        # messages/datagram; one-datagram-per-frame was the prime BufferIsFull cause). Wire order
-        # (reference capture's dominant KT/KTA): retransmits, then new K* (mid 1..n), then the T slot, then the
-        # ctrl-ack LAST. Everything shares the host channel so it rides one per-channel pktid.
+        # One datagram per VBlank; wire order (the reference's KT/KTA): retransmits, K, T, ctrl-ack last.
         batch = []
-        # 1. retransmits. BLOCK/TRADE phase: GAP-TARGETED (limit=RTX_GAP_LIMIT) - re-send only the oldest
-        #    unacked frame (the cumulative gap); the host buffers out-of-order so delivering the gap drains
-        #    its whole run. This kills the high-RTT Go-Back-N flood (re-sending the whole window on the
-        #    ~440ms-2s-RTT bridge re-sent every frame many times before its ack -> flood -> latency climbs).
-        #    NI/SEAT phase (low-volume, all frames critical): whole-window (limit=None, capped at the batch)
-        #    so our few NI/standby frames get through fast - gap-targeting there starved the send-NI.
-        #    due_retransmits returns the ORIGINAL bytes (a retransmitted K keeps its original mid).
+        # Block/trade phase: gap-targeted retransmit (the host buffers out-of-order); NI/seat phase: a longer tail so the few
+        # critical frames get through.
         in_block_phase = self._gba_accepted and not getattr(self.engine, "in_seat_phase", True)
-        rtx_limit = RTX_GAP_LIMIT if in_block_phase else RTX_GAP_LIMIT_NI   # never None
+        rtx_limit = RTX_GAP_LIMIT if in_block_phase else RTX_GAP_LIMIT_NI
         for seq, flagsA, inner in self.rel.due_retransmits(now_ms, limit=rtx_limit)[:RELIABLE_BATCH_MAX]:
             batch.append((seq, flagsA, inner))
-        # FREE-RUN emission: emit ONE new 'T' slot per VBlank on our OWN clock (not gated on how many host
-        # polls arrived this tick), window-bounded, plus K-acks up to a small per-VBlank cap. _gba_frame()
-        # returns the phase-correct slot (NI sub-frame / block fragment / trade slot / idle keepalive) or
-        # None (recv-NI quiet / nothing to send), so one call per VBlank covers every phase. The flood guard
-        # is the send window (max_inflight) + the RTT-driven gap-targeted retransmit, not response pacing.
-        # 2. K-acks FIRST (wire order K-then-T): at most one per VBlank for the newest owed host ts,
-        #    under the K in-flight cap, leaving window slots for the 'T'. _k_seqs tracks our unacked K
-        #    so a K burst can never starve the critical per-poll T (recv-NI ack / UNI slot).
-        self._k_seqs.intersection_update(self.rel.unacked)   # drop K seqs the host has acked (drained)
+        self._k_seqs.intersection_update(self.rel.unacked)
         queued = 0
         k_frames = []
-        # ONE K per VBlank, carrying the NEWEST owed host ts and the RUNNING host-'T' receive count;
-        # anything older was superseded on receive. Superseding drops a K frame, never a count: _k_seq
-        # was already advanced on receipt, so the K that does go out reports everything the dropped
-        # ones would have. It is NOT window-gated: the console blocks its whole post-finalize sequence
-        # on this ack (K_INFLIGHT_MAX above), and one superseding frame per VBlank cannot flood.
         if (self._pending_k_ts is not None
                 and len(self._k_seqs) < K_INFLIGHT_MAX):
             kf = gbaframe.build_k(self._k_seq, 1, self._pending_k_ts)
@@ -842,41 +480,14 @@ class Sim:
             self._pending_k_ts = None
             self.k_out += 1
             queued = 1
-        # 3. our own 'T' slot - ONE per VBlank, ONLY after the host ACCEPTS our connect ('A'), window-bounded.
         t_frames = []
         if self._gba_accepted:
-            # Gate on OUTSTANDING (frames the host has not acked), not on inflight(): a frame the
-            # host has already acked but that is still buffered behind an older hole is on the host
-            # already and must not cost us send capacity. Charging it froze the child's slot stream
-            # for seconds at a time on hardware.
-            #
-            # The window is a CONGESTION cap and it yields to the console's liveness bound: once we
-            # have been quiet for CHILD_SILENCE_LIMIT VBlanks the slot goes out regardless, because a
-            # full window only costs throughput while silence costs the link (MC_TimerCount above).
-            # The override is self-limiting - at most one extra frame per CHILD_SILENCE_LIMIT VBlanks.
+            # Gate on outstanding(), not inflight(); the window yields to the liveness bound after CHILD_SILENCE_LIMIT quiet VBlanks.
             _out = self.rel.outstanding()
             _quiet = self._tick - self._last_t_tick >= CHILD_SILENCE_LIMIT
             _starved = _quiet and _out < self.rel.max_inflight * SILENCE_OVERRIDE_CEIL
-            # Two independent gates: the congestion window, and the poll credit. The credit stops us
-            # out-running a host that has slowed down; the quiet floor overrides both, so a paused
-            # host can never make us go silent.
-            # NOTHING exempts a slot from the credit pacer - not even a block mid-transfer. The
-            # parent samples exactly ONE child slot per poll, and every non-idle slot must carry the
-            # next childSendCmdId in sequence; slots it never samples are lost tag increments, and
-            # after >4 of those it hard-errors [link_rfu_2.c:884-888, and rfu.SlotBuilder]. Measured
-            # (j34): a bounded 17-fragment burst was echoed back as fragment 0 then fragment 9 - the
-            # parent saw two of seventeen - and it stopped transmitting at the instant the burst ended.
-            # Out-running the parent does not merely waste bandwidth here, it faults the console.
-            # NOTHING is exempt from the credit pacer, the seat walk included. The child's cadence is
-            # ONE SLOT PER POLL RECEIVED - that is the same rule the leader follows (host_trade emits
-            # one held-key per VBlank because as the PARENT it owns the clock; the child's equivalent
-            # is per poll, not per VBlank). Every non-idle slot advances the rolling childSendCmdId,
-            # and slots the parent never samples are lost tag increments - it hard-errors after >4
-            # [link_rfu_2.c:884-888]. Measured (j43): exempting the walk let it free-run at 57/s
-            # uncorrelated with the console's polls; the console stopped transmitting after exactly
-            # FIVE of our slots, 54ms BEFORE our first movement key. It had been polling at 55/s right
-            # up to that point - credit-paced we would have matched it and walked the 145-frame route
-            # in ~2.6s.
+            # NOTHING is exempt from the credit pacer, the seat walk included: the parent samples one child slot per poll and
+            # hard-errors after >4 lost tag increments [link_rfu_2.c:884-888].
             _gated = ((_out >= self.rel.max_inflight and not _starved)
                       or (self._slot_credit <= 0 and not _quiet))
             if _starved and _out >= self.rel.max_inflight:
@@ -893,28 +504,20 @@ class Sim:
                     self.t_out += 1
                     self.max_silence = max(self.max_silence, self._tick - self._last_t_tick)
                     self._last_t_tick = self._tick
-                    if self._emitted_ni_ack is not None:   # recv-NI ack just queued -> track the one in flight
+                    if self._emitted_ni_ack is not None:
                         self._ni_ack_seq = seq
                         self._ni_ack_bytes = self._emitted_ni_ack
             else:
-                # WINDOW-GATED: cannot emit a new slot, but an in-flight block send must still advance
-                # HOLD -> DONE on the host's reflection (arrives via IN frames, idempotent).
+                # window-gated: an in-flight block send must still advance on the host's reflection
                 self.engine.poll_send_done()
-        # wire order is retransmits, K, T (the reference capture's KT pattern); the ctrl-ack goes last below.
         batch.extend(k_frames)
         batch.extend(t_frames)
-        if self._gba_accepted and self._dbg is not None:   # per-VBlank emission trace (debug-only)
+        if self._gba_accepted and self._dbg is not None:
             _snd = getattr(self.engine, "sender", None)
             self._dbg.append({"tick": tick, "credits": 0, "kacks": queued,
                               "gba_emitted": len(t_frames), "inflight": self.rel.inflight(),
                               "sender": (_snd.state, _snd.index, _snd.count) if _snd else None})
-        # 4. bulk-ack LAST (reference capture order K-T-A). Pure ack (FLAGSA_CTRL): carries recv_next (the contiguous gap)
-        #    + the selective mask. RATE-LIMITED to ACK_PERIOD (~8.5/s, the real client's rate) and emitted ONLY
-        #    when one is owed (received host data) or we have a gap to NACK - so it PIGGYBACKS on a data datagram
-        #    when we're already sending one, and goes standalone only at the floor. (Root-cause fix, measured:
-        #    the old `if batch or _ack_owed or due` emitted a STANDALONE pure-ack datagram nearly every VBlank
-        #    (~30/s, 95% of OUT datagrams) -> half-duplex flood -> host->us return collapsed to ~9/s -> send->ack
-        #    RTT 1.8s vs the real client's 24ms on the SAME bridge -> 6-frame window pushed ~3/s -> block crawl.)
+        # Bulk-ack LAST, rate-limited to ACK_PERIOD and only when owed: a standalone pure-ack every VBlank flooded the half-duplex link.
         due = (tick - self._last_ack_tick) >= ACK_PERIOD
         if due and (self._ack_owed or self.rel.recv_ooo):
             batch.append((None, reliable.FLAGSA_CTRL, self.rel.ack_payload()))
@@ -923,15 +526,11 @@ class Sim:
         self._tx_reliable_batch(batch)
 
     def _ensure_ni(self):
-        """Build the NI sender once we have an identity (after the host accepts our 'C'). The 26-byte
-        NI src is the child's RfuGameData connection config, CONSTRUCTED from our sim identity (the
-        engine's LinkPlayer: version, public OT id, OT name) - not hardcoded reference-capture bytes."""
         if self._ni_built:
             return
         self._ni_built = True
         lp = getattr(self.engine, "lp", None) or linkplayer.LinkPlayer()
-        # The activity advertised in the child's RfuGameData: ACTIVITY_TRADE for the trade joiner,
-        # ACTIVITY_WONDER_CARD for the Mystery Gift client [SetHostRfuGameData, union_room.c:2255].
+        # ACTIVITY_TRADE for the trade joiner, ACTIVITY_WONDER_CARD for the Mystery Gift client [SetHostRfuGameData, union_room.c:2255].
         src = ni.build_game_data(version_low=lp.version & 0xFF,
                                  trainer_id=lp.trainer_id & 0xFFFF, ot_name=lp.name,
                                  activity=getattr(self.engine, "ni_activity", ni.ACTIVITY_TRADE),
@@ -939,36 +538,15 @@ class Sim:
         self._ni = ni.NISender(src)
 
     def _gba_frame(self):
-        """Build this VBlank's emulator 'T' (0x54) frame, emitting ONE slot:
-
-          1. NI handshake (after the host's 'A', BEFORE any UNI): drive the librfu NI sender one
-             sub-frame per VBlank (game-data delivery) until it is exhausted.
-          2. UNI trade slot: rfu.uni_slot(SlotBuilder.build(engine.tick())) wrapped in the child UNI
-             LLSF - the trade engine's work, an all-zero IDLE slot, or (in the overworld/SEAT phase,
-             ONLY AFTER establishment) a 0xBE00 held-keys keepalive.
-
-        The held-keys gate is the C2 fix: held keys + sit() fire ONLY while engine.established
-        (gReceivedRemoteLinkPlayers: both LinkPlayer blocks exchanged) AND engine.in_seat_phase (still
-        in the overworld/cable seat, before the trade menu). Pre-establishment idle VBlanks are bare
-        all-zero IDLE slots (tag untouched), so our tagged 0xBE00 never races ahead of the NI/block
-        handshake and faults the host's childSendCmdId check. Held keys never override a real
-        block/LINKCMD slot (we ask the engine first; held keys take an IDLE slot only).
-
-        The ts (body[0:4]) is the per-NEW-frame u32 counter (+1 per new T; reused on retransmit, which
-        re-offers the already-built bytes). Single slot per frame, one frame per VBlank (free-run)."""
-        self._emitted_ni_ack = None      # cleared each call; set only when this call returns a recv-NI ack
-        # NI handshake first (only while connected to the host's RFU, before steady UNI). The post-'A'
-        # order is: our SEND-NI (game data) -> recv-NI (ack the host's own NI) -> UNI. We do NOT go UNI
-        # until BOTH our send-NI is finished AND the host itself has entered UNI (its first state-4 poll);
-        # going UNI early races a UNI slot ahead of the host's still-open NI sender and faults the link.
+        """One slot per call: the NI handshake (after 'A', before UNI), then UNI slots. Held keys + sit() fire only while
+        engine.established AND in_seat_phase; earlier idle VBlanks are bare all-zero slots so a tagged 0xBE00 never races
+        the NI/block handshake.
+        """
+        self._emitted_ni_ack = None
+        # Do not go UNI until our send-NI is finished AND the host has entered UNI.
         if self.conn is not None and self._gba_accepted and not self._ni_done:
             self._ensure_ni()
-            # 1. drive our send-NI to completion first (one sub-frame per VBlank). Single pass - Pia
-            #    Reliable guarantees delivery+order under us, so we don't stop-and-wait.
             if not self._ni.done:
-                # Stop-and-wait (see _ni_awaiting): emit the next sub-frame only once the host has
-                # acked the one before it. _host_ni_ack_key carries the (state, n, phase) named by
-                # the host's most recent ack of OUR NI.
                 if self._ni_awaiting is None or self._host_ni_ack_key == self._ni_awaiting:
                     slot = self._ni.next_slot()
                     if slot is not None:
@@ -976,30 +554,14 @@ class Sim:
                         self._ni_wait_ticks = 0
                         return self._wrap_t(slot)
                 else:
-                    # Still unacknowledged: re-send THIS sub-frame on the paced timer. Falls through
-                    # rather than returning, so the recv-NI ack below is never starved.
                     self._ni_wait_ticks += 1
                     if self._ni_wait_ticks % NI_ACK_WAIT_RESEND == 0:
                         return self._wrap_t(self._ni.emitted[-1][3])
-            # 1b. our send-NI is finished, but if the host is STILL acking NI_END it never
-            #     registered our NULL terminator, so it will re-ack forever and then drop the link
-            #     (observed: 328 NI_END acks over ~11s, then close). The sender is single-pass on the
-            #     assumption that "Pia Reliable guarantees delivery"; the same capture showed 116
-            #     retransmitted seqs, so that assumption does not hold at the librfu layer. Re-emit
-            #     the terminator until the host advances. Bounded so a genuinely dead host still ends.
-            # 1b. Ack the host's CURRENT NI sub-frame FIRST, once per DISTINCT sub-frame
-            #     (idempotent - the host needs only its current one acked). This outranks our own
-            #     re-sends below because the host is BLOCKED on it and because a branch here returns
-            #     early: with the order reversed, a fast re-send starves this ack entirely.
+            # The host is blocked on its current sub-frame's ack; this outranks our own re-sends (a branch below returns early).
             if self._cur_ni_ack is not None and self._ni_ack_bytes != self._cur_ni_ack:
                 self._emitted_ni_ack = self._cur_ni_ack
                 return self._wrap_t(self._cur_ni_ack)
-            # 2. Our send-NI is finished but the host is still re-acking one of our sub-frames, so
-            #    the NEXT one never reached it. The sender is single-pass on the assumption that
-            #    "Pia Reliable guarantees delivery"; hardware captures disprove that (105-160
-            #    duplicate deliveries per run, and the host re-acking one sub-frame 356 times over
-            #    6s before dropping the link). Re-send the one it waits for, PACED - see the
-            #    constants above for why the rate must not be raised.
+            # The host re-acking one of our sub-frames means the next never reached it; re-send it, paced (see the constants).
             if (self._ni.done and not self._host_uni_seen
                     and self._host_ni_resend is not None
                     and self._null_reemits < NULL_REEMIT_MAX):
@@ -1009,16 +571,9 @@ class Sim:
                     if self._null_reemits == 1:
                         self.info("Host is still awaiting one of our NI sub-frames; re-sending it.")
                     return self._wrap_t(self._host_ni_resend)
-            # 3. switch to UNI only once the host itself has entered UNI (_host_uni_seen); switching earlier
-            #    sends a state-4 slot into the host's still-open NI sender -> the in-game Communication error.
             if not self._host_uni_seen:
-                # ...but do not go silent past the console's MC_Timer budget while we wait. Re-emit
-                # the ack for the host's CURRENT NI sub-frame: it is exactly what the host is blocked
-                # on, it is idempotent, and a FRESH reliable frame is the only way to re-deliver it
-                # (a Pia retransmit carries the same seq, which the host's reliable layer discards, so
-                # it never reaches librfu). Not after the host's NULL: re-emitting the stale NI_END
-                # ack through the join-textbox gap is a known cause of the in-game Communication
-                # error, and the host is not polling for an ack there, so silence is correct then.
+                # Re-emit the current recv-NI ack rather than go silent past MC_Timer (a Pia retransmit keeps its seq and never
+                # reaches librfu), but not after the host's NULL.
                 if (self._cur_ni_ack is not None and not self._host_ni_null_seen
                         and self._tick - self._last_t_tick >= CHILD_SILENCE_LIMIT):
                     self.silence_forced += 1
@@ -1029,75 +584,55 @@ class Sim:
             self.log("[sim] host entered UNI -> NI handshake complete, switching to UNI trade slots")
             self.info("Join handshake complete.")
 
-        # engine.tick() returns the 7-int slot, OR None on a barrier frame whose want_emit() has
-        # nothing to emit this VBlank (e.g. the post-trade save chain idling between echoes). None == an
-        # IDLE slot here, so coerce to [0]*7 rather than crashing on words[0] (observed: post-commit crash).
+        # engine.tick() returns None on a barrier frame with nothing to emit; treat it as idle.
         words = self.engine.tick() or [0] * 7
         if (self.linkstate is not None and (words[0] & 0xFFFF) == 0
                 and getattr(self.engine, "established", False)
                 and getattr(self.engine, "host_in_seat", False)
                 and getattr(self.engine, "held_keys_active",
                             getattr(self.engine, "in_seat_phase", True))):
-            # held-keys keepalive + sit, ONLY once the host is at its seat (host_in_seat) AND we are still
-            # in the seat phase (before the party exchange latches seat_phase_over) (seat-barrier).
             words = self.linkstate.tick()
         cmd14 = self.slot.build(words)
         return self._wrap_t(rfu.uni_slot(cmd14))
 
     def _wrap_t(self, slot):
-        """Wrap one complete slot (NI sub-frame or rfu.uni_slot(...)) in a child 'T' frame with the
-        next u32 ts, advancing the counter (+1 per NEW frame)."""
         frame = gbaframe.wrap_t(slot, self.ts)
         self.ts = (self.ts + 1) & 0xFFFFFFFF
         return frame
 
     def _reliable_trade_payload(self):
-        """Offline (conn=None) path: build ONE Reliable frame carrying this VBlank's gba 'T'. The K-ack
-        layer / NI handshake are live-only (driven by the host's RFU which the offline ReplayTransport
-        does not provide an 'A' for), so this stays the bare UNI/idle 'T' the offline tests expect."""
+        """Offline (conn=None): the bare UNI/idle 'T' the offline tests expect; the K-ack/NI layers are live-only."""
         frame = self._gba_frame()
         rel = reliable.build_reliable(self.out_seq, self.last_in_seq, frame)
         self.out_seq = (self.out_seq + 1) & 0xFFFF
         return rel
 
-    # ---- one VBlank --------------------------------------------------------
     def poll_rx(self):
-        """Drain and process any datagrams waiting on the transport without advancing the VBlank
-        tick (used by the live loop between ticks so replies and the hold-off clock are prompt)."""
         for datagram, src_ip in self.t.recv():
             if self.pace_ms:
                 self._last_rx_ms = self._pace_clock()
             self.process_datagram(datagram, src_ip)
 
     def tick(self):
-        self._tick += 1                  # drives the ReliableLink retransmit timers
+        self._tick += 1
         for datagram, src_ip in self.t.recv():
             if self.pace_ms:
                 self._last_rx_ms = self._pace_clock()
             self.process_datagram(datagram, src_ip)
-        # Supplementary RTT source: feed any round-trips the RTT protocol measured into the reliable RTO
-        # (median of the last 7), converting VBlanks->ms. Over this link the host doesn't echo our RTT
-        # systime, so this is usually empty and the reliable layer's own clean-ack round-trip is what
-        # actually drives the RTO; if a host does echo it, these samples fold into the same median.
         if self.conn is not None and getattr(self.conn, "rtt_samples", None):
             for rtt_vblanks in self.conn.rtt_samples:
                 self.rel.add_rtt_sample(rtt_vblanks * MS_PER_VBLANK)
             self.conn.rtt_samples = []
-        # S0 handshake + RTT replies; each outbox entry is a dict carrying its own stage var-ids and
-        # Pia framing (compress/footer/establishing) [pia_connect].
         if self.conn:
             if hasattr(self.conn, "maybe_originate_rtt"):
-                self.conn.maybe_originate_rtt(self._tick)   # liveness RTT probe (dst=0x0001)
+                self.conn.maybe_originate_rtt(self._tick)
             if hasattr(self.conn, "maybe_repeat_join"):
-                self.conn.maybe_repeat_join(self._tick)     # console-like join re-send (default off)
+                self.conn.maybe_repeat_join(self._tick)
             for e in self.conn.drain():
                 self._send(e["proto"], e["payload"], dst_var=e["dst"], src_var=e["src"],
                            compress=e["compress"], footer=e["footer"],
                            establishing=e["establishing"], unicast=e.get("unicast", True),
                            pktid=e.get("pktid"), footer_var=e.get("footer_var"))
-        # Reliable traffic only once the Pia connection is up. Live (conn present): drive the full
-        # sliding-window connection (open stream + bulk-acks + gba frame) so the host engages its
-        # own Reliable stream. Offline replay/tests (conn=None): emit the bare gba frame as before.
         if self.connected:
             if self.conn is not None:
                 self._drive_reliable()

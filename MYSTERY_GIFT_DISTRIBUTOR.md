@@ -150,7 +150,7 @@ control does not help: `MGL_Send` waits on `MGL_HasReceived(sendPlayerId)`, whic
 its own slot 0, and `Rfu_SetBlockReceivedFlag` [link_rfu_2.c:1044] sets the parent's own flag
 immediately — the four-VBlank `numBlocksReceived` countdown [link_rfu_2.c:1220] applies only to
 blocks arriving *from a child*. A native parent therefore paces blocks about a frame apart and just
-relies on the console keeping up. `MysteryGiftTiming.inter_block_gap_frames` (12) buys far more:
+relies on the console keeping up. `MysteryGiftTiming.inter_block_gap_frames` (36) buys far more:
 measured against the console model, the console may take 13 frames to consume a block with nothing
 dropped and 16 before the transfer dies. Lose that race and the console waits forever for a block
 that was dropped without an error.

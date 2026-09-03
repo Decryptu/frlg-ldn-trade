@@ -1,8 +1,5 @@
 
-"""
-Provides an implementation of the LDN protocol. This protocol facilitates local
-wireless communication between Nintendo Switch consoles.
-"""
+"""LDN: the local wireless protocol between Nintendo Switch consoles."""
 
 from __future__ import annotations
 
@@ -33,18 +30,15 @@ logger = logging.getLogger(__name__)
 MACAddress = wlan.MACAddress
 
 
-# Station accept policy
 ACCEPT_ALL = 0
 ACCEPT_NONE = 1
 ACCEPT_BLACKLIST = 2
 ACCEPT_WHITELIST = 3
 
-# Advertisement frame format
 ADVERTISE_FORMAT_PLAIN = 1
 ADVERTISE_FORMAT_AES_CTR = 2
 ADVERTISE_FORMAT_AES_GCM = 3
 
-# Authentication status code
 AUTH_SUCCESS = 0
 AUTH_DENIED_BY_POLICY = 1
 AUTH_MALFORMED_REQUEST = 2
@@ -53,27 +47,22 @@ AUTH_INVALID_VERSION = 4
 AUTH_UNEXPECTED = 5
 AUTH_CHALLENGE_FAILURE = 6
 
-# Authentication frame format
 AUTH_FORMAT_PLAIN = 0
 AUTH_FORMAT_AES_GCM = 1
 
-# Disconnect reason
 DISCONNECT_NETWORK_DESTROYED = 3
 DISCONNECT_NETWORK_DESTROYED_FORCEFULLY = 4
 DISCONNECT_STATION_REJECTED_BY_HOST = 5
 DISCONNECT_CONNECTION_LOST = 6
 
-# Platform type
 PLATFORM_NX = 0
 PLATFORM_OUNCE = 1
 
-# Security mode
 SECURITY_MODE_PROD = 1 # Everything is encrypted
 SECURITY_MODE_DEBUG = 2 # Advertisement frames are encrypted, data frames not
 SECURITY_MODE_SYSTEM_DEBUG = 3 # No advertisement or data frames are encrypted
 
 
-# This key is used for the HMAC algorithm in the authentication challenge.
 CHALLENGE_KEY = bytes.fromhex(
     "f84b487fb37251c263bf11609036589266af70ca79b44c93c7370c5769c0f602"
 )
@@ -94,7 +83,7 @@ ChannelBands = {
 
 
 def load_keys(path: str) -> dict[str, bytes]:
-    """Loads encryption keys from a prod.keys file."""
+    """Loads keys from a prod.keys file (`name = hex` per line)."""
     path = os.path.expanduser(path)
 
     with open(path) as f:
@@ -110,8 +99,6 @@ def load_keys(path: str) -> dict[str, bytes]:
 
 
 class AuthenticationError(Exception):
-    """Represents an error that occurred during authentication."""
-
     status_code: int
 
     def __init__(self, status_code: int):
@@ -122,8 +109,6 @@ class AuthenticationError(Exception):
 
 
 class KeyDerivation:
-    """Implements key derivation for the LDN protocol."""
-
     _keys: dict[str, bytes]
     _protocol: int
 
@@ -137,11 +122,6 @@ class KeyDerivation:
         override_data_key: bytes | None = None,
         override_challenge_key: bytes | None = None
     ):
-        """
-        Initializes key derivation with the given encryption keys and protocol
-        version. It is also possible to supply pre-derived keys through the
-        override_advertise_key and override_data_key arguments.
-        """
         self._keys = keys
         self._protocol = protocol
 
@@ -150,12 +130,10 @@ class KeyDerivation:
         self._override_challenge_key = override_challenge_key
     
     def _decrypt_key(self, key: bytes, kek: bytes) -> bytes:
-        """Decrypts a key with AES-ECB."""
         aes = AES.new(kek, AES.MODE_ECB)
         return aes.decrypt(key)
     
     def _select_master_key(self) -> bytes:
-        """Returns the master key for the active protocol version."""
         if self._protocol == 1:
             return self._keys["master_key_00"]
         elif self._protocol == 3:
@@ -167,8 +145,6 @@ class KeyDerivation:
         )
     
     def _derive_key(self, data: bytes, source: bytes) -> bytes:
-        """Derives an encryption key from the provided data and source."""
-
         aes_kek_generation_source = self._keys["aes_kek_generation_source"]
         aes_key_generation_source = self._keys["aes_key_generation_source"]
 
@@ -179,12 +155,10 @@ class KeyDerivation:
         return self._decrypt_key(hashlib.sha256(data).digest()[:16], key)
     
     def derive_authentication_key(self, client_random: bytes) -> bytes:
-        """Derives the key that is used for authentication frames."""
         source = bytes.fromhex("f1e7018419a84f711da714c2cf919c9c")
         return self._derive_key(client_random, source)
     
     def derive_data_key(self, server_random: bytes, password: bytes) -> bytes:
-        """Derives the key that is used for data frames."""
         if self._override_data_key:
             return self._override_data_key
         
@@ -192,7 +166,6 @@ class KeyDerivation:
         return self._derive_key(server_random + password, source)
     
     def derive_advertise_key(self, data: bytes) -> bytes:
-        """Derives the key that is used for advertisement frames."""
         if self._override_advertise_key:
             return self._override_advertise_key
         
@@ -200,7 +173,6 @@ class KeyDerivation:
         return self._derive_key(data, source)
     
     def challenge_key(self, dev: bool) -> bytes:
-        """Returns the HMAC key for the authentication challenge."""
         if self._override_challenge_key:
             return self._override_challenge_key
         
@@ -209,17 +181,13 @@ class KeyDerivation:
 
 @dataclass
 class NetworkId:
-    """
-    A 32-byte struct that contains the local communication id, game mode and
-    SSID of the network.
-    """
+    """32-byte wire struct: local communication id, scene id, SSID."""
 
     local_communication_id: int = 0
     scene_id: int = 0
     ssid: bytes = bytes(16)
     
     def encode(self, endianness: str) -> bytes:
-        """Encodes the network id with the given endianness."""
         stream = streams.StreamOut(endianness)
         stream.u64(self.local_communication_id)
         stream.pad(2)
@@ -229,7 +197,6 @@ class NetworkId:
         return stream.get()
     
     def decode(self, data: bytes, endianness: str) -> None:
-        """Decodes the network id from the given data and endianness."""
         stream = streams.StreamIn(data, endianness)
         self.local_communication_id = stream.u64()
         stream.pad(2)
@@ -240,8 +207,6 @@ class NetworkId:
 
 @dataclass
 class ParticipantInfo:
-    """Holds information about a node in the network."""
-
     ip_address: str = "0.0.0.0"
     mac_address: MACAddress = MACAddress()
     connected: bool = False
@@ -280,9 +245,7 @@ class AdvertisementInfoEncoder(typing.Protocol):
 
 
 class AdvertisementInfoEncoderV1:
-    """
-    Advertisement encoder when AES-CTR or plaintext encryption is used
-    """
+    """Payload layout for plaintext and AES-CTR advertisements."""
 
     def encode(self, info: AdvertisementInfo) -> bytes:
         stream = streams.StreamOut(">")
@@ -356,9 +319,7 @@ class AdvertisementInfoEncoderV1:
 
 
 class AdvertisementInfoEncoderV2:
-    """
-    Advertisement encoder when AES-GCM encryption is used
-    """
+    """Payload layout for AES-GCM advertisements."""
 
     def encode(self, info: AdvertisementInfo) -> bytes:
         stream = streams.StreamOut(">")
@@ -425,8 +386,6 @@ class AdvertisementInfoEncoderV2:
 
 
 class AdvertisementFrame:
-    """Represents an advertisement frame."""
-
     _key_derivation: KeyDerivation
     _protocol: int
 
@@ -447,7 +406,6 @@ class AdvertisementFrame:
         self.payload = AdvertisementInfo()
 
     def _derive_key(self) -> bytes:
-        """Derives the key that is used to encrypt the advertisement frame."""
         data = self.network_id.encode(">")
         return self._key_derivation.derive_advertise_key(data)
     
@@ -503,7 +461,6 @@ class AdvertisementFrame:
         substream.write(self.nonce)
         header = substream.get()
 
-        # A SHA-256 is added before the payload in plain and AES-CTR mode
         if self.format in [ADVERTISE_FORMAT_PLAIN, ADVERTISE_FORMAT_AES_CTR]:
             data = header + bytes(32) + plaintext
             sha = hashlib.sha256(data).digest()
@@ -600,8 +557,8 @@ class ChallengeRequest:
     
     def encode(self, key: bytes) -> bytes:
         stream = streams.StreamOut("<")
-        stream.u8(0) # Always 0
-        stream.u8(0) # Always 0
+        stream.u8(0)
+        stream.u8(0)
         stream.u8(len(self.params1))
         stream.u8(len(self.params2))
         stream.u8(self.flags)
@@ -675,8 +632,8 @@ class ChallengeResponse:
     
     def encode(self, key: bytes) -> bytes:
         stream = streams.StreamOut("<")
-        stream.u8(0) # Always 0
-        stream.u8(0) # Always 0
+        stream.u8(0)
+        stream.u8(0)
         stream.pad(2)
         stream.u32(self.flags)
         stream.u64(self.nonce)
@@ -1110,14 +1067,12 @@ class CreateNetworkParam:
     override_advertise_key: bytes | None = None
     override_challenge_key: bytes | None = None
 
-    # Keep the portable software-CCMP transmit path by default.  Some drivers
-    # (notably mt7601u in AP+monitor mode) encrypt an injected frame again, so
-    # callers may instead delegate the one CCMP layer to mac80211/hardware.
+    # Some drivers (mt7601u in AP+monitor mode) encrypt an injected frame again;
+    # skip the software CCMP layer and let mac80211/hardware apply the only one.
     skip_encryption: bool = False
 
-    # Some monitor drivers expose hardware-decrypted receive frames while
-    # retaining the Protected bit, CCMP header and MIC.  Keep this compatibility
-    # path opt-in because receive layouts vary by driver.
+    # Some monitor drivers (rtw88) deliver hardware-decrypted frames with the Protected bit,
+    # CCMP header and MIC still in place.
     accept_decrypted_ccmp: bool = False
 
     def check(self):
@@ -1191,7 +1146,6 @@ class Scanner:
         # Vendor-specific, Nintendo OUI, LDN, Advertisement
         header = bytes([0x7F, 0x00, 0x22, 0xAA, 0x04, 0x00, 0x01, 0x01])
         while True:
-            # Receive a single frame
             radiotap = await self._monitor.recv()
 
             if radiotap.frequency is None:
@@ -1201,18 +1155,16 @@ class Scanner:
             action = wlan.ActionFrame()
             try: action.decode(radiotap.data)
             except Exception:
-                continue # Skip invalid frames
+                continue
 
-            # Check if we received an advertisement frame from LDN
             if not action.action.startswith(header):
                 continue
             
-            # Decode the frame itself
             for protocol, key_derivation in self._protocols.items():
                 frame = AdvertisementFrame(key_derivation, protocol)
                 try: frame.decode(action.action)
                 except Exception:
-                    continue # Skip invalid frames
+                    continue
                 
                 info = NetworkInfo(protocol)
                 info.address = action.source
@@ -1328,14 +1280,14 @@ class STANetwork:
 
             if isinstance(event, wlan.ActionFrameEvent):
                 if event.frame.source != self._network.address:
-                    continue # Only process frames from the host
+                    continue
                 
                 frame = AdvertisementFrame(
                     self._key_derivation, self._network.protocol
                 )
                 try: frame.decode(event.frame.action)
                 except Exception:
-                    continue # Skip invalid frames
+                    continue
                 
                 info = NetworkInfo(self._network.protocol)
                 info.address = event.frame.source
@@ -1392,14 +1344,11 @@ class STANetwork:
         frame.client_random = self._param.client_random
         frame.payload = request
         
-        # Attempt authentication up to three times
         for i in range(3):
             await self._interface.send_custom_frame(
                 self._network.address, frame.encode()
             )
             
-            # Resend the authentication request if we do not
-            # receive a response after 700 milliseconds
             with trio.move_on_after(.7):
                 while True:
                     event = await self._interface.next_event()
@@ -1422,7 +1371,6 @@ class STANetwork:
     async def _initialize_network(self) -> None:
         await self._interface.set_authorized()
         
-        # Wait until the host has updated the advertisement frame
         network = None
         with trio.move_on_after(1):
             network, index = await self._wait_for_network()
@@ -1432,17 +1380,14 @@ class STANetwork:
                 "Failed to obtain IP address after joining network (timeout)"
             )
         
-        # Initialize local state
         self._network = network
         self._network_id = int(network.participants[0].ip_address.split(".")[2])
         self._participant_id = index
         
-        # Initialize interface address
         local_address = network.participants[index].ip_address
         broadcast_address = f"169.254.{self._network_id}.255"
         await self._interface.add_address(local_address, broadcast_address)
         
-        # Create a static neighbor entry for each participant
         for participant in network.participants:
             if participant.connected:
                 await self._interface.add_neighbor(
@@ -1450,26 +1395,21 @@ class STANetwork:
                 )
     
     async def _monitor_network(self) -> None:
-        # Monitors advertisement frames to get
-        # notified when the network changes
         while True:
             network = await self._advertisements.get()
             
-            # Check if the accept policy has changed
             if network.accept_policy != self._network.accept_policy:
                 accept_policy_event = AcceptPolicyChanged(
                     self._network.accept_policy, network.accept_policy
                 )
                 await self._events.put(accept_policy_event)
             
-            # Check if the application data has changed
             if network.application_data != self._network.application_data:
                 app_data_event = ApplicationDataChanged(
                     self._network.application_data, network.application_data
                 )
                 await self._events.put(app_data_event)
             
-            # Remove participants that are gone
             for i in range(8):
                 old = self._network.participants[i]
                 new = network.participants[i]
@@ -1479,7 +1419,6 @@ class STANetwork:
                     )
                     await self._events.put(LeaveEvent(i, old))
             
-            # Register new participants
             for i in range(8):
                 old = self._network.participants[i]
                 new = network.participants[i]
@@ -1489,7 +1428,6 @@ class STANetwork:
                     )
                     await self._events.put(JoinEvent(i, new))
             
-            # Update local state
             self._network = network
 
 
@@ -1763,15 +1701,11 @@ class APNetwork:
     async def _register_participant(
         self, address: MACAddress, name: bytes, app_version: int, platform: int
     ) -> None:
-        # Allocate an ip address
         for index in range(8):
             if not self._network.participants[index].connected:
                 break
 
-        # START_AP enables userspace control-port handling, which leaves a new
-        # station unauthorized until the custom LDN authentication succeeds.
-        # Complete the kernel-side state transition before publishing the
-        # participant to the rest of LDN.
+        # With a userspace control port the kernel keeps the station unauthorized until told otherwise.
         await self._interface.set_authorized(address)
         
         self._peers.append(address)
@@ -1869,15 +1803,10 @@ class APNetwork:
             snap.protocol = ethernet.protocol
             snap.payload = ethernet.payload
 
-            # Preserve the Ethernet destination selected by the TAP/IP stack.
-            # In particular, Pia Session replies are IP unicast and must also
-            # be 802.11 unicast so mac80211 selects the participant's pairwise
-            # key rather than the AP group key.
+            # IP unicast must stay 802.11 unicast so mac80211 picks the pairwise key, not the group key.
             await self._send_data_frame(snap.encode(), ethernet.target)
     
     async def _process_data_frame(self, frame: wlan.DataFrame) -> None:
-        # Reject monitor-looped copies of our own transmissions and unrelated
-        # traffic before applying any driver-specific receive normalization.
         if frame.source not in self._peers:
             return
 
@@ -1925,9 +1854,7 @@ class APNetwork:
         if self._key and not kernel_encrypt:
             self._data_nonce += 1
             frame.encrypt(self._key, self._data_nonce, 1)
-        # With skip_encryption, only the Python CCMP step is skipped.  The
-        # radiotap encryption request below still makes mac80211/hardware
-        # protect the over-air frame exactly once.
+        # With skip_encryption the radiotap flag makes mac80211/hardware protect the frame exactly once.
         await self._monitor.send_frame(frame, encrypt=kernel_encrypt)
 
 
@@ -1936,11 +1863,8 @@ async def scan(
     channels: list[int] = [1, 6, 11], dwell_time: float = .110,
     protocols: list[int] = [1, 3]
 ) -> list[NetworkInfo]:
-    """Scans for nearbly LDN networks."""
-
     if not channels: return []
 
-    # Check if all channels are valid
     for channel in channels:
         if not wlan.is_valid_channel(channel):
             raise ValueError(f"Invalid channel: {channel}")
@@ -1961,8 +1885,6 @@ async def scan(
 
 @contextlib.asynccontextmanager
 async def connect(param: ConnectNetworkParam) -> AsyncIterator[STANetwork]:
-    """Joins a nearby LDN network."""
-
     param = copy.copy(param)
     if param.client_random is None:
         param.client_random = secrets.token_bytes(16)
@@ -1995,8 +1917,6 @@ async def connect(param: ConnectNetworkParam) -> AsyncIterator[STANetwork]:
 
 @contextlib.asynccontextmanager
 async def create_network(param: CreateNetworkParam) -> AsyncIterator[APNetwork]:
-    """Starts hosting an LDN network."""
-
     param = copy.copy(param)
     if param.ssid is None: param.ssid = secrets.token_bytes(16)
     if param.channel is None: param.channel = random.choice([1, 6, 11])

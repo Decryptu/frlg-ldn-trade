@@ -1,10 +1,8 @@
-"""Small OS-facing helpers shared by host tools."""
-
 import os
 
 
 def resolve_keys(path):
-    """Resolve prod.keys correctly when the program is launched through sudo."""
+    """Resolves ~ against SUDO_USER's home when launched through sudo."""
     expanded = os.path.expanduser(path)
     if os.path.exists(expanded):
         return expanded

@@ -1,24 +1,7 @@
 #!/usr/bin/env python3
-"""LDN advertisement sniffer - air-side ground truth on a second radio (the MT7601U is perfect for
-this: monitor mode is the one relevant thing its driver supports).
-
-Puts an adapter in monitor mode on a fixed channel and prints every LDN advertisement action frame
-(vendor-specific, Nintendo OUI: payload starts `7f 00 22 aa 04 00 01 01`), with source MAC, length,
-rate, and a hexdump on first sight / change. Optionally archives ALL captured frames to a pcap
-(radiotap linktype) for Wireshark.
-
-Two uses (debug runbook, MYSTERY_GIFT_DISTRIBUTOR.md):
-  1. While frlgtrade_host.py hosts on ANOTHER adapter: verify our advertisements are actually on air at
-     ~10/s. Silence here = monitor-TX/injection problem, even if the spike printed "AP up".
-  2. Against a REAL console hosting (e.g. the trade Direct Corner, or another Switch sharing a
-     Wonder Card): capture a genuine advertisement. (NOTE: the LDN advertisement body is encrypted -
-     the application_data/beacon inside is NOT directly readable here. For a decrypted beacon use
-     the join path's `_dump_beacon`; the sniffer's value is presence/cadence/source, and the pcap.)
-
-    sudo ./.venv/bin/python sniff.py --phy phy0 --channel 6 --pcap air.pcap
-
-Ctrl-C to stop (tears down the monitor vif).
-"""
+"""Monitor-mode sniffer: prints every LDN advertisement action frame (Nintendo OUI, payload 7f 00 22 aa 04 00 01 01)
+by source MAC and optionally archives all frames to a radiotap pcap. The advertisement body is encrypted, so the
+application_data inside is not readable here; the value is presence, cadence and source."""
 
 import argparse
 import os
@@ -51,7 +34,7 @@ def teardown(ifname):
 
 
 class PcapWriter:
-    """Minimal pcap (not pcapng) writer, linktype 127 = LINKTYPE_IEEE802_11_RADIOTAP."""
+    """Minimal pcap (not pcapng), linktype 127 = LINKTYPE_IEEE802_11_RADIOTAP."""
 
     def __init__(self, path):
         self.f = open(path, "wb")
@@ -67,7 +50,6 @@ class PcapWriter:
 
 
 def parse_frame(frame):
-    """radiotap + 802.11 mgmt parse -> (subtype_name, src_mac, action_payload|None)."""
     if len(frame) < 4:
         return None
     rt_len = int.from_bytes(frame[2:4], "little")
@@ -76,10 +58,10 @@ def parse_frame(frame):
         return None
     fc = int.from_bytes(dot11[0:2], "little")
     ftype, subtype = (fc >> 2) & 0x3, (fc >> 4) & 0xF
-    if ftype != 0:                                  # management frames only
+    if ftype != 0:
         return None
     src = dot11[10:16]
-    payload = dot11[24:] if subtype == 13 else None  # action frame body
+    payload = dot11[24:] if subtype == 13 else None
     return MGMT_SUBTYPES.get(subtype, f"mgmt-{subtype}"), src, payload
 
 
@@ -108,7 +90,7 @@ def main():
     rx.bind((args.ifname, 0))
     rx.settimeout(1.0)
 
-    seen = {}                       # src_mac -> (count, last_body) for LDN adverts
+    seen = {}
     mgmt_counts = {}
     last_report = time.time()
     try:

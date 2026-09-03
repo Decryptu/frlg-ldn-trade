@@ -1,23 +1,7 @@
 #!/usr/bin/env python3
-"""Advertise one experimental FRLG JoySpot discovery candidate over LDN.
-
-This is retained research instrumentation, not the working Mystery Gift
-distributor. The supported path is ``frlgmg_host.py`` through **Wonder Cards →
-Friend**, which is hardware-proven end to end. The Switch LDN bridge has exposed
-all tested Wireless Communication candidates as serial ``0x0002`` rather than
-JoySpot's required ``0x7F7D``; this tool exists for future bridge-mapping work.
-
-It creates the same proven LDN/AP radio shape as the trade host, advertises one
-named candidate until Ctrl-C, and records whether the Switch joins. It never
-starts Pia, Reliable, RFU, or the gift protocol, so a join is intentionally
-allowed to time out.
-
-Example::
-
-    sudo -E ./.venv/bin/python -u joyspot_probe.py --live --phy phy3 \\
-        --skip-encryption --candidate wireless_activity21_no_card \\
-        --capture joyspot_1.1_wireless_activity21_no_card.jsonl
-"""
+"""Advertise one experimental FRLG JoySpot discovery candidate over LDN (research only; the supported
+distributor is frlgmg_host.py). Advertises until Ctrl-C and records whether the Switch joins; never starts Pia,
+RFU or the gift protocol, so a join is allowed to time out."""
 
 import argparse
 import os
@@ -28,8 +12,6 @@ import time
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Prefer the tracked vendored, host-capable LDN package just like
-# frlgtrade_host.py.
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
@@ -48,8 +30,6 @@ from frlgsim.joyspot_probe import (  # noqa: E402
 
 
 class _ProbeLog:
-    """Always show milestones; add transport details with ``--verbose``."""
-
     def __init__(self, verbose=False):
         self.verbose = verbose
         self.started = time.monotonic()
@@ -137,7 +117,6 @@ def _print_candidates():
 
 
 def _capture_path_for_candidate(base_path, candidate_name):
-    """Derive a distinct JSONL trace path for one sweep candidate."""
     if base_path is None:
         return None
     stem, suffix = os.path.splitext(base_path)
@@ -151,7 +130,6 @@ def _candidate_menu(candidate):
 
 
 def _prompt_candidate_visible(candidate):
-    """Ask for the operator's observation while ``candidate`` remains live."""
     menu = _candidate_menu(candidate)
     print()
     print(f"Candidate {candidate.name!r} is live.")
@@ -228,9 +206,7 @@ def _run_all_candidates(args, parser, log):
                 observation["visible"] = visible
                 return visible
 
-            # Each iteration constructs and tears down the complete LDN/AP
-            # environment so the next observation cannot inherit scan or
-            # authentication state from the previous candidate.
+            # Each iteration rebuilds the whole LDN/AP environment so no scan or auth state carries over.
             joined = JoySpotProbeApplication(
                 config, DEFAULT_TRAINER, log=log).run(decision_prompt=decide)
             results.append((candidate, observation["visible"], joined))

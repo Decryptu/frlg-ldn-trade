@@ -1,22 +1,6 @@
 #!/usr/bin/env python3
-"""Isolation test #1 (RECEIVE path): does the dongle's monitor RX + the LDN library's
-parse/decrypt work at all? This uses the library's own `ldn.scan` directly — NONE of our
-frlgsim beacon/transport code is involved.
-
-Point a REAL LDN host at us and see if we list it:
-  - Easiest: on the FRLG console, go to the trade Union/Direct Corner and pick the side that
-    WAITS for a partner. In an FRLG trade the waiting console is the RFU parent = the LDN host,
-    so it starts advertising a network we should see here.
-  - Or any nearby Switch hosting a local-wireless game.
-
-If a network shows up:
-  * the dongle's monitor RECEIVE path works, and
-  * `application_data`/`local_communication_id`/`scene_id`/`channel`/`version` printed below are the
-    AUTHORITATIVE real values to mirror when we host (feed them back into the host side).
-
-    sudo -E ./.venv/bin/python ldn_scan.py                 # auto phy, channels 1,6,11
-    sudo -E ./.venv/bin/python ldn_scan.py --channels 1,2,3,4,5,6,7,8,9,10,11
-"""
+"""Receive-path isolation test: list nearby LDN hosts with the LDN library's own `ldn.scan` (no frlgsim beacon or
+transport code involved). A waiting FRLG trade console is the RFU parent = LDN host, so it shows up here."""
 import argparse
 import os
 import subprocess

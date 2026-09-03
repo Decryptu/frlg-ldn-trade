@@ -38,8 +38,6 @@ def make_engine(run_config, lg, *, default_anim_delay=None):
     lg.info(f"Loaded {len(party)} party Pokémon (offering slot {plan.trade_slot + 1}).")
     lp = run_config.profile.to_link_player()
     elog = runtime.ConsoleLog(lg.verbose, "  [trade]", start=lg.start)
-    # anim_delay None -> the engine uses DEFAULT_ANIM_FRAMES (the wire-measured wireless DoTradeAnim
-    # duration); --anim-delay overrides it (mainly for fast offline replays).
     anim_delay = plan.anim_delay if plan.anim_delay is not None else default_anim_delay
     eng = trade.TradeEngine(
         party, trade_slot=plan.trade_slot, link_player=lp, mpid=options.self_id,
@@ -53,9 +51,8 @@ def make_engine(run_config, lg, *, default_anim_delay=None):
 
 
 def _paced_sleep(s, period, slice_s=0.002):
-    """Sleep one VBlank, flushing the TX pacer every 2ms so PACE_MIN_GAP_MS / REPLY_HOLDOFF_MS are
-    honoured at that resolution instead of once per tick. Also polls RX between slices so the
-    hold-off clock sees the console's frames as they arrive, not at the next tick."""
+    """Flushes the TX pacer and polls RX every 2ms so PACE_MIN_GAP_MS / REPLY_HOLDOFF_MS hold at that
+    resolution rather than once per tick."""
     end = time.monotonic() + period
     while True:
         now = time.monotonic()
@@ -66,7 +63,13 @@ def _paced_sleep(s, period, slice_s=0.002):
             s.poll_rx()
             s.flush_paced()
 
-def run_live(run_config, lg):
+
+# Going silent before the host leads the walk-out trips its keepalive watchdog (LinkRfu_FatalError); err long.
+LEAVE_TAIL_S = 120.0
+
+
+def _live_connect(run_config, lg):
+    """Brings up the LDN transport, the Pia connection manager, the engine and the Sim."""
     plan, ldn, options = run_config.plan, run_config.ldn, run_config.role
     profile = run_config.profile
     lg(f"[live] scanning for FRLG LDN network (nickname={profile.name})...")
@@ -75,10 +78,8 @@ def run_live(run_config, lg):
         local_comm_id=ldn.local_comm_id, phyname=ldn.phy, log=lg).start()
     pc = cryptomod.PiaCrypto(t.ssid)
     engine = make_engine(run_config, lg)
-    # Pia CONNECTION layer (S0): Net 0x11->0x12, Session(13) join, RTT keepalive. WITHOUT this the
-    # host never registers us as a peer (no "OK"); the sim must NOT emit trade traffic or sit down
-    # until the host confirms the connection [frlgsim/pia_connect.py; wiki Pia 6.32+]. The MACs are
-    # the Pia connection GUIDs, learned from the LDN participant list.
+    # The sim must not emit trade traffic or sit until the host confirms the Pia connection
+    # (Net 0x11->0x12, Session join) [frlgsim/pia_connect.py].
     if not t.our_mac or not t.host_mac:
         lg(f"[live] WARNING: MAC(s) not resolved from the participant list "
               f"(us={t.our_mac and t.our_mac.hex()} host={t.host_mac and t.host_mac.hex()}); "
@@ -87,14 +88,8 @@ def run_live(run_config, lg):
         our_mac=t.our_mac or b"\x00" * 6, host_mac=t.host_mac or b"\x00" * 6,
         our_ip=t.our_ip, host_ip=t.host_ip, player_name=profile.name,
         random4=os.urandom(4), log=lg)
-    # Held-keys overworld link-state engine: keepalive (0xBE00 EMPTY) every idle VBlank, sit at
-    # the RIGHT seat (mpId 1), then cancel-to-leave after the configured trade(s). self_id is
-    # asserted == 1 (the joiner / RIGHT seat) [frlgsim/linkstate.py; trade.c:1816].
     lstate = lsmod.LinkState(self_id=options.self_id, log=lg)
-    # emulator RFU connect id: our OWN 2-byte RFU connection id sent in the 'C' frame. Any nonzero
-    # value works (the host does not match it, it just seats our slot), so we pick a random nonzero
-    # one. A FRESH id per run also avoids the host's ~40s lost-id re-join lockout that reusing a value
-    # would hit. --connect-id (alias --parent-pid) overrides for debugging.
+    # Any nonzero connect id works; a FRESH id per run avoids the host's ~40s lost-id re-join lockout.
     if options.connect_id:
         connect_id = options.connect_id
     else:
@@ -114,255 +109,240 @@ def run_live(run_config, lg):
     lg(f"[live] joined LDN; awaiting the host's Pia connection handshake "
           f"(Net 0x11 -> Session join -> confirm). NOT trading until the host confirms us.")
     lg(f"[live] configured trades={plan.trades} (cancel-to-leave after the final trade)")
-    period = 1.0 / 59.727
-    # Sit at the RIGHT seat once the link is ESTABLISHED so our slot reaches PLAYER_LINK_STATE_READY
-    # and the host's seat barrier (GetCableClubPartnersReady) can clear [overworld.c:2989-3000].
-    #
-    # Faithfulness: in the ROM the READY(0x16) one-shot is KeyInterCB_SetReady, installed by
-    # SetInCableClubSeat inside Task_EnterCableClubSeat case 1 [cable_club.c:839; overworld.c:2951-2955]
-    # - and SendKeysToRfu only emits it once gReceivedRemoteLinkPlayers is set [link_rfu_2.c:1069], i.e.
-    # AFTER the LinkPlayer exchange. So we gate sit() on engine.established (gReceivedRemoteLinkPlayers:
-    # both LinkPlayer blocks exchanged) - NOT on a blind timer. An earlier blind 120-frame fallback
-    # fired sit() ~2s after Pia connect regardless of link progress, racing a tagged 0xBE00 READY into
-    # an unestablished slot and faulting the host's childSendCmdId check; it is removed. Live residual:
-    # the warp/seat transition itself is a local field task not on the wire, so we approximate it
-    # with the establishment latch - the last wire-observable milestone before the seat.
-    sat = walking = exited = connect_announced = responded_exit = False
-    announced_cancel = announced_close = announced_entry = announced_menu = False
-    announced_established = False
-    saved_commits = 0       # received mons already written to disk (save AT COMMIT, not just run-end)
-    connect_ticks = 0
-    ni_wait_ticks = 0
-    entry_ticks = 0
-    leave_ticks = 0
-    leave_until = None
-    close_until = None
-    graceful_interrupt = False
-    interrupt_count = 0
+    return t, engine, s, conn, lstate
 
-    # Emission snapshot for both stall diagnostics. The joiner's failures all look the same on the
-    # wire - the console keeps polling and we go quiet - and neither diagnostic reported a RATE, so
-    # a starved child slot stream was indistinguishable from a healthy wait. host_t/s vs our t/s is
-    # the classifier: a healthy child answers a ~60/s console poll at ~60/s, and the reference
-    # failure ran at 0-3/s. `out` is the reliable frames the host has not acked (the send gate) and
-    # `rto` is the retransmit timeout the RTT samples have produced.
-    last_rates = [0.0, 0, 0, 0]      # [t_at_sample, host_t_in, t_out, k_out]
 
-    def rates():
+class _LiveJoiner:
+    """The live joiner loop's shared state: the wired-up objects plus the once-only announce flags."""
+
+    def __init__(self, run_config, lg, t, engine, s, conn, lstate):
+        self.run_config, self.lg = run_config, lg
+        self.t, self.engine, self.s, self.conn, self.lstate = t, engine, s, conn, lstate
+        # sit() is gated on engine.established: SendKeysToRfu only emits once gReceivedRemoteLinkPlayers is set
+        # [link_rfu_2.c:1069], and a READY before that faults the host's childSendCmdId check.
+        self.sat = self.walking = self.exited = False
+        self.connect_announced = self.responded_exit = False
+        self.announced_cancel = self.announced_close = False
+        self.announced_entry = self.announced_menu = False
+        self.announced_established = False
+        self.saved_commits = 0  # received mons already written to disk (save AT COMMIT, not just run-end)
+        self.connect_ticks = 0
+        self.ni_wait_ticks = 0
+        self.entry_ticks = 0
+        self.leave_ticks = 0
+        self.leave_until = None
+        self.close_until = None
+        self.graceful_interrupt = False
+        self.interrupt_count = 0
+        self.last_rates = [0.0, 0, 0, 0]      # [t_at_sample, host_t_in, t_out, k_out]
+
+    def rates(self):
+        s = self.s
         now = time.monotonic()
-        dt = max(1e-3, now - last_rates[0])
-        r = (f"host_t={(s.host_t_in - last_rates[1]) / dt:.0f}/s "
-             f"our_t={(s.t_out - last_rates[2]) / dt:.0f}/s "
-             f"k={(s.k_out - last_rates[3]) / dt:.0f}/s "
+        dt = max(1e-3, now - self.last_rates[0])
+        r = (f"host_t={(s.host_t_in - self.last_rates[1]) / dt:.0f}/s "
+             f"our_t={(s.t_out - self.last_rates[2]) / dt:.0f}/s "
+             f"k={(s.k_out - self.last_rates[3]) / dt:.0f}/s "
              f"out={s.rel.outstanding()}/{s.rel.max_inflight} "
              f"rto={s.rel.rto() and round(s.rel.rto())}ms "
              f"max_quiet={s.max_silence}f forced={s.silence_forced}")
-        last_rates[:] = [now, s.host_t_in, s.t_out, s.k_out]
+        self.last_rates[:] = [now, s.host_t_in, s.t_out, s.k_out]
         return r
 
-    def on_interrupt(_signum, _frame):
-        nonlocal graceful_interrupt, interrupt_count
-        interrupt_count += 1
-        if interrupt_count == 1:
-            graceful_interrupt = True
+    def on_interrupt(self, _signum, _frame):
+        self.interrupt_count += 1
+        if self.interrupt_count == 1:
+            self.graceful_interrupt = True
         else:
             raise KeyboardInterrupt
 
-    old_sigint = signal.signal(signal.SIGINT, on_interrupt)
-    # Overworld leave tail: keep the link ALIVE (held-keys keepalive) while waiting for the HOST to lead
-    # the walk-out and sever the link itself (graceful). The host's exit is human-paced (walk to the south
-    # exit -> confirm-leave prompt -> EXIT_ROOM -> RunTerminateLinkScript -> CloseLink -> 'D'), so this is
-    # generous - the loop ends sooner on the host's actual 'D' disconnect / READY_CLOSE_LINK. Going silent
-    # BEFORE the host leads would trip its keepalive watchdog (LinkRfu_FatalError), so err long, not short.
-    LEAVE_TAIL_S = 120.0
+    def handle_interrupt(self):
+        engine, lg = self.engine, self.lg
+        if self.graceful_interrupt:
+            self.graceful_interrupt = False
+            if engine.host_in_seat and engine.in_seat_phase and self.lstate is not None:
+                self.lstate.exit()
+                lg("[live] Ctrl+C: sent EXIT_ROOM; waiting for the host to terminate the link. "
+                   "Press Ctrl+C again to stop immediately.")
+            else:
+                raise KeyboardInterrupt
+
+    def save_at_commit(self):
+        # Save at commit: the post-trade tail can stall or be interrupted and the mon is already valid.
+        engine, lg = self.engine, self.lg
+        if engine.commits > self.saved_commits:
+            self.saved_commits = engine.commits
+            try:
+                n = save_received(engine, self.run_config, lg)
+                lg(f"[live] trade committed -> saved {n} received mon(s) to disk now "
+                      f"(robust to an abrupt exit)")
+            except Exception as e:                       # never let a save error kill the link tail
+                lg(f"[live] WARNING: could not save received mon at commit: {e}")
+
+    def check_abort(self):
+        """True when the host refused or dropped us and the loop must stop."""
+        s, lg = self.s, self.lg
+        if getattr(s, "ni_rejected", False):
+            lg("[live] ABORT: host rejected our join (NI status != JOIN_GROUP_OK) - leaving.")
+            lg.info("Host rejected our join; leaving.")
+            return True
+        if getattr(s, "host_disconnected", False):
+            lg("[live] host closed the RFU link ('D' 0x44) - disconnecting.")
+            return True
+        return False
+
+    def connect_gate(self):
+        """True while the Pia connection is not up yet (the caller must idle a tick and retry)."""
+        s, lg = self.s, self.lg
+        if not s.connected:
+            self.connect_ticks += 1
+            if self.connect_ticks % 120 == 0:
+                # No proto 13 means the console never sent its Session join (a wedged host session: close
+                # and reopen the game); proto 13 with conn not OK is a handshake we mishandle.
+                lg.info(f"awaiting host connection: {self.connect_ticks}f, conn={self.conn.state}, "
+                        f"host_var={'learned' if s._learned else 'unseen'}, "
+                        f"rx_ok={s.rx_count} rx_decryptfail={s.rx_fail} "
+                        f"protos={dict(sorted(s.rx_protos.items()))} tx={s.tx_count}")
+            return True
+        if not self.connect_announced:
+            lg(f"[live] Pia connection ESTABLISHED - host confirmed us "
+                  f"(conn={self.conn.state} after {self.connect_ticks}f). Awaiting the emulator RFU "
+                  f"connect/'A' + NI handshake + LinkPlayer exchange before sitting.")
+            self.connect_announced = True
+        return False
+
+    def log_ni_progress(self):
+        s, lg = self.s, self.lg
+        if not s._ni_done:
+            self.ni_wait_ticks += 1
+            if self.ni_wait_ticks % 120 == 0:
+                ni = getattr(s, "_ni", None)
+                lg.info(f"awaiting RFU handshake: {self.ni_wait_ticks}f, "
+                   f"gba_accepted={s._gba_accepted}, "
+                   f"send_ni={'done' if (ni is not None and ni.done) else 'in progress' if ni else 'not built'}, "
+                   f"host_ni_ack={'pending' if s._cur_ni_ack else 'none'}, "
+                   f"host_ni_null={s._host_ni_null_seen}, host_uni={s._host_uni_seen}, "
+                   f"rx_ok={s.rx_count} protos={dict(sorted(s.rx_protos.items()))} tx={s.tx_count} "
+                   f"{self.rates()}")
+
+    def log_entry_progress(self):
+        s, engine, lg = self.s, self.engine, self.lg
+        if s._ni_done and not engine.commits:
+            self.entry_ticks += 1
+            if self.entry_ticks % 120 == 0:
+                ent = getattr(engine, "entry", None)
+                lg.info(f"entry state: {self.entry_ticks}f, "
+                        f"established={engine.established}, "
+                        f"host_in_seat={getattr(engine, 'host_in_seat', None)}, "
+                        f"host_ready={getattr(engine, 'host_ready', None)}, "
+                        f"we_sat={self.sat}, in_seat_phase={getattr(engine, 'in_seat_phase', None)}, "
+                        f"card_pulled={getattr(ent, 'card_pulled', None)}, "
+                        f"rx_ok={s.rx_count} tx={s.tx_count} {self.rates()}")
+
+    def log_leave_progress(self):
+        s, engine, lg = self.s, self.engine, self.lg
+        if engine.commits and getattr(engine, "leaving", False) and not engine.cancelled:
+            self.leave_ticks += 1
+            if self.leave_ticks % 120 == 0:
+                lg.info(f"leave state: {self.leave_ticks}f since the trade committed, "
+                        f"menu_live={engine._trade_menu_live()}, "
+                        f"state={engine.state}, selected={engine._selected}, "
+                        f"host_party_blocks={engine._host_party_blocks}/3, "
+                        f"party_sent={engine._party_sent}, "
+                        f"requested_cancel={engine.requested_cancel}, "
+                        f"rx_ok={s.rx_count} tx={s.tx_count} {self.rates()}")
+
+    def handle_seating(self):
+        """Announcements plus the walk/seat gating, in the order the entry sequence reaches them."""
+        engine, lg = self.engine, self.lg
+        if not self.announced_established and engine.established:
+            self.announced_established = True
+            lg("[live] RFU link ESTABLISHED (gReceivedRemoteLinkPlayers: both LinkPlayer "
+                  "blocks exchanged) - held keys + sit are now armed.")
+        # Walk as soon as the host is in the room: the console leader sends only EMPTY held keys in the
+        # trade room and waits for the CHILD's READY, so waiting for host_ready deadlocks. READY fires
+        # only at the chair; from the doorway it faults the host's cable-seat FSM.
+        if not self.walking and engine.host_in_seat:
+            lg("[live] host is in the trade room - walking to the RIGHT seat.")
+            self.lstate.walk_to_seat()
+            self.walking = True
+        if not self.sat and self.lstate.seated:
+            lg("[live] our READY (0x16) went out at the RIGHT seat.")
+            engine.note_self_seated()
+            self.sat = True
+        if not self.announced_entry and engine.entry.card_pulled:
+            lg("[live] entry: host pulled our 100B trainer card (BLOCK_REQ_SIZE_100) - "
+                  "supplied; this is the pre-trade card exchange (Task_ExchangeCards).")
+            self.announced_entry = True
+        if not self.announced_menu and engine.entry.complete:
+            lg("[live] entry: complete (P0..P5) - trade menu is live; entering the trade FSM.")
+            lg.info("Trade menu open; received the host's party.")
+            self.announced_menu = True
+
+    def handle_barrier(self):
+        """True when the host's CLOSE has been answered long enough to disconnect."""
+        engine, lg = self.engine, self.lg
+        # READY_CLOSE_LINK (0x5F00): answer briefly, then disconnect [link_rfu_2.c:1460-1520].
+        if engine.barrier.mode == lsmod_barrier.CLOSE:
+            if not self.announced_close:
+                self.announced_close = True
+                self.close_until = time.monotonic() + 1.5
+                lg("[live] host issued READY_CLOSE_LINK (0x5F00) - answering, then disconnecting.")
+                lg.info("Closing the link...")
+            if self.close_until is not None and time.monotonic() >= self.close_until:
+                return True
+        elif (self.exited and engine.barrier.mode == lsmod_barrier.STANDBY
+              and not self.announced_cancel):
+            lg("[live] answering the host's cancel-side standby (0x6600) so its "
+                  "cancel-to-leave completes.")
+            self.announced_cancel = True
+        return False
+
+    def handle_exit(self):
+        """True when the walk-out is over (host CLOSE answered, or the leave tail elapsed)."""
+        engine, lg = self.engine, self.lg
+        # Let the HOST lead the exit: a proactive EXIT_ROOM hits it mid-CB2_ReturnToFieldFromMultiplayer
+        # -> LinkRfu_FatalError. Its walk-out is mutual: it blocks at KeyInterCB_WaitForPlayersToExit
+        # until we answer with OUR EXIT_ROOM, so keep the link alive and answer reactively below.
+        if engine.done and not self.exited:
+            lg("[live] trade(s) complete - returning to the overworld; keeping the link ALIVE "
+                  "(held-keys keepalive + barrier) and letting the HOST lead the walk-out. Will answer "
+                  "the host's EXIT_ROOM with ours, then mirror its READY_CLOSE_LINK / 'D'.")
+            self.exited = True
+            self.leave_until = time.monotonic() + LEAVE_TAIL_S
+        if engine.host_exiting and not self.responded_exit and self.lstate is not None:
+            lg("[live] host is walking out (EXIT_ROOM 0x17, 'escorted out... please wait') - "
+                  "responding with OUR EXIT_ROOM so both are EXITING_ROOM -> host closes the link.")
+            self.lstate.exit()
+            self.responded_exit = True
+        if self.handle_barrier():
+            return True
+        if self.leave_until is not None and time.monotonic() >= self.leave_until:
+            lg("[live] overworld leave tail elapsed without a host CLOSE - disconnecting.")
+            return True
+        return False
+
+
+def run_live(run_config, lg):
+    t, engine, s, conn, lstate = _live_connect(run_config, lg)
+    period = 1.0 / 59.727
+    st = _LiveJoiner(run_config, lg, t, engine, s, conn, lstate)
+    old_sigint = signal.signal(signal.SIGINT, st.on_interrupt)
     try:
         while True:
             s.tick()
-            if graceful_interrupt:
-                graceful_interrupt = False
-                if engine.host_in_seat and engine.in_seat_phase and lstate is not None:
-                    lstate.exit()
-                    lg("[live] Ctrl+C: sent EXIT_ROOM; waiting for the host to terminate the link. "
-                       "Press Ctrl+C again to stop immediately.")
-                else:
-                    raise KeyboardInterrupt
-            # Save each received mon the INSTANT it commits (on CONFIRM_FINISH), not just at graceful
-            # run-end: the post-trade tail (save chain / cancel / close) can stall or be Ctrl+C'd, and the
-            # mon data is already valid at commit. Writing here means the received mon survives an
-            # abrupt exit. save_received() is idempotent (re-writes all received).
-            if engine.commits > saved_commits:
-                saved_commits = engine.commits
-                try:
-                    n = save_received(engine, run_config, lg)
-                    lg(f"[live] trade committed -> saved {n} received mon(s) to disk now "
-                          f"(robust to an abrupt exit)")
-                except Exception as e:                       # never let a save error kill the link tail
-                    lg(f"[live] WARNING: could not save received mon at commit: {e}")
-            # host REJECTED our join (recv-NI status != JOIN_GROUP_OK): bail cleanly instead of acking
-            # forever then hanging on a UNI that never arrives.
-            if getattr(s, "ni_rejected", False):
-                lg("[live] ABORT: host rejected our join (NI status != JOIN_GROUP_OK) - leaving.")
-                lg.info("Host rejected our join; leaving.")
+            st.handle_interrupt()
+            st.save_at_commit()
+            if st.check_abort():
                 break
-            # host closed the RFU link (emulator 'D'): the link is down, stop cleanly.
-            if getattr(s, "host_disconnected", False):
-                lg("[live] host closed the RFU link ('D' 0x44) - disconnecting.")
-                break
-            # --- S0 GATE: do NOTHING (no sit, no trade) until the host CONFIRMS the connection.
-            # sim.tick() only emits trade Reliable once s.connected; here we likewise hold off the
-            # seat/trade orchestration so we never "blow past" the host's connection confirmation.
-            if not s.connected:
-                connect_ticks += 1
-                if connect_ticks % 120 == 0:
-                    # INFO sink, not [live]. This is the one stall with no visible symptom at all:
-                    # the joiner sits between "Host acknowledged our join" and "Connection
-                    # established" indefinitely and prints NOTHING, because [live] is verbose-gated
-                    # and --verbose is banned on live runs. Observed on hardware as a silent hang of
-                    # minutes with the process alive and the console idle. `protos` separates the
-                    # two cases: no proto 13 means the console never sent its Session join (a wedged
-                    # host session - close and reopen the game, backing out is not enough), while
-                    # proto 13 present with conn not OK is a handshake we are mishandling.
-                    lg.info(f"awaiting host connection: {connect_ticks}f, conn={conn.state}, "
-                            f"host_var={'learned' if s._learned else 'unseen'}, "
-                            f"rx_ok={s.rx_count} rx_decryptfail={s.rx_fail} "
-                            f"protos={dict(sorted(s.rx_protos.items()))} tx={s.tx_count}")
+            if st.connect_gate():
                 _paced_sleep(s, period)
                 continue
-            if not connect_announced:
-                lg(f"[live] Pia connection ESTABLISHED - host confirmed us "
-                      f"(conn={conn.state} after {connect_ticks}f). Awaiting the emulator RFU "
-                      f"connect/'A' + NI handshake + LinkPlayer exchange before sitting.")
-                connect_announced = True
-            # Post-connect stall diagnostic. Between the host's 'A' and its first UNI poll the
-            # child is legitimately silent (the reference capture sends zero 'T' across the host's
-            # join-textbox gap), so a stall here is invisible: it looks identical to a healthy wait.
-            # Report the NI/UNI state so "the host never engaged" can be told apart from "our own
-            # NI never finished".
-            if not s._ni_done:
-                ni_wait_ticks += 1
-                if ni_wait_ticks % 120 == 0:
-                    ni = getattr(s, "_ni", None)
-                    lg.info(f"awaiting RFU handshake: {ni_wait_ticks}f, "
-                       f"gba_accepted={s._gba_accepted}, "
-                       f"send_ni={'done' if (ni is not None and ni.done) else 'in progress' if ni else 'not built'}, "
-                       f"host_ni_ack={'pending' if s._cur_ni_ack else 'none'}, "
-                       f"host_ni_null={s._host_ni_null_seen}, host_uni={s._host_uni_seen}, "
-                       f"rx_ok={s.rx_count} protos={dict(sorted(s.rx_protos.items()))} tx={s.tx_count} "
-                       f"{rates()}")
-            # Post-handshake entry observability. Everything below here logs to the verbose-only
-            # sink, and --verbose is banned on live runs (it stalls the handshake), so a stall in
-            # the union-room -> trade-room entry is completely invisible. Report the entry state on
-            # the info sink instead.
-            if s._ni_done and not engine.commits:
-                entry_ticks += 1
-                if entry_ticks % 120 == 0:
-                    ent = getattr(engine, "entry", None)
-                    lg.info(f"entry state: {entry_ticks}f, "
-                            f"established={engine.established}, "
-                            f"host_in_seat={getattr(engine, 'host_in_seat', None)}, "
-                            f"host_ready={getattr(engine, 'host_ready', None)}, "
-                            f"we_sat={sat}, in_seat_phase={getattr(engine, 'in_seat_phase', None)}, "
-                            f"card_pulled={getattr(ent, 'card_pulled', None)}, "
-                            f"rx_ok={s.rx_count} tx={s.tx_count} {rates()}")
-            # Post-trade cancel-to-leave observability. The entry heartbeat above stops the
-            # moment the trade commits, and the leave path then waits silently for the host to
-            # re-run BufferTradeParties and bring the menu back up (~11s in j85) before it can
-            # emit REQUEST_CANCEL. j86 died inside that window with nothing logged at all - the
-            # same phase as the rec1 host wedge. Report it on the info sink too.
-            if engine.commits and getattr(engine, "leaving", False) and not engine.cancelled:
-                leave_ticks += 1
-                if leave_ticks % 120 == 0:
-                    lg.info(f"leave state: {leave_ticks}f since the trade committed, "
-                            f"menu_live={engine._trade_menu_live()}, "
-                            f"state={engine.state}, selected={engine._selected}, "
-                            f"host_party_blocks={engine._host_party_blocks}/3, "
-                            f"party_sent={engine._party_sent}, "
-                            f"requested_cancel={engine.requested_cancel}, "
-                            f"rx_ok={s.rx_count} tx={s.tx_count} {rates()}")
-            if not announced_established and engine.established:
-                announced_established = True
-                lg("[live] RFU link ESTABLISHED (gReceivedRemoteLinkPlayers: both LinkPlayer "
-                      "blocks exchanged) - held keys + sit are now armed.")
-            # sit() (the held-keys READY 0x16 seat-down) is gated on the HOST itself SITTING - i.e. the
-            # host emitting its own READY (0x16), engine.host_ready - NOT merely on it entering the room
-            # (host_in_seat). Sitting on host_in_seat fired READY while the host's avatar was still
-            # walking to its chair (FSM in 'Please wait') -> out-of-sequence READY faults the host's
-            # cable-seat FSM immediately (observed as a comms error on trade-room load). Until host_ready we emit
-            # EMPTY held-keys keepalive (host_in_seat armed the seat keepalive); we sit WITH the host so
-            # GetCableClubPartnersReady sees both PLAYER_LINK_STATE_READY and clears.
-            # Start the WALK as soon as the host is in the room (host_in_seat). Waiting for the host's
-            # own READY (host_ready) deadlocks: measured on hardware (j35), the console leader streams
-            # nothing but EMPTY held-keys in the trade room and waits for the CHILD's READY - which is
-            # exactly what this repo's own leader does [host_trade.py, LINK_KEY_READY in H_ENTRY_SEAT].
-            # Neither side moved and it timed out. The earlier note that sitting on host_in_seat faults
-            # the host FSM was right about the CAUSE but wrong about the fix: the fault was firing READY
-            # from the doorway. walk_to_seat() sends the real route first and READY only at the chair.
-            if not walking and engine.host_in_seat:
-                lg("[live] host is in the trade room - walking to the RIGHT seat.")
-                lstate.walk_to_seat()
-                walking = True
-            if not sat and lstate.seated:
-                lg("[live] our READY (0x16) went out at the RIGHT seat.")
-                engine.note_self_seated()   # arm the post-seat warp-into-scene standbys (count=2, count=3)
-                sat = True
-            # ENTRY-phase observability: report the union-room -> trade-center handshake.
-            if not announced_entry and engine.entry.card_pulled:
-                lg("[live] entry: host pulled our 100B trainer card (BLOCK_REQ_SIZE_100) - "
-                      "supplied; this is the pre-trade card exchange (Task_ExchangeCards).")
-                announced_entry = True
-            if not announced_menu and engine.entry.complete:
-                lg("[live] entry: complete (P0..P5) - trade menu is live; entering the trade FSM.")
-                lg.info("Trade menu open; received the host's party.")
-                announced_menu = True
-            # Cancel-to-leave: once the trade/cancel LOGIC is done, do NOT disconnect
-            # AND do NOT initiate the walk-out ourselves. LET THE HOST LEAD THE EXIT. Either player CAN
-            # emit EXIT_ROOM (overworld.c:2701-2710 DPAD_DOWN at the south exit -> CreateConfirmLeave...
-            # -> EXIT_ROOM(0x17) -> 2751 sPlayerLinkStates=EXITING_ROOM), but the HOST leading is cleaner:
-            # the host runs its OWN RunTerminateLinkScript + CloseLink and SEVERS the link itself (a clean
-            # 'D'), while we - a fake client - have no teardown FSM/scripts to drive (the host terminates
-            # off its own EXITING_ROOM; RunTerminateLinkScript runs only if (player->isLocalPlayer), so it
-            # never needs us to LEAD). Emitting EXIT_ROOM PROACTIVELY (the instant the cancel-exit standby
-            # passes) hit the host mid-CB2_ReturnToFieldFromMultiplayer (field link FSM not re-established)
-            # -> it couldn't process our EXITING_ROOM -> CheckRfuKeepAliveTimer -> LinkRfu_FatalError
-            # (observed live). So we let the HOST lead: keep the link ALIVE (sim's 0xBE00 keepalive, re-armed by
-            # _post_cancel_overworld + the barrier responder) and WAIT. BUT - the host's walk-out is a
-            # MUTUAL handshake: when it walks out it broadcasts EXIT_ROOM and BLOCKS at
-            # KeyInterCB_WaitForPlayersToExit ("escorted out... please wait") until ALL players are
-            # EXITING_ROOM, so we MUST answer with OUR EXIT_ROOM (reactively, below) - silence hangs the host.
-            if engine.done and not exited:
-                lg("[live] trade(s) complete - returning to the overworld; keeping the link ALIVE "
-                      "(held-keys keepalive + barrier) and letting the HOST lead the walk-out. Will answer "
-                      "the host's EXIT_ROOM with ours, then mirror its READY_CLOSE_LINK / 'D'.")
-                exited = True
-                leave_until = time.monotonic() + LEAVE_TAIL_S
-            # The host walked out (EXIT_ROOM 0x17) and is blocked waiting for ALL players to be EXITING_ROOM
-            # [overworld.c:2962-2981]. RESPOND with OUR EXIT_ROOM (lstate.exit() emits 0x17 once, then EMPTY
-            # keepalive) so the host marks us EXITING_ROOM -> CableClub_EventScript_DoLinkRoomExit ->
-            # READY_CLOSE_LINK (c=13). This is the REACTIVE walk-out (NOT the premature proactive
-            # EXIT_ROOM that faulted earlier - the host is now genuinely waiting for it).
-            if engine.host_exiting and not responded_exit and lstate is not None:
-                lg("[live] host is walking out (EXIT_ROOM 0x17, 'escorted out... please wait') - "
-                      "responding with OUR EXIT_ROOM so both are EXITING_ROOM -> host closes the link.")
-                lstate.exit()
-                responded_exit = True
-            # When the host issues READY_CLOSE_LINK (0x5F00) the responder mirrors it; answer briefly,
-            # then disconnect (the close handshake is done - no need to wait out the full tail)
-            # [trade_scene.c:2722-2725; trade.c:2117-2132; link_rfu_2.c:1460-1520].
-            if engine.barrier.mode == lsmod_barrier.CLOSE:
-                if not announced_close:
-                    announced_close = True
-                    close_until = time.monotonic() + 1.5
-                    lg("[live] host issued READY_CLOSE_LINK (0x5F00) - answering, then disconnecting.")
-                    lg.info("Closing the link...")
-                if close_until is not None and time.monotonic() >= close_until:
-                    break
-            elif (exited and engine.barrier.mode == lsmod_barrier.STANDBY
-                  and not announced_cancel):
-                lg("[live] answering the host's cancel-side standby (0x6600) so its "
-                      "cancel-to-leave completes.")
-                announced_cancel = True
-            if leave_until is not None and time.monotonic() >= leave_until:
-                lg("[live] overworld leave tail elapsed without a host CLOSE - disconnecting.")
+            st.log_ni_progress()
+            st.log_entry_progress()
+            st.log_leave_progress()
+            st.handle_seating()
+            if st.handle_exit():
                 break
             _paced_sleep(s, period)
     finally:
@@ -380,9 +360,8 @@ def run_replay(run_config, lg):
     if not t.ssid:
         sys.exit("capture has no SSID (predates SSID logging) - cannot decrypt")
     pc = cryptomod.PiaCrypto(t.ssid)
-    # the capture has a finite frame budget; the realistic 1935-frame anim would outlast it, so use
-    # a small anim_delay for replay unless the user explicitly set --anim-delay. The early-arrival
-    # guard keeps READY_FINISH before commit regardless of the value.
+    # A finite capture would not outlast the 1935-frame anim; the early-arrival guard keeps READY_FINISH
+    # before commit for any value.
     engine = make_engine(run_config, lg, default_anim_delay=5)
     s = simmod.Sim(t, pc, engine, t.our_ip, t.host_ip, log=lg)
     while not t.drained and not engine.done:
@@ -508,8 +487,6 @@ def main(argv=None):
     ap = build_parser()
     args = ap.parse_args(argv)
     run_config = _build_run_config(ap, args)
-    # The host's Pia messages are zstd-compressed; without zstandard in THIS interpreter every
-    # received message is unparseable and the sim silently never responds (tx stays 0). Fail loudly.
     if not cryptomod.HAVE_ZSTD:
         sys.exit(f"FATAL: 'zstandard' is not installed in this Python ({sys.executable}).\n"
                  f"The host's handshake is zstd-compressed - without it the sim can't read a single\n"
@@ -522,15 +499,10 @@ def main(argv=None):
     saved = save_received(engine, run_config, lg)
     if not saved and args.live:
         print("\nTrade did not complete (no mon received).")
-    # success: a mon was saved, or this was an offline replay (which exercises the path even if the
-    # finite capture stops short of every configured trade).
     return 0 if (saved or args.replay) else 1
 
 
 def save_received(engine, run_config, lg):
-    """Save each received mon. trades==1 keeps the exact legacy single-file
-    behavior (named by --out). trades>1 saves each as <stem>_trade<k>_<species>.pk3. Returns the
-    number of mons saved."""
     mons = engine.received_mons or ([engine.received_mon] if engine.received_mon else [])
     plan = run_config.plan
     return runtime.save_received_mons(

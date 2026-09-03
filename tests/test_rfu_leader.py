@@ -1,6 +1,6 @@
 """Deterministic child/parent simulation for RFU leader milestones 3.1-3.3."""
 
-from frlgsim import gbaframe, ni, rfu
+from frlgsim import gbaframe, ni, rfu, rfu_leader
 from frlgsim.rfu_leader import CHILD_NI, PARENT_NI, UNI, RFULeader
 
 
@@ -135,9 +135,7 @@ def test_duplicate_child_ni_is_reacked_without_corrupting_reassembly():
 
 
 def test_link_state_frames_mirror_the_real_parent():
-    """Every joiner capture (j19-j87) shows the real Switch parent sending 'G' (0x47) link-state
-    frames: value 0 shortly after A, value 1 once it holds the child's NI. Session 11 added them
-    to the leader; FRLG_NO_LINK_STATE=1 (send_link_state=False) restores the old stream for A/B."""
+    """The real Switch parent sends 'G' link-state frames: 0 shortly after A, 1 once it holds the child's NI."""
     leader = RFULeader()
     leader.receive(gbaframe.build_connect(b"\x67\x79"))
     assert gbaframe.parse_in(leader.tick())["type"] == "A"
@@ -156,12 +154,6 @@ def test_link_state_frames_mirror_the_real_parent():
     assert event == "child_ni_complete"
     assert leader.tick() == bytes.fromhex("5747040001000000")
     assert gbaframe.parse_in(leader.tick())["ni"]["state"] == rfu.LCOM_NI_START
-
-    quiet = RFULeader()
-    quiet.send_link_state = False
-    quiet.receive(gbaframe.build_connect(b"\x67\x79"))
-    assert gbaframe.parse_in(quiet.tick())["type"] == "A"
-    assert quiet.tick() is None
 
 
 def test_ldn_leave_immediately_silences_queued_output():
@@ -197,9 +189,8 @@ def _complete_ni_handshake():
 
 
 def test_every_child_command_is_echoed_even_when_they_arrive_in_a_burst(monkeypatch):
-    """Row 1 reflects every child command rather than only the newest one (with the 2026-09-03
-    backlog bound lifted; the bound exists because a lagging echo kills the console's block send)."""
-    monkeypatch.setenv("FRLG_ECHO_MAX", "1000")
+    """Row 1 reflects every child command rather than only the newest one, once the backlog bound is lifted."""
+    monkeypatch.setattr(rfu_leader, "ECHO_MAX", 1000)
     leader = _complete_ni_handshake()
     builder = rfu.SlotBuilder()
     expected = [rfu.serialize(rfu.send_block_words(i, bytes([i]) * 12))

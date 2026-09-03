@@ -1,5 +1,3 @@
-"""Human-readable artifacts for the exact Mystery Gift bytes being distributed."""
-
 from __future__ import annotations
 
 import hashlib
@@ -32,7 +30,6 @@ def _virtual_offset(pointer):
 
 
 def _event_text(data):
-    """Decode the field-message controls the composer can emit."""
     fragments = []
     plain = bytearray()
 
@@ -116,7 +113,6 @@ def _one_stage_summary(path, stage):
 
 
 def _instructions(script, code_end):
-    """Yield (offset, raw bytes, text, targets) for supported field opcodes."""
     simple = {
         0x02: "end", 0x09: "callstd obtain_item", 0x28: None,
         0x29: None, 0x2A: None, 0x2B: None, 0x42: None, 0x43: "getpartysize",
@@ -219,7 +215,6 @@ def _instructions(script, code_end):
 
 
 def render_artifact(*, gift, flag_id, distribution, definition=None):
-    """Return a readable listing for the exact distribution bytes passed in."""
     script = distribution.ram_script
     message_targets = []
     for offset, raw, text, targets in _instructions(script, len(script)):
@@ -281,7 +276,6 @@ def render_artifact(*, gift, flag_id, distribution, definition=None):
 
 
 def write_artifact(directory, *, gift, flag_id, distribution, definition=None):
-    """Write and return a deterministic ``.ram.lst`` artifact path."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256(distribution.ram_script).hexdigest()[:12]

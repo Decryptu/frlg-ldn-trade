@@ -1,15 +1,6 @@
-"""Transport adapters: where Pia datagrams come from / go to.
-
-ReplayTransport - OFFLINE. Replays a capture's IN datagrams (so the sim's whole RX stack runs
-                  against the real host stream) and records the sim's OUT datagrams. Used by the
-                  test harness; needs no hardware.
-
-LiveTransport   - LIVE. Joins the FRLG console's LDN session with kinnay's `ldn` library (like
-                  the bridge tooling), then moves UDP :12345 payloads on the 169.254.x interface
-                  exactly as the bridge does: a bound UDP socket for TX (SO_BROADCAST)
-                  and an AF_PACKET raw socket for RX (so subnet-directed broadcasts aren't dropped).
-                  Requires root + the `netlink`/`ldn`/`trio` deps and the real Switch; it cannot be
-                  exercised offline, so it is written to mirror the proven bridge code path.
+"""Transport adapters: ReplayTransport replays a capture's IN datagrams offline; LiveTransport joins the console's LDN
+session (kinnay's ldn) and moves UDP :12345 via a bound UDP TX socket + an AF_PACKET RX socket (so subnet-directed
+broadcasts are not dropped); HostTransport is the AP side. The live classes need root and a real Switch.
 """
 
 import json
@@ -28,24 +19,21 @@ PROTO_UDP = 17
 PIA_PORT = 12345
 
 
-_PIA_HDR = 0x5C     # Pia 6.16-6.41 LDN system header (sysCommVer 21/22); the game payload follows it
+_PIA_HDR = 0x5C     # Pia 6.16-6.41 LDN system header length; the game payload follows it
 
 
 def _b85_decode(s):
-    """Decode the custom base85 used for the RFU beacon payload: alphabet 0x23..0x78 skipping 0x5c
-    ('\\'), first char = least-significant digit, 4-byte little-endian groups. len(s) is truncated to
-    a multiple of 5."""
+    """Custom base85: alphabet 0x23..0x78 skipping 0x5c, first char = least-significant digit, 4-byte LE groups."""
     out = bytearray()
     for i in range(0, len(s) - len(s) % 5, 5):
         v = 0
-        for c in reversed(s[i:i + 5]):                  # reversed: first char is the LOW digit
+        for c in reversed(s[i:i + 5]):
             v = v * 85 + ((c - 0x23) if c < 0x5C else (c - 0x24))
         out += (v & 0xFFFFFFFF).to_bytes(4, "little")
     return bytes(out)
 
 
 def _frlg_name(b):
-    """Render a name from the FRLG character set (letters/digits) for the beacon dump."""
     out = []
     for x in b:
         if x == 0xFF:
@@ -62,11 +50,7 @@ def _frlg_name(b):
 
 
 def _dump_beacon(app_data, log):
-    """Dump the host's LDN advertisement application data (the RFU search beacon). It is a Pia
-    6.16-6.41 system header (0x5C bytes: Switch nickname etc.) followed by the game payload, a
-    custom-base85-encoded 24-byte RFU record (player trainer id, in-game name, RFU session id, partner
-    info, game data). Diagnostics only - the connect id is not taken from here; it is a random nonzero
-    value."""
+    """Diagnostics only; the connect id is not taken from the beacon."""
     if not app_data:
         log("[live] beacon: NO application_data on the advertisement")
         return None
@@ -75,19 +59,14 @@ def _dump_beacon(app_data, log):
     if len(app_data) >= _PIA_HDR:
         gba = app_data[_PIA_HDR:]
         log(f"[live] beacon RFU payload (after the 0x5C Pia header, {len(gba)} B): {gba.hex()}")
-        try:                                            # never let an odd beacon abort the join
+        try:
             d = _b85_decode(gba)
             if len(d) >= 24:
                 log(f"[live] beacon decoded: host name={_frlg_name(d[2:10])!r} "
                     f"TID=0x{int.from_bytes(d[0:2], 'little'):04x} "
                     f"RFU-session-id=0x{int.from_bytes(d[10:12], 'little'):04x} "
                     f"tradeSpecies={int.from_bytes(d[20:24], 'little') >> 16}")
-                # The RFU search word carries the host's GAME state: which activity it is
-                # advertising and whether it has already started one. Roughly half of all joiner
-                # runs get a console that accepts the LDN/Pia/RFU link and then never runs its
-                # game link loop (zero NI acks, ~3 'T'/s instead of ~40). This is the only
-                # pre-join, read-only view of that state, so surface it on the INFO sink - the
-                # verbose sink is unusable on live runs.
+                # The only pre-join view of the host's game state; the verbose sink is unusable on live runs, so use INFO.
                 word = int.from_bytes(d[16:18], "little")
                 info = getattr(log, "info", log)
                 info(f"host beacon game state: activity={word & 0x007F} "
@@ -99,11 +78,8 @@ def _dump_beacon(app_data, log):
 
 
 def _flatten_exc(e, depth=0):
-    """Recursively flatten a (Base)ExceptionGroup - which is how trio reports failures from inside
-    its nursery ('Exceptions from Trio nursery (N sub-exceptions)') - into the LEAF exceptions, so
-    the real cause (e.g. a netlink/nl80211 EBUSY, an association timeout) is visible instead of the
-    opaque group wrapper. Returns a list of (depth, exception) leaves."""
-    subs = getattr(e, "exceptions", None)           # ExceptionGroup / trio.MultiError
+    """Flatten a (Base)ExceptionGroup (trio nursery failures) to its leaf exceptions -> [(depth, exc)]."""
+    subs = getattr(e, "exceptions", None)
     if subs:
         out = []
         for sub in subs:
@@ -113,10 +89,8 @@ def _flatten_exc(e, depth=0):
 
 
 def _format_join_error(e):
-    """Human-readable, fully-unwrapped description of an LDN-join failure, with the leaf exceptions'
-    types, messages, and tracebacks (the opaque trio ExceptionGroup hides all of these)."""
     leaves = _flatten_exc(e)
-    if len(leaves) == 1 and leaves[0][1] is e:      # not a group: report it directly
+    if len(leaves) == 1 and leaves[0][1] is e:
         leaf = e
         body = "".join(traceback.format_exception(type(leaf), leaf, leaf.__traceback__))
         return f"{type(leaf).__name__}: {leaf}\n{body}"
@@ -126,12 +100,10 @@ def _format_join_error(e):
         parts.append(f"  [{i}] {type(leaf).__name__}: {leaf}\n{body}")
     return "\n".join(parts)
 
-# LDN virtual interfaces to clear off the radio (ported from the bridge tooling).
 LDN_VIFS = {"ldn", "ldn-mon", "ldn-tap", "ldnclient"}
-AIR_MONITOR_VIF = "ldnair"      # passive capture vif owned by scratchpad/run_*.sh, never touched here
+AIR_MONITOR_VIF = "ldnair"      # passive capture vif owned by scratchpad/run_*.sh; never touched here
 
 
-# --- radio / interface cleanup (the library needs the radio free of stale vifs) -------------
 def _run(cmd):
     subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -145,7 +117,6 @@ def _sysctl(key, val):
 
 
 def get_power_save(iface):
-    """-> True/False/None (unknown) for `iw dev <iface> get power_save`."""
     try:
         out = subprocess.check_output(["iw", "dev", iface, "get", "power_save"],
                                       text=True, stderr=subprocess.DEVNULL)
@@ -160,17 +131,9 @@ def get_power_save(iface):
 
 
 def disable_power_save(iface, log=print):
-    """Turn 802.11 power save OFF on the joiner's station vif, and say what it was.
-
-    A new managed vif inherits the driver default, which on rtw88 is PS ON. A dozing station
-    only wakes on the AP's beacons, so with the console beaconing at 100 TU every exchange
-    costs up to a beacon interval: the measured joiner captures (j43/j50/j55) show the child
-    <-> parent ping-pong pinned at 11-15 exchanges/s with 100-400ms latency tails and ~50% of
-    our reliable frames retransmitted, while the console's own frame counter advances at
-    55-60/s. The host direction never had this because an AP vif does not doze - which is why
-    hosting a trade works and joining crawls. Everything the joiner has to fit inside the
-    console's patience (the trainer-card round, the entry barriers, the 112-slot seat walk)
-    is throughput-bound on that number."""
+    """rtw88 defaults a new managed vif to power save ON; a dozing station wakes only on the console's 100 TU beacons,
+    pinning the link at ~11-15 exchanges/s. An AP vif never dozes, which is why hosting never had this.
+    """
     before = get_power_save(iface)
     _run(["iw", "dev", iface, "set", "power_save", "off"])
     after = get_power_save(iface)
@@ -183,7 +146,6 @@ def disable_power_save(iface, log=print):
 
 
 def list_phy_ifaces():
-    """Map phyName -> [netdev names] by parsing `iw dev`."""
     mapping, current = {}, None
     try:
         out = subprocess.check_output(["iw", "dev"], text=True, stderr=subprocess.DEVNULL)
@@ -200,17 +162,12 @@ def list_phy_ifaces():
 
 
 def free_radio(phys, log=print):
-    """Delete leftover LDN vifs and take any other interface off the radio so the station can
-    grab the channel (fixes SET_CHANNEL -> EBUSY). Brings your normal Wi-Fi down on that adapter
-    for the duration (restore with wifi-init.sh --restore). Needs root."""
+    """Delete stale LDN vifs and take other interfaces off the radio (SET_CHANNEL -> EBUSY otherwise). Needs root."""
     mapping = list_phy_ifaces()
     for phy in {p for p in phys if p}:
         for iface in mapping.get(phy, []):
             if iface == AIR_MONITOR_VIF:
-                # The launchers' passive air capture. It used to be created AFTER "Hosting.", i.e.
-                # while the first console was already authenticating on the same phy (lg66: 2.2s to
-                # the assoc response, 5s of undelivered data frames, a dead run). Now it is created
-                # BEFORE the host starts, so leave it up.
+                # the launchers' passive air capture, created before the host starts; leave it up
                 continue
             if iface in LDN_VIFS:
                 _iw_del(iface)
@@ -218,10 +175,8 @@ def free_radio(phys, log=print):
                 _run(["nmcli", "device", "set", iface, "managed", "no"])
                 _run(["ip", "link", "set", iface, "down"])
                 log(f"[live] freed radio: brought {iface} ({phy}) down")
-    # Belt-and-suspenders: a failed/abandoned join LEAKS its station vif (still associated to the
-    # host), and `iw dev` may not map it under the expected phy - a leftover, still-associated
-    # `ldnclient` then makes the NEXT association fail with nl80211 status code 1. Delete every
-    # known LDN vif by name unconditionally so each join starts from a clean radio.
+    # A failed join leaks a still-associated station vif that makes the next association fail (nl80211 status 1);
+    # delete every known LDN vif by name.
     for vif in LDN_VIFS:
         if vif in {i for ifs in mapping.values() for i in ifs} or _iface_exists(vif):
             _iw_del(vif)
@@ -237,16 +192,15 @@ def _iface_exists(iface):
 
 
 def light_cleanup(log=print):
-    """Delete the LDN virtual interfaces (teardown)."""
     for iface in sorted(LDN_VIFS):
         _iw_del(iface)
     time.sleep(0.3)
 
 
 def tune_iface(iface, keep_ip, broadcast_ip, log=print):
-    """Make the LDN interface deliver the host's link-local subnet broadcasts: relax rp_filter,
-    force the 169.254.X.255 broadcast route into the local table, and drop stray zeroconf
-    addresses that would shadow it (ported from the bridge tooling). Needs root."""
+    """Make the iface deliver the host's link-local subnet broadcasts: rp_filter off, the broadcast route in the local
+    table, stray zeroconf addresses removed. Needs root.
+    """
     _run(["nmcli", "device", "set", iface, "managed", "no"])
     _run(["pkill", "-f", f"avahi-autoipd.*{iface}"])
     for key in (f"net.ipv4.conf.{iface}.rp_filter", "net.ipv4.conf.all.rp_filter",
@@ -269,29 +223,22 @@ def tune_iface(iface, keep_ip, broadcast_ip, log=print):
     except Exception as e:
         log(f"[live] stray-address cleanup skipped: {e}")
 
-# The emulator's LDN passphrase (NintendoClients wiki "LDN Passphrases"). It belongs to the
-# GBA emulator container, not the ROM, so it is SHARED across its titles: FRLG today, and
-# Ruby/Sapphire/Emerald when they are re-released. It is ONE 64-byte value (the two 32-byte halves
-# concatenate - earlier code mislabeled the second half as an "alternate"). Hardcoded as the
-# default so no --password is needed.
+# The emulator's LDN passphrase (NintendoClients wiki "LDN Passphrases"): one 64-byte value, shared across the GBA
+# emulator's titles.
 GBA_APP_PASSPHRASE = bytes.fromhex(
     "fcb6f6adb9dfea66aca9c326149d2b3b08a781895cbf78f720d78b85a57584a9"
     "9665d237797b2a41ddef14063ec28d259143af7832fb3cbcf2759cbfbdc81d8c")
 assert len(GBA_APP_PASSPHRASE) == 64
 
 
-# ---------------------------------------------------------------------------
 class ReplayTransport:
-    """Offline: dispense capture IN datagrams; collect OUT datagrams the sim sends."""
-
     def __init__(self, in_datagrams, our_ip="169.254.21.2", host_ip="169.254.21.1"):
-        # in_datagrams: list of (payload_bytes, src_ip_str), in capture order
         self._in = list(in_datagrams)
         self._i = 0
         self.our_ip = our_ip
         self.host_ip = host_ip
-        self.sent = []                  # [(datagram, dst_ip)]
-        self.batch = 4                  # IN datagrams handed out per recv() (coalescing model)
+        self.sent = []
+        self.batch = 4
 
     def recv(self):
         out = []
@@ -311,7 +258,6 @@ class ReplayTransport:
 
     @classmethod
     def from_capture(cls, raw_path):
-        """Load a raw capture: IN datagrams + session ssid/ips."""
         metas, ins = [], []
         sess = {}
         for line in open(raw_path, errors="replace"):
@@ -334,13 +280,8 @@ class ReplayTransport:
         return t
 
 
-# ---------------------------------------------------------------------------
 class LiveTransport:
-    """Join the console's LDN session and exchange UDP :12345 datagrams. Mirrors the bridge
-    (scan/connect + UDP TX socket + AF_PACKET RX). Untested offline."""
-
-    # FRLG LDN identity (the same the bridge/console use).
-    LOCAL_COMMUNICATION_ID = 0x0100610011000000     # FireRed/LeafGreen emulator title id
+    LOCAL_COMMUNICATION_ID = 0x0100610011000000
     SCENE_ID = 0
     APPLICATION_VERSION = 88
 
@@ -348,7 +289,7 @@ class LiveTransport:
                  local_comm_id=None, scene_id=None, app_version=None,
                  phyname="phy0", ifname="ldnclient", log=print,
                  scan_channels=(1, 6, 11), scan_dwell=0.6):
-        self.info = getattr(log, "info", log)   # clean milestone sink (default-mode narration)
+        self.info = getattr(log, "info", log)
         self.password = password if password else GBA_APP_PASSPHRASE
         self.nickname = nickname
         self.keys_path = keys_path
@@ -366,9 +307,9 @@ class LiveTransport:
         self.ssid = None
         self.our_ip = None
         self.host_ip = None
-        self.our_mac = None        # our 6-byte LDN MAC = our Pia connection GUID (constant id)
-        self.host_mac = None       # the host's 6-byte LDN MAC = its Pia connection GUID
-        self.app_data = None       # the host's LDN advertisement beacon (emulator RFU search data)
+        self.our_mac = None
+        self.host_mac = None
+        self.app_data = None
         self.iface = None
         self.broadcast = None
         self._tx = None
@@ -379,17 +320,11 @@ class LiveTransport:
         self._stop = threading.Event()
         self._err = None
 
-    # -- LDN join runs in a trio thread that keeps the connection alive -------
     def start(self, timeout=30, attempts=3, settle=1.5):
-        """Join the LDN network, retrying transient failures. The LDN/nl80211 layer flakes
-        intermittently (radio busy, association timeout, a stale vif racing the fresh join) - the
-        SAME failure the bridge hits as 'connection failed'. Rather than make the user re-run, we
-        free the radio and retry up to `attempts` times, logging each attempt's FULLY-UNWRAPPED
-        cause (see _format_join_error) so persistent problems are still diagnosable instead of
-        hidden behind trio's opaque ExceptionGroup."""
+        """Join, retrying: the LDN/nl80211 layer flakes intermittently (radio busy, association timeout, a stale vif)."""
         last_err = None
         for attempt in range(1, attempts + 1):
-            free_radio({self.phyname}, self.log)        # clear the radio before each join attempt
+            free_radio({self.phyname}, self.log)
             self._err = None
             self._ready.clear()
             self._stop.clear()
@@ -398,25 +333,24 @@ class LiveTransport:
             if not self._ready.wait(timeout):
                 last_err = f"LDN join timed out after {timeout}s (attempt {attempt}/{attempts})"
                 self.log(f"[live] {last_err}")
-                self._stop.set()                        # ask the (stuck) attempt to unwind
+                self._stop.set()
             elif self._err:
-                last_err = self._err                    # already unwrapped + logged in _run_ldn
+                last_err = self._err
             else:
-                tune_iface(self.iface, self.our_ip, self.broadcast, self.log)  # host broadcasts
-                disable_power_save(self.iface, self.info)   # a dozing station caps the link at
-                                                            # the console's beacon interval
+                tune_iface(self.iface, self.our_ip, self.broadcast, self.log)
+                disable_power_save(self.iface, self.info)
                 self._setup_sockets()
                 if attempt > 1:
                     self.log(f"[live] LDN join succeeded on attempt {attempt}/{attempts}.")
                 return self
             self._stop.set()
             if self._thread is not None:
-                self._thread.join(timeout=2)            # let an abandoned attempt unwind/disconnect
+                self._thread.join(timeout=2)
             if attempt < attempts:
                 self.log(f"[live] retrying LDN join in {settle}s "
                          f"(attempt {attempt + 1}/{attempts})...")
-                time.sleep(settle)                      # let the radio settle before retrying
-        light_cleanup(self.log)                         # remove any vif a failed attempt leaked
+                time.sleep(settle)
+        light_cleanup(self.log)
         raise RuntimeError(f"LDN join failed after {attempts} attempt(s):\n{last_err}")
 
     def _run_ldn(self):
@@ -431,11 +365,7 @@ class LiveTransport:
         async def main():
             keys = ldn.load_keys(self.keys_path)
             self.info("Scanning for the FRLG network...")
-            # ldn.scan defaults to a 110ms dwell, but a Switch beacons about every 102ms
-            # (100 TU), so the default gives barely one beacon per channel and misses the
-            # network outright on a bad roll - observed as 'saw 0, 0 joinable' on a console
-            # that was definitely hosting, immediately followed by a successful join.
-            # ldn_scan.py uses --dwell 0.6 for discovery; match it.
+            # A Switch beacons every ~102ms; ldn.scan's default 110ms dwell sees barely one beacon per channel and misses the network.
             networks = await ldn.scan(keys, phyname=self.phyname,
                                       channels=list(self.scan_channels),
                                       dwell_time=self.scan_dwell)
@@ -443,13 +373,9 @@ class LiveTransport:
                         if n.accept_policy != ldn.ACCEPT_NONE
                         and n.num_participants < n.max_participants]
             for n in networks:
-                # also log accept_policy: a blacklist/whitelist host (policy != ACCEPT_ALL) passes the
-                # joinable filter but then rejects our auth, surfacing as an opaque trio timeout - logging
-                # it makes "this Switch isn't accepting this MAC" diagnosable.
                 self.log(f"[live] saw network comm_id=0x{n.local_communication_id:016x} "
                          f"scene={n.scene_id} app_version={n.app_version} s{n.num_participants}/{n.max_participants} "
                          f"accept_policy={getattr(n, 'accept_policy', '?')}")
-            # Prefer an exact FRLG comm-id match; else fall back to the only joinable network.
             net = next((n for n in joinable
                         if n.local_communication_id == self.LOCAL_COMMUNICATION_ID), None)
             if net is None and len(joinable) == 1:
@@ -462,28 +388,21 @@ class LiveTransport:
                 self._ready.set()
                 return
             self.LOCAL_COMMUNICATION_ID = net.local_communication_id
-            # The advertisement's application data is the RFU search beacon (dumped + decoded for
-            # diagnostics). The connect id is not taken from here: any nonzero value works, so it is a
-            # random nonzero value chosen locally.
             self.app_data = _dump_beacon(getattr(net, "application_data", b"") or b"", self.log)
             param = ldn.ConnectNetworkParam()
             param.keys = keys
             param.network = net
-            param.password = self.password           # 64-byte emulator passphrase
+            param.password = self.password
             param.name = self.nickname.encode()
             param.app_version = self.APPLICATION_VERSION
-            param.phyname = self.phyname              # wifi phy (like the bridge: phy0)
-            param.ifname = self.ifname                # station iface (like the bridge: ldnclient)
+            param.phyname = self.phyname
+            param.ifname = self.ifname
             self.info("Joining the host...")
             async with ldn.connect(param) as network:
                 info = network.info()
                 self.ssid = info.ssid
                 self.iface = self.ifname
-                # The host is participant 0 (the network creator); its IP fixes the 169.254.X subnet
-                # [ldn/__init__.py NetworkInfo.participants; the bridge's network_nodes]. Each
-                # ParticipantInfo carries ip_address + mac_address (the 6-byte LDN MAC = the Pia
-                # connection GUID). We are the participant whose name matches our nickname (we set
-                # param.name); fall back to the first connected non-host, then to subnet .2.
+                # The host is participant 0; its IP fixes the 169.254.X subnet.
                 parts = list(getattr(info, "participants", []) or [])
                 host = parts[0] if parts else None
                 self.host_ip = host.ip_address if host else "169.254.21.1"
@@ -491,9 +410,6 @@ class LiveTransport:
                 ours = next((p for p in parts if p is not host and self._pname(p) == self.nickname),
                             None) or next((p for p in parts if p is not host
                                            and getattr(p, "connected", False)), None)
-                # our IP: prefer the address the ldn lib actually assigned to the iface (ground
-                # truth) over the participant list; broadcast is OUR subnet's .255 (= where the host
-                # broadcasts its Net 0x11). [the reference capture seq 1: host -> 169.254.X.255]
                 self.our_ip = (self._iface_ip() or (ours.ip_address if ours else None)
                                or self.host_ip.rsplit(".", 1)[0] + ".2")
                 self.our_mac = ((bytes(ours.mac_address) if ours else None)
@@ -510,8 +426,6 @@ class LiveTransport:
         try:
             trio.run(main)
         except BaseException as e:                     # pragma: no cover
-            # trio wraps nursery failures in a (Base)ExceptionGroup whose str() is the useless
-            # "Exceptions from Trio nursery (N sub-exceptions)"; unwrap to the real leaf cause(s).
             self._err = _format_join_error(e)
             self.log(f"[live] LDN join FAILED:\n{self._err}")
             self._ready.set()
@@ -524,7 +438,6 @@ class LiveTransport:
             return ""
 
     def _iface_mac(self):
-        """Read the station interface's MAC as a last-resort fallback for our connection GUID."""
         try:
             with open(f"/sys/class/net/{self.ifname}/address") as f:
                 return bytes.fromhex(f.read().strip().replace(":", ""))
@@ -532,7 +445,6 @@ class LiveTransport:
             return None
 
     def _iface_ip(self):
-        """Read the IPv4 the ldn lib actually assigned to the station iface (ground truth)."""
         try:
             out = subprocess.check_output(["ip", "-4", "-o", "addr", "show", "dev", self.ifname],
                                           text=True, stderr=subprocess.DEVNULL)
@@ -550,16 +462,13 @@ class LiveTransport:
         tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         tx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         tx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        tx.setblocking(False)             # never freeze the frame loop on a jammed adapter queue
+        tx.setblocking(False)             # never block the frame loop
         tx.bind(("0.0.0.0", PIA_PORT))
         self._tx = tx
         rx = socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_IP))
         rx.bind((self.iface, 0))
         rx.setblocking(False)
-        # Grow the kernel receive buffer so a burst of host frames between our ~60Hz recv() drains is
-        # not dropped at the OS level (AF_PACKET ring overflow shows up as silent gaps in the reliable
-        # stream -> recovery work; cutting OS drops cuts the recovery we depend on). Best-effort: the
-        # kernel clamps to net.core.rmem_max, so log what we actually got. 8 MiB request.
+        # AF_PACKET ring overflow between ~60Hz drains shows up as silent gaps; the kernel clamps to net.core.rmem_max.
         try:
             rx.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
             got = rx.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF)
@@ -569,7 +478,6 @@ class LiveTransport:
             self.log(f"[live] could not enlarge rx SO_RCVBUF: {e}")
         self._rx = rx
 
-    # -- data plane ----------------------------------------------------------
     def send(self, datagram, dst_ip):
         dst = self.broadcast if dst_ip in (self.broadcast, "255.255.255.255") else dst_ip
         try:
@@ -578,10 +486,7 @@ class LiveTransport:
             self.log(f"[live] sendto failed: {e}")
 
     def _accept_dst(self, dst_ip):
-        """The host INITIATES by BROADCASTING its Net 0x11 to the subnet .255 (the reference capture seq 1 ->
-        169.254.X.255), then unicasts to us. Accept our own IP, ANY 169.254.*.255 link-local
-        broadcast (robust to imperfect subnet resolution), and the global broadcasts - so we never
-        miss the host's broadcast outreach."""
+        """The host broadcasts its Net 0x11 to the subnet .255 before unicasting; accept any 169.254.*.255 and the global broadcast."""
         return (dst_ip == self.our_ip
                 or (dst_ip.startswith("169.254.") and dst_ip.endswith(".255"))
                 or dst_ip in ("255.255.255.255",))
@@ -600,9 +505,6 @@ class LiveTransport:
                 continue
             src_ip, src_port, dst_ip, dst_port, payload = parsed
             if src_ip == self.our_ip or dst_port != PIA_PORT or not self._accept_dst(dst_ip):
-                # Diagnostic: a stall where only broadcast Net/Session arrive and never the
-                # unicast RTT/Reliable looks identical to "the host is silent" unless we can see
-                # what we are dropping. Bounded so it cannot flood the frame loop.
                 if dst_port == PIA_PORT and src_ip != self.our_ip:
                     self._rx_filtered = getattr(self, "_rx_filtered", 0) + 1
                     if self._rx_filtered <= 12:
@@ -644,14 +546,10 @@ class LiveTransport:
                 pass
         if self._thread is not None:
             self._thread.join(timeout=2)
-        light_cleanup(self.log)                         # delete the LDN vifs on teardown
+        light_cleanup(self.log)
 
 
-# --- hosting preflight ------------------------------------------------------
 def _parse_iw_modes(iw_phy_output):
-    """Parse `iw phy <phy> info` output -> (modes, software_modes): the interface types the DRIVER
-    registered with nl80211 ('Supported interface modes') and the virtual types the kernel can always
-    add on top ('software interface modes'). Pure function so it is unit-testable with canned output."""
     modes, soft, section = [], [], None
     for raw in iw_phy_output.splitlines():
         s = raw.strip()
@@ -667,7 +565,6 @@ def _parse_iw_modes(iw_phy_output):
 
 
 def list_phys():
-    """All wireless phy names present, e.g. ['phy3'] (from /sys/class/ieee80211)."""
     import os
     try:
         return sorted(os.listdir("/sys/class/ieee80211"))
@@ -676,9 +573,7 @@ def list_phys():
 
 
 def find_ap_phy(log=print):
-    """Return the first phy whose driver advertises AP mode, or None. Used to resolve `--phy auto`
-    so the tooling survives the phy renumbering that happens when the adapter is reloaded/replugged
-    (e.g. the mt7601u-ap driver came up as phy3, not phy0)."""
+    """First phy advertising AP mode (for `--phy auto`; phy numbering changes when the adapter is reloaded)."""
     for phy in list_phys():
         try:
             out = subprocess.check_output(["iw", "phy", phy, "info"],
@@ -697,9 +592,7 @@ HOST_WIFI_PROFILES = {
     "rtw88_8822bu": ("TP-Link Archer T3U (USB 2357:012d)", True, True),
 }
 
-# Names accepted by the checked-in Pi profile.  We identify the USB device as
-# well as its driver so the Raspberry Pi's internal radio (and a second USB
-# dongle) cannot be selected merely because it happened to become ``phy0``.
+# Match the USB id as well as the driver so the Pi's internal radio cannot be selected because it became phy0.
 HOST_ADAPTER_PROFILES = {
     "tplink-archer-t3u": {
         "label": "TP-Link Archer T3U / AC1300",
@@ -710,7 +603,6 @@ HOST_ADAPTER_PROFILES = {
 
 
 def _phy_driver(phyname):
-    """Return the selected PHY's kernel driver name, or ``?`` if unavailable."""
     try:
         return os.path.basename(os.path.realpath(
             f"/sys/class/ieee80211/{phyname}/device/driver")) or "?"
@@ -719,7 +611,6 @@ def _phy_driver(phyname):
 
 
 def _phy_usb_id(phyname):
-    """Return ``vvvv:pppp`` for a phy's ancestor USB device, if any."""
     try:
         node = Path(f"/sys/class/ieee80211/{phyname}/device").resolve()
     except OSError:
@@ -736,7 +627,6 @@ def _phy_usb_id(phyname):
 
 
 def describe_phys():
-    """Return deterministic diagnostics for currently visible WLAN PHYs."""
     return [
         (phy, _phy_driver(phy), _phy_usb_id(phy))
         for phy in list_phys()
@@ -744,13 +634,7 @@ def describe_phys():
 
 
 def find_adapter_phy(adapter, log=print):
-    """Resolve one named, physically identified host adapter to a PHY.
-
-    Unlike ``find_ap_phy``, this deliberately refuses to guess: a missing or
-    duplicated TP-Link is actionable deployment feedback, while selecting the
-    Pi's built-in radio would be surprising and unsafe.  A literal ``phyN``
-    passed through ``--phy`` is handled by the caller and always wins.
-    """
+    """Refuses to guess: a missing or duplicated adapter raises; a literal phyN via --phy is handled by the caller."""
     profile = HOST_ADAPTER_PROFILES.get(adapter)
     if profile is None:
         choices = ", ".join(sorted(HOST_ADAPTER_PROFILES))
@@ -779,7 +663,6 @@ def find_adapter_phy(adapter, log=print):
 
 
 def wifi_profile_messages(driver, skip_encryption, accept_decrypted_ccmp):
-    """Describe a known adapter profile and flag mismatches for startup logs."""
     profile = HOST_WIFI_PROFILES.get(driver)
     if profile is None:
         return []
@@ -798,13 +681,9 @@ def wifi_profile_messages(driver, skip_encryption, accept_decrypted_ccmp):
 
 
 def preflight_host(phyname, log=print, _iw_output=None):
-    """Check BEFORE ldn.create_network whether `phyname` can host, and fail with ONE clear verdict
-    instead of repeated ENOTSUP tracebacks. The authoritative signal is `iw phy` 'Supported interface
-    modes' - the capability set the kernel driver registers; it is NOT a setting (the MT7601U case:
-    managed+monitor only, so NL80211_CMD_NEW_INTERFACE(IFTYPE_AP) -> EOPNOTSUPP, always).
-
-    Returns True if the phy advertises AP mode; raises RuntimeError with the verdict otherwise.
-    `_iw_output` injects canned output for tests."""
+    """`iw phy` 'Supported interface modes' is the driver's registered capability, not a setting (MT7601U: managed+monitor
+    only -> IFTYPE_AP is EOPNOTSUPP). Raises RuntimeError with the verdict; `_iw_output` injects canned output for tests.
+    """
     if _iw_output is None:
         try:
             _iw_output = subprocess.check_output(["iw", "phy", phyname, "info"],
@@ -812,7 +691,7 @@ def preflight_host(phyname, log=print, _iw_output=None):
         except (subprocess.CalledProcessError, FileNotFoundError) as e:
             log(f"[host] preflight: could not run `iw phy {phyname} info` ({e}); "
                 f"skipping the AP-mode check")
-            return True                     # can't check -> let the real bring-up decide
+            return True
     modes, soft = _parse_iw_modes(_iw_output)
     driver = _phy_driver(phyname)
     if "AP" in modes:
@@ -829,25 +708,8 @@ def preflight_host(phyname, log=print, _iw_output=None):
         f"and verify with `iw phy <phy> info` -> '* AP' under Supported interface modes.")
 
 
-# ---------------------------------------------------------------------------
 class HostTransport:
-    """Host an FRLG LDN network with kinnay's ``ldn`` library, the
-    inverse of LiveTransport: we call `ldn.create_network` and become participant 0 (the AP); the
-    console SCANS for and JOINS us. Broadcasts our RFU search beacon (frlgsim.beacon) as the LDN
-    advertisement `application_data`, and moves UDP :12345 datagrams over the `ldn-tap` data iface
-    exactly as LiveTransport does over its station iface. Requires root + `ldn`/`trio`/`netlink` and
-    the real Switch; it cannot run offline.
-
-    Two hardware unknowns this class exists to surface EARLY (before any MG transport is built):
-      HW-0  can this Wi-Fi card AP-host (create an AP + monitor vif on one radio without erroring)?
-      HW-A  does the console list the advertised Direct Corner group?
-    `start()` returning without error answers HW-0; a JoinEvent in the log answers a step past HW-A."""
-
-    # FRLG-NSO LDN identity - CAPTURED from a real FRLG session (trade capture 2026-08-07:
-    # "saw network comm_id=0x01006fa0233f8000 scene=22287"). The console's activity scan filters
-    # by this comm_id, so hosting with the old placeholder (0x0100610011000000/scene 0) made us
-    # invisible. comm_id is the FRLG title (same across activities); scene 22287 is the trade scene -
-    # the MG-friend scene may differ (tune with --scene if not listed once the record is also right).
+    # comm_id/scene captured from a real FRLG session; the console's scan filters on comm_id, so a placeholder makes us invisible.
     LOCAL_COMMUNICATION_ID = 0x01006fa0233f8000
     SCENE_ID = 22287
     APPLICATION_VERSION = 88
@@ -858,16 +720,16 @@ class HostTransport:
                  channel=None, skip_encryption=False, accept_decrypted_ccmp=False,
                  tracer=None, log=print):
         self.info = getattr(log, "info", log)
-        self.tracer = tracer                # optional ldntrace.Tracer: byte/action trace of hosting
+        self.tracer = tracer
         self.app_data = bytes(app_data or b"")
         self.password = password if password else GBA_APP_PASSPHRASE
         self.nickname = nickname
         self.keys_path = keys_path
         self.max_participants = max_participants
         self.phyname = phyname
-        self.ifname = ifname                # data (tap) iface - where our UDP sockets live
-        self.ap_ifname = ap_ifname          # the AP vif
-        self.mon_ifname = mon_ifname        # the monitor vif (scan/advertise)
+        self.ifname = ifname
+        self.ap_ifname = ap_ifname
+        self.mon_ifname = mon_ifname
         self.channel = channel
         self.skip_encryption = skip_encryption
         self.accept_decrypted_ccmp = accept_decrypted_ccmp
@@ -880,12 +742,12 @@ class HostTransport:
         self.log = log
         self.ssid = None
         self.our_ip = None
-        self.host_ip = None                 # alias of our_ip (we ARE the host) for engine symmetry
-        self.our_mac = None                 # our AP MAC = our Pia connection GUID
+        self.host_ip = None
+        self.our_mac = None
         self.broadcast = None
         self.iface = None
-        self.participants = []              # [(index, ip, mac, name)] as children join
-        self.join_events = 0                # monotonic history; survives a quick join/leave
+        self.participants = []
+        self.join_events = 0
         self._network = None
         self._tx = None
         self._rx = None
@@ -896,19 +758,16 @@ class HostTransport:
         self._err = None
 
     def start(self, timeout=30, attempts=3, settle=1.5, preflight=True):
-        """Bring up the AP, retrying transient nl80211 flakes like LiveTransport. Returns self once
-        hosting (HW-0 passed). Raises RuntimeError with the fully-unwrapped cause if the card cannot
-        host (e.g. AP+monitor interface combination unsupported - the fatal HW-0 answer).
-        `preflight=False` skips the iw-phy AP-mode check (escape hatch if `iw` output misleads)."""
+        """`preflight=False` skips the iw-phy AP-mode check."""
         driver = _phy_driver(self.phyname)
         for message in wifi_profile_messages(
                 driver, self.skip_encryption, self.accept_decrypted_ccmp):
             self.info(message)
         if preflight:
-            preflight_host(self.phyname, self.log)      # one clear verdict, not 3x ENOTSUP walls
+            preflight_host(self.phyname, self.log)
         last_err = None
         for attempt in range(1, attempts + 1):
-            free_radio({self.phyname}, self.log)        # clear the radio (frees ldn/ldn-mon/ldn-tap)
+            free_radio({self.phyname}, self.log)
             self._err = None
             self._ready.clear()
             self._stop.clear()
@@ -921,7 +780,7 @@ class HostTransport:
             elif self._err:
                 last_err = self._err
             else:
-                self._assert_vifs()                     # prove the AP+monitor+tap trio exists
+                self._assert_vifs()
                 tune_iface(self.iface, self.our_ip, self.broadcast, self.log)
                 self._setup_sockets()
                 if attempt > 1:
@@ -955,11 +814,11 @@ class HostTransport:
             param.app_version = self.APPLICATION_VERSION
             param.max_participants = self.max_participants
             param.accept_policy = ldn.ACCEPT_ALL
-            param.application_data = self.app_data       # our RFU search beacon (frlgsim.beacon)
-            param.password = self.password               # 64-byte emulator passphrase (same as join)
+            param.application_data = self.app_data
+            param.password = self.password
             param.name = self.nickname.encode()
             param.phyname = self.phyname
-            param.phyname_monitor = self.phyname         # AP + monitor share the one radio
+            param.phyname_monitor = self.phyname
             param.ifname = self.ap_ifname
             param.ifname_monitor = self.mon_ifname
             param.ifname_tap = self.ifname
@@ -975,12 +834,12 @@ class HostTransport:
             self.info("Creating the LDN network (hosting)...")
             async with ldn.create_network(param) as network:
                 self._network = network
-                if self.tracer is not None:             # byte/action trace of the hosting path
+                if self.tracer is not None:
                     from . import ldntrace
                     ldntrace.attach(network, self.tracer, self.log)
                 info = network.info()
                 self.ssid = info.ssid
-                me = network.participant()               # participant 0 = us (the AP)
+                me = network.participant()
                 self.our_ip = me.ip_address
                 self.host_ip = me.ip_address
                 self.our_mac = bytes(me.mac_address)
@@ -992,7 +851,6 @@ class HostTransport:
                 self.info(f"Hosting. Waiting for the console to join "
                           f"(ssid={self.ssid.hex()[:8]}..., channel {info.channel}).")
                 self._ready.set()
-                # Keepalive + event pump: log joins/leaves (the HW-A/HW-B signal) until asked to stop.
                 while not self._stop.is_set():
                     with trio.move_on_after(0.2):
                         event = await network.next_event()
@@ -1015,10 +873,7 @@ class HostTransport:
                      f"mac={bytes(p.mac_address).hex()} name={bytes(p.name)!r}")
             self.info("A console joined the network.")
         elif name == "LeaveEvent":
-            # Keep the public participant view truthful.  The host protocol
-            # drivers use this list as their liveness/teardown signal; leaving
-            # stale entries here made them continue RTT and Reliable traffic
-            # toward a station that had already left the LDN network.
+            # The host drivers use this list as their liveness/teardown signal; stale entries kept RTT/Reliable going to a departed station.
             self.participants = [p for p in self.participants if p[0] != event.index]
             reason = getattr(event, "reason", None)
             management_type = getattr(event, "management_type", None)
@@ -1030,11 +885,9 @@ class HostTransport:
             self.log(f"[host] event: {name} {event!r}")
 
     def _assert_vifs(self):
-        """Verify the LDN-README hosting design is actually in place after bring-up: three vifs -
-        the AP (`ldn`, handles mgmt/auth frames), the monitor (`ldn-mon`, sends advertisements +
-        moves data frames incl. broadcast), and the tap (`ldn-tap`, the kernel data plane our UDP
-        sockets ride). Log each vif's type; warn loudly on anything missing (a missing monitor =
-        the console will never see an advertisement even though 'AP up' printed)."""
+        """Three vifs must exist: AP (mgmt/auth), monitor (advertisements + data frames incl. broadcast), tap (the kernel data
+        plane); a missing monitor means the console never sees an advertisement.
+        """
         missing = []
         for name, want in ((self.ap_ifname, "AP"), (self.mon_ifname, "monitor"), (self.ifname, "tap")):
             if not _iface_exists(name):
@@ -1048,14 +901,13 @@ class HostTransport:
                     if line.strip().startswith("type "):
                         typ = line.strip().split()[1]
             except (subprocess.CalledProcessError, FileNotFoundError):
-                pass                                    # tap is not an nl80211 dev - `iw` fails, fine
+                pass
             self.log(f"[host] vif check: {name} present (type {typ}, want {want})")
         if missing:
             self.log(f"[host] vif check WARNING - missing: {', '.join(missing)}; "
                      f"hosting will not work correctly")
 
     def set_application_data(self, data):
-        """Update the live beacon (e.g. to flip startedActivity once a child connects)."""
         self.app_data = bytes(data)
         if self._network is not None:
             try:
@@ -1067,11 +919,8 @@ class HostTransport:
         tx = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         tx.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         tx.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        # A machine can have several link-local routes. Leaving this socket
-        # unbound made limited broadcasts occasionally disappear onto another
-        # interface even though unicast to the child still used ldn-tap. Pia
-        # Session type 5 is a subnet broadcast, so pin every host datagram to
-        # the LDN data plane explicitly.
+        # Unbound, limited broadcasts occasionally left on another link-local interface; Session type 5 is a subnet
+        # broadcast, so pin every host datagram to the LDN data plane.
         tx.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE,
                       self.iface.encode("ascii") + b"\x00")
         tx.bind(("0.0.0.0", PIA_PORT))
@@ -1092,10 +941,8 @@ class HostTransport:
         try:
             self._tx.sendto(datagram, (dst, PIA_PORT))
         except BlockingIOError:
-            # 2026-09-03 (lg129/lg133): when the console stops acking for ~0.5s (its flash save after
-            # accepting the card) the adapter's queue fills with hardware-retried frames and a blocking
-            # sendto froze this whole host process for 6-11s. The socket is non-blocking now; a frame
-            # that cannot be queued is dropped (Reliable re-sends it) and the frame loop keeps running.
+            # The console stops acking ~0.5s during its flash save; a blocking sendto froze the host 6-11s, so drop what
+            # cannot be queued (Reliable re-sends it).
             self.tx_dropped = getattr(self, "tx_dropped", 0) + 1
             if self.tx_dropped in (1, 10, 100, 1000):
                 self.log(f"[host] sendto would block; dropped {self.tx_dropped} datagram(s) so far")
@@ -1127,12 +974,8 @@ class HostTransport:
         return out
 
     def wait_readable(self, timeout):
-        """Wait until TAP IPv4 traffic is ready, without fixed-interval polling.
-
-        HostTransport receives through a nonblocking AF_PACKET socket.  Using
-        select here lets the Pia leader react as soon as the Switch's packet
-        reaches ldn-tap while still returning periodically for JoinEvent,
-        injector-health, and retransmission-deadline checks.
+        """select() on the AF_PACKET socket so the leader reacts as soon as a packet lands while still returning periodically
+        for event/deadline checks.
         """
         timeout = max(0.0, float(timeout))
         if self._rx is None:

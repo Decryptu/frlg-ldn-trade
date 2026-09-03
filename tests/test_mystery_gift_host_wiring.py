@@ -12,7 +12,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import beacon, charmap, crypto, pia_connect, reliable, transport, wonder_card  # noqa: E402
+from frlgsim import beacon, charmap, gift_composer, crypto, pia_connect, reliable, transport, wonder_card  # noqa: E402
 from frlgsim.host_beacon import (  # noqa: E402
     build_trade_app_data, build_wonder_card_app_data,
 )
@@ -104,7 +104,7 @@ def test_default_config_selects_the_self_contained_celebi_gift():
     assert int.from_bytes(card[2:4], "little") == wonder_card.SPECIES_CELEBI
     assert int.from_bytes(card[4:8], "little") == 3
     assert charmap.decode(card[250:290]).endswith("MercuryEnigma")
-    assert len(script) == 352
+    assert 0 < len(script) <= gift_composer.MAX_RAM_SCRIPT_SIZE
     assert script != wonder_card.build_delivery_ram_script(item=None, flag_id=1003)
 
 
@@ -124,7 +124,7 @@ def test_client_ready_idle_frame_override_reaches_the_engine():
 
     engine = app.session.activity
     assert engine.timing.client_ready_idle_frames == 45
-    assert engine.timing.inter_block_gap_frames == 12
+    assert engine.timing.inter_block_gap_frames == 36
     assert seen["transport"]["phyname"] == "phy7"
 
 

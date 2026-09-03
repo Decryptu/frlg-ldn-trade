@@ -1,9 +1,5 @@
-"""Application runtime for hosting one complete FRLG trade session.
-
-``HostApplication`` owns OS resources and scheduling.  Protocol bytes and peer
-state live in :mod:`frlgsim.host_pia`; Reliable/RFU/trade state lives in
-:class:`frlgsim.host_session.HostSession`.
-"""
+"""Application runtime for hosting one complete FRLG trade session; owns OS resources and
+scheduling only (protocol bytes live in host_pia, RFU/trade state in host_session)."""
 
 import os
 import time
@@ -19,8 +15,6 @@ HOST_CONTROL_POLL_SECONDS = 0.05
 
 
 class HostApplication:
-    """Wire together the host components and own their deterministic cleanup."""
-
     def __init__(self, config, *, log=print,
                  transport_factory=transport.HostTransport,
                  injector_factory=BeaconInjector):
@@ -127,7 +121,6 @@ class HostApplication:
             self.info("Received the Switch RFU identity; sending join-status NI.")
 
     def _activity(self):
-        """Return the configured activity through the shared session seam."""
         activity = getattr(self.session, "activity", None)
         return activity if activity is not None else self.session.trade
 
@@ -145,15 +138,12 @@ class HostApplication:
         return "Room-exit grace period complete; host peer traffic stopped cleanly."
 
     def _idle_timeout_seconds(self):
-        """Optional meaningful-peer-traffic watchdog used by the MG supervisor."""
         return getattr(self.config, "idle_timeout_seconds", None)
 
     def _end_on_success(self):
-        """Whether a completed activity should exit immediately after safe close."""
         return bool(getattr(self.config, "end_on_success", False))
 
     def _activity_succeeded(self):
-        """Whether the configured activity completed a successful outward action."""
         return bool(getattr(self._activity(), "gift_sent", False))
 
     def _log_activity_progress(self):
@@ -170,18 +160,12 @@ class HostApplication:
             if message:
                 self.info(message)
             if state == host_trade.H_PARTY:
-                # The child's walk to the RIGHT trade chair, as (LINK_KEY_CODE, frames). The joiner
-                # has no other source for this route - see HostTradeEngine.child_route_runs.
                 runs = activity.child_route_runs()
                 if runs:
                     names = {0x11: "EMPTY", 0x12: "DOWN", 0x13: "UP", 0x14: "LEFT", 0x15: "RIGHT",
                              0x16: "READY", 0x17: "EXIT_ROOM", 0x19: "A", 0x1D: "EXIT_SEAT"}
                     self.info("child seat route: " + ", ".join(
                         f"({names.get(k, hex(k))}, {n})" for k, n in runs))
-                # The FULL child slot stream, not just the held keys: the authoritative reference
-                # for what a real console child sends through room entry, the seat and the standby
-                # rounds. The joiner has never had this, and every joiner stall in the trade room so
-                # far has been diagnosed by guessing at it.
                 slots = activity.format_child_slots()
                 if slots:
                     self.info("child slot stream (op x run-length):\n" + slots)

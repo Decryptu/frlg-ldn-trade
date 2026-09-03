@@ -1,13 +1,5 @@
-"""Shared configuration loading and argument parsing for host CLIs.
-
-The two host entry points use the same four-layer policy:
-
-``built-ins -> config/host.toml -> config/host.local.toml -> CLI``.
-
-Only this module knows how command-line arguments select those files.  The
-strict TOML parsing itself remains in :mod:`frlgsim.config` so deployment
-scripts and tests can use the exact same API.
-"""
+"""Configuration loading and argument parsing shared by the host CLIs.
+Precedence: built-ins -> config/host.toml -> config/host.local.toml -> CLI."""
 
 import argparse
 from pathlib import Path
@@ -28,7 +20,6 @@ decrypted receive plaintext while retaining the CCMP header and MIC.
 
 
 def _config_bootstrap_parser():
-    """Parse just enough CLI to locate the TOML layers before full parsing."""
     parser = argparse.ArgumentParser(add_help=False, allow_abbrev=False)
     parser.add_argument("--config", metavar="PATH")
     local = parser.add_mutually_exclusive_group()
@@ -38,13 +29,7 @@ def _config_bootstrap_parser():
 
 
 def load_host_file_config_from_argv(argv=None):
-    """Return ``(HostFileConfig, shared_path, local_path)`` selected by *argv*.
-
-    A custom shared file naturally uses a sibling ``host.local.toml`` unless
-    ``--local-config`` or ``--no-local-config`` says otherwise.  This lets a
-    copied deployment directory retain its machine-local settings while still
-    making one-off profiles easy to inspect and test.
-    """
+    """A custom --config uses a sibling host.local.toml unless --local-config/--no-local-config says otherwise."""
     known, _unknown = _config_bootstrap_parser().parse_known_args(argv)
     shared_path = (Path(known.config) if known.config else
                    config.default_host_config_path())
@@ -59,7 +44,6 @@ def load_host_file_config_from_argv(argv=None):
 
 
 def add_host_config_arguments(parser, *, shared_path=None, local_path=None):
-    """Add visible configuration-selection switches to a full host parser."""
     parser.add_argument(
         "--config", metavar="PATH", default=str(shared_path) if shared_path else None,
         help="shared host TOML (default: config/host.toml)")
@@ -79,7 +63,6 @@ def add_host_config_arguments(parser, *, shared_path=None, local_path=None):
 def add_host_arguments(parser, *, option_defaults=None, ldn_defaults=None,
                        trust_pia_default=True, live_default=True,
                        scene_help="LDN scene; default uses the configured FRLG scene"):
-    """Add identity, lifecycle, LDN, and Pia options shared by host programs."""
     option_defaults = option_defaults or config.HostOptions()
     ldn_defaults = ldn_defaults or config.LdnConfig(phy="auto")
     parser.epilog = "\n\n".join(
@@ -162,7 +145,6 @@ def parse_hex_int(parser, option, value):
 
 
 def build_host_config(parser, args):
-    """Build the shared profile, LDN config, and host options from parsed args."""
     try:
         profile = config.profile_from_overrides(
             ot=args.ot, version=args.version, language=args.language,
@@ -191,12 +173,7 @@ def build_host_config(parser, args):
 
 
 def effective_host_file_config(args):
-    """Convert already parsed host arguments to a printable typed config.
-
-    Parsers are constructed with the loaded TOML values as defaults, so these
-    fields represent exactly the final CLI precedence layer without another
-    file read.  Passwords deliberately are not part of ``HostFileConfig``.
-    """
+    """Parsers carry the TOML values as defaults, so args are already the final layer; passwords never enter HostFileConfig."""
     return config.BUILTIN_HOST_FILE_CONFIG.with_overrides({
         "host": {
             "live": args.live,
@@ -221,7 +198,6 @@ def effective_host_file_config(args):
 
 
 def parse_hex_int_for_display(value):
-    """Best-effort display conversion; parser validation handles bad values."""
     if value is None:
         return None
     try:
@@ -231,7 +207,6 @@ def parse_hex_int_for_display(value):
 
 
 def format_effective_config(args):
-    """Return deterministic, non-secret TOML-like effective configuration."""
     result = effective_host_file_config(args)
     lines = ["[host]"]
     for name in (
@@ -245,8 +220,6 @@ def format_effective_config(args):
     lines.append("")
     lines.append("[ldn]")
     lines.append(_format_config_value("phy", result.phy))
-    # Paths may identify a local account or a capture location.  The flag is
-    # shown without leaking the machine-specific value.
     lines.append('keys_path = "<redacted>"')
     if result.local_comm_id is not None:
         lines.append(f'local_comm_id = "0x{result.local_comm_id:x}"')

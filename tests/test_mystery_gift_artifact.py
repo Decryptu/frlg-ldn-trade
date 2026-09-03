@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Regression coverage for human-readable Mystery Gift artifacts."""
 
+import hashlib
 import os
 import sys
 import tempfile
@@ -49,8 +50,8 @@ def test_artifact_writer_uses_the_script_hash_in_a_readable_sidecar_name():
             directory, gift=entry.slug, flag_id=entry.default_flag_id,
             distribution=distribution, definition=entry.definition)
         assert path.parent == Path(directory)
-        assert path.name.startswith("worlds-xp-1008-")
-        assert path.name.endswith(".ram.lst")
+        digest = hashlib.sha256(distribution.ram_script).hexdigest()[:12]
+        assert path.name == f"worlds-xp-{entry.default_flag_id}-{digest}.ram.lst"
         assert "Mystery Gift artifact: worlds-xp" in path.read_text(encoding="utf-8")
 
 

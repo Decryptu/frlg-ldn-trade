@@ -1,5 +1,3 @@
-"""Shared immutable configuration for FRLG joiner and host roles."""
-
 import argparse
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -13,8 +11,7 @@ VERSIONS = {
     "firered": linkplayer.VERSION_FIRE_RED,
     "leafgreen": linkplayer.VERSION_LEAF_GREEN,
 }
-# The five Latin-charset languages. Japanese (1) is deliberately absent: its text uses the kana
-# table, which reuses the same byte values as the accented Latin range in frlgsim/charmap.py.
+# Japanese is absent: its kana table shares byte values with the accented Latin range in charmap.py.
 LANGUAGES = {
     "english": linkplayer.LANGUAGE_ENGLISH,
     "french": linkplayer.LANGUAGE_FRENCH,
@@ -23,8 +20,6 @@ LANGUAGES = {
     "spanish": linkplayer.LANGUAGE_SPANISH,
 }
 
-# Public alongside the other immutable run models while its implementation
-# lives with the stamp/static distribution builders.
 MysteryGiftDistribution = stamp_rally.MysteryGiftDistribution
 
 
@@ -102,7 +97,6 @@ class TrainerProfile:
             self.to_link_player(), mon_species=mon_species, name_pad=name_pad)
 
     def build_rfu_game_data(self, activity, *, started=True):
-        """Build profile-consistent child RFU NI game data when a role needs it."""
         return ni.build_game_data(
             VERSIONS[self.version], self.tid, self.name,
             language=LANGUAGES[self.language], activity=activity,
@@ -165,10 +159,7 @@ class TradePlan:
 class LdnConfig:
     password: bytes | None = None
     phy: str = "phy0"
-    # A named physical adapter profile is resolved at runtime when ``phy`` is
-    # ``auto``.  Keeping it here lets the host application make the decision
-    # with live sysfs information rather than baking an unstable phy number
-    # into a Pi configuration file.
+    # Resolved to a concrete phy at runtime when ``phy`` is "auto".
     adapter: str | None = None
     keys_path: str = "~/.switch/prod.keys"
     local_comm_id: int | None = None
@@ -194,7 +185,7 @@ class JoinerOptions:
     decline: bool = False
     refuse_illegit: bool = False
     compress: bool = False
-    pace_ms: int = 0    # live TX pacing window, ms (sim.PACE_MIN_GAP_MS); 0 = off. Tested j79/j80: no help
+    pace_ms: int = 0
     connect_id: bytes | None = None
 
     def __post_init__(self):
@@ -218,8 +209,7 @@ class HostOptions:
     session_response_first: bool = False
 
     def __post_init__(self):
-        # LDN allows 2.4 GHz 1/6/11 and 5 GHz 36/40/44/48 [kinnay LDN wiki, WLAN Channels]. 5 GHz was
-        # never tried here (2026-09-03): every neighbour AP in this flat is on 2.4 GHz 1/6/11.
+        # LDN channels: 2.4 GHz 1/6/11 and 5 GHz 36/40/44/48 [kinnay LDN wiki, WLAN Channels].
         if type(self.channel) is not int or not (1 <= self.channel <= 14 or self.channel in (36, 40, 44, 48)):
             raise ValueError("channel must be 1..14 or one of 36, 40, 44, 48")
         if type(self.max_participants) is not int or not 2 <= self.max_participants <= 8:
@@ -229,27 +219,14 @@ class HostOptions:
             raise ValueError("scene_id must fit in 16 bits")
 
 
-# These configuration objects deliberately sit alongside the immutable runtime
-# models above, rather than inside either command-line entry point.  That makes
-# a checked-in configuration useful to both host roles and gives the Pi
-# deployment one well-defined place for safe machine defaults.
 HOST_CONFIG_FILENAME = "host.toml"
 HOST_LOCAL_CONFIG_FILENAME = "host.local.toml"
 
 
 @dataclass(frozen=True)
 class HostFileConfig:
-    """Typed, non-secret settings loaded from the layered host TOML files.
+    """Strict ``[host]`` / ``[ldn]`` TOML sections; the local file overrides the tracked one."""
 
-    The file format has two strict sections: ``[host]`` for common host
-    behavior and ``[ldn]`` for the local WLAN transport.  A value in the
-    optional local file replaces the corresponding value from the tracked
-    file.  Command-line code can use :meth:`with_overrides` for the final
-    precedence layer without needing to know how TOML was loaded.
-    """
-
-    # ``live`` lives here rather than in HostOptions because it selects the
-    # program mode, not a transport setting.  It is consumed by CLI wiring.
     live: bool = True
     adapter: str = "tplink-archer-t3u"
     trust_pia: bool = True
@@ -289,7 +266,6 @@ class HostFileConfig:
             _require_nonempty_string("ldn.capture_path", self.capture_path)
 
     def to_host_options(self):
-        """Build the runtime host options represented by this file config."""
         return HostOptions(
             channel=self.channel,
             scene_id=self.scene_id,
@@ -302,7 +278,6 @@ class HostFileConfig:
         )
 
     def to_ldn_config(self):
-        """Build the runtime LDN transport configuration represented here."""
         return LdnConfig(
             phy=self.phy,
             adapter=self.adapter,
@@ -312,12 +287,6 @@ class HostFileConfig:
         )
 
     def with_overrides(self, overrides: Mapping[str, Mapping[str, Any]] | None):
-        """Apply one strict partial TOML-shaped layer and return a new config.
-
-        This is intentionally public so CLI integration can apply only
-        arguments explicitly supplied by a user after the project and local
-        configuration files have been merged.
-        """
         return _apply_host_config_layer(self, overrides, source="overrides")
 
 
@@ -334,7 +303,6 @@ _TOP_LEVEL_TOML_SECTIONS = frozenset({"host", "ldn"})
 
 
 def project_config_directory():
-    """Return the repository's tracked configuration directory."""
     return Path(__file__).resolve().parent.parent / "config"
 
 
@@ -347,13 +315,7 @@ def default_host_local_config_path():
 
 
 def load_host_file_config(config_path, *, local_path=None, overrides=None):
-    """Load strict host TOML layers in their documented precedence order.
-
-    ``config_path`` is required because a deployment should fail clearly if its
-    shared configuration is absent.  ``local_path`` is optional; a missing
-    local file is normal.  ``overrides`` must use the same ``[host]`` / ``[ldn]``
-    mapping shape and forms the final, CLI-ready layer.
-    """
+    """Layers: builtin < config_path (required) < local_path (optional) < overrides."""
     result = BUILTIN_HOST_FILE_CONFIG
     result = _apply_host_config_layer(
         result, _read_host_toml(Path(config_path), required=True),
@@ -370,7 +332,6 @@ def load_host_file_config(config_path, *, local_path=None, overrides=None):
 
 
 def load_project_host_file_config(*, overrides=None):
-    """Load ``config/host.toml`` and optional ignored ``host.local.toml``."""
     return load_host_file_config(
         default_host_config_path(),
         local_path=default_host_local_config_path(),
@@ -388,7 +349,7 @@ def _read_host_toml(path, *, required):
             raw = tomllib.load(source)
     except tomllib.TOMLDecodeError as exc:
         raise ValueError(f"invalid TOML in host configuration {path}: {exc}") from exc
-    if not isinstance(raw, dict):  # Defensive: tomllib currently always returns dict.
+    if not isinstance(raw, dict):
         raise ValueError(f"host configuration must be a TOML table: {path}")
     return raw
 
@@ -437,9 +398,6 @@ def _require_int_range(name, value, lower, upper):
         raise ValueError(f"{name} must be an integer between {lower} and {upper}")
 
 
-# Built-ins make the loader deterministic for tests and for callers that elect
-# not to ship a project file.  ``config/host.toml`` repeats the operational
-# TP-Link profile so the visible, tracked default is self-documenting.
 BUILTIN_HOST_FILE_CONFIG = HostFileConfig()
 
 
@@ -453,8 +411,6 @@ class TradeRunConfig:
 
 @dataclass(frozen=True)
 class MysteryGiftPayload:
-    """Immutable description of the Wonder Card and delivery script."""
-
     gift: str = wonder_card.GIFT_CELEBI
     flag_id: int | None = None
 
@@ -473,18 +429,15 @@ class MysteryGiftPayload:
         return wonder_card.flag_for_flag_id(self.flag_id)
 
     def build(self):
-        """Return the traditional static ``(card, delivery_script)`` pair."""
         distribution = self.build_distribution()
         return distribution.card, distribution.ram_script
 
     def build_distribution(self):
-        """Build the complete live-host conversation for this payload."""
         return gift_registry.GIFT_REGISTRY.build_distribution(
             self.gift, flag_id=self.flag_id)
 
 
 def _mystery_gift_host_defaults():
-    """ALFA/mt76x0u defaults; Realtek retained-CCMP RX remains explicit."""
     return HostOptions(
         skip_encryption=True,
         native_nonce_sequence=True,
@@ -494,8 +447,6 @@ def _mystery_gift_host_defaults():
 
 @dataclass(frozen=True)
 class MysteryGiftRunConfig:
-    """Complete immutable configuration for one Mystery Gift host run."""
-
     profile: TrainerProfile = DEFAULT_TRAINER
     payload: MysteryGiftPayload = field(default_factory=MysteryGiftPayload)
     ldn: LdnConfig = field(default_factory=lambda: LdnConfig(phy="auto"))
@@ -503,7 +454,6 @@ class MysteryGiftRunConfig:
     trust_pia: bool = True
     client_ready_idle_frames: int | None = None
     inter_block_gap_frames: int | None = None
-    gift_resend_idle_frames: int | None = None
     block_repeat: int | None = None
     ram_script_block_repeat: int | None = None
     end_on_success: bool = False
@@ -529,10 +479,6 @@ class MysteryGiftRunConfig:
                 and (type(self.inter_block_gap_frames) is not int
                      or not 0 <= self.inter_block_gap_frames <= 600)):
             raise ValueError("inter_block_gap_frames must be between 0 and 600")
-        if (self.gift_resend_idle_frames is not None
-                and (type(self.gift_resend_idle_frames) is not int
-                     or not 0 <= self.gift_resend_idle_frames <= 3600)):
-            raise ValueError("gift_resend_idle_frames must be between 0 and 3600")
         if (self.block_repeat is not None
                 and (type(self.block_repeat) is not int
                      or not 1 <= self.block_repeat <= 8)):
@@ -552,7 +498,6 @@ class MysteryGiftRunConfig:
 
 
 def parse_trainer_id(value):
-    """Parse decimal ``TID`` or ``TID:SID`` and return both overrides."""
     parts = value.split(":")
     if len(parts) not in (1, 2) or any(not part or not part.isdecimal() for part in parts):
         raise ValueError("ID must be decimal TID or TID:SID")

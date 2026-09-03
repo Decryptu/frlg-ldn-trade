@@ -1,10 +1,5 @@
-"""Solrock/Lunatone live-host Stamp Rally Mystery Gift payloads.
-
-FRLG stores the shared card and its delivery RAM script persistently, while
-each four-byte stamp is added to ``WonderCardMetadata``.  A small Mystery Event
-wrapper runs immediately after a newly accepted stamp to make the matching
-delivery reward eligible.
-"""
+"""FRLG stores the card and RAM script persistently and appends each four-byte stamp to WonderCardMetadata;
+a Mystery Event wrapper runs right after an accepted stamp to make its reward eligible."""
 
 from dataclasses import dataclass
 
@@ -43,13 +38,6 @@ MON_CANT_GIVE = 2
 
 @dataclass(frozen=True)
 class MysteryGiftDistribution:
-    """One complete host-side distribution conversation.
-
-    Static gifts use only ``card`` and ``ram_script``.  Stamp distributions
-    additionally carry the selected stamp and the activation wrappers used for
-    an existing card and a newly installed card.
-    """
-
     card: bytes
     ram_script: bytes
     stamp: bytes | None = None
@@ -79,7 +67,6 @@ class MysteryGiftDistribution:
 
 
 def build_stamp_rally_card(*, flag_id=STAMP_RALLY_FLAG_ID):
-    """Build the shared Claydol-icon, two-slot Stamp Rally Wonder Card."""
     return build_wonder_card(
         flag_id=flag_id,
         icon_species=SPECIES_CLAYDOL,
@@ -210,7 +197,6 @@ def _givemon(species, level):
 
 
 def build_stamp_rally_delivery_script(*, flag_id=STAMP_RALLY_FLAG_ID):
-    """Build the persistent, retry-safe three-reward deliveryman script."""
     receipt_flag = flag_for_flag_id(flag_id)
     b = _FieldScriptBuilder()
     b.emit(bytes([_OP_SETVADDRESS])
@@ -295,12 +281,7 @@ _ME_END = 2
 
 def build_stamp_activation_script(state_var, *, flag_id=STAMP_RALLY_FLAG_ID,
                                   install=False):
-    """Wrap a tiny field script for ``CLI_RUN_MEVENT_SCRIPT``.
-
-    ``runscript`` relocates a zero-based pointer against the received buffer.
-    New-card activation also clears the card's mapped receipt flag; ordinary
-    stamp activation changes only its selected state variable.
-    """
+    """``runscript`` relocates its zero-based pointer against the received buffer (CLI_RUN_MEVENT_SCRIPT)."""
     if state_var not in (VAR_MYSTERY_GIFT_1, VAR_MYSTERY_GIFT_2):
         raise ValueError("state_var must be a Stamp Rally state variable")
     embedded = bytearray()

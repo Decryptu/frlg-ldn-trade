@@ -40,11 +40,11 @@ def test_definition_compiles_to_the_expected_card_and_cli_entry():
     assert len(card) == wonder_card.WONDER_CARD_SIZE
     assert int.from_bytes(card[0:2], "little") == event.WORLDS_XP_GIFT_FLAG_ID
     assert int.from_bytes(card[2:4], "little") == event.SPECIES_CLAYDOL
-    assert int.from_bytes(card[4:8], "little") == 8
+    assert int.from_bytes(card[4:8], "little") == event.WORLDS_XP_GIFT_FLAG_ID - 1000
     assert card[8] & 0x3 == mystery_gift.CARD_TYPE_GIFT
     assert (card[8] >> 6) & 0x3 == mystery_gift.SEND_TYPE_ALLOWED_ALWAYS
     assert card[9] == 0
-    assert charmap.decode(card[10:50]) == "WORLDS XP"
+    assert charmap.decode(card[10:50]) == event.WORLDS_XP_GIFT.card.title
     assert len(distribution.ram_script) <= 995
     battle_actions = tuple(
         stage.actions[-1]
@@ -75,9 +75,9 @@ def test_definition_compiles_to_the_expected_card_and_cli_entry():
 
 def test_first_visit_gives_the_baltoy_egg_then_starts_the_matching_beast_battle():
     cases = (
-        (0, wonder_card.OBJ_EVENT_GFX_KANGASKHAN, wonder_card.SPECIES_SUICUNE, 0),
-        (1, wonder_card.OBJ_EVENT_GFX_KANGASKHAN, wonder_card.SPECIES_ENTEI, 1),
-        (2, wonder_card.OBJ_EVENT_GFX_KANGASKHAN, wonder_card.SPECIES_RAIKOU, 2),
+        (0, wonder_card.OBJ_EVENT_GFX_SUICUNE, wonder_card.SPECIES_SUICUNE, 0),
+        (1, wonder_card.OBJ_EVENT_GFX_ENTEI, wonder_card.SPECIES_ENTEI, 1),
+        (2, wonder_card.OBJ_EVENT_GFX_RAIKOU, wonder_card.SPECIES_RAIKOU, 2),
     )
     script = _distribution().ram_script
     for starter, graphics, species, sprite_id in cases:
@@ -132,8 +132,7 @@ def test_revisit_requires_the_kanto_pokedex_then_gives_celebi():
     ).run()
     assert later.eggs == later.mons == later.battles == later.items == []
     assert [charmap.decode(line) for line in later.messages[-1].split(b"\xfe")] == [
-        "Come to Pokemon Worlds in San Francisco!",
-        "See what LEGENDARY gift awaits.",
+        "Visit MercuryEnigma.github.io/pkcamp",
     ]
 
 

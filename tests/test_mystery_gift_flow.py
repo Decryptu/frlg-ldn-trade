@@ -298,6 +298,7 @@ class ConsoleClientModel:
         self.redundant_inits = 0        # benign: HandleBlockSend re-sends INIT by design
         self.dropped_inits = 0          # fatal: previous block not consumed yet
         self.dropped_fragments = 0
+        self.redundant_fragments = 0   # a repeat of a fragment already held; the console ignores it
 
         # Link-establishment phase.
         self.phase = "wait_req"
@@ -355,6 +356,10 @@ class ConsoleClientModel:
                     self.recv_state = self.RECV_FINISHED
                     self.block_received = True
                     self._received_age = 0
+            elif ((self.recv_flags >> rec["index"]) & 1
+                  and self.recv_buf[rec["index"] * block.FRAG_BYTES:
+                                    (rec["index"] + 1) * block.FRAG_BYTES] == rec["frag"]):
+                self.redundant_fragments += 1
             else:
                 self.dropped_fragments += 1
         return rec
@@ -592,12 +597,12 @@ def test_ram_script_block_repeat_adds_redundancy_to_only_the_ident25_message():
     assert by_repeat.get(True) == {4}, "ident-25 fragments must use ram_script_block_repeat"
     assert by_repeat.get(False) == {2}, "other messages must keep the base block_repeat"
 
-    # And with the default (ram_script_block_repeat=0) every message uses block_repeat unchanged.
     console2 = ConsoleClientModel(flag_id=0)
-    plain = host_mystery_gift.MysteryGiftTiming(client_ready_idle_frames=10, block_repeat=2)
+    plain = host_mystery_gift.MysteryGiftTiming(
+        client_ready_idle_frames=10, block_repeat=2, ram_script_block_repeat=2)
     engine2, _ = _drive(console2, card=card, ram_script=ram_script, timing=plain)
     repeats = {e[3] for e in engine2.trace if e[0] == "send_block"}
-    assert repeats == {2}, "with ram_script_block_repeat unset, ident 25 must not be special-cased"
+    assert repeats == {2}, "ident 25 at the base repeat must not be special-cased"
 
 
 def test_end_to_end_never_drops_a_block_init():
@@ -645,9 +650,9 @@ def test_pacing_budget_is_what_the_timing_docstring_claims():
 
     lossless, dropped = survives(gap + 1)
     assert lossless and dropped == 0, "clean margin should be the gap plus one frame"
-    completed, dropped = survives(gap + 4)
+    completed, dropped = survives(gap + 5)
     assert completed and dropped > 0, "INIT resends should still rescue a late console"
-    completed, _dropped = survives(gap + 5)
+    completed, _dropped = survives(gap + 8)
     assert not completed, "past the budget the transfer must fail, not silently pass"
 
 
@@ -692,7 +697,9 @@ def test_end_to_end_console_already_holding_this_card_is_told_so():
 
 def _new_link_player_engine():
     card, ram_script = wonder_card.build_default_gift()
-    return host_mystery_gift.HostMysteryGiftEngine(card, ram_script)
+    # These tests inspect the exact fragment sequence, so send each fragment once.
+    timing = host_mystery_gift.MysteryGiftTiming(block_repeat=1, ram_script_block_repeat=1)
+    return host_mystery_gift.HostMysteryGiftEngine(card, ram_script, timing=timing)
 
 
 def _drain_link_player_opening(engine):

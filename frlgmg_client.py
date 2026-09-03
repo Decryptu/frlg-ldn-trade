@@ -1,18 +1,11 @@
 #!/usr/bin/env python3
-"""frlgmg_client - RECEIVE a Wonder Card from a real FireRed/LeafGreen console (Mystery Gift CLIENT).
-
-The console SHARES: Mystery Gift -> Wonder Cards -> Friend -> send (it must hold a card whose
-sendType allows sharing, e.g. one delivered with `--gift beast-cutscene-share`). We join its LDN
-session as the wireless CHILD, run the ROM's mystery_gift_client.c state machine against it, and
-save whatever it pushes: the client scripts, the 332-byte Wonder Card and the 1024-byte delivery
-RAM script. Every message and every parent slot is recorded, so a run is a full-fidelity capture
-of a REAL Mystery Gift host - the data no passive two-console capture could give.
+"""Receive a Wonder Card from a real FireRed/LeafGreen console (Mystery Gift client). The console shares
+via Mystery Gift -> Wonder Cards -> Friend -> send; we join its LDN session as the child and save what it pushes.
 
     sudo -E ./.venv/bin/python -u frlgmg_client.py --live --version firered --language french \\
         --capture scratchpad/mc1.pcap --out scratchpad/mc1
 
-Outputs (with --out PREFIX): PREFIX_card.bin, PREFIX_ramscript.bin, PREFIX_messages.jsonl (every
-MysteryGiftLink message both ways, hex), PREFIX_trace.jsonl (engine events by VBlank).
+Outputs (with --out PREFIX): PREFIX_card.bin, PREFIX_ramscript.bin, PREFIX_messages.jsonl, PREFIX_trace.jsonl.
 """
 
 import argparse

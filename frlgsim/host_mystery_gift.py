@@ -1,33 +1,6 @@
-"""Leader-side FRLG Mystery Gift engine (the distributor's activity FSM).
-
-Same integration contract as :class:`frlgsim.host_trade.HostTradeEngine` - the
-RFU/Reliable/Pia stack below it is unchanged and already proven by the trade
-host::
-
-    engine.feed_child_slot(rfu_leader.child_cmd)   # each new child UNI row
-    parent_words = engine.tick()                   # once per VBlank, into row 0
-
-The activity above that stack is much smaller than a trade.  After the shared
-LinkPlayer exchange the console has ``gReceivedRemoteLinkPlayers`` set, runs one
-``SetLinkStandbyCallback`` barrier [union_room.c:2391] and creates its Mystery
-Gift client [mystery_gift_menu.c:1231].  From that point the console executes
-only the scripts we push, so the whole flow is
-:class:`frlgsim.mg_server.MysteryGiftServer` driving block sends.
-
-Block pacing is the one genuinely delicate part.  ``SEND_BLOCK_INIT`` is
-*ignored* unless the receiver's slot is ``RECV_STATE_READY``
-[link_rfu_2.c:1146], and the console only returns to READY when its
-``MGL_ResetReceived`` consumes the previous block.  Nothing on the wire reports
-that, and the sender's own flow control does not help: ``MGL_Send`` gates on
-``MGL_HasReceived(sendPlayerId)``, which for the parent is slot 0, and
-``Rfu_SetBlockReceivedFlag`` [link_rfu_2.c:1044] sets the parent's *own* flag
-immediately - the four-VBlank ``numBlocksReceived`` countdown [link_rfu_2.c:1220]
-applies only to blocks arriving *from a child*.  So a native parent paces blocks
-roughly one frame apart and simply relies on the console keeping up.
-:attr:`MysteryGiftTiming.inter_block_gap_frames` buys a much larger margin than
-that, because losing this race does not corrupt data - it strands the console
-waiting for a block that was dropped without an error.
-"""
+"""Leader-side FRLG Mystery Gift engine; same feed_child_slot()/tick() contract as HostTradeEngine.
+The console ignores SEND_BLOCK_INIT unless its slot is RECV_STATE_READY [decomp:src/link_rfu_2.c:1146]
+and nothing on the wire reports that, so blocks must be paced (inter_block_gap_frames)."""
 
 from collections import Counter, deque
 from dataclasses import dataclass
@@ -43,73 +16,28 @@ MG_DONE = "MG_DONE"
 
 HOST_NAME_PAD = linkplayer.HOST_NAME_PAD
 
-# How often to report what a stalled bring-up is still waiting for. A console
-# that goes quiet here gives no other clue, and its own RFU timeout fires within
-# a few seconds, so the report has to be frequent enough to land twice first.
+# The console's own RFU timeout fires within a few seconds of it going quiet; report twice before that.
 STATUS_REPORT_FRAMES = 120
 
 
 @dataclass(frozen=True)
 class MysteryGiftTiming:
-    """Frame counts owned by the Mystery Gift leader."""
-
-    # Keep a startup barrier echo visible across several child polls, exactly as
-    # the trade leader does for the same LinkPlayer-exchange barrier.
     startup_standby_echo_frames: int = 4
-    # Quiet child polls after the standby barrier before the first gift message.
-    # The console is freeing the group list, running SetLinkStandbyCallback and
-    # only then reaching MysteryGiftClient_Create [mystery_gift_menu.c:1231]. A
-    # block that lands early is buffered harmlessly, but the *second* block of
-    # that message would be dropped, so wait for the console to settle first.
-    client_ready_idle_frames: int = 120
-    # Idle VBlanks between the blocks of one MysteryGiftLink message. Measured
-    # against the console model in tests/test_mystery_gift_flow.py: the console
-    # may take up to this + 1 frames to consume a block with nothing dropped,
-    # and up to this + 4 before the transfer fails outright (the block sender's
-    # four SEND_BLOCK_INIT resends can still arm a console that was late). A
-    # native parent gives the console far less - about one frame plus its own
-    # three INIT resends - so this is generous by design, and cheap. Raise it
-    # first if a live run stalls part-way through a message; that is the symptom
-    # of losing this race.
-    inter_block_gap_frames: int = 12
-    # How many consecutive polls each SEND_PLAYER_IDS burst occupies.
-    #
-    # Native RfuPrepareSendBuffer leaves gSendCmd holding SEND_PLAYER_IDS until
-    # the next link task overwrites it [Task_PlayerExchange case 1/101,
-    # link_rfu_2.c:1832], so the console sees it across many polls. Emitting it
-    # for a single VBlank loses the race: the console misses it, GetMultiplayerId
-    # stays 0 (visible as owner 0x80 instead of 0x81 on its blocks) and
-    # Task_PlayerExchange parks at case 2 waiting on gRfu.playerCount forever.
+    # The console reaches MysteryGiftClient_Create [decomp:src/mystery_gift_menu.c:1231] only after its
+    # standby round; the second block of a message sent before then is dropped.
+    client_ready_idle_frames: int = 20
+    # The console silently drops a block that arrives before it consumed the previous one; raise this
+    # first if a live run stalls part-way through a message.
+    inter_block_gap_frames: int = 36
+    # The console misses a single-VBlank SEND_PLAYER_IDS and then parks in Task_PlayerExchange case 2
+    # with multiplayer id 0 [decomp:src/link_rfu_2.c:1832].
     player_ids_repeat_frames: int = 8
-    # Quiet child polls to tolerate while a gift message is awaiting its reply
-    # before re-sending that message. trust_pia=True sends each fragment exactly
-    # ONCE (block.BlockSender: the decomp's re-send-until-confirmed loop is
-    # disabled because it floods Pia), so a single fragment lost inside the
-    # console's stack leaves it waiting for the rest of the message while we
-    # wait for its reply - neither side speaks, forever. Measured on hardware:
-    # lg3, lg11 and lg12 all hung after the 6-block ident 25 with the LDN link
-    # demonstrably alive in both directions and no adapter wedge. lg8 answered
-    # the same message in 9.2s, so the reply window is seconds, not minutes.
-    # 0 disables the watchdog, which is the DEFAULT: re-sending is an unproven
-    # remedy for an intermittent hardware stall, and four existing regression
-    # guards deliberately starve the console to prove inter_block_gap_frames is
-    # what prevents a drop - a re-send rescues those and hides what they test.
-    # Turn it on explicitly with --gift-resend-idle-frames while investigating.
-    gift_resend_idle_frames: int = 0
-    # How many times one message may be re-sent before giving up on it.
-    gift_resend_limit: int = 3
-    # Emit each block fragment this many times (block.BlockSender.stream_repeat). 1 = send-once.
-    block_repeat: int = 1
-    # Extra redundancy for JUST the RAM/delivery script (ident 25, MG_LINKID_RAM_SCRIPT) - the
-    # largest, last, stall-prone message. 0 = fall back to block_repeat (no change). The ident-25
-    # stall is a fragment LOST in the console's post-Pia RFU->game handoff, and the MG client never
-    # reflects our gift block so the host cannot tell which fragment to resend; proactive redundancy
-    # on this one message is the only lever with a mechanism. See NOTES.local.md "ident-25 STALL".
-    ram_script_block_repeat: int = 0
-    # Re-emit READY_CLOSE_LINK on this cadence while closing.
+    block_repeat: int = 2
+    # The MG client never reflects gift blocks, so a lost RAM-script fragment cannot be identified
+    # for resend; redundancy on first send is the only lever.
+    ram_script_block_repeat: int = 3
     close_retry_frames: int = 60
-    # Stay on the air after the console asks to close, so its Rfu_LinkClose and
-    # post-gift save complete before the LDN network disappears.
+    # The console's Rfu_LinkClose and post-gift save must finish before the LDN network disappears.
     post_client_close_grace_frames: int = 5 * 60
 
 
@@ -117,8 +45,6 @@ DEFAULT_MYSTERY_GIFT_TIMING = MysteryGiftTiming()
 
 
 class HostMysteryGiftEngine:
-    """Transport-independent, single-child FRLG Mystery Gift distributor."""
-
     def __init__(self, card=None, ram_script=None, *, distribution=None,
                  link_player=None, trust_pia=True, timing=None,
                  log=lambda *a: None):
@@ -155,10 +81,8 @@ class HostMysteryGiftEngine:
 
         self._rx = block.RecvBlock()
         self._words = deque()
-        self._blocks = deque()          # queued (bytes, label) SendBlock transfers
+        self._blocks = deque()
         self._sender = None
-        self._last_message = None
-        self._gift_resends = 0
         self._gap = 0
         self._expected = None
         self._link_player_seen = False
@@ -171,16 +95,13 @@ class HostMysteryGiftEngine:
         self._close_retry_wait = None
 
         self._receiver = mg_link.MysteryGiftLinkReceiver()
-        self._recv_blocks = deque()     # completed child blocks awaiting a recv action
+        self._recv_blocks = deque()
         self._message_label = None
 
         self._link_player_block = linkplayer.build_block(
             self.lp, name_pad=HOST_NAME_PAD).ljust(200, b"\x00")
-        # The Switch is the RFU child. It creates Task_PlayerExchange directly
-        # from RFUSTATE_CHILD_JOINED [link_rfu_2.c:459-473], so begin with the
-        # parent half of that task immediately.  Do not borrow the native
-        # distributor UI's 120-frame delay: that delay belongs to the *parent*
-        # Task_SendMysteryGift, not this receiver.
+        # The child console creates Task_PlayerExchange directly from RFUSTATE_CHILD_JOINED
+        # [decomp:src/link_rfu_2.c:459]; do not add the native distributor's 120-frame delay.
         self._link_phase = "send_player_ids"
         self._link_player_requests = 0
         self._host_link_player_queued = False
@@ -197,23 +118,12 @@ class HostMysteryGiftEngine:
         self._begin_link_player_exchange()
 
     def _queue_player_ids(self, label="SEND_PLAYER_IDS"):
-        """Expose the id table long enough to observe the child's slot-one id.
-
-        ``SEND_PLAYER_IDS`` is idempotent in ``RfuHandleReceiveCommand``.  In
-        contrast, ``SEND_BLOCK_REQ`` begins a transfer, so only this harmless
-        command may be repeated while we wait for an observable child state.
-        """
+        """SEND_PLAYER_IDS is idempotent on the console; SEND_BLOCK_REQ is not, so only this may be repeated."""
         for _ in range(self.timing.player_ids_repeat_frames):
             self._queue_words(rfu.send_player_ids_words(), label)
 
     def _begin_link_player_exchange(self):
-        """Run the parent-owned opening of ``Task_PlayerExchange`` once.
-
-        The parent task sends player ids, then emits exactly one block request
-        [link_rfu_2.c:1813-1854].  A repeated request can start a second child
-        send after the first has completed, so the next observable transition is
-        a *completed valid* child LinkPlayer block, not a retry timer.
-        """
+        """Exactly one SEND_BLOCK_REQ [decomp:src/link_rfu_2.c:1813]; a repeat can start a second child send."""
         self._queue_player_ids()
         self._expected = "link_player"
         self._link_player_requests += 1
@@ -223,10 +133,8 @@ class HostMysteryGiftEngine:
         self.trace.append(("link_player_request", self._link_player_requests))
         self.info("Sent player ids and one LinkPlayer block request; waiting for the console block.")
 
-    # --- host application surface ------------------------------------------------------------
     @property
     def close_confirmed(self):
-        """Whether the console has asked to close the RFU link."""
         return self._close_confirmed
 
     @property
@@ -235,7 +143,6 @@ class HostMysteryGiftEngine:
 
     @property
     def result(self):
-        """The server result message id once the flow finished, else ``None``."""
         return self.server.result
 
     def mark_disconnect_sent(self):
@@ -244,7 +151,6 @@ class HostMysteryGiftEngine:
         self.done = True
         self._set_state(MG_DONE)
 
-    # --- internals ---------------------------------------------------------------------------
     def _set_state(self, state):
         if state != self.state:
             self.state = state
@@ -260,20 +166,18 @@ class HostMysteryGiftEngine:
         self._blocks.append((bytes(data), label))
         self.trace.append(("queue_block", label, len(data)))
 
-    # --- the gift conversation ---------------------------------------------------------------
     def _begin_gift(self):
         self._set_state(MG_GIFT)
         self.info("Link established; starting the Mystery Gift conversation.")
         self._pump_server()
 
     def _pump_server(self):
-        """Publish the server's next action onto the wire, repeatedly if needed."""
         while self.state == MG_GIFT:
             action = self.server.run()
             kind = action[0]
             if kind == "send":
                 if self._blocks or self._sender is not None:
-                    return                      # the previous message is still going out
+                    return
                 self._queue_message(*action[1:])
                 return
             if kind == "recv":
@@ -283,37 +187,27 @@ class HostMysteryGiftEngine:
                     self.trace.append(("expect", ident))
                 if not self._drain_recv_blocks():
                     return
-                continue                        # the message was already buffered
+                continue
             if kind == "done":
                 self._finish_gift(action[1])
                 return
 
     def _queue_message(self, ident, payload, size):
-        self._last_message = (ident, payload, size)
-        self._gift_resends = 0
         blocks = mg_link.build_message(ident, payload, size)
         self._message_label = f"ident{ident}"
         for index, data in enumerate(blocks):
             self._queue_block(data, f"{self._message_label}:{index}")
         self.trace.append(("send_message", ident, len(blocks)))
-        # One line per logical MysteryGiftLink message is a useful live
-        # milestone; per-fragment detail remains in ``trace``/JSONL.
         self.info(f"[mg] sending ident {ident} as {len(blocks)} block(s)")
 
     def _drain_recv_blocks(self):
-        """Feed buffered child blocks to the receiver. True once a message completed."""
         while self._recv_blocks and self._receiver.active:
             block = self._recv_blocks.popleft()
             try:
                 payload = self._receiver.feed_block(block)
             except mg_link.MysteryGiftLinkError as exc:
-                # 2026-09-03 (lg135): the console re-sent an already-consumed message (its ident-17
-                # game data arrived again while we were expecting the ident-19 toss response). The
-                # RFU reassembler dedups whole blocks by (count, owner) epoch, but a genuine console
-                # retransmit of the PREVIOUS message still surfaces here as a stale header. Drop the
-                # stale block and re-arm the SAME expected ident rather than crashing the host; the
-                # console re-sends the message we are waiting for. Previously this raised and killed
-                # the whole host process ("nobody is up").
+                # A console retransmit of the previous message surfaces here as a stale header; drop it
+                # and re-arm the same ident rather than raising (the console re-sends what we await).
                 want = self._receiver.expected_ident
                 self.trace.append(("recv_resync", want, str(exc)))
                 self.info(f"[mg] ignoring a stale/duplicate child block while awaiting ident "
@@ -335,12 +229,8 @@ class HostMysteryGiftEngine:
         self._begin_close()
 
     def _begin_close(self):
-        """Answer the console's post-gift Rfu_SetCloseLinkCallback [mystery_gift_menu.c:1248].
-
-        Both sides must expose READY_CLOSE_LINK before ``IsLinkRfuTaskFinished``
-        releases the console into its save, so ours goes out immediately rather
-        than after the first retry interval.
-        """
+        """Both sides must expose READY_CLOSE_LINK before IsLinkRfuTaskFinished releases the console
+        into its save [decomp:src/mystery_gift_menu.c:1248], so ours goes out immediately."""
         self._set_state(MG_CLOSE)
         self._queue_close_words()
         self._close_retry_wait = self.timing.close_retry_frames
@@ -349,7 +239,6 @@ class HostMysteryGiftEngine:
         for _ in range(self.timing.startup_standby_echo_frames):
             self._queue_words(rfu.close_link_words(self._exit_count), "READY_CLOSE_LINK")
 
-    # --- child traffic ------------------------------------------------------------------------
     def feed_child_slot(self, slot):
         """Consume one child gSendCmd row (14 bytes, rolling tag permitted)."""
         self._child_frames += 1
@@ -363,9 +252,6 @@ class HostMysteryGiftEngine:
             return
         op = rec["op"]
         self._child_op_counts[op] += 1
-        # First sighting of each child opcode. Without this a stall is invisible:
-        # the console goes quiet and there is nothing to say whether it never
-        # answered, answered something unexpected, or stopped part-way.
         if op not in self._child_ops:
             self._child_ops.add(op)
             detail = ""
@@ -376,10 +262,8 @@ class HostMysteryGiftEngine:
             self.info(f"Console sent its first {rec['name']}{detail} "
                       f"(host state {self.state}).")
         if op == rfu.SEND_BLOCK_INIT:
-            # The owner byte is mpId | 0x80, and mpId comes from our
-            # SEND_PLAYER_IDS via LoadLinkPlayerIds [link_rfu_2.c:1058]. A
-            # console still reporting 0 has not processed it and is parked in
-            # Task_PlayerExchange case 2.
+            # owner byte = mpId | 0x80; mpId 0 means the console has not processed SEND_PLAYER_IDS
+            # [decomp:src/link_rfu_2.c:1058] and is parked in Task_PlayerExchange case 2.
             mp_id = (rec.get("owner_raw") or 0) & 0x7F
             if mp_id != self._child_mp_id:
                 self._child_mp_id = mp_id
@@ -387,9 +271,7 @@ class HostMysteryGiftEngine:
                           + ("." if mp_id == 1 else
                              " - repeating only the id table, not the block request."))
             if self.state == MG_LINK_PLAYER and mp_id != 1:
-                # This repeat is harmless: SEND_PLAYER_IDS only updates the
-                # child's player count/id.  Do not repeat SEND_BLOCK_REQ here;
-                # it can start a second transfer after the first completes.
+                # Do not repeat SEND_BLOCK_REQ here; it can start a second transfer after the first completes.
                 self._queue_player_ids("SEND_PLAYER_IDS:repair")
             self._rx.on_init(rec["count"], rec.get("owner_raw"))
         elif op == rfu.SEND_BLOCK:
@@ -409,47 +291,6 @@ class HostMysteryGiftEngine:
         if (self.state == MG_START and self._standby_seen
                 and self._idle_run >= self.timing.client_ready_idle_frames):
             self._begin_gift()
-        elif self.state == MG_GIFT:
-            self._maybe_resend_gift_message()
-
-    def _maybe_resend_gift_message(self):
-        """Speak again when a gift message has gone unanswered.
-
-        On this console whoever is waited on must speak first (CLAUDE.md: four
-        separate bugs of this shape). With trust_pia we send each fragment once,
-        so one drop inside the console's stack deadlocks both sides. This re-sends
-        the WHOLE message (a fresh BlockSender that re-INITs), because the host has
-        no per-block reflection from the MG client and so cannot tell which fragment
-        was lost.
-
-        UNPROVEN and observed INEFFECTIVE: in lg43 the re-send fired and the console
-        kept idling and left without ever sending ident 20 - a fresh INIT did NOT
-        restart it cleanly. Default OFF (gift_resend_idle_frames=0); leave it off.
-        The only lever that has a mechanism behind it is block_repeat (proactive
-        redundancy on the first send). See NOTES.local.md "ident-25 STALL".
-        """
-        limit = self.timing.gift_resend_idle_frames
-        if not limit or self._last_message is None:
-            return
-        if self._blocks or self._sender is not None:
-            return                              # still talking; nothing to answer yet
-        action = self.server.action
-        if action is None or action[0] != "recv":
-            return                              # not waiting on the console
-        if self._idle_run < limit:
-            return
-        if self._gift_resends >= self.timing.gift_resend_limit:
-            return
-        self._gift_resends += 1
-        ident, payload, size = self._last_message
-        blocks = mg_link.build_message(ident, payload, size)
-        for index, data in enumerate(blocks):
-            self._queue_block(data, f"{self._message_label}:resend{self._gift_resends}:{index}")
-        self.trace.append(("resend_message", ident, self._gift_resends))
-        self._idle_run = 0
-        self.info(f"[mg] console has been quiet for {limit} polls while we wait for "
-                  f"ident {action[1]}; re-sending ident {ident} "
-                  f"(attempt {self._gift_resends}/{self.timing.gift_resend_limit})")
 
     def _on_child_block(self, count, data):
         self.trace.append(("child_block", self._expected, count))
@@ -460,12 +301,8 @@ class HostMysteryGiftEngine:
                 return
             parsed, ok = linkplayer.parse_block(data)
             if not ok:
-                # SEND_BLOCK_REQ makes the child ship gBlockSendBuffer verbatim
-                # [link_rfu_2.c:232], but LocalLinkPlayerToBlock only fills that
-                # buffer in Task_PlayerExchange case 0 [link_rfu_2.c:1828]. Ask
-                # too early and it sends whatever was left there - not an error
-                # to abort on, just a request that arrived before the console
-                # was ready.
+                # The child ships gBlockSendBuffer verbatim [decomp:src/link_rfu_2.c:232]; asked before
+                # Task_PlayerExchange case 0 fills it, it sends stale bytes. Not fatal.
                 self._reject_link_player("invalid GameFreak magic", data)
                 return
             self.child_link_player = parsed
@@ -473,9 +310,7 @@ class HostMysteryGiftEngine:
             self._link_player_seen = True
             self._link_phase = "send_host_block"
             self.trace.append(("link_player_child_block_valid", count))
-            # A valid child block proves that Task_PlayerExchange case 0 has
-            # already filled the child's gBlockSendBuffer.  This is the safe
-            # signal to send ours; an INIT alone can predate case 0's reset.
+            # Only a valid child block proves case 0 ran; an INIT alone can predate its buffer reset.
             self._host_link_player_queued = True
             self._queue_block(self._link_player_block, "host:link_player")
             self.trace.append(("link_player_host_block_queued", count))
@@ -490,9 +325,7 @@ class HostMysteryGiftEngine:
         self.trace.append(("unexpected_child_block", count))
 
     def _on_child_standby(self, count):
-        # Mirror the barrier for several polls: native gSendCmd stays current
-        # until the next link task overwrites it, and a one-VBlank pulse can be
-        # missed entirely by the console's resend loop.
+        # A one-VBlank echo can be missed entirely by the console's resend loop.
         for _ in range(self.timing.startup_standby_echo_frames):
             self._queue_words(rfu.exit_standby_words(count), f"STANDBY:{count}")
         self._exit_count = max(self._exit_count, count + 1)
@@ -500,23 +333,18 @@ class HostMysteryGiftEngine:
             if self._host_link_player_complete:
                 self._complete_link_player_barrier(count)
             else:
-                # The child may stop emitting this semantic event after it sees
-                # our echo, so retain it until our last fragment has left.  This
-                # is a latch, not a synthetic standby/retry.
+                # Latch: the child may stop emitting standby once it sees our echo.
                 self._pending_standby_count = count
                 self.trace.append(("link_player_standby_latched", count,
                                    self._link_phase))
         elif self.state == MG_LINK_PLAYER:
-            # Mirror it for the child, but do not treat a premature standby as
-            # proof that our block reached Task_PlayerExchange case 4.
+            # A premature standby is not proof that our block reached Task_PlayerExchange case 4.
             self.trace.append(("link_player_standby_early", count, self._link_phase))
 
     def _complete_link_player_barrier(self, count):
-        """Enter the post-exchange standby exactly once, including a latched event."""
         if self.state != MG_LINK_PLAYER:
             return
-        # union_room.c:2391 runs exactly one SetLinkStandbyCallback round
-        # between gReceivedRemoteLinkPlayers and the Mystery Gift client.
+        # Exactly one SetLinkStandbyCallback round precedes the Mystery Gift client [decomp:src/union_room.c:2391].
         self._pending_standby_count = None
         self._set_state(MG_START)
         self._standby_seen = True
@@ -526,7 +354,6 @@ class HostMysteryGiftEngine:
     def _on_child_close(self, count):
         self._exit_count = max(self._exit_count, count)
         if self.state in (MG_LINK_PLAYER, MG_START, MG_GIFT):
-            # The console gave up or finished ahead of us; follow it out.
             self.trace.append(("child_close_early", self.state))
             self._begin_close()
         if self.state != MG_CLOSE:
@@ -538,9 +365,8 @@ class HostMysteryGiftEngine:
             self.info("Console finished the gift and asked to close the link; "
                       "holding the network open while it saves.")
 
-    # --- per-VBlank output --------------------------------------------------------------------
     def tick(self):
-        """Advance one VBlank and return the parent's seven-word gSendCmd."""
+        """One VBlank; returns the parent's seven-word gSendCmd row."""
         self._parent_polls += 1
         if self.state in (MG_LINK_PLAYER, MG_START, MG_GIFT):
             self._status_countdown -= 1
@@ -560,8 +386,7 @@ class HostMysteryGiftEngine:
         if self._sender is None and self._blocks:
             data, label = self._blocks.popleft()
             repeat = self.timing.block_repeat
-            if (self.timing.ram_script_block_repeat > 0
-                    and label.startswith(f"ident{mystery_gift.MG_LINKID_RAM_SCRIPT}:")):
+            if label.startswith(f"ident{mystery_gift.MG_LINKID_RAM_SCRIPT}:"):
                 repeat = max(repeat, self.timing.ram_script_block_repeat)
             self._sender = block.BlockSender(data, owner=0, trust_pia=self.trust_pia,
                                              stream_repeat=repeat)
@@ -592,7 +417,6 @@ class HostMysteryGiftEngine:
         return [0] * 7
 
     def _reject_link_player(self, reason, data):
-        """Record a stale/malformed first response without restarting its send."""
         self.rejected_link_players += 1
         self.trace.append(("link_player_rejected", reason))
         self._expected = None
@@ -603,15 +427,6 @@ class HostMysteryGiftEngine:
         self._rx = block.RecvBlock()
 
     def _report_status(self, rfu_leader=None):
-        """Say what the bring-up is still waiting on.
-
-        The console's half of Task_PlayerExchange needs three things: our
-        player ids (visible as its multiplayer id), our LinkPlayer block, and
-        its own block echoed back in row 1 of our UNI table.  RFULeader queues
-        every normalized child command and drains one echo per parent poll, so
-        the frame counts and opcode totals show whether that queue is still
-        making progress without printing every VBlank.
-        """
         ops = ", ".join(
             f"{rfu.RFUCMD_NAMES.get(op, hex(op))}x{count}"
             for op, count in sorted(self._child_op_counts.items(),
@@ -627,14 +442,6 @@ class HostMysteryGiftEngine:
             f"opcodes seen: {ops}" + self._gift_status_detail())
 
     def _gift_status_detail(self):
-        """Gift-phase context for _report_status.
-
-        A stall inside MG_GIFT used to print nothing at all (the report was
-        gated on MG_LINK_PLAYER/MG_START), so lg3 and lg11 both went silent
-        after 'sending ident 25' with the link demonstrably alive in both
-        directions and no way to tell which side was waiting. Say which message
-        is still going out and which one we are blocked on receiving.
-        """
         if self.state != MG_GIFT:
             return ""
         pending = len(self._blocks) + (1 if self._sender is not None else 0)
@@ -643,11 +450,9 @@ class HostMysteryGiftEngine:
         return (f"; gift: last message {self._message_label or 'none'}, "
                 f"{pending} block(s) still outbound, "
                 f"expecting ident {expecting if expecting is not None else 'nothing (sending)'}, "
-                f"{len(self._recv_blocks)} child block(s) buffered, "
-                f"resends {self._gift_resends}")
+                f"{len(self._recv_blocks)} child block(s) buffered")
 
     def _record_link_player_outbound(self, words):
-        """Keep an exact, low-noise record of the host LinkPlayer wire order."""
         rec = rfu.parse_slot(rfu.serialize(words))
         if rec is None:
             return

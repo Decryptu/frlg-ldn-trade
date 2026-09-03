@@ -1,37 +1,6 @@
-"""CHILD-side FRLG Mystery Gift client - we RECEIVE a Wonder Card from a real console.
-
-This is the mirror image of :mod:`frlgsim.host_mystery_gift`.  There we are the RFU parent
-running ``mystery_gift_server.c``; here we are the RFU child running ``mystery_gift_client.c``
-[decomp:src/mystery_gift_client.c] against a console that chose
-Mystery Gift -> Wonder Cards -> Friend -> *send* (``Task_SendMysteryGift``, union_room.c:2041).
-
-Why it exists: every capture of a real Mystery Gift HOST so far was passive (two consoles, a
-monitor vif, ~50% of the air lost to aggregation).  With our own radio in the session we see the
-console's whole parent stream at full fidelity - what a real host does in the first three
-seconds after the join is exactly the data the 3-second wall investigation never had.
-
-Integration contract is the JOINER's (:class:`frlgsim.trade.TradeEngine`), so it drops into
-:class:`frlgsim.sim.Sim` unchanged::
-
-    engine.feed_in_frame(gbaframe.parse_in(host_T))   # each host 'T' (the gRecvCmds table)
-    words = engine.tick()                              # once per VBlank, our 7-word gSendCmd
-
-What the child does, in order [decomp citations inline]:
-
-1. ``Task_PlayerExchange`` child branch: answer the parent's one ``SEND_BLOCK_REQ`` with our
-   200-byte LinkPlayerBlock, take the parent's LinkPlayer block (count 17, GameFreak magics)
-   -> ``gReceivedRemoteLinkPlayers`` [link_rfu_2.c:1813-1900].
-2. ``Task_CardOrNewsWithFriend`` case 11: ONE ``SetLinkStandbyCallback`` round (count 0)
-   [union_room.c:2391].  Child-initiated, as every standby is on this console (barrier.py).
-3. ``MysteryGiftClient_Create`` [mystery_gift_menu.c:1231]: run the two-instruction boot
-   script (RECV client script, COPY_RECV) and from then on whatever scripts the server pushes
-   [mystery_gift_scripts.c:15; mystery_gift_client.c:87].  One instruction per VBlank.
-4. ``CLI_RETURN`` -> ``Rfu_SetCloseLinkCallback`` [mystery_gift_menu.c:1248]: emit
-   READY_CLOSE_LINK and wait for the parent's.
-
-Every message in both directions is kept (``messages``) with its VBlank index: this engine is
-an instrument first and a card receiver second.
-"""
+"""Child-side FRLG Mystery Gift client [decomp:src/mystery_gift_client.c]: we receive a Wonder Card from
+a console that chose Friend -> send. Same feed_in_frame()/tick() contract as the trade joiner, so it drops
+into frlgsim.sim.Sim unchanged; every message in both directions is kept in ``messages``."""
 
 from collections import deque
 
@@ -43,26 +12,21 @@ from .mystery_gift import (MG_LINKID_CLIENT_SCRIPT, MG_LINKID_GAME_DATA, MG_LINK
 ACTIVITY_WONDER_CARD = 21           # include/constants/union_room.h:46
 ACTIVITY_WONDER_NEWS = 22
 
-# engine states
-C_LINK = "C_LINK"                   # LinkPlayer exchange + the post-exchange standby
-C_GIFT = "C_GIFT"                   # MysteryGiftClient running the server's scripts
-C_CLOSE = "C_CLOSE"                 # READY_CLOSE_LINK handshake
+C_LINK = "C_LINK"
+C_GIFT = "C_GIFT"
+C_CLOSE = "C_CLOSE"
 C_DONE = "C_DONE"
 
-# client funcs [mystery_gift_client.c FUNC_*]
 F_RUN, F_RECV, F_SEND, F_WAIT, F_DONE = "run", "recv", "send", "wait", "done"
 
 COUNT_LINK_PLAYER = 17              # ceil(200/12): the fixed 200B LinkPlayer pull
 LINK_PLAYER_REQTYPES = (0, 1)       # BLOCK_REQ_SIZE_NONE / _200 [link.c BLOCK_REQ_*]
 
-# Idle VBlanks between two consecutive blocks of ONE outgoing message. The parent's receive
-# slot for a CHILD block only re-arms after its four-VBlank numBlocksReceived countdown
-# [link_rfu_2.c:1220] AND after MGL_Receive consumed the previous block, and the console's
-# server task consumes one block per frame at best. The host engine gives the console 12; a
-# console parent is at least as slow as we are, so we give it the same.
+# The parent's receive slot for a child block re-arms only after its four-VBlank countdown
+# [decomp:src/link_rfu_2.c:1220] and after MGL_Receive consumed the previous block.
 DEFAULT_INTER_BLOCK_GAP = 12
 
-RAM_SCRIPT_SAVE_SIZE = 1024         # keep the whole ident-25 buffer, not just script[995]
+RAM_SCRIPT_SAVE_SIZE = 1024
 
 GAME_CODES = {                      # RomHeaderGameCode: BPR=FireRed BPG=LeafGreen + region byte
     ("firered", "english"): b"BPRE", ("leafgreen", "english"): b"BPGE",
@@ -80,13 +44,8 @@ IDENT_NAMES = {v: k for k, v in vars(mg).items() if k.startswith("MG_LINKID_")}
 
 def build_link_game_data(link_player, *, version_code, flag_id=0, game_code=b"BPRE",
                          software_version=0, max_stamps=0, card_metadata=b""):
-    """``MysteryGift_LoadLinkGameData`` [mystery_gift.c:337] from our profile.
-
-    The struct is CpuFill32'd to zero first, so every unset field is 0x00. ``playerName`` is a
-    StringCopy into a 7-byte field with no terminator slot - a 7-character name spills its 0xFF
-    over ``playerTrainerId[0]`` natively (see :class:`mg_script.LinkGameData`); we reproduce
-    that faithfully rather than "fix" it, because it is what a console sends.
-    """
+    """[decomp:src/mystery_gift.c:337]; a 7-character name spills its 0xFF over playerTrainerId[0] natively
+    and that is reproduced on purpose."""
     data = bytearray(mg_script.GAME_DATA_SIZE)
     data[0x00:0x04] = mg.GAME_DATA_VALID_VAR.to_bytes(4, "little")
     data[0x04:0x06] = (1).to_bytes(2, "little")
@@ -100,7 +59,7 @@ def build_link_game_data(link_player, *, version_code, flag_id=0, game_code=b"BP
     data[mg_script.GD_OFF_MAX_STAMPS] = max_stamps & 0xFF
     tid = (link_player.trainer_id & 0xFFFFFFFF).to_bytes(4, "little")
     data[mg_script.GD_OFF_TRAINER_ID:mg_script.GD_OFF_TRAINER_ID + 4] = tid
-    name = charmap.encode(link_player.name)[:7] + b"\xff"      # StringCopy: text + EOS
+    name = charmap.encode(link_player.name)[:7] + b"\xff"
     data[mg_script.GD_OFF_PLAYER_NAME:mg_script.GD_OFF_PLAYER_NAME + len(name)] = name
     data[mg_script.GD_OFF_GAME_CODE:mg_script.GD_OFF_GAME_CODE + 4] = bytes(game_code)[:4].ljust(4, b"\x00")
     data[mg_script.GD_OFF_VERSION] = software_version & 0xFF
@@ -108,7 +67,6 @@ def build_link_game_data(link_player, *, version_code, flag_id=0, game_code=b"BP
 
 
 def describe_wonder_card(card):
-    """Human-readable summary of a 332-byte ``struct WonderCard`` [include/global.h:655]."""
     card = bytes(card)
     if len(card) < mg_script.GD_OFF_CARD_METADATA:
         return f"{len(card)}-byte card (short)"
@@ -129,8 +87,6 @@ def describe_wonder_card(card):
 
 
 class MysteryGiftClientEngine:
-    """Transport-independent FRLG Mystery Gift CLIENT (RFU child, mpId 1)."""
-
     def __init__(self, link_player=None, *, version="firered", language="english",
                  holding_flag_id=0, accept_replacement=True, yes_no_answer=True,
                  game_code=None, software_version=0, trust_pia=False,
@@ -141,10 +97,10 @@ class MysteryGiftClientEngine:
         self.info = getattr(log, "info", log)
         self.trust_pia = trust_pia
         self.inter_block_gap = int(inter_block_gap)
-        # what the sim advertises in its NI game data (sim._ensure_ni reads these)
+        # sim._ensure_ni reads these for the NI game data
         self.ni_activity = ACTIVITY_WONDER_CARD
-        self.ni_started = False         # SetHostRfuGameData(activity, 0, FALSE) [union_room.c:2255]
-        self._live = False              # set by the live sim; unused here, kept for the contract
+        self.ni_started = False
+        self._live = False
 
         version_code = (mg.VERSION_CODE_LEAFGREEN if version == "leafgreen"
                         else mg.VERSION_CODE_FIRERED)
@@ -154,25 +110,21 @@ class MysteryGiftClientEngine:
             self.lp, version_code=version_code, flag_id=holding_flag_id,
             game_code=game_code, software_version=software_version)
         self.holding_flag_id = holding_flag_id
-        # CLI_ASK_TOSS: the menu sets param FALSE for YES (toss the old card) and TRUE for NO
-        # [mystery_gift_menu.c MG_STATE_CLIENT_ASK_TOSS]; the server sends the card on FALSE.
+        # CLI_ASK_TOSS param is FALSE for YES (toss the old card) and TRUE for NO; the server gifts on FALSE.
         self.toss_param = 0 if accept_replacement else 1
         self.yes_no_param = 1 if yes_no_answer else 0
 
-        # RFU layer
         self.rx = block.BlockReceiver()
         self.sender = None
         self.barrier = barriermod.BarrierResponder(log=self.log)
         self._player_ids_seen = False
 
-        # LinkPlayer exchange
         self._lp_sent = False
         self._lp_requests = 0
         self.host_link_player = None
         self._standby_initiated = False
-        self._self_standby_echo = None   # highest 0x6600 count the host reflected back at us
+        self._self_standby_echo = None
 
-        # MysteryGiftClient [mystery_gift_client.c]
         self.state = C_LINK
         self.state_history = [C_LINK]
         self.func = F_RUN
@@ -181,9 +133,9 @@ class MysteryGiftClientEngine:
         self.param = 0
         self.recv_buffer = bytearray(mg.MG_LINK_BUFFER_SIZE)
         self.link_recv = mg_link.MysteryGiftLinkReceiver()
-        self._host_blocks = deque()      # completed parent blocks not yet consumed by MGL_Receive
-        self._pending_send = None        # (ident, payload, size) staged by a LOAD_* instruction
-        self._send_blocks = []           # remaining blocks of the message going out
+        self._host_blocks = deque()
+        self._pending_send = None
+        self._send_blocks = []
         self._send_gap = 0
         self._message_label = ""
         self.saved_card = None
@@ -193,11 +145,10 @@ class MysteryGiftClientEngine:
         self.activation_scripts = []
         self.buffer_scripts = []
         self.dynamic_msg = None
-        self.result = None               # CLI_RETURN parameter (CLI_MSG_*)
+        self.result = None
         self.close_confirmed = False
         self.done = False
         self.error = None
-        # instrumentation: (tick, direction, ident, size, payload) and free-form events
         self.messages = []
         self.trace = []
         self.host_ops = {}
@@ -205,16 +156,13 @@ class MysteryGiftClientEngine:
         self._unexpected_blocks = 0
         self._gift_idle = 0
 
-    # --- contract properties ------------------------------------------------------------------
     @property
     def established(self):
-        """gReceivedRemoteLinkPlayers: both LinkPlayer blocks exchanged [link_rfu_2.c:1879]."""
         return self._lp_sent and self.host_link_player is not None
 
     @property
     def in_seat_phase(self):
-        # sim.py uses this only to pick the retransmit policy (whole-window before the block
-        # phase, gap-targeted inside it). No held keys are ever emitted: host_in_seat stays False.
+        # sim.py uses this only to pick the retransmit policy; no held keys are ever emitted.
         return not self.established
 
     host_in_seat = False
@@ -231,7 +179,6 @@ class MysteryGiftClientEngine:
             self.trace.append((self._tick, "state", state))
             self.log(f"mg client: -> {state}")
 
-    # --- receive ------------------------------------------------------------------------------
     def feed_in_frame(self, unwrapped):
         completed, reqs = self.rx.feed_frame(unwrapped)
         if unwrapped is None:
@@ -263,8 +210,8 @@ class MysteryGiftClientEngine:
             if host_slot["op"] == rfu.READY_CLOSE_LINK:
                 self._confirm_close("host 0x5F00")
         self.barrier.observe_frame(saw)
-        # The console never broadcasts its own 0x6600 at mpId 0 on hardware (j45-j58); the only
-        # evidence a child-initiated round landed is its reflection of ours. Complete on that.
+        # The console never broadcasts its own 0x6600 at mpId 0; the only evidence a child-initiated
+        # round landed is its reflection of ours.
         if (self.barrier.mode == barriermod.STANDBY and self.barrier.initiated
                 and self._self_standby_echo is not None
                 and self._self_standby_echo >= self.barrier.local_count):
@@ -287,10 +234,8 @@ class MysteryGiftClientEngine:
     def _on_req(self, reqtype):
         self.trace.append((self._tick, "req", reqtype))
         if self.sender is not None and not self.sender.done:
-            return                          # the parent re-pulls every frame until it lands
+            return
         if self.state == C_LINK and reqtype in LINK_PLAYER_REQTYPES and not self._lp_sent:
-            # Task_PlayerExchange child case: both sides Rfu_InitBlockSend their LinkPlayerBlock in
-            # the fixed 200-byte buffer [link_rfu_2.c:1172, 232].
             self._lp_requests += 1
             self._lp_sent = True
             self._begin_block(linkplayer.build_block(self.lp).ljust(200, b"\x00"), "link_player")
@@ -320,9 +265,8 @@ class MysteryGiftClientEngine:
             self.trace.append((self._tick, "close_confirmed", how))
             self.info(f"Console acknowledged the link close ({how}).")
 
-    # --- send ---------------------------------------------------------------------------------
     def _begin_block(self, data, label):
-        # Reset the peer-1 reflection so the fresh INIT waits for THIS block's echo (trade.py).
+        # Reset the peer-1 reflection so the fresh INIT waits for THIS block's echo.
         self.rx.peers[1] = block.RecvBlock()
         self.sender = block.BlockSender(data, owner=self.mpid, trust_pia=self.trust_pia,
                                         stream_gap=0)
@@ -337,16 +281,13 @@ class MysteryGiftClientEngine:
         self.messages.append((self._tick, "out", ident, declared, bytes(payload)))
         self.info(f"[mg] sending {IDENT_NAMES.get(ident, ident)} ({ident}) as {len(blocks)} block(s)")
 
-    # --- MysteryGiftLink receive [mystery_gift_link.c MGL_Receive] -----------------------------
     def _drain_recv(self):
-        """Feed buffered parent blocks to the message receiver. True once a message completed."""
         while self._host_blocks and self.link_recv.active:
             blk = self._host_blocks.popleft()
             try:
                 payload = self.link_recv.feed_block(blk)
             except mg_link.MysteryGiftLinkError as exc:
-                # LinkRfu_FatalError territory natively; we record it and keep the link up so
-                # the capture shows what the console does next.
+                # Natively LinkRfu_FatalError; keep the link up so the capture shows what the console does next.
                 self.error = str(exc)
                 self.trace.append((self._tick, "link_error", str(exc)))
                 self.info(f"[mg] MysteryGiftLink error: {exc} (native would LinkRfu_FatalError)")
@@ -362,7 +303,6 @@ class MysteryGiftClientEngine:
             return True
         return False
 
-    # --- client script interpreter [mystery_gift_client.c Client_Run] ------------------------
     def _run_one(self):
         off = self.cmdidx * mg_script.CLIENT_CMD_SIZE
         if off + mg_script.CLIENT_CMD_SIZE > len(self.script):
@@ -409,7 +349,6 @@ class MysteryGiftClientEngine:
             if instr == mg_script.CLI_YES_NO:
                 self.param = self.yes_no_param
                 self.info(f"[mg] yes/no prompt -> answering {'YES' if self.param else 'NO'}")
-            # MG_STATE_CLIENT_* menu states answer/dismiss immediately via AdvanceState
             self.func = F_RUN
         elif instr == mg_script.CLI_ASK_TOSS:
             self.param = self.toss_param
@@ -456,15 +395,12 @@ class MysteryGiftClientEngine:
                 break
         self.trace.append((self._tick, "copy_recv_script", n))
 
-    # --- per VBlank ---------------------------------------------------------------------------
     def poll_send_done(self):
-        """Window-gated: keep an in-flight HOLD advancing on the host's reflection (trade.py)."""
         if self.sender is not None and self.sender.state == block.HOLD:
             self.sender.tick(self.rx.peers[1])
 
     def tick(self):
         self._tick += 1
-        # 1. a block on the wire always finishes first
         if self.sender is not None:
             host_rx = self.rx.peers[0]
             peer_sending = bool(host_rx.receiving and not host_rx.done)
@@ -477,7 +413,6 @@ class MysteryGiftClientEngine:
                     self.info("Our LinkPlayer block is complete on the wire.")
             if (words[0] & 0xFFFF) != 0 or self.sender is not None and self.sender.state != block.HOLD:
                 return words
-        # 2. link phase: the one post-exchange standby [union_room.c:2391]
         if self.state == C_LINK:
             if self.established and not self._standby_initiated:
                 self._standby_initiated = True
@@ -489,7 +424,6 @@ class MysteryGiftClientEngine:
                 self.info("Mystery Gift client started; waiting for the console's client script.")
         if self.barrier.active and self.barrier.mode == barriermod.STANDBY:
             return self.barrier.want_emit() or [0] * 7
-        # 3. the client [MysteryGiftClient_Run, one FUNC per frame]
         if self.state == C_GIFT:
             if self.func == F_RUN:
                 self._run_one()
@@ -502,7 +436,7 @@ class MysteryGiftClientEngine:
                 if self._send_gap > 0:
                     self._send_gap -= 1
                 elif self.sender is not None:
-                    pass                    # the previous block is still on the wire (HOLD)
+                    pass
                 elif self._send_blocks:
                     self._begin_block(self._send_blocks.pop(0), self._message_label)
                     return self.tick_sender_first_words()
@@ -522,7 +456,6 @@ class MysteryGiftClientEngine:
         peer_sending = bool(host_rx.receiving and not host_rx.done)
         return self.sender.tick(self.rx.peers[1], peer_sending=peer_sending)
 
-    # --- reporting ----------------------------------------------------------------------------
     def status(self):
         return (f"state={self.state} func={self.func} established={self.established} "
                 f"lp_sent={self._lp_sent} host_lp={self.host_link_player is not None} "
