@@ -36,6 +36,12 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser.add_argument("--slots", default="",
                         help="comma-separated 0-based offered slots for multiple trades")
     parser.add_argument("--trades", type=int, default=1, choices=range(1, 7), metavar="N")
+    parser.add_argument(
+        "--union-room", action="store_true",
+        help="advertise ACTIVITY_SEARCH so the Union Room NPC (the MIDDLE NPC on Pokemon Center 2F) "
+             "can list us, instead of the wireless club trade centre's THIRD NPC. UNTESTED on "
+             "hardware: the Union Room search accepts only ACTIVITY_SEARCH "
+             "(sAcceptedActivityIds_Init), which is why the normal trade beacon is invisible there")
     parser.add_argument("--anim-delay", type=int, default=None,
                         help="override the proven trade-animation frame delay")
     parser.add_argument(

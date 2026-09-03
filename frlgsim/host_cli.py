@@ -166,6 +166,8 @@ def build_host_config(parser, args):
             accept_decrypted_ccmp=args.accept_decrypted_ccmp,
             native_nonce_sequence=args.native_nonce_sequence,
             session_response_first=args.session_response_first,
+            # Only the trade host defines --union-room; the Mystery Gift host shares this parser.
+            union_room=getattr(args, "union_room", False),
         )
     except ValueError as exc:
         parser.error(str(exc))

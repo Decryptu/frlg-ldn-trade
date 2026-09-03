@@ -12,7 +12,14 @@ RECORD_SIZE = 24
 
 RFU_SERIAL_GAME = 0x0002
 ACTIVITY_TRADE = 4
+ACTIVITY_SEARCH = 12
 ACTIVITY_WONDER_CARD = 21
+# A console standing in the Union Room advertises ACTIVITY_SEARCH and its search accepts only
+# ACTIVITY_SEARCH back (sAcceptedActivityIds_Init, LINK_GROUP_UNION_ROOM_INIT; union_room.c sets it
+# with SetHostRfuGameData(ACTIVITY_SEARCH, 0, FALSE)). Once players are in the room the resume search
+# accepts IN_UNION_ROOM | activity instead (sAcceptedActivityIds_Resume). IN_UNION_ROOM is 1 << 6 and
+# so fits inside SEARCH_ACTIVITY_MASK.
+IN_UNION_ROOM = 1 << 6
 LANGUAGE_ENGLISH = 2
 VERSION_FIRE_RED = 4
 HASCARD_BIT = 0x20                 # gname[0] |= 0x20 [union_room]

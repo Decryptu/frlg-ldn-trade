@@ -207,6 +207,9 @@ class HostOptions:
     accept_decrypted_ccmp: bool = False
     native_nonce_sequence: bool = False
     session_response_first: bool = False
+    # Advertise ACTIVITY_SEARCH so the Union Room NPC's search can see us instead of the trade
+    # centre's. UNTESTED on hardware; see tests/test_union_room_advertisement.py.
+    union_room: bool = False
 
     def __post_init__(self):
         # LDN channels: 2.4 GHz 1/6/11 and 5 GHz 36/40/44/48 [kinnay LDN wiki, WLAN Channels].

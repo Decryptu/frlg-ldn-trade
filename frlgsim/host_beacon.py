@@ -89,6 +89,45 @@ def build_trade_app_data(profile, host_session_id):
     return inactive, activate_trade_app_data(inactive, host_session_id)
 
 
+def build_union_room_app_data(profile, host_session_id, activity=None):
+    """Advertisement for the Union Room NPC (the middle NPC on Pokemon Center 2F).
+
+    The trade and Wonder Card beacons are invisible there: the searching console runs
+    LINK_GROUP_UNION_ROOM_INIT, whose accept list is sAcceptedActivityIds_Init = {ACTIVITY_SEARCH},
+    and IsPartnerActivityAcceptable drops every other activity. So a Union Room advertisement carries
+    ACTIVITY_SEARCH with startedActivity clear, matching union_room.c's own
+    SetHostRfuGameData(ACTIVITY_SEARCH, 0, FALSE). Pass activity=IN_UNION_ROOM | ACTIVITY_* to be seen
+    by a console already inside the room, which searches with the RESUME accept list instead.
+
+    UNTESTED on hardware: no run has advertised this yet.
+    """
+    if activity is None:
+        activity = beacon.ACTIVITY_SEARCH
+    app_data = bytearray(beacon.mutate_beacon(
+        CAPTURED_TRADE_BEACON, name=profile.discovery_name,
+        trainer_id=profile.discovery_trainer_id))
+    pia_name = profile.session_name.encode("utf-8")[:64]
+    app_data[0x17:0x1B] = len(pia_name).to_bytes(4, "big")
+    app_data[0x1B] = beacon.PIA_NAME_UTF8
+    app_data[0x1C:beacon.PIA_HDR] = b"\x00" * 64
+    app_data[0x1C:0x1C + len(pia_name)] = pia_name
+
+    record = bytearray(transport._b85_decode(
+        app_data[beacon.PIA_HDR:])[:beacon.RECORD_SIZE]).ljust(
+            beacon.RECORD_SIZE, b"\x00")
+    record[10:12] = bytes(host_session_id)[:2].ljust(2, b"\x00")
+    _apply_profile_to_search_word(record, profile)
+    offset = beacon.SEARCH_WORD_OFFSET
+    search_word = int.from_bytes(record[offset:offset + 2], "little")
+    search_word &= ~(beacon.SEARCH_ACTIVITY_MASK | beacon.SEARCH_HAS_CARD
+                     | beacon.SEARCH_STARTED_ACTIVITY)
+    search_word |= activity & beacon.SEARCH_ACTIVITY_MASK
+    record[offset:offset + 2] = search_word.to_bytes(2, "little")
+
+    inactive = bytes(app_data[:beacon.PIA_HDR]) + beacon.b85_encode(bytes(record))
+    return inactive, activate_trade_app_data(inactive, host_session_id)
+
+
 def build_wonder_card_app_data(profile, host_session_id):
     app_data = bytearray(beacon.mutate_beacon(
         CAPTURED_TRADE_BEACON, name=profile.discovery_name,

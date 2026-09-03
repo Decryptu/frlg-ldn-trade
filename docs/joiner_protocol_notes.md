@@ -339,3 +339,45 @@ Fix: `HostSession` holds new frames while the console has not cumulatively acked
 `HOST_OUTSTANDING_MAX` (6) frames, keeps retransmitting the gap, and resumes when the ack catches up.
 A closed hole then releases at most 6 frames. Measured tools: `scratchpad/ack_trace.py` (bulk acks and
 masks), the K-per-datagram count over `host_decode.py` output (97 vs max 3 in lg149).
+
+## Why the Union Room NPC cannot see our host (decomp, 2026-09-03)
+
+The middle NPC on Pokemon Center 2F is the Union Room; the third NPC is the wireless club trade
+centre. Every run so far has used the third NPC, and CLAUDE.md recorded the middle NPC's blindness as
+a bare observation. The decomp gives the mechanism, with no hardware run spent.
+
+FACT: a console standing in the Union Room advertises `ACTIVITY_SEARCH` (12) and searches with
+`LINK_GROUP_UNION_ROOM_INIT`:
+
+    SetHostRfuGameData(ACTIVITY_SEARCH, 0, FALSE);   [src/union_room.c:3549]
+    CreateTask_SearchForChildOrParent(..., LINK_GROUP_UNION_ROOM_INIT);   [src/union_room.c:3565]
+
+FACT: that group's accept list holds exactly one activity, and `IsPartnerActivityAcceptable`
+[src/union_room.c:1590] walks it and returns FALSE for anything absent:
+
+    sAcceptedActivityIds_Init[] = {ACTIVITY_SEARCH, 0xFF};   [src/data/union_room.h:419]
+
+DEDUCTION: our trade host advertises `ACTIVITY_TRADE` (4) and our Mystery Gift host
+`ACTIVITY_WONDER_CARD` (21). Both are rejected by that filter before the group list is drawn, so the
+console never had a chance to list us. This is a filter on the advertised activity alone, not a
+different transport, a different discovery service or a Pia-level difference.
+
+FACT: once players are inside the room the search switches to `LINK_GROUP_UNION_ROOM_RESUME`
+[src/union_room.c:2664], whose list is `IN_UNION_ROOM | activity`
+[src/data/union_room.h:407-418], with `IN_UNION_ROOM` = `1 << 6`
+[include/constants/union_room.h:49]. That bit fits inside our hardware-proven
+`SEARCH_ACTIVITY_MASK` (0x7F), so both forms are expressible in the record we already build.
+
+Implemented offline: `beacon.ACTIVITY_SEARCH` / `beacon.IN_UNION_ROOM`,
+`host_beacon.build_union_room_app_data(profile, session_id, activity=None)`, the `union_room`
+`HostOptions` field and `frlgtrade_host.py --union-room`. `tests/test_union_room_advertisement.py`
+(7 tests) pins the constants against the decomp, checks the advertisement carries `ACTIVITY_SEARCH`
+with `startedActivity` and the wonder flags clear (matching the console's own
+`SetHostRfuGameData(ACTIVITY_SEARCH, 0, FALSE)`), checks the resume form round-trips, checks every
+other captured byte is identical to the trade advertisement, and drives the real
+`HostApplication._build_components` to confirm the flag changes what reaches the transport.
+
+HYPOTHESIS, untested: with `--union-room` the middle NPC lists us. UNKNOWN: what the console expects
+after it joins. The Union Room is a persistent room with avatars, chat and `ACTIVITY_PLYRTALK`
+negotiation, not the trade centre's straight-to-trade flow, so being listed is very unlikely to be
+enough to reach a trade. Being listed at all is the single thing the next run should test.

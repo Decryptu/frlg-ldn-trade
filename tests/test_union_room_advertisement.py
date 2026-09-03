@@ -1,0 +1,141 @@
+"""The Union Room advertisement (the middle NPC on Pokemon Center 2F).
+
+Why this exists: the trade host is invisible to the middle NPC, and until now that was only an
+observation.  The decomp says exactly why.  A console standing in the Union Room searches with
+LINK_GROUP_UNION_ROOM_INIT, whose accept list is::
+
+    sAcceptedActivityIds_Init[] = {ACTIVITY_SEARCH, 0xFF};   [src/data/union_room.h:419]
+
+and IsPartnerActivityAcceptable [src/union_room.c:1590] walks that list and returns FALSE for
+anything else.  ACTIVITY_TRADE (4) and ACTIVITY_WONDER_CARD (21) are therefore both dropped before
+the group list is ever drawn.  The console's own Union Room advertisement is
+SetHostRfuGameData(ACTIVITY_SEARCH, 0, FALSE) [src/union_room.c:3549].
+
+Once players are in the room the resume search uses sAcceptedActivityIds_Resume, which accepts
+IN_UNION_ROOM | activity [src/data/union_room.h:407-418], IN_UNION_ROOM being 1 << 6
+[include/constants/union_room.h:49].
+
+These are offline assertions about what we put on the air.  NOTHING here is hardware-proven: no run
+has advertised ACTIVITY_SEARCH yet.
+
+Run standalone (no pytest needed):   python tests/test_union_room_advertisement.py
+"""
+
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from frlgsim import beacon, transport  # noqa: E402
+from frlgsim.host_beacon import (  # noqa: E402
+    build_trade_app_data, build_union_room_app_data,
+)
+from frlgsim.config import DEFAULT_TRAINER  # noqa: E402
+from frlgsim import config, host_cli  # noqa: E402
+from frlgsim.host_app import HostApplication  # noqa: E402
+
+SESSION_ID = b"\x7b\xf1"
+
+
+def _record(app_data):
+    return transport._b85_decode(app_data[beacon.PIA_HDR:])[:beacon.RECORD_SIZE]
+
+
+def _search_word(app_data):
+    record = _record(app_data)
+    return int.from_bytes(
+        record[beacon.SEARCH_WORD_OFFSET:beacon.SEARCH_WORD_OFFSET + 2], "little")
+
+
+def test_constants_match_the_decomp():
+    assert beacon.ACTIVITY_SEARCH == 12
+    assert beacon.IN_UNION_ROOM == 1 << 6
+    # IN_UNION_ROOM has to survive the packed field or the resume form cannot be expressed.
+    assert beacon.IN_UNION_ROOM & beacon.SEARCH_ACTIVITY_MASK == beacon.IN_UNION_ROOM
+
+
+def test_union_room_advertisement_declares_activity_search():
+    inactive, active = build_union_room_app_data(DEFAULT_TRAINER, SESSION_ID)
+    word = _search_word(inactive)
+    assert word & beacon.SEARCH_ACTIVITY_MASK == beacon.ACTIVITY_SEARCH
+    # SetHostRfuGameData(ACTIVITY_SEARCH, 0, FALSE): no started bit, no wonder flags.
+    assert not word & beacon.SEARCH_STARTED_ACTIVITY
+    assert not word & beacon.SEARCH_HAS_CARD
+    assert _search_word(active) & beacon.SEARCH_STARTED_ACTIVITY
+
+
+def test_trade_and_wonder_card_activities_are_the_ones_the_init_search_drops():
+    """Guards the explanation itself: if either activity ever became 12 the invisibility
+    would be gone and this file's premise with it."""
+    accepted_by_init_search = {beacon.ACTIVITY_SEARCH}
+    assert beacon.ACTIVITY_TRADE not in accepted_by_init_search
+    assert beacon.ACTIVITY_WONDER_CARD not in accepted_by_init_search
+
+
+def test_resume_form_is_expressible():
+    """A console already inside the room accepts IN_UNION_ROOM | ACTIVITY_TRADE."""
+    activity = beacon.IN_UNION_ROOM | beacon.ACTIVITY_TRADE
+    inactive, _ = build_union_room_app_data(DEFAULT_TRAINER, SESSION_ID, activity=activity)
+    word = _search_word(inactive)
+    assert word & beacon.SEARCH_ACTIVITY_MASK == activity
+    assert word & beacon.SEARCH_ACTIVITY_MASK & ~beacon.IN_UNION_ROOM == beacon.ACTIVITY_TRADE
+
+
+def test_only_the_activity_differs_from_the_trade_advertisement():
+    """Every unexplained captured byte is preserved; the Pia header, version, language and
+    both unexplained regions are untouched, exactly as the Wonder Card beacon does it."""
+    uroom, _ = build_union_room_app_data(DEFAULT_TRAINER, SESSION_ID)
+    trade, _ = build_trade_app_data(DEFAULT_TRAINER, SESSION_ID)
+    assert uroom[:beacon.PIA_HDR] == trade[:beacon.PIA_HDR]
+    u_record, t_record = bytearray(_record(uroom)), bytearray(_record(trade))
+    offset = beacon.SEARCH_WORD_OFFSET
+    u_word = int.from_bytes(u_record[offset:offset + 2], "little")
+    t_word = int.from_bytes(t_record[offset:offset + 2], "little")
+    assert u_word & ~beacon.SEARCH_ACTIVITY_MASK == t_word & ~beacon.SEARCH_ACTIVITY_MASK
+    u_record[offset:offset + 2] = t_record[offset:offset + 2]
+    assert bytes(u_record) == bytes(t_record)
+
+
+# --- the flag actually reaches the air ------------------------------------------------------------
+def test_union_room_flag_parses_and_reaches_host_options():
+    import frlgtrade_host
+    parser = frlgtrade_host.build_parser()
+    args = parser.parse_args(["--union-room", "--no-live"])
+    _profile, _ldn, options = host_cli.build_host_config(parser, args)
+    assert options.union_room is True
+
+    default_args = parser.parse_args(["--no-live"])
+    _p, _l, default_options = host_cli.build_host_config(parser, default_args)
+    assert default_options.union_room is False
+
+
+def _advertised_activity(union_room):
+    """Drive the real HostApplication._build_components and read the activity it puts on the air."""
+    seen = {}
+
+    class FakeTransport:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+    run = config.TradeRunConfig(
+        DEFAULT_TRAINER,
+        config.TradePlan(party_paths=("PARTY1.pk3", "PARTY2.pk3"), trade_slot=1,
+                         offered_slots=(1,), trust_pia=True),
+        config.LdnConfig(phy="phy7", keys_path=__file__),
+        config.HostOptions(union_room=union_room))
+    app = HostApplication(run, transport_factory=FakeTransport, log=lambda *_a: None,
+                          injector_factory=lambda **unused: None)
+    app._build_components()
+    return _search_word(seen["app_data"]) & beacon.SEARCH_ACTIVITY_MASK
+
+
+def test_host_app_advertises_activity_search_only_with_the_option():
+    assert _advertised_activity(True) == beacon.ACTIVITY_SEARCH
+    assert _advertised_activity(False) == beacon.ACTIVITY_TRADE
+
+
+if __name__ == "__main__":
+    for name, fn in sorted(globals().items()):
+        if name.startswith("test_") and callable(fn):
+            fn()
+            print("ok", name)

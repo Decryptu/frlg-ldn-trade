@@ -6,7 +6,9 @@ import time
 
 from . import config as configmod, host_session, host_trade, ldntrace, trade_runtime, transport
 from .linkplayer import HOST_NAME_PAD
-from .host_beacon import BeaconInjector, build_trade_app_data
+from .host_beacon import (
+    BeaconInjector, build_trade_app_data, build_union_room_app_data,
+)
 from .host_pia import HostPeerProtocol
 from .host_support import resolve_keys
 
@@ -70,7 +72,10 @@ class HostApplication:
         link_player = self.profile.to_link_player()
         self.session = host_session.HostSession(
             party, plan=self.plan, profile=self.profile, log=self.log)
-        inactive, active = build_trade_app_data(
+        build_app_data = (build_union_room_app_data
+                          if getattr(self.options, "union_room", False)
+                          else build_trade_app_data)
+        inactive, active = build_app_data(
             self.profile, self.session.rfu.host_session_id)
         self.tracer = (ldntrace.Tracer(self.ldn.capture_path, log=self.log)
                        if self.ldn.capture_path else None)
