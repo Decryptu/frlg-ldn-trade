@@ -258,3 +258,44 @@ covers both. `--block-repeat 1` is measurably worse.
   child's stream for an RTO; repeating every reliable data frame in the next few datagrams removes
   the stalls (the host de-duplicates by sequence).
 - LDN allows 5 GHz channels 36/40/44/48 and the host can use them, but the FRLG app scans 2.4 GHz only.
+
+## Pia header nonce is a counter the console enforces
+
+The console keeps, per channel, the last accepted 8-byte header nonce (big-endian) and drops any
+datagram whose nonce is not strictly above it (upstream tornadus 5a5a138). The joiner used a random
+nonce, which passes that test about half the time. Measured with `scratchpad/rtx_analyze.py` and
+`decode.py`'s duplicate-delivery line:
+
+    j86-j88 (random):   ~1.1 duplicate outgoing reliable deliveries per unique frame, ~0.3 inbound
+    j89     (counter):  0.34 outgoing, 0.00 inbound; the user called the trade "much smoother"
+
+The inbound duplicates were the console retransmitting because our acks were being dropped too.
+`Sim._next_nonce` now counts; the host already did (`native_nonce_sequence = true`). This is also
+what the "~40% silent drop inside the console" behind the carry-forward and the reply holdoff was.
+
+## Carry-forward stays at 4 on both sides
+
+With the counter nonce the remaining joiner duplicates are the carry-forward (each reliable frame
+repeated in the next 4 datagrams), acked ~17ms after the original. It still earns its place: air
+loss is 1-2% and bursty, and Pia delivers in order, so a hole holds every later slot back and the
+console's 8-deep RFU receive queue overflows when it fills.
+
+    h5, host carry 0: parent slot seq 954 lost with its 68ms retransmit; the 137ms one landed; the
+        console received ten slots at once and disconnected 300ms later (type D, LEAVE reason 3),
+        "erreur de connexion" on screen, during the mail block.
+    h4, host carry unlimited (a [-0:] slicing bug at depth 0, since guarded): clean.
+    j90, joiner carry 0: clean, but zero trade-phase loss, so it proves nothing.
+
+The console's own child-side retransmit rate is ~0.01-0.02 per frame in every host capture: that is
+the real air loss, and what a single-copy sender is up against. `scratchpad/host_rtx.py` measures a
+host capture, `rtx_analyze.py` / `rtx_where.py` a joiner one.
+
+## One-sided cancel returns both sides to the menu
+
+`PLAYER_CANCEL_TRADE` / `PARTNER_CANCEL_TRADE` go through `CB_HandleTradeCanceled` ->
+`CB_MAIN_MENU` [trade.c:2094-2113]; only `BOTH_CANCEL_TRADE` ends the session [1715-1722]. The joiner
+now re-enters S4_PARTY and selects again after 60 frames (upstream 3eaf381). On the host, answering
+every `REQUEST_CANCEL` at SELECT with `PARTNER_CANCEL_TRADE` looped the console on "votre ami veut
+échanger des Pokémon" (h6: two cancels, two identical prompts, then a normal trade still worked). A
+second consecutive CANCEL now makes the leader cancel too, `BOTH_CANCEL_TRADE`, and the exit path
+runs (h7: cancel, A, cancel, both walk out, link closed, console left LDN).
