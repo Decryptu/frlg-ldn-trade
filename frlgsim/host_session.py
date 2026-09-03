@@ -11,6 +11,13 @@ from .rfu_leader import RFULeader, UNI
 # recovers from that flood, so retransmits per VBlank are capped.
 HOST_RTX_LIMIT = 2
 
+# The console releases in-order Reliable frames to the game in one burst when a hole closes, and its
+# RFU receive queue is 8 deep (h5). If we keep emitting new frames while the console's cumulative ack
+# is stuck behind a lost frame, the backlog grows without bound and the release burst overflows the
+# queue, silently dropping block fragments (the ident-25 stall, lg150, session 16). Cap the frames the
+# console has not yet cumulatively acked: below its queue depth, so any single release fits.
+HOST_OUTSTANDING_MAX = 6
+
 class HostSession:
     def __init__(self, party=None, *, engine=None, plan=None, profile=None, trade_slot=0,
                  offered_slots=None, trades=1, link_player=None,
@@ -56,6 +63,8 @@ class HostSession:
         self.stopped = False
         self.send_window_full = False
         self.window_full_ticks = 0
+        self.console_backlogged = False
+        self.backlog_ticks = 0
 
     @property
     def trade(self):
@@ -113,6 +122,26 @@ class HostSession:
                 f"Reliable send window drained after {self.window_full_ticks} ticks; "
                 "resuming the activity.")
             self.window_full_ticks = 0
+
+        # Hole guard: while the console's cumulative ack lags our send by more than its RFU receive
+        # queue can release at once, stop emitting NEW frames and let poll()'s retransmits refill the
+        # hole. A closed hole then releases at most HOST_OUTSTANDING_MAX frames, which the 8-deep queue
+        # accepts without dropping block fragments (lg150, session 16). Never gate the close/disconnect
+        # path: those must still go out even if an ack is outstanding.
+        if (not (self.close_poll_sent and self.activity.disconnect_requested)
+                and self.reliable.link.outstanding() >= HOST_OUTSTANDING_MAX):
+            if not self.console_backlogged:
+                self.console_backlogged = True
+                getattr(self.log, "info", self.log)(
+                    f"Console ack is behind by {self.reliable.link.outstanding()} frames; holding "
+                    "new frames and retransmitting the gap until it catches up.")
+            self.backlog_ticks += 1
+            return out
+        if self.console_backlogged:
+            self.console_backlogged = False
+            getattr(self.log, "info", self.log)(
+                f"Console ack caught up after {self.backlog_ticks} held ticks; resuming.")
+            self.backlog_ticks = 0
 
         # Queue D one VBlank after the final parent close-link UNI poll.
         if (self.close_poll_sent and self.activity.disconnect_requested

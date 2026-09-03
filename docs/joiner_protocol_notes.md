@@ -318,3 +318,24 @@ every `REQUEST_CANCEL` at SELECT with `PARTNER_CANCEL_TRADE` looped the console 
 échanger des Pokémon" (h6: two cancels, two identical prompts, then a normal trade still worked). A
 second consecutive CANCEL now makes the leader cancel too, `BOTH_CANCEL_TRADE`, and the exit path
 runs (h7: cancel, A, cancel, both walk out, link closed, console left LDN).
+
+## The ident-25 stall: a hole plus an unbounded backlog (lg150, 2026-09-03)
+
+Mystery Gift host, LeafGreen. Two consecutive frames (seq 927, 928) were lost at 18.78s. The console's
+cumulative ack stayed at 927 for 1.75s and it sent no bulk ack at all in that time, while its own data
+kept flowing at 45-62 datagrams/s. We re-sent 927 and 928 in every datagram (about 100 copies) and kept
+emitting new frames behind them, five per datagram with carry-forward. When the console finally acked
+at 20.53s it held 927, 928 and 960-969 only; the mask then filled at 30-80 frames per 50ms, and at
+21.00s the hole closed and the console released 97 frames to the game in one datagram (97 K acks,
+acked_ts 973-1069). Its RFU receive queue is 8 deep (h5): the ident-25 fragments in that release were
+dropped, the block never completed, and the console sat on "Transmission..." for 150s with no timeout.
+
+FACT: the console accepted nothing from us for 1.75s although every datagram carried the frame it
+was waiting for. DEDUCTION: with the backlog behind the hole the console had no room to take the
+retransmit either; the hole is self-sustaining as long as new frames keep arriving. FACT: the normal
+ack lag is 0-1 frames at 99% of acks (lg149: 1180 acks, one at 7; lg150 before the hole: one at 10).
+
+Fix: `HostSession` holds new frames while the console has not cumulatively acked
+`HOST_OUTSTANDING_MAX` (6) frames, keeps retransmitting the gap, and resumes when the ack catches up.
+A closed hole then releases at most 6 frames. Measured tools: `scratchpad/ack_trace.py` (bulk acks and
+masks), the K-per-datagram count over `host_decode.py` output (97 vs max 3 in lg149).
