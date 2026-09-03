@@ -1127,3 +1127,8 @@ The console-side re-send mechanics seen in u25 are the decomp's, not a fault: th
 every fragment missing from its own echo bitmask (`HandleSendFailure`, link_rfu_2.c:1015) and the
 receiver ORs fragments into a bitmask (`receivedFlags |= 1 << index`), so duplicated or reordered
 echoes are harmless. What is not harmless is the 0.1 s hole that started it.
+
+FACT (u27, 2026-09-04): a complete Union Room battle with the per-block echo gate: two KOs by our
+Machamp, `FAINTINGCRY`, `FAINTANIMATION`, `CHOOSEPOKEMON`, `DRAWPARTYSTATUSSUMMARY`, `SWITCHINANIM`,
+then `ENDLINKBATTLE` outcome 2, the console's save and the normal close. No hole-guard event in the
+run and no transmit hold longer than 220 ms in the 50 ms debugfs sampler.
