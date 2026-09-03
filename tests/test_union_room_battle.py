@@ -392,15 +392,32 @@ def test_our_ack_waits_for_the_console_to_see_its_own_block_returned():
     our ack on all sixteen commands before the stall and trailed it on the seventeenth."""
     h = _into_the_battle()
     h._words.clear()
-    h.echo_backlog = 1
+    h.echo_backlog, h.echo_progress = 2, 10
     h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
                                    bytes([bl.PRINTSTRING, 0, 0, 0])))
     assert h._blocks, "the ack must be queued"
     assert h._next_parent_words() == [0] * 7, "but not sent while the echo is still owed"
     assert h._sender is None
-    h.echo_backlog = 0
+    h.echo_progress = 11                      # one of the two queued echoes has gone out
+    assert h._next_parent_words() == [0] * 7
+    h.echo_progress = 12                      # both have; the console has seen its own block
     h._next_parent_words()
     assert h._sender is not None, "and sent as soon as the console has seen its own block"
+
+
+def test_the_echo_gate_does_not_wait_on_traffic_that_arrived_later():
+    """u20: waiting for the queue to EMPTY held every answer for 5-8 s, because the console sends a
+    command every poll and the queue almost never empties. Only the echoes queued when the block
+    landed are owed."""
+    h = _into_the_battle()
+    h._words.clear()
+    h.echo_backlog, h.echo_progress = 1, 100
+    h._on_child_block(24, bl.build(bl.BUFFER_A, bl.MASTER_BATTLER,
+                                   bytes([bl.PRINTSTRING, 0, 0, 0])))
+    h.echo_progress = 101                     # our block is mirrored back...
+    h.echo_backlog = 2                        # ...and two unrelated commands have since arrived
+    h._next_parent_words()
+    assert h._sender is not None, "a later command must not delay the answer to this one"
 
 
 def test_the_echo_gate_does_not_touch_the_proven_paths():

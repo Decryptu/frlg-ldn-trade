@@ -78,6 +78,10 @@ class RFULeader:
         self._echo_cmd = rfu.idle_slot()
         self.echo_backlog_peak = 0
         self.echo_dropped = 0
+        # Entries that have LEFT the echo queue, sent or dropped. Monotonic, so a caller can record
+        # `echo_progress + echo_backlog` when a block lands and wait for progress to reach it: that
+        # is the point at which everything queued behind that block has been mirrored back.
+        self.echo_progress = 0
         self.child_game_data = None
         self.k_acks = 0
         self.uni_in = 0
@@ -206,6 +210,7 @@ class RFULeader:
         while len(self._echo_queue) > ECHO_MAX:
             self._echo_queue.popleft()
             self.echo_dropped += 1
+            self.echo_progress += 1
         self.uni_in += 1
         return "uni"
 
@@ -249,6 +254,7 @@ class RFULeader:
                 parent_cmd = rfu.serialize(parent_words)
             if self._echo_queue:
                 self._echo_cmd = self._echo_queue.popleft()
+                self.echo_progress += 1
             table = rfu.pack_recv_cmds([parent_cmd, self._echo_cmd])
             self.uni_out += 1
             return self._wrap_parent_t(rfu.parent_uni_slot(table, self.bm_slot))

@@ -161,6 +161,8 @@ class HostTradeEngine:
         self.battle_move_slot = int(battle_move_slot)
         self.battle = None                 # the BattleController, once the battle starts
         self.echo_backlog = 0              # set by HostSession each poll; see _echo_owed
+        self.echo_progress = 0             # monotonic count of echoes that have left the queue
+        self._echo_deadline = 0            # progress we must reach before answering the last block
         self._battle_party_block = 0
         self.uroom_requests = []
         self.uroom_trade_request = None
@@ -1001,6 +1003,9 @@ class HostTradeEngine:
         """One link buffer record. Every BUFFER_A command must be acked, for BOTH battlers, or the
         master waits on gBattleControllerExecFlags forever [battle_util.c:185]."""
         rec = bl.parse(data)
+        # Everything still queued for echo when this block landed includes this block's own last
+        # fragment; our answer waits for exactly that much to be mirrored back. See _echo_owed.
+        self._echo_deadline = self.echo_progress + self.echo_backlog
         self.trace.append(("battle_recv", rec["buffer_id"], rec["active_battler"], rec["cmd"]))
         self.info(f"Union Room battle: <- {bl.describe(rec)}")
         for out in self.battle.feed(data):
@@ -1139,19 +1144,25 @@ class HostTradeEngine:
             self._commit()
 
     def _echo_owed(self):
-        """u18: hold a new block while child commands are still waiting to be mirrored back.
+        """u18: never answer a command before we have echoed it back.
 
         Our echo of the console's own block is what makes MarkBattlerReceivedLinkData run over there
         [battle_util.c:193] and SET the exec-flag bit our ack then clears. Our parent command and the
-        echo share a frame, one echo per poll, so a 2-fragment ack overtakes a 7-fragment echo
-        backlog: the console clears a bit that is not set yet, then sets it, and waits forever for an
-        ack that already came. That is exactly what stalled u18 -- and only there: the echo led our
-        ack for all sixteen commands before it and trailed it on the seventeenth, a 72-byte
-        PRINTSTRING behind a hole-guard hold.
+        echo share a frame, one echo per poll, so a short ack can overtake the echo of a long block:
+        the console clears a bit that is not set yet, then sets it, and waits forever for an ack that
+        already came. That stalled u18.
+
+        u20: the first version of this waited for the echo queue to be EMPTY, but the console sends a
+        command every poll, so the queue almost never empties and our turnaround went from ~0.3 s to
+        5-8 s -- a single Double Slap turn took the user four or five minutes. Wait instead for the
+        echoes that were queued when the block landed, and no more: `_echo_deadline` is
+        `echo_progress + echo_backlog` at that moment, and `echo_progress` counts entries that have
+        left the queue.
 
         Scoped to the battle. The trade, Mystery Gift and chat paths are proven on hardware with the
         old timing and nothing in them acks a block the console has to see returned first."""
-        return self.state == H_UROOM_BATTLE_LINK and self.echo_backlog > 0
+        return (self.state == H_UROOM_BATTLE_LINK
+                and self.echo_progress < self._echo_deadline)
 
     def _next_parent_words(self):
         if self._words:
