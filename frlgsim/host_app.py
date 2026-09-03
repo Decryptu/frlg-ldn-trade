@@ -71,9 +71,13 @@ class HostApplication:
         phy, keys = self._resolve_phy_and_keys()
         link_player = self.profile.to_link_player()
         union_room = bool(getattr(self.options, "union_room", False))
+        rfu_kwargs = None
+        if union_room:
+            rfu_kwargs = {"skip_parent_ni": True,
+                          "keepalive_frames": int(getattr(self.options, "union_room_keepalive", 0))}
         self.session = host_session.HostSession(
             party, plan=self.plan, profile=self.profile, log=self.log,
-            rfu_kwargs={"skip_parent_ni": True} if union_room else None)
+            rfu_kwargs=rfu_kwargs)
         if union_room:
             inactive, active = build_union_room_app_data(
                 self.profile, self.session.rfu.host_session_id,
@@ -81,6 +85,8 @@ class HostApplication:
         else:
             inactive, active = build_trade_app_data(
                 self.profile, self.session.rfu.host_session_id)
+        if getattr(self.options, "hold_beacon", False):
+            active = inactive
         self.tracer = (ldntrace.Tracer(self.ldn.capture_path, log=self.log)
                        if self.ldn.capture_path else None)
         self.network = self.transport_factory(

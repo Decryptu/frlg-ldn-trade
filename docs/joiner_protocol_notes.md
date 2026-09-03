@@ -486,3 +486,64 @@ UNKNOWN: why the child never enters its own UNI send. Candidates, none tested:
 
 Candidate 2 is the one to read next: nothing in the trade-centre path exercises MODE_P_C_SWITCH, and
 it is the clearest structural difference between the two flows.
+
+### After u05, offline: the decomp path, and the five-frame pattern
+
+No hardware run spent. Two things came out of reading the child side of the Union Room connect end
+to end, plus a re-timing of u03/u04/u05 against each other.
+
+FACT (decomp): the Union Room child expects no parent NI at all. `rfu_LMAN_CHILD_checkSendChildName2`
+[AgbRfu_LinkManager.c:1203] raises `LMAN_MSG_CHILD_NAME_SEND_COMPLETED` as soon as its own name NI
+reaches `SLOT_STATE_SEND_SUCCESS`; `LinkManagerCB_UnionRoom` [link_rfu_2.c:2526] answers by setting
+`RFUSTATE_UR_PLAYER_EXCHANGE` and a TYPE_UNI receive buffer, never a TYPE_NI one, and
+`Task_UnionRoomListen` [link_rfu_2.c:533] then calls `rfu_UNI_setSendData` and starts
+`Task_PlayerExchange` as MODE_CHILD. The trade-centre callback [link_rfu_2.c:2364] is the one that
+adds the TYPE_NI buffer for our join status. This is why u03/u04 mirrored our NI_STARTs but no NI
+body: `rfu_STC_NI_receive` accepts LCOM_NI_START into control data without a game buffer
+[librfu_rfu.c:2202], and only the LCOM_NI body needs one. `skip_parent_ni` is therefore
+decomp-backed, not just u05-backed.
+
+DEDUCTION (decomp): candidate 2 (MODE_P_C_SWITCH) is dead as a cause. `rfu_LMAN_CHILD_connectParent`
+sets `pcswitch_flag = PCSWITCH_CP` [AgbRfu_LinkManager.c:232], and after that nothing in
+`rfu_LMAN_settingPCSWITCH` [:565] touches the flag, the ID_SP_END_REQ branch skips it [:750], and
+`rfu_LMAN_forceChangeSP` (called every frame by `LinkRfu_ForceChangeSpParent` because `RfuMain1`
+zeroes `gRfu.parentId` each frame [link_rfu_2.c:2111]) has no case for the post-connect LMAN
+states. The switch machine is quiescent once the console is our child.
+
+DEDUCTION (decomp): no game-side timer fits a ~100 ms disconnect. The name-accept timer is 360
+frames, `NI_failCounter_limit` is 480 [link_rfu_2.c:139], the Union Room connect timeout is 480
+[link_rfu_2.c:2970], link recovery is off. The only child-side disconnects are link loss reported
+by the adapter (`rfu_LMAN_linkWatcher`), a `RFUCMD_DISCONNECT` from the parent, or a queue overflow,
+none of which we cause.
+
+FACT (u03, u04, u05 re-timed): the 'D' follows exactly five parent frames the console left
+unanswered, whatever those frames were.
+  u03  child NULL 28.361  we send NI ts=8..12, K only   D 28.496   (NI_STARTs ts=6,7 were mirrored)
+  u04  child NULL 34.069  we send NI ts=8..12, K only   D 34.199
+  u05  child NULL 36.527  we send UNI ts=6..10, K only  D 36.628
+Measured from the child's NULL the delay is 135/130/101 ms; measured from the A frame it is
+646/646/615 ms. u05 is two frames earlier on both clocks, and two frames is exactly the pair of
+NI_START mirrors u05 did not have. Counting unanswered frames fits all three runs with no residual.
+
+HYPOTHESIS: the emulated adapter declares link loss on the child when the child has had nothing to
+send for more than `maxMFrame` (4) consecutive parent frames [sRfuReqConfigTemplate,
+link_rfu_2.c:128]. h8 never exceeds two silent frames (NULL ts=12, UNI ts=13) before the child's
+first UNI IDLE. Under this hypothesis the D is a symptom: the real defect is that the console never
+calls `rfu_UNI_setSendData`, i.e. never reaches `RFUSTATE_UR_PLAYER_EXCHANGE`, and we do not know
+why, since the wire exchange up to the child's NULL is byte-identical to h8.
+
+UNKNOWN: what the Union Room child is waiting for before `rfu_UNI_setSendData`. One candidate with
+a mechanism: our advertisement flips to the started-activity form when the console joins
+(`activate_trade_app_data` sets record bit 0x80 at byte 17 and the Pia header byte 0x16). A real
+Union Room parent sets `startedActivity` only at `RFUSTATE_UR_FINALIZE` [link_rfu_2.c:554], after
+the child's name, and the room's list compares `startedActivity` when deciding whether a player
+changed [union_room.c:4157]. The trade-centre child never looks at beacons, so h8 could not have
+shown this. It does not explain the five-frame count by itself.
+
+Two probes, one variable each, both untested (tags u06, u07):
+  --hold-beacon             keep the pre-join app_data after the join (tests the flip)
+  --union-room-keepalive N  re-present the first parent NI_START for N VBlanks before UNI; the
+                            console mirrors it, so if the five-frame rule is real the link survives
+                            the keepalive and the D moves to five frames after the first UNI. If
+                            the D still comes ~130 ms after the NULL, the rule is time-based and
+                            game-side after all.

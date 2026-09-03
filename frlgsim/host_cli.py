@@ -170,6 +170,8 @@ def build_host_config(parser, args):
             union_room=getattr(args, "union_room", False),
             union_room_activity=config.resolve_union_room_activity(
                 getattr(args, "union_room_activity", None)),
+            hold_beacon=getattr(args, "hold_beacon", False),
+            union_room_keepalive=getattr(args, "union_room_keepalive", 0),
         )
     except ValueError as exc:
         parser.error(str(exc))

@@ -268,3 +268,52 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(func):
             func()
             print(f"PASS {name}")
+
+
+def test_union_room_keepalive_re_presents_an_ni_start_before_uni():
+    """Probe for the 'D' that follows five unanswered parent frames (u03-u05): after the child's
+    name NI the leader re-presents the first parent NI_START subframe, which the console mirrors
+    even in the room (u03, u04), for keepalive_frames VBlanks, then goes to UNI. UNTESTED on hardware."""
+    leader = RFULeader(skip_parent_ni=True, keepalive_frames=3)
+    leader.receive(gbaframe.build_connect(b"\x67\x79"))
+    leader.tick()                                      # A
+    leader.tick()                                      # G link-state 0
+    child = ni.NISender(ni.build_game_data(5, 0x2288, "EMU"))
+    ts = 1
+    while not child.done:
+        slot = child.next_slot()
+        event = leader.receive(_child_t(slot, ts))
+        ts += 1
+        if rfu.parse_llsf_child(slot)["state"] != rfu.LCOM_NULL:
+            leader.tick()
+    assert event == "child_ni_complete_keepalive"
+    assert leader.tick() == bytes.fromhex("5747040001000000")
+    reference = RFULeader()                            # the hardware-proven first parent NI_START
+    first = ni.ParentNISender(reference.join_status, reference.bm_slot).next_slot()
+    for _ in range(3):
+        parsed = gbaframe.parse_in(leader.tick())
+        assert parsed["ni"]["state"] == rfu.LCOM_NI_START, parsed
+        assert parsed["ni"]["n"] == 1 and parsed["ni"]["ack"] == 0, parsed
+        assert parsed["ni"]["size"] == 5 and parsed["ni"]["payload"] == first[-5:]
+        assert leader.state == "KEEPALIVE"
+    # A mirrored ack during the keepalive is accepted without changing state.
+    assert leader.receive(_child_t(ni.recv_ack_slot(rfu.LCOM_NI_START, 1, 0), ts)) == "ni_ack_ignored"
+    parsed = gbaframe.parse_in(leader.tick())
+    assert parsed.get("ni") is None, parsed
+    assert leader.state == "UNI"
+
+
+def test_union_room_keepalive_zero_is_the_plain_skip():
+    leader = RFULeader(skip_parent_ni=True, keepalive_frames=0)
+    leader.receive(gbaframe.build_connect(b"\x67\x79"))
+    leader.tick()
+    leader.tick()
+    child = ni.NISender(ni.build_game_data(5, 0x2288, "EMU"))
+    ts = 1
+    while not child.done:
+        slot = child.next_slot()
+        event = leader.receive(_child_t(slot, ts))
+        ts += 1
+        if rfu.parse_llsf_child(slot)["state"] != rfu.LCOM_NULL:
+            leader.tick()
+    assert event == "child_ni_complete_no_parent_ni"

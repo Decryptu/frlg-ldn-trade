@@ -184,3 +184,56 @@ if __name__ == "__main__":
         if name.startswith("test_") and callable(fn):
             fn()
             print("ok", name)
+
+
+def _advertisements(union_room, hold_beacon):
+    """Drive the real HostApplication._build_components; return (pre-join app_data, the app_data
+    handed to HostPeerProtocol for the post-join session update)."""
+    from frlgsim import host_app as host_app_module
+    seen = {}
+    peer_args = []
+
+    class FakeTransport:
+        def __init__(self, **kwargs):
+            seen.update(kwargs)
+
+    class FakePeer:
+        def __init__(self, *args, **kwargs):
+            peer_args.extend(args)
+
+    run = config.TradeRunConfig(
+        DEFAULT_TRAINER,
+        config.TradePlan(party_paths=("PARTY1.pk3", "PARTY2.pk3"), trade_slot=1,
+                         offered_slots=(1,), trust_pia=True),
+        config.LdnConfig(phy="phy7", keys_path=__file__),
+        config.HostOptions(union_room=union_room, hold_beacon=hold_beacon))
+    original = host_app_module.HostPeerProtocol
+    host_app_module.HostPeerProtocol = FakePeer
+    try:
+        app = HostApplication(run, transport_factory=FakeTransport, log=lambda *_a: None,
+                              injector_factory=lambda **unused: None)
+        app._build_components()
+    finally:
+        host_app_module.HostPeerProtocol = original
+    return seen["app_data"], peer_args[3]
+
+
+def test_post_join_advertisement_sets_started_activity_by_default():
+    inactive, active = _advertisements(True, hold_beacon=False)
+    assert active != inactive
+    assert _search_word(inactive) & beacon.SEARCH_STARTED_ACTIVITY == 0
+    assert _search_word(active) & beacon.SEARCH_STARTED_ACTIVITY
+
+
+def test_hold_beacon_keeps_the_pre_join_advertisement():
+    """--hold-beacon: the post-join session update carries the same app_data as the beacon, so the
+    console never sees startedActivity flip. A real Union Room parent sets it only at
+    RFUSTATE_UR_FINALIZE [src/link_rfu_2.c:554]. HYPOTHESIS, untested on hardware."""
+    inactive, active = _advertisements(True, hold_beacon=True)
+    assert active == inactive
+    assert _search_word(active) & beacon.SEARCH_STARTED_ACTIVITY == 0
+
+
+def test_hold_beacon_is_off_for_the_trade_centre():
+    inactive, active = _advertisements(False, hold_beacon=False)
+    assert active != inactive

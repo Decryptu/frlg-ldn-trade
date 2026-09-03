@@ -214,6 +214,14 @@ class HostOptions:
     # looks for (the screen before entering). A console already standing in the room runs
     # Task_RunUnionRoom and searches with the RESUME list, which accepts IN_UNION_ROOM | activity.
     union_room_activity: int | None = None
+    # Union Room probe: keep the pre-join advertisement after the console joins instead of switching
+    # to the started-activity form. A real Union Room parent only sets startedActivity at
+    # RFUSTATE_UR_FINALIZE [src/link_rfu_2.c:554], after the child's name. HYPOTHESIS, untested.
+    hold_beacon: bool = False
+    # Union Room probe: after the child's name NI, re-present a parent NI_START for this many VBlanks
+    # before the first UNI frame. The console mirrors NI_STARTs in the room (u03, u04); the 'D' came
+    # after exactly five parent frames it left unanswered (u03, u04, u05). 0 = straight to UNI.
+    union_room_keepalive: int = 0
 
     def __post_init__(self):
         # LDN channels: 2.4 GHz 1/6/11 and 5 GHz 36/40/44/48 [kinnay LDN wiki, WLAN Channels].

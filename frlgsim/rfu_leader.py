@@ -11,6 +11,7 @@ from . import gbaframe, ni, rfu
 WAIT_CONNECT = "WAIT_CONNECT"
 CHILD_NI = "CHILD_NI"
 PARENT_NI = "PARENT_NI"
+KEEPALIVE = "KEEPALIVE"
 UNI = "UNI"
 DISCONNECTED = "DISCONNECTED"
 
@@ -50,7 +51,7 @@ class RFULeader:
 
     def __init__(self, host_session_id=None, *, bm_slot=1,
                  join_status=ni.RFU_STATUS_JOIN_GROUP_OK, start_ts=1,
-                 skip_parent_ni=False):
+                 skip_parent_ni=False, keepalive_frames=0):
         if host_session_id is None:
             # Native leaders use parent-id high byte 0xf1 with a varying low byte; beacon and A store it LE.
             host_session_id = secrets.token_bytes(1) + b"\xf1"
@@ -62,6 +63,13 @@ class RFULeader:
         # parent's join-status NI. Presenting one leaves us re-sending a subframe the child will
         # never mirror (u03, u04). HYPOTHESIS, untested on hardware.
         self.skip_parent_ni = bool(skip_parent_ni)
+        # Union Room probe (skip_parent_ni only): re-present the first parent NI_START subframe for
+        # this many VBlanks before the first UNI frame. The console mirrors NI_STARTs in the room
+        # [rfu_STC_NI_receive accepts LCOM_NI_START without a game recv buffer, librfu_rfu.c:2202]
+        # and in u03-u05 its 'D' came after exactly five parent frames it left unanswered.
+        self.keepalive_frames = max(0, int(keepalive_frames))
+        self._keepalive_left = 0
+        self._keepalive_slot = None
         self.ts = start_ts & 0xFFFFFFFF
         self.state = WAIT_CONNECT
         self.connect_id = None
@@ -177,6 +185,12 @@ class RFULeader:
                 self.child_game_data = self._child_ni.game_data
                 self._pending.append(gbaframe.build_link_state(1))
                 if self.skip_parent_ni:
+                    if self.keepalive_frames:
+                        self._keepalive_slot = ni.ParentNISender(
+                            self.join_status, self.bm_slot).next_slot()
+                        self._keepalive_left = self.keepalive_frames
+                        self.state = KEEPALIVE
+                        return "child_ni_complete_keepalive"
                     self.state = UNI
                     return "child_ni_complete_no_parent_ni"
                 self._parent_ni = ni.ParentNISender(self.join_status, self.bm_slot)
@@ -202,6 +216,12 @@ class RFULeader:
         goes out every call, even with both rows idle. None before C arrives."""
         if self._pending:
             return self._pending.popleft()
+
+        if self.state == KEEPALIVE:
+            if self._keepalive_left > 0:
+                self._keepalive_left -= 1
+                return self._wrap_parent_t(self._keepalive_slot)
+            self.state = UNI
 
         if self.state == PARENT_NI:
             # The native leader re-presents the current NI subframe every VBlank until the child mirrors it
