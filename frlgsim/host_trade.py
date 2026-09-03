@@ -144,7 +144,6 @@ class HostTradeEngine:
         self._link_idle_frames = 0
         self._link_completed = None
         self._link_player_idle = 0
-        self._child_ready = False
         self._child_finish = False
         self._anim_wait = None
         self._save_rounds = 0
@@ -561,7 +560,6 @@ class HostTradeEngine:
         else:
             self._child_key_runs.append([key, 1])
         if key == LINK_KEY_READY and self.state == H_ENTRY_SEAT:
-            self._child_ready = True
             self.trace.append(("child_key", "READY"))
             self._maybe_finish_entry()
         elif key == LINK_KEY_EXIT_ROOM and self.state == H_RETURN_FIELD:

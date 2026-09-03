@@ -332,7 +332,6 @@ class TradeEngine:
         # evidence a child-initiated entry barrier landed. Gate the warps on max(host_count, this).
         self._seat_wait_host = 0         # ticks spent seated, waiting for the host to sit too
         self._self_ready_echo = False    # the host has reflected OUR READY (0x16) back at us
-        self._host_walk_quiet = 0        # consecutive host held-key frames carrying NO dpad code
         self._post_seat_logged = False
         self._self_seated = False        # we have emitted our READY (0x16) at the cable seat
         self._post_seat_wait = 0         # held-keys keepalive ticks left before the post-seat standbys
@@ -465,10 +464,6 @@ class TradeEngine:
             self.log("entry: host entered the trade room (first SEND_HELD_KEYS) -> emit EMPTY keepalive")
             self.info("Host entered the trade room.")
         _k = int.from_bytes(slot[2:4], "little") & 0xFF
-        if 0x12 <= _k <= 0x15:      # DPAD_DOWN/UP/LEFT/RIGHT - the host is still WALKING
-            self._host_walk_quiet = 0
-        else:
-            self._host_walk_quiet += 1
         if _k == 0x16 and not self._host_ready:
             self._host_ready = True
             self.log("entry: host emitted READY (0x16) - host is seated; we may sit now")
