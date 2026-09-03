@@ -58,15 +58,13 @@ class RFULeader:
         self.host_session_id = bytes(host_session_id)[:2].ljust(2, b"\x00")
         self.bm_slot = bm_slot & 0xF
         self.join_status = join_status & 0xFF
-        # Union Room: the child reaches RFUSTATE_UR_PLAYER_EXCHANGE and goes straight to UNI via
-        # rfu_UNI_setSendData + Task_PlayerExchange [link_rfu_2.c:533], so it never waits for the
-        # parent's join-status NI. Presenting one leaves us re-sending a subframe the child will
-        # never mirror (u03, u04). HYPOTHESIS, untested on hardware.
+        # Union Room: the child sets only a UNI receive buffer at LMAN_MSG_CHILD_NAME_SEND_COMPLETED
+        # [link_rfu_2.c:2526] and goes straight to UNI, so it never mirrors a parent NI body (u03, u04).
         self.skip_parent_ni = bool(skip_parent_ni)
-        # Union Room probe (skip_parent_ni only): re-present the first parent NI_START subframe for
-        # this many VBlanks before the first UNI frame. The console mirrors NI_STARTs in the room
-        # [rfu_STC_NI_receive accepts LCOM_NI_START without a game recv buffer, librfu_rfu.c:2202]
-        # and in u03-u05 its 'D' came after exactly five parent frames it left unanswered.
+        # skip_parent_ni only: re-present the first parent NI_START subframe for this many VBlanks
+        # before the first UNI frame. The room child mirrors NI_STARTs without a game receive buffer
+        # [librfu_rfu.c:2202] and 'D's after five unanswered parent frames; the pending receive then
+        # blocks its own UNI send until its 480-frame NI fail counter releases it (u06, u12).
         self.keepalive_frames = max(0, int(keepalive_frames))
         self._keepalive_left = 0
         self._keepalive_slot = None

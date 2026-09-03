@@ -163,7 +163,7 @@ def test_union_room_leader_skips_the_parent_join_status_ni():
     stopped mirroring the NI body and disconnected 80ms later.
 
     With skip_parent_ni the leader still sends the 'G' link-state 1 frame, then goes straight to
-    UNI instead of presenting an NI. UNTESTED on hardware."""
+    UNI instead of presenting an NI. Proven with the keepalive (u06)."""
     leader = RFULeader(skip_parent_ni=True)
     leader.receive(gbaframe.build_connect(b"\x67\x79"))
     assert gbaframe.parse_in(leader.tick())["type"] == "A"
@@ -273,7 +273,7 @@ if __name__ == "__main__":
 def test_union_room_keepalive_re_presents_an_ni_start_before_uni():
     """Probe for the 'D' that follows five unanswered parent frames (u03-u05): after the child's
     name NI the leader re-presents the first parent NI_START subframe, which the console mirrors
-    even in the room (u03, u04), for keepalive_frames VBlanks, then goes to UNI. UNTESTED on hardware."""
+    even in the room (u03, u04), for keepalive_frames VBlanks, then goes to UNI. Proven u06-u12."""
     leader = RFULeader(skip_parent_ni=True, keepalive_frames=3)
     leader.receive(gbaframe.build_connect(b"\x67\x79"))
     leader.tick()                                      # A

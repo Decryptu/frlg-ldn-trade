@@ -90,16 +90,11 @@ def build_trade_app_data(profile, host_session_id):
 
 
 def build_union_room_app_data(profile, host_session_id, activity=None, trade_board=None):
-    """Advertisement for the Union Room NPC (the middle NPC on Pokemon Center 2F).
+    """Advertisement for the Union Room (the middle NPC on Pokemon Center 2F).
 
-    The trade and Wonder Card beacons are invisible there: the searching console runs
-    LINK_GROUP_UNION_ROOM_INIT, whose accept list is sAcceptedActivityIds_Init = {ACTIVITY_SEARCH},
-    and IsPartnerActivityAcceptable drops every other activity. So a Union Room advertisement carries
-    ACTIVITY_SEARCH with startedActivity clear, matching union_room.c's own
-    SetHostRfuGameData(ACTIVITY_SEARCH, 0, FALSE). Pass activity=IN_UNION_ROOM | ACTIVITY_* to be seen
-    by a console already inside the room, which searches with the RESUME accept list instead.
-
-    UNTESTED on hardware: no run has advertised this yet.
+    The trade and Wonder Card beacons are invisible there: IsPartnerActivityAcceptable drops every
+    activity but the ones the room's accept lists carry [src/data/union_room.h:398-453]. The default
+    is the bare IN_UNION_ROOM a console standing in the room accepts and connects to (u03).
     """
     if activity is None:
         # IN_UNION_ROOM | ACTIVITY_NONE: IsPartnerActivityIncompatible [link_rfu_2.c:2933] requires

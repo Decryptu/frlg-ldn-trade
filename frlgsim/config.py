@@ -207,16 +207,16 @@ class HostOptions:
     accept_decrypted_ccmp: bool = False
     native_nonce_sequence: bool = False
     session_response_first: bool = False
-    # Advertise ACTIVITY_SEARCH so the Union Room NPC's search can see us instead of the trade
-    # centre's. UNTESTED on hardware; see tests/test_union_room_advertisement.py.
+    # Host for the Union Room (the middle NPC on Pokemon Center 2F) instead of the trade centre:
+    # bare IN_UNION_ROOM advertisement, no parent NI, SEND_PACKET prompt, room trade flow.
     union_room: bool = False
     # Which activity --union-room advertises. None = ACTIVITY_SEARCH, the form Task_InitUnionRoom
     # looks for (the screen before entering). A console already standing in the room runs
     # Task_RunUnionRoom and searches with the RESUME list, which accepts IN_UNION_ROOM | activity.
     union_room_activity: int | None = None
-    # Union Room probe: after the child's name NI, re-present a parent NI_START for this many VBlanks
-    # before the first UNI frame. The console mirrors NI_STARTs in the room (u03, u04); the 'D' came
-    # after exactly five parent frames it left unanswered (u03, u04, u05). 0 = straight to UNI.
+    # After the child's name NI, re-present a parent NI_START for this many VBlanks before the first
+    # UNI frame. The room child 'D's after five unanswered parent frames and only enters UNI 480
+    # frames after our last NI_START (its NI fail counter), so 0 never connects; 120 is proven.
     union_room_keepalive: int = 0
     # Trading board: the type we ask for in return (beacon.TYPE_NAMES value). None = no
     # registration, so the console's board does not list us. Species and level come from the

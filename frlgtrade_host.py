@@ -38,21 +38,18 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser.add_argument("--trades", type=int, default=1, choices=range(1, 7), metavar="N")
     parser.add_argument(
         "--union-room", action="store_true",
-        help="advertise ACTIVITY_SEARCH so the Union Room NPC (the MIDDLE NPC on Pokemon Center 2F) "
-             "can list us, instead of the wireless club trade centre's THIRD NPC. UNTESTED on "
-             "hardware: the Union Room search accepts only ACTIVITY_SEARCH "
-             "(sAcceptedActivityIds_Init), which is why the normal trade beacon is invisible there")
+        help="host for the Union Room (the MIDDLE NPC on Pokemon Center 2F) instead of the trade "
+             "centre's THIRD NPC; use with --union-room-keepalive 120 and --board-type")
     parser.add_argument(
         "--union-room-activity", choices=sorted(configmod.UNION_ROOM_ACTIVITIES), default=None,
-        help="which activity --union-room advertises. 'search' (default) is what the console looks "
-             "for on the screen BEFORE entering the room (Task_InitUnionRoom). Use an 'in-room' "
-             "value for a console already STANDING in the room: it runs Task_RunUnionRoom and its "
-             "search accepts IN_UNION_ROOM | activity instead")
+        help="which activity --union-room advertises; default 'in-room', the bare IN_UNION_ROOM a "
+             "console standing in the room connects to. 'search' is what the screen BEFORE the "
+             "room looks for (untested)")
     parser.add_argument(
         "--union-room-keepalive", type=int, default=0, metavar="N",
-        help="Union Room probe: after the child's name NI, re-present a parent NI_START for N "
-             "VBlanks (the console mirrors those in the room) before the first UNI frame; the 'D' "
-             "in u03-u05 came after exactly five unanswered parent frames")
+        help="Union Room: re-present a parent NI_START for N VBlanks before the first UNI frame; "
+             "the room child drops the link after five unanswered frames, and enters UNI 480 "
+             "frames after the last NI_START. 120 is proven")
     parser.add_argument(
         "--board-type", choices=sorted(beaconmod.TYPE_NAMES), default=None,
         help="Union Room trading board: register the offered Pokemon (its species and level) and "
