@@ -722,3 +722,81 @@ def test_the_cli_builds_an_anchors_session_with_its_own_fixed_size():
     assert run.payload.is_dump                      # the answer comes back as bytes, not the u32
     assert distribution.buffer_dump_size == buffer_script.ANCHORS_SIZE
     assert distribution.card is None
+
+
+# --- save-write: the first payload that changes something --------------------------------------
+
+@needs_unicorn
+def test_a_save_write_lands_in_the_block_and_reads_itself_back():
+    """One run does both: the bytes go into the save block, and link->sendBuffer is pointed AT THE
+    DESTINATION, so what comes back over the air is what is now in the console's save rather than a
+    copy of what we asked for."""
+    data = b"FRLG-LDN bs09xx"
+    run = buffer_script.emulate(buffer_script.build_save_write(data),
+                                sav2=bytes(0x1000))
+
+    assert run.done
+    assert run.client.send_size == len(data)
+    assert run.pending_send == data
+    assert run.sav2[0xB20:0xB20 + len(data)] == data
+    # Nothing outside the region it was given.
+    assert run.sav2[:0xB20] == bytes(0xB20)
+    assert run.sav2[0xB20 + len(data):] == bytes(0x1000 - 0xB20 - len(data))
+
+
+@needs_unicorn
+def test_a_save_write_carries_anything_from_one_byte_to_a_full_payload():
+    for size in (1, 2, buffer_script.MAX_SAVE_WRITE_BYTES):
+        data = bytes(range(256)) * 4
+        run = buffer_script.emulate(
+            buffer_script.build_save_write(data[:size]), sav2=bytes(0x1000))
+        assert run.pending_send == data[:size] == run.sav2[0xB20:0xB20 + size]
+
+
+def test_a_save_write_outside_the_never_read_filler_is_refused():
+    """This is the player's live save and the console commits it to flash at the end of the session,
+    so a wrong offset is a damaged game rather than a failed run. The two spans allowed are
+    struct SaveBlock2's `u8 filler[]` [global.h:345,357], which src/ never references."""
+    assert buffer_script.is_scratch(buffer_script.SAVE_BLOCK_2, 0xB20, 0x400)
+    assert buffer_script.is_scratch(buffer_script.SAVE_BLOCK_2, 0x90, 8)
+    assert not buffer_script.is_scratch(buffer_script.SAVE_BLOCK_2, 0xB20, 0x401)  # runs off the end
+    assert not buffer_script.is_scratch(buffer_script.SAVE_BLOCK_1, 0xB20, 4)      # sav1 has none
+
+    with pytest.raises(buffer_script.BufferScriptError, match="the game reads"):
+        buffer_script.build_save_write(b"\x01\x02", offset=0x0A)          # playerTrainerId
+    with pytest.raises(buffer_script.BufferScriptError, match="the game reads"):
+        buffer_script.build_save_write(b"\x01\x02", block=buffer_script.SAVE_BLOCK_1, offset=0x38)
+    with pytest.raises(buffer_script.BufferScriptError, match="the game reads"):
+        # Ends four bytes past filler_B20, in SaveBlock2.encryptionKey - which money is XORed with,
+        # so getting this wrong would scramble the player's money rather than fail cleanly.
+        buffer_script.build_save_write(bytes(8), offset=0xF1C)
+    # The override exists, and says what it is.
+    assert buffer_script.build_save_write(b"\x01\x02", offset=0x0A, unsafe=True)
+
+
+def test_a_save_write_refuses_what_the_payload_cannot_carry():
+    with pytest.raises(buffer_script.BufferScriptError, match="bytes of data"):
+        buffer_script.build_save_write(b"")
+    with pytest.raises(buffer_script.BufferScriptError, match="bytes of data"):
+        buffer_script.build_save_write(bytes(buffer_script.MAX_SAVE_WRITE_BYTES + 1), unsafe=True)
+
+
+def test_the_cli_builds_a_save_write_and_sizes_the_answer_to_it():
+    run = _run_config(["--buffer-script", "save-write", "--dump-offset", "0xB20",
+                       "--write-text", "FRLG-LDN"])
+    distribution = run.payload.build_distribution()
+
+    assert run.payload.write_data == b"FRLG-LDN"
+    assert distribution.buffer_dump_size == len("FRLG-LDN")
+    assert distribution.buffer_code == buffer_script.build_save_write(b"FRLG-LDN", offset=0xB20)
+
+    hexed = _run_config(["--buffer-script", "save-write", "--dump-offset", "0xB20",
+                         "--write-hex", "00ff10"])
+    assert hexed.payload.write_data == b"\x00\xff\x10"
+
+
+def test_the_cli_refuses_a_write_without_bytes_and_bytes_without_a_write():
+    with pytest.raises(SystemExit):
+        _run_config(["--buffer-script", "save-dump", "--write-text", "no"])
+    with pytest.raises((ValueError, SystemExit)):
+        _run_config(["--buffer-script", "save-write", "--dump-offset", "0xB20"])

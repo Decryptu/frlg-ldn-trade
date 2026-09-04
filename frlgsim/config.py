@@ -529,6 +529,10 @@ class BufferScriptPayload:
     dump_block: str = buffer_script.SAVE_BLOCK_2
     dump_offset: int = 0
     dump_size: int = buffer_script.MAX_BUFFER_SCRIPT_SIZE
+    # save-write only: the bytes to put into the save block, and the override for the guard that
+    # keeps a write inside the region the game never reads.
+    write_data: bytes | None = None
+    write_unsafe: bool = False
     # Where to write the bytes that come back. A dump whose contents only ever reached a log line
     # is a run spent for 16 bytes of head.
     dump_file: str | None = None
@@ -546,9 +550,20 @@ class BufferScriptPayload:
         elif self.dump_address is not None:
             raise ValueError(
                 f"an address to dump is only meaningful with {buffer_script.MEMORY_DUMP}")
-        if self.script != buffer_script.SAVE_DUMP and self.dump_offset:
+        if self.script not in (buffer_script.SAVE_DUMP, buffer_script.SAVE_WRITE) \
+                and self.dump_offset:
             raise ValueError(
-                f"an offset into a save block is only meaningful with {buffer_script.SAVE_DUMP}")
+                f"an offset into a save block is only meaningful with {buffer_script.SAVE_DUMP} "
+                f"and {buffer_script.SAVE_WRITE}")
+        if self.script == buffer_script.SAVE_WRITE:
+            if not self.write_data:
+                raise ValueError(
+                    f"{buffer_script.SAVE_WRITE} needs the bytes to write (--write-text/--write-hex)")
+            # The answer is the destination read back, so it is exactly as long as what we wrote.
+            object.__setattr__(self, "dump_size", len(self.write_data))
+        elif self.write_data is not None:
+            raise ValueError(
+                f"bytes to write are only meaningful with {buffer_script.SAVE_WRITE}")
         if self.script == buffer_script.ANCHORS:
             # It reports a fixed set of words; --dump-size means nothing to it.
             object.__setattr__(self, "dump_size", buffer_script.ANCHORS_SIZE)
@@ -559,7 +574,7 @@ class BufferScriptPayload:
     def is_dump(self):
         """Anything whose answer comes back as bytes on ident 19 rather than the 4-byte channel."""
         return self.script in (buffer_script.MEMORY_DUMP, buffer_script.SAVE_DUMP,
-                               buffer_script.ANCHORS)
+                               buffer_script.ANCHORS, buffer_script.SAVE_WRITE)
 
     @property
     def spec(self):
@@ -571,6 +586,10 @@ class BufferScriptPayload:
         if self.script == buffer_script.SAVE_DUMP:
             return buffer_script.build_save_dump(
                 self.dump_block, self.dump_offset, self.dump_size)
+        if self.script == buffer_script.SAVE_WRITE:
+            return buffer_script.build_save_write(
+                self.write_data, self.dump_block, self.dump_offset,
+                unsafe=self.write_unsafe)
         return buffer_script.payload(self.script)
 
     def build_distribution(self):

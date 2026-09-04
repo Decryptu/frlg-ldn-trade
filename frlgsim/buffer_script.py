@@ -100,6 +100,16 @@ class BufferScriptSpec:
 MEMORY_DUMP = "memory-dump"
 SAVE_DUMP = "save-dump"
 ANCHORS = "anchors"
+SAVE_WRITE = "save-write"
+
+# save-write's operands, from its disassembly (ldr [pc,#0x44] -> 0x4C, [pc,#0x38] -> 0x50,
+# [pc,#0x30] -> 0x54, add r1,pc,#0x2C -> 0x58). Proven by emulating a patched payload.
+SAVE_WRITE_WHICH_OFFSET = 0x4C
+SAVE_WRITE_OFFSET_OFFSET = 0x50
+SAVE_WRITE_SIZE_OFFSET = 0x54
+SAVE_WRITE_DATA_OFFSET = 0x58
+MAX_SAVE_WRITE_BYTES = MAX_BUFFER_SCRIPT_SIZE - SAVE_WRITE_DATA_OFFSET
+
 
 # The eleven words `anchors` sends back, in order. The first four cannot be obtained any other way.
 ANCHORS_FIELDS = (
@@ -157,6 +167,15 @@ SAVE_DUMP_SIZE_OFFSET = 0x34
 SAVE_BLOCK_2 = "sav2"       # r1, struct SaveBlock2: name, trainer id, pokedex, battle tower
 SAVE_BLOCK_1 = "sav1"       # r2, struct SaveBlock1: party, bag, money, flags, vars
 SAVE_BLOCKS = (SAVE_BLOCK_2, SAVE_BLOCK_1)
+# Regions of the save the GAME NEVER READS, so a write there cannot break the player's game. Both
+# are `u8 filler[]` in struct SaveBlock2 [decomp:include/global.h:345,357] and neither is referenced
+# anywhere in src/. They are still saved to flash with the rest of the block, which is what makes
+# them the right place to prove that a write lands and survives.
+SAVE_SCRATCH = {
+    SAVE_BLOCK_2: ((0x090, 0x008),      # filler_90
+                   (0xB20, 0x400)),     # filler_B20, a kilobyte
+    SAVE_BLOCK_1: (),
+}
 
 # Where build_memory_dump patches its two operands. The payload is six ARM instructions followed by
 # a two-word literal pool; the disassembly reads `ldr r3, [pc, #16]` -> 0x18 and
@@ -179,6 +198,11 @@ SCRIPT_REGISTRY = {
         MEMORY_DUMP,
         "read out any region of the console's memory by repointing the console's own outgoing "
         "message at it (needs --dump-address; reads only, writes nothing)",
+        None),
+    SAVE_WRITE: BufferScriptSpec(
+        SAVE_WRITE,
+        "WRITE bytes into a save block and read the same region back in the same run (the console "
+        "saves afterwards, so the write reaches flash; --write-hex, --dump-block, --dump-offset)",
         None),
     ANCHORS: BufferScriptSpec(
         ANCHORS,
@@ -207,6 +231,50 @@ def build_save_dump(block=SAVE_BLOCK_2, offset=0, size=MAX_BUFFER_SCRIPT_SIZE):
         (0 if block == SAVE_BLOCK_2 else 1).to_bytes(4, "little"))
     code[SAVE_DUMP_OFFSET_OFFSET:SAVE_DUMP_OFFSET_OFFSET + 4] = offset.to_bytes(4, "little")
     code[SAVE_DUMP_SIZE_OFFSET:SAVE_DUMP_SIZE_OFFSET + 4] = size.to_bytes(4, "little")
+    return bytes(code)
+
+
+def scratch_regions(block):
+    """-> the (offset, length) spans of that block the game never reads."""
+    return SAVE_SCRATCH.get(block, ())
+
+
+def is_scratch(block, offset, size):
+    return any(start <= offset and offset + size <= start + length
+               for start, length in scratch_regions(block))
+
+
+def build_save_write(data, block=SAVE_BLOCK_2, offset=0xB20, *, unsafe=False):
+    """The save-write payload, patched to write `data` at `offset` into one save block.
+
+    Refuses, by default, anything the game actually reads. This is the player's live save, the
+    console writes it to flash at the end of the session, and a wrong offset here is not a failed
+    run but a damaged game. `unsafe=True` is the deliberate override, and the caller that passes it
+    is saying it knows which field it is editing.
+    """
+    if block not in SAVE_BLOCKS:
+        raise BufferScriptError(f"block is one of {SAVE_BLOCKS}, got {block!r}")
+    data = bytes(data)
+    offset = int(offset)
+    if not 0 < len(data) <= MAX_SAVE_WRITE_BYTES:
+        raise BufferScriptError(
+            f"a save write carries 1..{MAX_SAVE_WRITE_BYTES} bytes of data (the payload itself "
+            f"takes the first {SAVE_WRITE_DATA_OFFSET}), got {len(data)}")
+    if offset < 0 or offset % 2:
+        raise BufferScriptError(f"offset {offset} must be positive and halfword aligned")
+    if not unsafe and not is_scratch(block, offset, len(data)):
+        spans = ", ".join(f"0x{start:X}..0x{start + length:X}"
+                          for start, length in scratch_regions(block)) or "nothing"
+        raise BufferScriptError(
+            f"writing {len(data)} bytes at {block} 0x{offset:X} touches a field the game reads. "
+            f"The scratch region of {block} is {spans} (struct SaveBlock2's u8 filler[], never "
+            f"referenced in src/). Pass unsafe=True only if you mean to edit a live field.")
+    code = bytearray(payload(SAVE_WRITE))
+    code[SAVE_WRITE_WHICH_OFFSET:SAVE_WRITE_WHICH_OFFSET + 4] = (
+        (0 if block == SAVE_BLOCK_2 else 1).to_bytes(4, "little"))
+    code[SAVE_WRITE_OFFSET_OFFSET:SAVE_WRITE_OFFSET_OFFSET + 4] = offset.to_bytes(4, "little")
+    code[SAVE_WRITE_SIZE_OFFSET:SAVE_WRITE_SIZE_OFFSET + 4] = len(data).to_bytes(4, "little")
+    code[SAVE_WRITE_DATA_OFFSET:] = data.ljust((len(data) + 3) & ~3, b"\x00")
     return bytes(code)
 
 

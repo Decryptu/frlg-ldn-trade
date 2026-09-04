@@ -89,6 +89,19 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser.add_argument(
         "--dump-file", default=None, metavar="PATH",
         help="with a dumping --buffer-script: write the bytes that come back to this file")
+    parser.add_argument(
+        "--write-text", default=None, metavar="TEXT",
+        help=("with --buffer-script save-write: ASCII to write into the save block at "
+              "--dump-offset. The same region is read back in the same run, so the answer is the "
+              "proof. The console saves afterwards, so it reaches flash"))
+    parser.add_argument(
+        "--write-hex", default=None, metavar="HEX",
+        help="with --buffer-script save-write: the bytes to write, as hex")
+    parser.add_argument(
+        "--write-unsafe", action="store_true",
+        help=("allow a save write OUTSIDE struct SaveBlock2's never-read filler regions. This is "
+              "the player's live save and the console commits it to flash; without this the write "
+              "is refused"))
     gift_registry.add_flag_id_argument(parser)
     parser.add_argument(
         "--questionnaire", default=None, metavar="W1,W2,W3,W4",
@@ -180,10 +193,24 @@ def build_run_config(parser, args):
                 parser.error("--flag-id belongs to a Wonder Card; a buffer script has no flagId")
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")
+            if args.write_text is not None and args.write_hex is not None:
+                parser.error("--write-text and --write-hex are two ways to say the same thing")
+            write_data = None
+            if args.write_text is not None:
+                write_data = args.write_text.encode("ascii", "strict")
+            elif args.write_hex is not None:
+                try:
+                    write_data = bytes.fromhex(args.write_hex.replace(" ", ""))
+                except ValueError:
+                    parser.error("--write-hex takes hex digits")
+            if (write_data is not None or args.write_unsafe) \
+                    and args.buffer_script != buffer_script.SAVE_WRITE:
+                parser.error(f"--write-* belongs to --buffer-script {buffer_script.SAVE_WRITE}")
             payload = configmod.BufferScriptPayload(
                 script=args.buffer_script, dump_address=args.dump_address,
                 dump_block=args.dump_block, dump_offset=args.dump_offset,
-                dump_size=args.dump_size, dump_file=args.dump_file)
+                dump_size=args.dump_size, dump_file=args.dump_file,
+                write_data=write_data, write_unsafe=args.write_unsafe)
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")

@@ -358,14 +358,68 @@ address. The host logs those lines itself.
 
     ./scratchpad/run_mg_fast.sh bsNN --buffer-script anchors --version firered
 
+## bs08: the anchor, first try (2026-09-04)
+
+FACT. `--buffer-script anchors` on French FireRed:
+
+    code                0x0201C000
+    return_address      0x08148C75
+    stack_pointer       0x03007DB8
+    client_param        0x020020D4
+    save_block_2        0x02024598
+    save_block_1        0x0202553C
+    client_send_buffer  0x02006510
+    client_recv_buffer  0x02006920
+    client_script       0x02006D30
+    client_msg          0x02007140
+    link_send_buffer    0x02006510
+
+Read in order:
+
+- **gDecompressionBuffer IS 0x0201C000.** That was a deduction from ld_script.ld from the day the
+  buffer script work started. It is now a measurement.
+- **The ROM anchor is 0x08148C74**, THUMB (bit 0 set on lr): the instruction after the call in
+  `Client_RunBufferScript` [mystery_gift_client.c:276] in the FRENCH rev-10 build the console runs.
+  With bs07's header (BPRF version 0x0A) the build is identified and now located.
+- `link_send_buffer` == `client_send_buffer`, so every struct offset this project computes from r0
+  is confirmed against the console rather than against the header file.
+- The four AllocZeroed buffers are 0x410 apart - 1024 bytes plus a 16-byte block header - so gHeap's
+  allocator is behaving exactly as malloc.c describes, and the client sits at 0x020020D0.
+- The save blocks are at 0x02024598 and 0x0202553C on this console, which is what a `memory-dump`
+  would need and `save-dump` never has to know.
+
+## `save-write`: writing, not just reading (built, hardware run pending)
+
+A pointer takes a `strb` as readily as a `ldrb`, so the same two pointers give write access to the
+live save. `save-write` copies its payload tail into the block and then points `link->sendBuffer`
+**at the destination**, so what comes back over the air is what is now in the console's save, not a
+copy of what we asked for. One run writes and proves the write. The session ends in
+CLI_MSG_BUFFER_SUCCESS, which sends the console to MG_STATE_SAVE_LOAD_GIFT, so the write reaches
+flash and a later `save-dump` of the same offset proves it survived.
+
+    ./scratchpad/run_mg_fast.sh bsNN --buffer-script save-write --dump-block sav2 \
+        --dump-offset 0xB20 --write-text "FRLG-LDN bs09" --version firered
+
+**The guard is the important part.** This is the player's real save and the console commits it to
+flash. `build_save_write` refuses, by default, any span that is not inside a region the game never
+reads: `filler_90[8]` at 0x090 and `filler_B20[0x400]` at 0xB20 in struct SaveBlock2
+[decomp:include/global.h:345,357], neither of which is referenced anywhere in src/. A write ending
+four bytes past filler_B20 lands in `encryptionKey`, which money is XORed with, so the failure mode
+of getting this wrong is a scrambled game rather than a failed run. `--write-unsafe` is the
+deliberate override and exists for the day we mean to edit a live field.
+
 ## Left
 
-1. ~~bs06: bs05's own command again~~ ~~bs07: 1024 bytes of ROM~~ Both done, above. Next: **bs08,
-   `--buffer-script anchors`**, which turns the ROM anchor from a plan into a number. Then: **calling into the ROM**, with the build identified
-   (BPRF version 0x0A) and, after bs08, a known address inside it. `echo_gaps.py` on the capture afterwards: every block
-   must read `never=[]`. That single line is the whole verdict.
+1. **bs09: `save-write` into filler_B20**, then a `save-dump` of the same offset in a later session
+   to prove the write survived the console's save to flash. `echo_gaps.py` on every capture: each
+   block must read `never=[]`, and that one line is the whole transport verdict.
 
-2. Writing, rather than reading: the same offsets take a `str` as easily as a `ldr`.
+2. **Calling into the ROM.** The build is identified (bs07: BPRF, software version 0x0A) and now
+   located (bs08: 0x08148C74 is the instruction after the call in Client_RunBufferScript). The
+   decomp has a `firered_switch` target at GAME_REVISION=10 with its own sha1 and ld script, but it
+   matches the ENGLISH rev-10 ROM and the console runs the French one, so its symbol map cannot be
+   used unchecked. The cheap next step is a `memory-dump` around 0x08148C74: the disassembly either
+   is Client_RunBufferScript or is not, and that settles whether the two builds share a code layout.
 
-3. Calling into the ROM, which needs a real address and therefore a way to identify the build the
-   console is running - which the dump can now answer, by reading the ROM header at 0x080000A0.
+3. **Writing a live field rather than scratch.** `--write-unsafe` exists; what it needs is a reason
+   and a field whose effect can be checked on the console's own screen.
