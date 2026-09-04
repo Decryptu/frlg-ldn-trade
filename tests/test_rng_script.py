@@ -161,6 +161,8 @@ def _walk(script):
     """-> [(offset, opcode, operand bytes)] for the fixed-width commands this script uses."""
     widths = {_OP_SETVADDRESS: 4, _OP_COPYBYTE: 8, _OP_BUFFERNUMBERSTRING: 3, _OP_VMESSAGE: 4,
               0x28: 2,                                  # delay, a u16 of frames
+              0xB6: 5,                                  # setwildbattle
+              0xB7: 0,                                  # dowildbattle
               _OP_LOCK: 0, _OP_FACEPLAYER: 0, _OP_RELEASE: 0, _OP_END: 0,
               _OP_WAITMESSAGE: 0, _OP_WAITBUTTONPRESS: 0, _OP_CLOSEMESSAGE: 0}
     out, i = [], 0
@@ -348,3 +350,18 @@ def test_the_two_rate_models_are_told_apart_by_the_frame_count_and_only_that():
     assert (events.RNG_RATE_PROBE_LONG_PREDICTIONS["rate above 2 (2.003333N)"]
             != events.RNG_RATE_PROBE_LONG_PREDICTIONS["constant overhead (2N+2)"]), \
         "a run that cannot come out two ways is not a test"
+
+
+def test_the_generation_is_bracketed_by_two_reads_with_no_yield_between():
+    """The measured interval must contain the generation and NOTHING else. copybyte and
+    setwildbattle both return FALSE, so all nine commands run in one frame and none of the
+    overworld's 2-turns-per-frame falls inside the bracket. If anything yielding got in there the
+    distance would silently pick up frames and read as extra draws."""
+    script = gift_composer.build_draw_count_script(species=132, level=50)
+    opcodes = [op for _o, op, _operand in _walk(script)]
+    first = opcodes.index(_OP_COPYBYTE)
+    last = len(opcodes) - 1 - opcodes[::-1].index(_OP_COPYBYTE)
+
+    assert opcodes[first:last + 1] == [_OP_COPYBYTE] * 4 + [0xB6] + [_OP_COPYBYTE] * 4
+    assert opcodes[-1] == 0xB7, "dowildbattle calls ScriptContext_Stop, so it must come last"
+    assert 0xB7 not in opcodes[:-1]

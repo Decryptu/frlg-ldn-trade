@@ -1364,6 +1364,60 @@ def build_seed_rate_script(*, address=None, var_address=None, frames=RATE_PROBE_
     return script
 
 
+# --- the draw counter: how many turns the generation itself costs ---------------------------------
+# `setwildbattle` returns FALSE [decomp:src/scrcmd.c:1935] and so does `copybyte`, so a read, the
+# generation, and a second read all run back to back inside ONE frame. No frame boundary means none
+# of the 2-per-frame overworld consumption falls between them, so `distance(before, after)` is
+# EXACTLY the number of draws CreateScriptedWildMon took, and nothing else.
+#
+# That measures two things no other arrangement can:
+#   1. The offset between a reading and the generation is ZERO by construction - the four draws
+#      start from the state that was just read - so a predicted mon needs no fudge constant.
+#   2. The DRAW COUNT itself. Method 1 says four. docs/rng.md records a stray draw on this
+#      cartridge that appears in no line of CreateBoxMon and is "measured and unexplained"; if it is
+#      here, this run prints it as a 5 or a 6 instead of a 4.
+#
+# It needs no Pokemon caught and no Poke Ball: the answer is two numbers on screen, before the
+# battle even starts. `dowildbattle` calls ScriptContext_Stop [decomp:src/scrcmd.c:1945], so the
+# script cannot print anything after the battle - which is why both readings and both messages come
+# first, and why the human's button press sits AFTER the measured interval where it cannot reach it.
+DRAW_COUNT_DEFAULT_LINES = ("BEFORE HI {STR_VAR_2}\n"
+                            "BEFORE LO {STR_VAR_1}",
+                            "AFTER HI {STR_VAR_2}\n"
+                            "AFTER LO {STR_VAR_1}")
+
+
+def build_draw_count_script(*, species, level, item=0, address=None, var_address=None,
+                            lines=DRAW_COUNT_DEFAULT_LINES, slug="rng-draw-count"):
+    """Read gRngValue, generate a scripted wild mon, read gRngValue again, print both, then fight.
+
+    The two readings bracket the generation and nothing else: no yielding command sits between
+    them, so no frame passes and no per-frame draw is counted. A test asserts that.
+    """
+    address = rom_map.GRNG_VALUE if address is None else int(address)
+    var_address = (rom_map.G_SPECIAL_VAR_0X8000 if var_address is None else int(var_address))
+    if len(lines) != 2:
+        raise GiftValidationError(slug, "two readings, so two messages")
+    builder = _FieldScriptBuilder()
+    builder.emit(bytes([_OP_SETVADDRESS]) + _RAM_SCRIPT_VIRTUAL_BASE.to_bytes(4, "little"))
+    builder.emit(bytes([_OP_LOCK, _OP_FACEPLAYER]))
+    for i in range(4):                                   # BEFORE -> vars 0x8000, 0x8001
+        builder.emit(_copybyte(var_address + i, address + i))
+    builder.emit(bytes([_OP_SETWILDBATTLE]) + _u16(species)
+                 + bytes([int(level)]) + _u16(item))      # the four draws happen HERE
+    for i in range(4):                                   # AFTER -> vars 0x8002, 0x8003
+        builder.emit(_copybyte(var_address + 4 + i, address + i))
+    for pair, message in zip(((_VAR_0x8000, _VAR_0x8001), (_VAR_0x8002, _VAR_0x8003)), lines):
+        builder.emit(_buffernumberstring(0, pair[0]))
+        builder.emit(_buffernumberstring(1, pair[1]))
+        _validate_message(message, f"{slug}.lines")
+        builder.message(message)
+    builder.emit(bytes([_OP_DOWILDBATTLE]))              # stops the script; nothing may follow
+    script = builder.finish(slug)
+    _check_script_size(script, builder, slug)
+    return script
+
+
 def compile_definition(definition, *, flag_id=None):
     """Returns one MysteryGiftDistribution for a GiftSpec, or ``{slot_slug: distribution}`` for a rally."""
     validate_definition(definition, flag_id=flag_id)
@@ -1386,7 +1440,8 @@ __all__ = [
     "VAR_MYSTERY_GIFT_1", "VAR_MYSTERY_GIFT_2", "VAR_MYSTERY_GIFT_3",
     "VAR_MYSTERY_GIFT_4", "VAR_MYSTERY_GIFT_5", "VAR_MYSTERY_GIFT_6",
     "VAR_MYSTERY_GIFT_7", "VAR_MYSTERY_GIFT_SLOT_VARS",
-    "build_seed_rate_script", "build_seed_read_script", "build_talk_script",
+    "build_draw_count_script", "build_seed_rate_script", "build_seed_read_script",
+    "build_talk_script",
     "compile_definition",
     "validate_definition",
 ]

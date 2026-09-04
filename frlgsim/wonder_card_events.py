@@ -23,6 +23,7 @@ from .gift_composer import (
     VarEquals,
     WonderCardSpec,
     WonderGift,
+    build_draw_count_script,
     build_seed_rate_script,
     build_seed_read_script,
     build_talk_script,
@@ -892,6 +893,57 @@ RNG_RATE_PROBE_LONG_GIFT = WonderGift(
         "Talk to the man in the south of\n"
         "PALLET TOWN."),
     mevent=build_rng_rate_probe_script(frames=RNG_RATE_PROBE_LONG_FRAMES),
+)
+
+
+GIFT_RNG_DRAW_COUNT = "rng-draw-count"
+RNG_DRAW_COUNT_FLAG_ID = 1018
+
+# Ditto at 50, the same mon mev07 put in front of the player, so the drill is familiar. The species
+# is not the point and nothing needs catching: the answer is the two numbers printed BEFORE the
+# battle starts. Method 1 predicts a distance of 4; docs/rng.md's unexplained stray draw, if it is
+# in this path, shows up as 5 or 6.
+RNG_DRAW_COUNT_SPECIES = 132
+RNG_DRAW_COUNT_LEVEL = 50
+RNG_DRAW_COUNT_PREDICTION = 4
+
+
+def build_rng_draw_count_script(**kwargs):
+    return build_mevent_npc_script(
+        field_script=build_draw_count_script(species=RNG_DRAW_COUNT_SPECIES,
+                                             level=RNG_DRAW_COUNT_LEVEL), **kwargs)
+
+
+RNG_DRAW_COUNT_GIFT = WonderGift(
+    slug=GIFT_RNG_DRAW_COUNT,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="The man counts a POKEMON",
+        body=(
+            "The man in the south of PALLET",
+            "TOWN will read a number, make a",
+            "POKEMON, and read it again.",
+            "Write both down, then fight.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=RNG_DRAW_COUNT_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "A man in PALLET TOWN counts\n"
+                "what it costs to make a POKEMON."),
+        ),
+    )),
+    completed_message=(
+        "Talk to the man in the south of\n"
+        "PALLET TOWN."),
+    mevent=build_rng_draw_count_script(),
 )
 
 
