@@ -247,3 +247,21 @@ def test_the_identity_log_names_the_payload_and_the_expectation():
     assert "gSaveBlock2Ptr" in text
     assert "Buffer script status:" in text
     assert "Wonder Cards -> Friend" in text
+
+
+def test_the_success_message_reads_the_status_off_the_running_engine():
+    """bs01: the run itself was clean and the crash was here, in the last line printed. The engine
+    is the session's activity; the application has never had an `engine` attribute."""
+    from types import SimpleNamespace
+
+    from frlgsim.host_mg_app import BufferScriptHostApplication
+
+    app = SimpleNamespace(
+        session=SimpleNamespace(activity=SimpleNamespace(
+            server=SimpleNamespace(buffer_status=0xE5BBDF65))))
+
+    message = BufferScriptHostApplication._success_message(app, mg_server.SVR_MSG_GIFT_SENT_1)
+
+    assert "0xE5BBDF65" in message
+    assert BufferScriptHostApplication._success_message(
+        SimpleNamespace(session=None), mg_server.SVR_MSG_GIFT_SENT_1)

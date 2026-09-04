@@ -302,8 +302,8 @@ class BufferScriptHostApplication(MysteryGiftHostApplication):
                 "Mystery Gift -> Wonder Cards -> Friend.")
 
     def _success_message(self, result):
-        server = getattr(self.engine, "server", None)
-        status = getattr(server, "buffer_status", None)
+        engine = self.session.activity if self.session is not None else None
+        status = getattr(getattr(engine, "server", None), "buffer_status", None)
         return ("NATIVE CODE RAN ON THE CONSOLE. It returned "
                 + (f"0x{status:08X}" if status is not None else "an answer")
                 + ", which matched. The console printed our message and saved.")

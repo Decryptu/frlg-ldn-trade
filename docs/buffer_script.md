@@ -102,6 +102,31 @@ On hardware (tags `bsNN`; FireRed or LeafGreen - no Pokemon Center is involved):
 
 There is no replace-card prompt and no card: a console holding any Wonder Card keeps it.
 
+## bs01: it runs (2026-09-04, first try)
+
+FACT. French FireRed, `--buffer-script`, the console on Mystery Gift -> Wonder Cards -> Friend:
+
+    Console identified itself: 'GURVAN' (TID 57189) on FireRed, holding card flagId 1009
+    Buffer script status: 0xE5BBDF65 MATCHES 0xE5BBDF65 (the trainer id from the console's own game data)
+    Mystery Gift server finished: gift sent
+
+Our 24 bytes of ARM ran on retail hardware and read the real save. 0xE5BBDF65's low half is 0xDF65 =
+57189, the TRAINER ID printed on the player's trainer card, so the value is checkable a third way.
+That settles, in one run, every assumption the payload rests on: ARM state and not THUMB, the three
+arguments the decomp promises, `gSaveBlock2Ptr` pointing at the live save, the offset of
+`playerTrainerId`, the once-per-frame call ending on a return of 1, and `client->param` reaching us
+through CLI_LOAD_TOSS_RESPONSE.
+
+Three things came with it:
+
+- **CLI_MSG_BUFFER_SUCCESS prints our own 64 bytes and then saves.** The failure half of that
+  message path was already proven (mev04's questionnaire refusal); this is the success half, and
+  `successMsg` is what sent the console on to MG_STATE_SAVE_LOAD_GIFT.
+- **A console holding a card is undisturbed.** It carried flagId 1009 in and out, with no
+  replace-card prompt and nothing sent, because the server script never checks the flag.
+- The run crashed AFTER the session, in the host's last printed line (`self.engine`, which never
+  existed - the engine is `self.session.activity`). Fixed, with a test.
+
 ## Left
 
 `CLI_RUN_BUFFER_SCRIPT` is the general case of every other opcode, so what is left is what to write,
