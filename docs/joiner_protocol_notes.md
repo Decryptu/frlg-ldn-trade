@@ -1170,6 +1170,13 @@ it decides what the console claims to support, and so what the link may use.
 The remaining beacon difference from a real Switch is elements 42 (ERP), 45/61 (HT), 127, 255 and 221
 (HT/HE/WMM) - all previously measured as null for the completion rate; they are not re-opened here.
 
+REGRESSION CHECK (lg156, lg157): this needed one, because the old `LDN_SWITCH_IES` level 1 - which
+added the real host's FULL rich element set - made Mystery Gift worse (0/5 completions against a ~50%
+baseline; the heavier management frames stalled our TX and the console gave up at a later watchdog).
+The change here is a 41-byte subset (elements 0, 1 and 3 only), not that 208-byte set. Both Mystery
+Gift runs delivered first try on LeafGreen, and u31/u32 covered the Union Room and a full battle. No
+regression. Do not extend the beacon further without repeating this check.
+
 ## The battle's pace is the RFU VBlank budget, not our latency (u29/u30/u32, 2026-09-04)
 
 The user sees roughly a second between each step of a link battle (the move landing, the hurt
