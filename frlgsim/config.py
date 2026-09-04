@@ -540,6 +540,11 @@ class BufferScriptPayload:
     scan_end: int = buffer_script.SCAN_ROM_END
     scan_blocks: int = buffer_script.SCAN_DEFAULT_BLOCKS
     scan_max_calls: int | None = None
+    # rng-trace: the word to sample once a frame, and what to call between the two reads of it.
+    trace_address: int | None = None
+    trace_call: int = 0
+    trace_samples: int = buffer_script.TRACE_SAMPLE_CAPACITY
+    trace_max_calls: int | None = None
     # Where to write the bytes that come back. A dump whose contents only ever reached a log line
     # is a run spent for 16 bytes of head.
     dump_file: str | None = None
@@ -581,6 +586,14 @@ class BufferScriptPayload:
         elif self.scan_word is not None:
             raise ValueError(
                 f"a value to search for is only meaningful with {buffer_script.MEMORY_SCAN}")
+        if self.script == buffer_script.RNG_TRACE:
+            if self.trace_address is None:
+                raise ValueError(f"{buffer_script.RNG_TRACE} needs an address to sample")
+            object.__setattr__(self, "dump_size",
+                               buffer_script.trace_answer_size(self.trace_samples))
+        elif self.trace_address is not None or self.trace_call:
+            raise ValueError(
+                f"a word to sample is only meaningful with {buffer_script.RNG_TRACE}")
         if self.script == buffer_script.ANCHORS:
             # It reports a fixed set of words; --dump-size means nothing to it.
             object.__setattr__(self, "dump_size", buffer_script.ANCHORS_SIZE)
@@ -592,7 +605,7 @@ class BufferScriptPayload:
         """Anything whose answer comes back as bytes on ident 19 rather than the 4-byte channel."""
         return self.script in (buffer_script.MEMORY_DUMP, buffer_script.SAVE_DUMP,
                                buffer_script.ANCHORS, buffer_script.SAVE_WRITE,
-                               buffer_script.MEMORY_SCAN)
+                               buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE)
 
     @property
     def spec(self):
@@ -604,6 +617,9 @@ class BufferScriptPayload:
         if self.script == buffer_script.SAVE_DUMP:
             return buffer_script.build_save_dump(
                 self.dump_block, self.dump_offset, self.dump_size)
+        if self.script == buffer_script.RNG_TRACE:
+            return buffer_script.build_rng_trace(
+                self.trace_address, self.trace_call, self.trace_samples, self.trace_max_calls)
         if self.script == buffer_script.MEMORY_SCAN:
             return buffer_script.build_memory_scan(
                 self.scan_word, self.scan_start, self.scan_end,
@@ -618,7 +634,8 @@ class BufferScriptPayload:
         return MysteryGiftDistribution(
             None, None, buffer_code=self.build_code(), buffer_expect=self.expect,
             buffer_dump_size=self.dump_size if self.is_dump else None,
-            buffer_scan=self.script == buffer_script.MEMORY_SCAN)
+            buffer_decode=(self.script if self.script in
+                           (buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE) else None))
 
 
 @dataclass(frozen=True)

@@ -313,6 +313,137 @@ def describe_scan(dump, needle=None, start=None, end=None):
     return lines
 
 
+# --- rng-trace: a word sampled once a frame, and the first call into the ROM ---------------------
+# bs13 found RAND_MULT in the cartridge and bs14's dump named gRngValue at 0x03004220 from Random's
+# own literal pool [rom_map.py]. A word that changes proves nothing, though, and at the Mystery Gift
+# menu the game may not call Random at all - so this payload proves the address by the LCG's own
+# recurrence: read the word, call the function, read it again, and check
+#     after == before * RAND_MULT + RAND_ADD   [decomp:include/random.h:18-19]
+# which settles the address, the ROM call and what was called, in one run.
+RNG_TRACE = "rng-trace"
+TRACE_ADDRESS_OFFSET = 0x04
+TRACE_FUNCTION_OFFSET = 0x08
+TRACE_SAMPLES_OFFSET = 0x0C
+TRACE_MAX_CALLS_OFFSET = 0x10
+TRACE_RESULT_OFFSET = 0x14
+TRACE_SAMPLE_CAPACITY = 96          # 2 words each; the image is 1012 bytes of the 1024
+TRACE_HEADER_SIZE = 16
+
+RAND_MULT = 1103515245              # 0x41C64E6D [decomp:include/random.h:18]
+RAND_ADD = 24691                    # ISO_RANDOMIZE1's addend [:19]
+
+
+def rand_step(value):
+    """One turn of the game's LCG."""
+    return (value * RAND_MULT + RAND_ADD) & 0xFFFFFFFF
+
+
+def trace_answer_size(samples):
+    return TRACE_HEADER_SIZE + 8 * int(samples)
+
+
+def build_rng_trace(address, function=0, samples=TRACE_SAMPLE_CAPACITY, max_calls=None):
+    """The rng-trace payload, patched with what to sample and what to call between the two reads.
+
+    `function` is a THUMB pointer (bit 0 set), or 0 for a plain per-frame sampler. It is called with
+    our own lr, so it must be an ordinary function that returns - the addresses that qualify are the
+    ones read out of the console in rom_map.py.
+    """
+    address, function, samples = int(address), int(function), int(samples)
+    if address % 4:
+        raise BufferScriptError(f"0x{address:X} is not word aligned")
+    if not SCAN_MIN_ADDRESS <= address < SCAN_MAX_ADDRESS:
+        raise BufferScriptError(
+            f"0x{address:X} is outside the memory the CPU can read: "
+            f"0x{SCAN_MIN_ADDRESS:X}..0x{SCAN_MAX_ADDRESS:X}")
+    if function:
+        if not function & 1:
+            raise BufferScriptError(
+                f"0x{function:X} is an ARM pointer; the ROM is THUMB, so a callable address has "
+                "bit 0 set (the `bx` selects the state from it)")
+        if not ROM_BASE <= function < SCAN_MAX_ADDRESS:
+            raise BufferScriptError(
+                f"0x{function:X} is not in the cartridge; calling it would run whatever is there")
+    if not 0 < samples <= TRACE_SAMPLE_CAPACITY:
+        raise BufferScriptError(
+            f"a trace takes 1..{TRACE_SAMPLE_CAPACITY} samples, got {samples}")
+    max_calls = samples + 2 if max_calls is None else int(max_calls)
+    if not 0 < max_calls <= MAX_SCAN_CALLS:
+        raise BufferScriptError(f"the watchdog allows 1..{MAX_SCAN_CALLS} calls, got {max_calls}")
+    code = bytearray(payload(RNG_TRACE))
+    for offset, value in ((TRACE_ADDRESS_OFFSET, address), (TRACE_FUNCTION_OFFSET, function),
+                          (TRACE_SAMPLES_OFFSET, samples), (TRACE_MAX_CALLS_OFFSET, max_calls)):
+        code[offset:offset + 4] = (value & 0xFFFFFFFF).to_bytes(4, "little")
+    return bytes(code)
+
+
+def trace_parameters(code):
+    """-> {address, function, samples, max_calls} read back out of a built payload."""
+    code = bytes(code)
+    def word(offset):
+        return int.from_bytes(code[offset:offset + 4], "little")
+    return {"address": word(TRACE_ADDRESS_OFFSET), "function": word(TRACE_FUNCTION_OFFSET),
+            "samples": word(TRACE_SAMPLES_OFFSET), "max_calls": word(TRACE_MAX_CALLS_OFFSET)}
+
+
+def read_rng_trace(dump):
+    """-> what the trace sampled, from the bytes it sent back."""
+    dump = bytes(dump)
+    if len(dump) < TRACE_HEADER_SIZE:
+        raise BufferScriptError(f"a trace answers with at least {TRACE_HEADER_SIZE} bytes, "
+                                f"got {len(dump)}")
+    words = [int.from_bytes(dump[i:i + 4], "little") for i in range(0, len(dump) - 3, 4)]
+    calls, taken, address, function = words[:4]
+    taken = min(taken, (len(words) - 4) // 2, TRACE_SAMPLE_CAPACITY)
+    pairs = [(words[4 + 2 * i], words[5 + 2 * i]) for i in range(taken)]
+    return {"calls": calls, "taken": taken, "address": address, "function": function,
+            "samples": pairs}
+
+
+def lcg_distance(start, target, limit=1 << 16):
+    """How many turns of the LCG take `start` to `target`, or None within `limit`.
+
+    The frame-to-frame gaps are what say how often the GAME called Random while we watched, which
+    is a measurement of the console's own behaviour that nothing else here can make.
+    """
+    value = start & 0xFFFFFFFF
+    for steps in range(int(limit)):
+        if value == (target & 0xFFFFFFFF):
+            return steps
+        value = rand_step(value)
+    return None
+
+
+def describe_rng_trace(dump):
+    """The same, as lines to log, with the recurrence CHECKED rather than displayed."""
+    trace = read_rng_trace(dump)
+    lines = [f"rng-trace: {trace['taken']} sample(s) of 0x{trace['address']:08X} over "
+             f"{trace['calls']} call(s) = frames"
+             + (f", calling 0x{trace['function']:08X}" if trace["function"] else
+                ", calling nothing")]
+    samples = trace["samples"]
+    if not samples:
+        return lines + ["   nothing was sampled"]
+    if trace["function"]:
+        held = sum(1 for before, after in samples if after == rand_step(before))
+        lines.append(
+            f"   the LCG recurrence after == before * {RAND_MULT} + {RAND_ADD} holds on "
+            f"{held}/{len(samples)} samples"
+            + (" - THE ADDRESS IS gRngValue AND THE ROM CALL RAN" if held == len(samples)
+               else " - it does NOT hold, so one of the two is wrong"))
+    changed = sum(1 for i in range(1, len(samples)) if samples[i][0] != samples[i - 1][1])
+    gaps = [lcg_distance(samples[i - 1][1], samples[i][0]) for i in range(1, len(samples))]
+    known = [g for g in gaps if g is not None]
+    lines.append(
+        f"   between frames the word changed {changed}/{len(samples) - 1} times"
+        + (f"; the game's own Random calls per frame: min {min(known)}, max {max(known)}, "
+           f"total {sum(known)}" if known and len(known) == len(gaps) else
+           "; some frame-to-frame gaps are not on the LCG orbit"))
+    lines.append("   first: " + ", ".join(f"0x{b:08X}->0x{a:08X}" for b, a in samples[:3]))
+    lines.append("   last:  " + ", ".join(f"0x{b:08X}->0x{a:08X}" for b, a in samples[-3:]))
+    return lines
+
+
 SCRIPT_REGISTRY = {
     TRAINER_ID_PROBE: BufferScriptSpec(
         TRAINER_ID_PROBE,
@@ -332,6 +463,12 @@ SCRIPT_REGISTRY = {
         SAVE_WRITE,
         "WRITE bytes into a save block and read the same region back in the same run (the console "
         "saves afterwards, so the write reaches flash; --write-hex, --dump-block, --dump-offset)",
+        None),
+    RNG_TRACE: BufferScriptSpec(
+        RNG_TRACE,
+        "sample one word of memory ONCE A FRAME, optionally calling a ROM function between the "
+        "two halves of each sample, and check the LCG recurrence on what comes back (--trace-"
+        "address, --trace-call, --trace-samples; reads only, plus whatever the callee does)",
         None),
     MEMORY_SCAN: BufferScriptSpec(
         MEMORY_SCAN,
@@ -452,6 +589,9 @@ PATCHED_SPANS = {
     MEMORY_DUMP: ((DUMP_TARGET_OFFSET, 8),),
     SAVE_DUMP: ((SAVE_DUMP_WHICH_OFFSET, 12),),
     SAVE_WRITE: ((SAVE_WRITE_WHICH_OFFSET, MAX_BUFFER_SCRIPT_SIZE),),
+    RNG_TRACE: ((TRACE_ADDRESS_OFFSET,
+                 TRACE_RESULT_OFFSET - TRACE_ADDRESS_OFFSET + TRACE_HEADER_SIZE
+                 + 8 * TRACE_SAMPLE_CAPACITY),),
     MEMORY_SCAN: ((SCAN_CURSOR_OFFSET,
                    SCAN_HITS_OFFSET - SCAN_CURSOR_OFFSET + 8 * SCAN_HIT_CAPACITY),),
 }

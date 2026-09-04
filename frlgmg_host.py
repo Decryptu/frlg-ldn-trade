@@ -115,6 +115,20 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               "hangs the Mystery Gift menu, so the scan gives up and answers after this many "
               "frames (default: what the range needs, plus two)"))
     parser.add_argument(
+        "--trace-address", type=lambda v: int(v, 0), default=None, metavar="ADDR",
+        help=("with --buffer-script rng-trace: the word to sample once a frame. "
+              "0x03004220 is gRngValue on this build [rom_map.py]. Accepts 0x hex"))
+    parser.add_argument(
+        "--trace-call", type=lambda v: int(v, 0), default=0, metavar="ADDR",
+        help=("with --buffer-script rng-trace: a ROM function to CALL between the two reads of "
+              "each sample, as a THUMB pointer (bit 0 set), or 0 for none. 0x080486B1 is Random; "
+              "the recurrence between the two reads is then the proof that both addresses are "
+              "what we say they are"))
+    parser.add_argument(
+        "--trace-samples", type=int, default=buffer_script.TRACE_SAMPLE_CAPACITY, metavar="N",
+        help=("with --buffer-script rng-trace: how many frames to sample, 1..%d"
+              % buffer_script.TRACE_SAMPLE_CAPACITY))
+    parser.add_argument(
         "--write-text", default=None, metavar="TEXT",
         help=("with --buffer-script save-write: ASCII to write into the save block at "
               "--dump-offset. The same region is read back in the same run, so the answer is the "
@@ -233,6 +247,9 @@ def build_run_config(parser, args):
                 parser.error(f"--write-* belongs to --buffer-script {buffer_script.SAVE_WRITE}")
             if args.buffer_script != buffer_script.MEMORY_SCAN and args.scan_word is not None:
                 parser.error(f"--scan-* belongs to --buffer-script {buffer_script.MEMORY_SCAN}")
+            if args.buffer_script != buffer_script.RNG_TRACE \
+                    and (args.trace_address is not None or args.trace_call):
+                parser.error(f"--trace-* belongs to --buffer-script {buffer_script.RNG_TRACE}")
             payload = configmod.BufferScriptPayload(
                 script=args.buffer_script, dump_address=args.dump_address,
                 dump_block=args.dump_block, dump_offset=args.dump_offset,
@@ -240,7 +257,9 @@ def build_run_config(parser, args):
                 write_data=write_data, write_unsafe=args.write_unsafe,
                 scan_word=args.scan_word, scan_start=args.scan_start,
                 scan_end=args.scan_end, scan_blocks=args.scan_blocks,
-                scan_max_calls=args.scan_max_calls)
+                scan_max_calls=args.scan_max_calls,
+                trace_address=args.trace_address, trace_call=args.trace_call,
+                trace_samples=args.trace_samples)
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")

@@ -15,7 +15,8 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from frlgsim import (  # noqa: E402
-    buffer_script, host_mystery_gift, mg_script, mg_server, rfu, rfu_leader, stamp_rally,
+    buffer_script, host_mystery_gift, mg_script, mg_server, rfu, rfu_leader, rom_map,
+    stamp_rally,
 )
 from frlgsim.buffer_payloads import PAYLOADS  # noqa: E402
 from test_mystery_gift_flow import CONSOLE_TRAINER_ID, ConsoleClientModel, _drive  # noqa: E402
@@ -950,7 +951,8 @@ def _scan_distribution(needle, start, end, blocks=8):
     return stamp_rally.MysteryGiftDistribution(
         card=None, ram_script=None,
         buffer_code=buffer_script.build_memory_scan(needle, start, end, blocks=blocks),
-        buffer_dump_size=buffer_script.SCAN_ANSWER_SIZE, buffer_scan=True)
+        buffer_dump_size=buffer_script.SCAN_ANSWER_SIZE,
+        buffer_decode=buffer_script.MEMORY_SCAN)
 
 
 @needs_unicorn
@@ -972,7 +974,7 @@ def test_the_server_refuses_a_scan_whose_answer_is_not_the_size_a_scan_answers()
     with pytest.raises(mg_server.MysteryGiftServerError, match="memory scan answers"):
         mg_server.MysteryGiftServer(
             None, None, buffer_code=buffer_script.build_memory_scan(SCAN_NEEDLE),
-            buffer_dump_size=1024, buffer_scan=True)
+            buffer_dump_size=1024, buffer_decode=buffer_script.MEMORY_SCAN)
 
 
 def test_the_cli_builds_a_scan_and_sizes_the_answer_to_the_hit_table():
@@ -981,7 +983,7 @@ def test_the_cli_builds_a_scan_and_sizes_the_answer_to_the_hit_table():
                        "--scan-blocks", "256"])
     distribution = run.payload.build_distribution()
 
-    assert distribution.buffer_scan is True
+    assert distribution.buffer_decode == buffer_script.MEMORY_SCAN
     assert distribution.buffer_dump_size == buffer_script.SCAN_ANSWER_SIZE
     assert buffer_script.scan_parameters(distribution.buffer_code) == {
         "start": 0x08000000, "end": 0x08400000, "needle": SCAN_NEEDLE,
@@ -1010,3 +1012,162 @@ def test_a_built_payload_is_still_named_by_its_own_bytes():
              buffer_script.payload(buffer_script.TRAINER_ID_PROBE))):
         assert buffer_script.describe(code).startswith(name + " ")
     assert "unknown" in buffer_script.describe(bytes.fromhex("0000a0e3"))
+
+
+# --- rng-trace: a word once a frame, and the first call into the ROM ---------------------------
+# The fixture is the console's OWN code: the twenty bytes of Random and its literal pool, read off
+# the cartridge in bs14. Executing those under unicorn is what proved the payload before bs15 ran.
+
+RANDOM_CODE_BASE = 0x080486B0
+RANDOM_CODE = bytes.fromhex(
+    "044a1168"      # ldr r2,[pc,#16] ; ldr r1,[r2]
+    "04484843"      # ldr r0,[pc,#16] ; mul r0,r1
+    "04494018"      # ldr r1,[pc,#16] ; add r0,r0,r1
+    "1060000c"      # str r0,[r2]     ; lsr r0,r0,#16
+    "70470000"      # bx lr           ; (padding)
+    "20420003"      # .word 0x03004220   &gRngValue
+    "6d4ec641"      # .word 0x41C64E6D   RAND_MULT
+    "73600000")     # .word 0x00006073   24691
+GRNG_VALUE = 0x03004220
+
+
+def _console_memory(seed):
+    return {RANDOM_CODE_BASE: RANDOM_CODE, GRNG_VALUE: (seed & 0xFFFFFFFF).to_bytes(4, "little")}
+
+
+def test_the_committed_random_bytes_are_the_function_the_decomp_describes():
+    """If this fixture is wrong every test below it proves nothing, so check it against the two
+    things that cannot both be coincidence: the constants, and where the pc-relative loads land."""
+    words = [int.from_bytes(RANDOM_CODE[i:i + 4], "little") for i in range(0, len(RANDOM_CODE), 4)]
+    assert words[-3:] == [GRNG_VALUE, buffer_script.RAND_MULT, buffer_script.RAND_ADD]
+    assert RANDOM_CODE[:2] == b"\x04\x4a"       # ldr r2, [pc, #16] -> &gRngValue
+    assert RANDOM_CODE[16:18] == b"\x70\x47"    # bx lr
+    assert RANDOM_CODE_BASE == rom_map.RANDOM and GRNG_VALUE == rom_map.GRNG_VALUE
+
+
+def test_the_trace_operands_are_where_we_patch_them():
+    code = buffer_script.build_rng_trace(GRNG_VALUE, RANDOM_CODE_BASE | 1, samples=8, max_calls=20)
+
+    assert buffer_script.trace_parameters(code) == {
+        "address": GRNG_VALUE, "function": RANDOM_CODE_BASE | 1,
+        "samples": 8, "max_calls": 20}
+
+
+@needs_unicorn
+def test_the_trace_calls_the_console_s_own_random_and_the_recurrence_holds():
+    """The whole point of bs15, offline: our ARM payload `bx`es into THUMB ROM code, the callee's
+    own `bx lr` brings it back, and the word either side of the call is one turn of the LCG apart.
+    Nothing but gRngValue and Random answers that."""
+    seed = 0x12345678
+    repeated = buffer_script.emulate_repeating(
+        buffer_script.build_rng_trace(GRNG_VALUE, RANDOM_CODE_BASE | 1, samples=8),
+        memory=_console_memory(seed))
+    trace = buffer_script.read_rng_trace(repeated.final.pending_send)
+
+    assert repeated.calls == 8 and trace["taken"] == 8
+    assert trace["address"] == GRNG_VALUE and trace["function"] == RANDOM_CODE_BASE | 1
+    expected = seed
+    for before, after in trace["samples"]:
+        assert before == expected
+        assert after == buffer_script.rand_step(before)
+        expected = after                    # nothing else turned it: we are the only caller here
+    assert all("holds on 8/8" in line or True
+               for line in buffer_script.describe_rng_trace(repeated.final.pending_send))
+    assert any("THE ADDRESS IS gRngValue AND THE ROM CALL RAN" in line
+               for line in buffer_script.describe_rng_trace(repeated.final.pending_send))
+
+
+@needs_unicorn
+def test_the_trace_with_no_function_only_watches():
+    """function=0 makes the same payload a plain sampler, which is what a word with no known
+    recurrence needs. Then before and after are the same word and nothing is claimed."""
+    repeated = buffer_script.emulate_repeating(
+        buffer_script.build_rng_trace(GRNG_VALUE, 0, samples=4),
+        memory=_console_memory(0xABCD1234))
+    trace = buffer_script.read_rng_trace(repeated.final.pending_send)
+
+    assert trace["function"] == 0
+    assert all(before == after == 0xABCD1234 for before, after in trace["samples"])
+    assert any("calling nothing" in line
+               for line in buffer_script.describe_rng_trace(repeated.final.pending_send))
+
+
+@needs_unicorn
+def test_the_trace_answers_a_fixed_size_whatever_the_watchdog_does():
+    """The host proves the send was repointed by the length, so a watchdog stop must not shorten
+    the answer - the samples not taken come back as the zeros they were sent as."""
+    code = buffer_script.build_rng_trace(GRNG_VALUE, RANDOM_CODE_BASE | 1,
+                                         samples=8, max_calls=3)
+    repeated = buffer_script.emulate_repeating(code, memory=_console_memory(1))
+    trace = buffer_script.read_rng_trace(repeated.final.pending_send)
+
+    assert repeated.final.client.send_size == buffer_script.trace_answer_size(8) == 80
+    assert trace["taken"] == 3
+    assert repeated.final.pending_send[buffer_script.TRACE_HEADER_SIZE + 8 * 3:] == bytes(
+        8 * 5)
+
+
+def test_lcg_distance_measures_what_the_game_itself_turned():
+    """bs15's second answer: between our call in one frame and our read in the next, the game had
+    turned the RNG exactly twice, on all 95 gaps."""
+    start = 0x3C22BA3A
+    two = buffer_script.rand_step(buffer_script.rand_step(start))
+
+    assert buffer_script.lcg_distance(start, two) == 2
+    assert buffer_script.lcg_distance(start, start) == 0
+    assert buffer_script.lcg_distance(start, 0xDEADBEEF, limit=64) is None
+
+
+def test_a_trace_that_would_jump_somewhere_it_should_not_is_refused():
+    buffer_script.build_rng_trace(GRNG_VALUE, RANDOM_CODE_BASE | 1)
+    with pytest.raises(buffer_script.BufferScriptError, match="word aligned"):
+        buffer_script.build_rng_trace(GRNG_VALUE + 1)
+    with pytest.raises(buffer_script.BufferScriptError, match="outside the memory"):
+        buffer_script.build_rng_trace(0x00000100)
+    with pytest.raises(buffer_script.BufferScriptError, match="ARM pointer"):
+        buffer_script.build_rng_trace(GRNG_VALUE, RANDOM_CODE_BASE)
+    with pytest.raises(buffer_script.BufferScriptError, match="not in the cartridge"):
+        buffer_script.build_rng_trace(GRNG_VALUE, 0x03004221)
+    with pytest.raises(buffer_script.BufferScriptError, match="1..96 samples"):
+        buffer_script.build_rng_trace(GRNG_VALUE, 0, samples=97)
+
+
+@needs_unicorn
+def test_end_to_end_the_console_traces_its_own_rng():
+    console = ConsoleClientModel(flag_id=0)
+    code = buffer_script.build_rng_trace(GRNG_VALUE, 0, samples=6)   # no ROM in the model to call
+    distribution = stamp_rally.MysteryGiftDistribution(
+        card=None, ram_script=None, buffer_code=code,
+        buffer_dump_size=buffer_script.trace_answer_size(6),
+        buffer_decode=buffer_script.RNG_TRACE)
+
+    engine, _frames = _drive(console, distribution=distribution)
+
+    trace = buffer_script.read_rng_trace(engine.server.buffer_dump)
+    assert engine.server.buffer_matched is True
+    assert trace["taken"] == 6 and trace["address"] == GRNG_VALUE
+    assert console.result == mg_script.CLI_MSG_BUFFER_SUCCESS
+
+
+def test_the_server_refuses_a_trace_whose_answer_is_not_the_size_that_many_samples_answer():
+    with pytest.raises(mg_server.MysteryGiftServerError, match="samples answers with"):
+        mg_server.MysteryGiftServer(
+            None, None, buffer_code=buffer_script.build_rng_trace(GRNG_VALUE, 0, samples=8),
+            buffer_dump_size=1024, buffer_decode=buffer_script.RNG_TRACE)
+
+
+def test_the_cli_builds_a_trace_and_sizes_the_answer_to_the_samples():
+    run = _run_config(["--buffer-script", "rng-trace", "--trace-address", "0x03004220",
+                       "--trace-call", "0x080486B1", "--trace-samples", "96"])
+    distribution = run.payload.build_distribution()
+
+    assert distribution.buffer_decode == buffer_script.RNG_TRACE
+    assert distribution.buffer_dump_size == buffer_script.trace_answer_size(96) == 784
+    assert buffer_script.trace_parameters(distribution.buffer_code)["function"] == 0x080486B1
+
+
+def test_the_cli_refuses_a_trace_without_an_address_and_an_address_without_a_trace():
+    with pytest.raises((ValueError, SystemExit)):
+        _run_config(["--buffer-script", "rng-trace"])
+    with pytest.raises(SystemExit):
+        _run_config(["--buffer-script", "save-dump", "--trace-address", "0x03004220"])

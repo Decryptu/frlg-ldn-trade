@@ -300,6 +300,16 @@ class BufferScriptHostApplication(MysteryGiftHostApplication):
                 "called again next frame [mystery_gift_client.c:277], so this takes about "
                 f"{frames} frames, {frames / 60:.1f} s, with the link held open throughout; the "
                 f"watchdog ends it after {asked['max_calls']}. The evidence line is 'scan:'.")
+        if payload.script == buffer_script.RNG_TRACE:
+            asked = buffer_script.trace_parameters(code)
+            self.info(
+                f"Sampling 0x{asked['address']:08X} once a frame, {asked['samples']} times "
+                f"(~{asked['samples'] / 60:.1f} s), "
+                + (f"CALLING 0x{asked['function']:08X} between the two reads of each sample - the "
+                   "LCG recurrence between them is the proof that the address is gRngValue and "
+                   "that our ARM code called the console's THUMB ROM and came back"
+                   if asked["function"] else "calling nothing")
+                + ". The evidence line is 'rng-trace:'.")
         expect = payload.expect
         self.info("The evidence line is 'Buffer script status:'. Expecting "
                   + ("the trainer id the console's own game data carried"

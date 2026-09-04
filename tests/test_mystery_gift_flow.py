@@ -495,16 +495,19 @@ class ConsoleClientModel:
         param = self.param if isinstance(self.param, int) else 0
         armed = self._pending_send
         ident, size = (armed[0], armed[2]) if armed else (mg.MG_LINKID_RESPONSE, 4)
-        for _frame in range(8):
-            run = buffer_script.emulate(payload, param=param, sav2=bytes(sav2),
-                                        send_size=size, send_ident=ident)
-            param = run.param
-            if run.done:
-                break
-        else:
+        # Called every frame until it returns 1, with gDecompressionBuffer as it left it: the
+        # memcpy that loads the payload runs once, at CLI_RUN_BUFFER_SCRIPT
+        # [decomp:src/mystery_gift_client.c:239,276]. emulate_repeating keeps that one image, so a
+        # payload that yields (memory-scan, rng-trace) is modelled rather than declared a hang.
+        try:
+            run = buffer_script.emulate_repeating(
+                payload, param=param, sav2=bytes(sav2), send_size=size, send_ident=ident,
+                max_calls=1200).final
+        except buffer_script.BufferScriptError as exc:
             raise AssertionError(
-                "the payload never returned 1: on the console the Mystery Gift menu hangs")
-        self.param = param
+                f"the payload never returned 1: on the console the Mystery Gift menu hangs ({exc})"
+            ) from None
+        self.param = run.param
         if run.client.send_changed:
             # MysteryGiftLink_InitSend kept the pointer and the size is read at send time too, so
             # what goes out is whatever the payload left in those two fields

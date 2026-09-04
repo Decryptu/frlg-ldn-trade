@@ -530,13 +530,85 @@ predictable and it is reachable by no Mystery Event opcode and no link message. 
 expected (`Random` and `Random2`, which share the multiplier [random.h:19-20]); a dump of either
 address then reads the pool.
 
+## bs13: the search works, on hardware, first try (2026-09-04)
+
+    ./scratchpad/run_mg_fast.sh bs13 --buffer-script memory-scan --scan-word 0x41C64E6D \
+        --scan-start 0x08000000 --scan-end 0x08400000 --version firered
+
+    scan: 11 match(es) for 0x41C64E6D, 256 call(s) = frames, stopped at 0x08400000
+       the whole range 0x08000000..0x08400000 was scanned
+       0x080486C8  0x0807D238  0x0807F25C  0x08086AB0  0x080AFC00  0x080F1EA0
+       0x080F2378  0x080F2438  0x08122284  0x08122518  0x0814CBFC
+
+FACTS from the run, and the third is the one that matters beyond this payload:
+
+- **256 calls, exactly as the arithmetic said.** 4 MB / (512 blocks x 32 bytes) = 256, and the
+  payload reported 256. The multi-call mechanism works on retail hardware.
+- `echo_gaps.py`: `never=[]` on all 13 console blocks. The session closed normally and the console
+  saved, as every buffer-script run does.
+- **The frame budget cost the console nothing.** The host's own status lines through the scan read
+  `child frames 716 ... 837 ... 956` against `parent polls 720 ... 840 ... 960`: ~60 child frames a
+  second while our code was running ~3 ms of every frame. There is room to raise `--scan-blocks`.
+
+WHICH HIT, WITHOUT SPENDING A RUN: `grep -rl 'ISO_RANDOMIZE1\|RAND_MULT' src/` gives eight files,
+and `ld_script.ld` puts `src/random.o` at #86 with the next user, `src/title_screen.o`, at #123.
+Hits come back in address order and the link order is the address order, so the LOWEST hit is
+random.o's pool. That is an inference from the decomp's ORDER, not from its addresses.
+
+## bs14: Random, and gRngValue named twice (first try)
+
+`--buffer-script memory-dump --dump-address 0x08048400`, and 0x080486B0 disassembles as:
+
+```
+4A04  ldr r2, [pc, #16]   -> 0x080486C4 = 0x03004220   &gRngValue
+6811  ldr r1, [r2]
+4804  ldr r0, [pc, #16]   -> 0x080486C8 = 0x41C64E6D   RAND_MULT
+4348  mul r0, r1
+4904  ldr r1, [pc, #16]   -> 0x080486CC = 0x00006073   24691
+1840  add r0, r0, r1
+6010  str r0, [r2]
+0C00  lsr r0, r0, #16
+4770  bx  lr
+```
+
+which is `gRngValue = ISO_RANDOMIZE1(gRngValue); return gRngValue >> 16` [decomp:src/random.c:9-13]
+instruction for instruction. The next function, 0x080486D0, is SeedRng - `lsl/lsr` for the u16 cast,
+then `str r0, [r1]` through a pool word that is **0x03004220 again**. Two independent functions name
+the same address inside one dump.
+
+## `rng-trace`, and bs15: the first call into the console's ROM (first try)
+
+An address that was only ever read is a hypothesis. `asm/rng-trace.s` samples a word once a frame
+and, between the two reads of each sample, CALLS a ROM function:
+
+    ./scratchpad/run_mg_fast.sh bs15 --buffer-script rng-trace --trace-address 0x03004220 \
+        --trace-call 0x080486B1 --trace-samples 96 --version firered
+
+    rng-trace: 96 sample(s) of 0x03004220 over 96 call(s) = frames, calling 0x080486B1
+       the LCG recurrence after == before * 1103515245 + 24691 holds on 96/96 samples
+          - THE ADDRESS IS gRngValue AND THE ROM CALL RAN
+       between frames the word changed 95/95 times; the game's own Random calls per frame:
+          min 2, max 2, total 190
+
+`after == before * RAND_MULT + RAND_ADD` on 96 samples out of 96 settles three things at once that
+no single read could: the address is gRngValue, our ARM payload can `bx` into THUMB ROM and be
+returned to by the callee's own `bx lr`, and the function at 0x080486B0 is Random. The call is
+`mov lr, pc; bx r2` - pc reads as that instruction + 8, which is the instruction after the `bx`, and
+its bit 0 is clear, so the callee returns us to ARM state.
+
+The second answer is a measurement of the console rather than of us: between our call in one frame
+and our read in the next, the game had turned the RNG **exactly twice, on all 95 gaps**. That is
+FRLG's own Random consumption while it sits in the Mystery Gift link menu.
+
+The payload was proven offline first by executing the console's OWN Random - the twenty bytes bs14
+read off the cartridge, put back at 0x080486B0 under unicorn (tests/test_buffer_script.py).
+
 ## Left
 
-1. **Calling into the ROM.** Thirteen function addresses are known and the calling convention is
-   plain: our payload is ARM, the ROM is THUMB, so a call needs `bx` to `address | 1` and a way back.
-   What is missing is a function worth calling - the thirteen we have are the Mystery Gift state
-   machine itself, which we already drive from outside. The next ones to find are reachable the same
-   way: dump a caller, read its `bl` targets, name them by what they do.
+1. **Calling into the ROM is DONE (bs15): `mov lr, pc; bx address|1`, 96 times, checked by the
+   callee's own arithmetic.** What is open is which function to call next. The scan is how they get
+   found now - a function is reachable by any constant only it uses - and `rng-trace` with
+   `--trace-call` is a general "call this and watch what it changes" harness, not an RNG tool.
 
 2. **Writing a live field rather than scratch.** `--write-unsafe` exists; what it needs is a reason
    and a field whose effect the player can check on the console's own screen.

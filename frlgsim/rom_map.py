@@ -18,6 +18,16 @@ How each one was obtained, because that is what makes it trustworthy:
 - A `memory-dump` of that table (bs12) returned eight THUMB pointers, and every one of them lands on
   a `push {r4, lr}` in bs11's disassembly. Entry 7 is 0x08148C61 - the function bs08 measured from
   the other end. Three runs, three routes, one answer.
+- `memory-scan` (bs13) SEARCHED 4 MB of the cartridge for RAND_MULT, which no ARM or THUMB
+  instruction can encode, so every use of the game's LCG has it in a literal pool. Eleven hits; the
+  decomp's link order puts src/random.o (#86 in ld_script.ld) before every other user of the macro
+  (the next is src/title_screen.o at #123), so the LOWEST hit is Random's pool.
+- A `memory-dump` there (bs14) disassembles as Random and SeedRng exactly as [decomp:src/random.c]
+  writes them, and their pools name gRngValue - twice, from two independent functions.
+- `rng-trace` (bs15) then CALLED Random 96 times, one frame apart, reading gRngValue either side of
+  each call: `after == before * RAND_MULT + RAND_ADD` held 96 out of 96. That is the address, the
+  ROM call and the identity of the function, checked by the LCG's own arithmetic - and the first
+  time this project has called into the console's ROM at all.
 
 Nothing here is inferred from the English build. A symbol that has not been read off the console does
 not belong in this file.
@@ -73,6 +83,16 @@ SERVER_FUNCS = (
 MYSTERY_GIFT_LINK_RECV = 0x081485E8
 MYSTERY_GIFT_LINK_SEND = 0x081485F4
 
+# --- src/random.c ---------------------------------------------------------------------------------
+# Found by SEARCH, not by luck: bs13 scanned for RAND_MULT, bs14 dumped the lowest hit. The
+# disassembly is byte for byte src/random.c:11 -
+#   4A04 ldr r2,[pc,#16] -> &gRngValue   6811 ldr r1,[r2]      4804 ldr r0,[pc,#16] -> RAND_MULT
+#   4348 mul r0,r1       4904 ldr r1,[pc,#16] -> 24691         1840 add r0,r0,r1
+#   6010 str r0,[r2]     0C00 lsr r0,r0,#16                    4770 bx lr
+# CALLED on hardware in bs15, 96 times, with the recurrence checked either side of every call.
+RANDOM = 0x080486B0                 # u16 Random(void)
+SEED_RNG = 0x080486D0               # void SeedRng(u16), whose pool names gRngValue a second time
+
 # --- gcc's THUMB-to-ARM call veneers ------------------------------------------------------------
 # Client_RunBufferScript reaches our ARM payload through one of these, which is why lr comes back
 # pointing into the caller rather than into the veneer.
@@ -88,6 +108,12 @@ GDECOMPRESSION_BUFFER = 0x0201C000
 # GURVAN's console in bs08 they were 0x02024598 and 0x0202553C.
 GSAVEBLOCK2PTR = 0x0300422C
 GSAVEBLOCK1PTR = 0x03004228
+# The seed EVERY random outcome in the game comes out of: encounters, shininess, damage rolls,
+# critical hits [Random, decomp:src/random.c:9]. Read out of Random's and SeedRng's literal pools
+# (bs14) and confirmed on hardware by its own recurrence (bs15). At the Mystery Gift link menu the
+# game itself turns it exactly TWICE a frame, measured over 95 consecutive frames.
+GRNG_VALUE = 0x03004220
+GAME_RANDOM_CALLS_PER_FRAME_AT_MG_MENU = 2
 
 
 def client_func(name):
