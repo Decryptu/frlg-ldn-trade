@@ -232,6 +232,35 @@ stating plainly: **the decomp is authoritative for what the code does, and it is
 on what this cartridge does.** Deriving the 4 first is what makes the 6 a finding rather than a
 number.
 
+## How precisely a human can press A: measured, not guessed
+
+Four trials against a chosen target 30.00 s ahead, read off the seed-printing NPC (mev14):
+
+| trial | frames elapsed | error vs 1791.8 |
+|---|---|---|
+| 1 | 1801 | +9.2 |
+| 2 | 1807 | +15.2 |
+| 3 | 1800 | +8.2 |
+| 4 | 1796 | +4.2 |
+
+**Mean +9.2 frames, standard deviation 4.5 frames, whole range 11 frames.** The mean is a fixed
+offset - the gap between the numbers appearing on screen and the script's read, plus press to read -
+and it cancels. The **spread** is what matters: presses land within about +/- 6 frames of where they
+are aimed.
+
+Every one of the four turn counts is **even**, which it has to be if the state only moves 2 per
+frame. That is a check passing on data taken for another purpose, and it extends the rate result to
+ordinary overworld play with the player standing in a room - not just to a script that is delaying.
+
+A fifth trial, discarded, read +39.2 frames: it was taken against the wandering Pallet Town NPC and
+most of the error was the player chasing him. That is why the scripts bind to the mother now.
+
+**What that makes the hunt.** A shiny frame arrives every ~8192 frames (~137 s), and a press with a
+4.5-frame spread lands on one chosen frame about 9% of the time - roughly 1 attempt in 11. So a
+shiny costs on the order of 25 minutes of waiting, against about 23 hours of random encounters for
+the same odds. A miss costs one A press and is measured exactly, because the script prints the state
+it generated from.
+
 ## What cannot be done, and what is still open
 
 **Closed: aiming by hand with no live seed.** The state advances 2 turns every frame with no idle
