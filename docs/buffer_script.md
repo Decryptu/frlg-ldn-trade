@@ -746,3 +746,71 @@ console that lives there. `./.venv/bin/python scratchpad/mg_client_harness.py --
 create-mon` runs the whole Mystery Gift session with them.
 
 What the models do NOT model is the ROM's own arithmetic. That is what the hardware run is for.
+
+## bs43, bs44: the eight-argument call, on hardware, both first try (2026-09-04)
+
+    ./scratchpad/run_mg_fast.sh bs43 --buffer-script create-mon \
+        --create-mon-species 59 --create-mon-level 30 --create-mon-iv 31 \
+        --create-mon-personality 0x3ADF0001 --create-mon-ot-id-type 0 --version firered
+
+    create-mon: 1 call(s), built at 0x0201C038, calling 0x08041151
+       personality 0x3ADF0001  otId 0xE5BBDF65  checksum VALID  SHINY
+       species 59 ARCANINE  Lv30  nickname 'ARCANIN'  OT 'GURVAN'  moves [44, 46, 52, 316]
+       IVs (HP ATK DEF SPE SPA SPD) [31, 31, 31, 31, 31, 31]
+       stats (maxHP ATK DEF SPE SPA SPD) [103, 80, 68, 63, 74, 62]
+
+Every value there was written down **before** the run. `echo_gaps.py` reads `never=[]` on all
+eleven console blocks in both captures; one call each, no stalls.
+
+The species and the personality were chosen so that the answer would check itself:
+
+- **`nickname 'ARCANIN'`.** `CreateBoxMon` fills the nickname from `gSpeciesNames`
+  [pokemon.c:1810], the FRENCH table. bs06's party dump had already read that same name off this
+  console by a completely different mechanism — a save dump, not a ROM call — so the run was
+  self-verifying the moment it landed, exactly as bs18 was.
+- **`moves [44, 46, 52, 316]` and the six stats.** Neither was sent by us. The moves are
+  Arcanine's level-up learnset walked to 30 by `GiveBoxMonInitialMoveset`, and the stats are
+  `CalculateMonStats` — and those stats depend on nature 7, which the ROM derived from the
+  personality we put at `[sp+4]`. **The stack argument reached the arithmetic, not just the
+  struct.**
+- **`0x3ADF0001` is one value exercising three derived branches**: it is shiny for TID 57189 /
+  SID 58811 (shiny value 0), its bit 0 makes `abilityNum` 1, and its nature is 7 rather than the
+  neutral 20, which visibly moves five of the six stats.
+- **checksum VALID.** The 48-byte substruct region is encrypted with `personality ^ otId` and
+  checksummed by the ROM itself, so a valid checksum means both of those words are the ones the
+  ROM used — two arguments confirmed before any field is even read.
+
+### bs44: the fourth stack argument
+
+bs43 left one gap. `otIdType 0` makes the OT the player and ignores `fixedOtId`, so the argument
+at `[sp+12]` was never read — and `otId 0xE5BBDF65` coming back only proved the *save* was read
+(a third independent confirmation of bs01's TID/SID, but not of the argument). bs44 changed
+exactly that one variable, `--create-mon-ot-id-type 1 --create-mon-ot-id 0xE5BBDF65`, so the same
+value had to arrive from the stack instead. It did, and the answer is otherwise identical:
+
+    otId: asked 0xE5BBDF65, got 0xE5BBDF65  OK
+
+All four stack arguments are now proven on hardware. `verify_create_mon.py` on bs44's dump:
+
+    13/13 predictions hold - CreateMon ran, with our eight arguments, on the real cartridge
+
+### Three readings that were not predictions
+
+The fields the payload could not predict are measurements of this console, and bs44's dump gives
+three at no extra cost:
+
+| field | value | what it says |
+| --- | --- | --- |
+| `language` | 3 | `gGameLanguage` is LANGUAGE_FRENCH [global.h:22], read off the console rather than inferred from the game code |
+| `metGame` | 4 | `gGameVersion` is VERSION_FIRE_RED [global.h:11] |
+| `metLocation` | 91 | `GetCurrentRegionMapSectionId()` [overworld.c:1265] — MAPSEC_CERULEAN_CITY, where the player was standing |
+
+That last one is the shape worth keeping: `CreateMon` reads live game state that no link message
+carries, and writes it somewhere we can read it back.
+
+### What is left
+
+**Writing the mon into the party.** `--create-mon-destination` exists and is proven offline; on
+hardware it is a live-save write and needs `--write-unsafe` and a deliberate decision, because the
+party count at `gSaveBlock1Ptr + 0x34` would have to be raised to match or the console would not
+see the new mon.

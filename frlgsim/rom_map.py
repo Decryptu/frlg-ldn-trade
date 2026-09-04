@@ -158,6 +158,23 @@ ZERO_MON_DATA = 0x08041090          # CreateMon's first call
 SET_MON_DATA = 0x08043A78           # SetMonData(mon, field, &value)
 CALCULATE_MON_STATS = 0x08041B78    # CreateMon's last call
 
+# CALLED ON HARDWARE, bs43 and bs44, both first try. The eight-argument call: four in r0..r3 and
+# four at sp+0..sp+12 at the moment of the call, which is where CreateMon's own prologue reads them
+# [bs42's disassembly]. bs43 used otIdType 0 (the OT is the player, so fixedOtId is ignored); bs44
+# changed only that, to otIdType 1 with the same value, so the fourth stack argument had to arrive
+# from the stack instead of from the save. Both answers are byte-identical and 13/13 predicted
+# fields hold [scratchpad/verify_create_mon.py], including the moves the ROM walked out of the
+# level-up learnset and the six stats CalculateMonStats derived from OUR personality's nature.
+
+# Read off the console for the first time in bs44, out of the mon CreateMon built - these are
+# globals no link message carries and no dump had been aimed at.
+GGAME_LANGUAGE = 3                  # LANGUAGE_FRENCH [decomp:include/constants/global.h:22]
+GGAME_VERSION = 4                   # VERSION_FIRE_RED [:11]
+# gSpeciesNames is the FRENCH table, and CreateBoxMon copies from it into the nickname
+# [decomp:src/pokemon.c:1810], so one species a run is readable this way. bs44 read species 59 as
+# ARCANIN - which bs06's party dump had already read by a completely different route.
+SPECIES_NAMES_READ = {59: "ARCANIN"}
+
 # --- read off the console but NOT yet confirmed by disassembling the function itself -------------
 # Named by call count and by the shape of the access, which is weaker evidence than the entries
 # above. Kept apart so nothing downstream mistakes them for measurements.
