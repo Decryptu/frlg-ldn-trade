@@ -59,3 +59,68 @@ def test_it_refuses_a_misaligned_target():
 def test_it_fits_the_ram_script_the_save_actually_has_room_for():
     assert rng_script.MAX_RAM_SCRIPT_SIZE == 995     # sizeof(RamScriptData.script)
     assert len(rng_script.build_seed_script(0xFFFFFFFF)) < rng_script.MAX_RAM_SCRIPT_SIZE
+
+
+# --- the RNG owned: seed and generate in the same frame -------------------------------------------
+
+def test_the_wild_battle_script_is_the_seed_then_the_two_battle_commands():
+    script = rng_script.build_wild_battle_script(0x81F6816D, 132, 50)
+    assert len(script) == 31
+    assert script[:24] == rng_script.build_seed_script(0x81F6816D, sound=None)[:24]
+    assert script[24] == rng_script.SCR_SETWILDBATTLE == 0xB6
+    assert int.from_bytes(script[25:27], "little") == 132       # DITTO
+    assert script[27] == 50                                     # level
+    assert int.from_bytes(script[28:30], "little") == 0         # no held item
+    assert script[30] == rng_script.SCR_DOWILDBATTLE == 0xB7
+
+
+def test_nothing_that_yields_sits_between_the_seed_and_the_generation():
+    """The whole design rests on setptr and setwildbattle running back to back in ONE frame: both
+    return FALSE, so the field engine does not yield between them and no draw can creep in. A
+    playse/waitse in there would break exactly that, silently."""
+    script = rng_script.build_wild_battle_script(0x81F6816D, 132, 50)
+    upto_generation = script[:script.index(bytes([rng_script.SCR_SETWILDBATTLE]))]
+    assert rng_script.SCR_PLAYSE not in upto_generation
+    assert rng_script.SCR_WAITSE not in upto_generation
+    assert rng_script.SCR_END not in upto_generation
+
+
+def test_the_chosen_seed_makes_a_shiny_ditto_for_this_console():
+    from frlgsim import wonder_card_events
+    got = rng_script.predict_wild_mon(wonder_card_events.RNG_DITTO_SEED, 57189, 58811)
+    assert got["shiny"] is True
+    assert got["low_first"]["shiny_value"] == got["high_first"]["shiny_value"] == 3
+    assert got["ivs"] == (31, 23, 27, 18, 30, 30)
+    assert got["iv_total"] == 159
+
+
+def test_shininess_and_ivs_do_not_depend_on_the_half_order_but_nature_does():
+    """Random32 is `Random() | (Random() << 16)` and C does not order the operands, so the half
+    order is the compiler's. It does not put the result at risk: the shiny test XORs both halves
+    together, and the IVs come from the two draws after."""
+    got = rng_script.predict_wild_mon(0x81F6816D, 57189, 58811)
+    assert got["low_first"]["shiny"] == got["high_first"]["shiny"]
+    assert got["low_first"]["personality"] != got["high_first"]["personality"]
+    assert got["low_first"]["nature"] != got["high_first"]["nature"]
+
+
+def test_it_refuses_a_species_or_level_the_operands_cannot_carry():
+    for bad in ((0, 50), (9999, 50), (132, 0), (132, 101)):
+        with pytest.raises(rng_script.RngScriptError):
+            rng_script.build_wild_battle_script(0, *bad)
+
+
+def test_the_gift_carries_that_script_and_binds_it_to_the_pallet_town_man():
+    from frlgsim import gift_registry, wonder_card_events
+    assert wonder_card_events.GIFT_RNG_SHINY_DITTO in gift_registry.GIFT_REGISTRY.live_choices
+    mevent = wonder_card_events.build_rng_shiny_ditto_script()
+    inner = rng_script.build_wild_battle_script(
+        wonder_card_events.RNG_DITTO_SEED, wonder_card_events.SPECIES_DITTO,
+        wonder_card_events.RNG_DITTO_LEVEL)
+    assert inner in mevent, "the field script must reach the console verbatim"
+
+
+def test_a_field_script_and_lines_are_not_both_accepted():
+    from frlgsim import wonder_card_events
+    with pytest.raises(ValueError):
+        wonder_card_events.build_mevent_npc_script(lines=("hi",), field_script=b"\x02")

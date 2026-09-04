@@ -117,3 +117,89 @@ def describe_seed_script(script):
         what = " (gRngValue)" if base == rom_map.GRNG_VALUE else ""
         lines.append(f"  => 0x{base:08X}{what} = 0x{word:08X}")
     return lines
+
+
+# --- the RNG owned: seed it and generate the mon in the SAME frame -------------------------------
+# Seeding alone still leaves the player walking, and the overworld turns the RNG ~148 times a second
+# (measured E1->E2, bs52: 18900 turns over 128.0 s), so no human and no network can aim at a
+# particular draw. The fix is not better timing - it is to remove the interval entirely.
+#
+#   bool8 ScrCmd_setwildbattle(struct ScriptContext * ctx)      // opcode 0xB6
+#   {
+#       u16 species = ScriptReadHalfword(ctx);
+#       u8 level = ScriptReadByte(ctx);
+#       u16 item = ScriptReadHalfword(ctx);
+#       CreateScriptedWildMon(species, level, item);
+#   }
+# [decomp:src/scrcmd.c:1935], and CreateScriptedWildMon is
+#   CreateMon(&gEnemyParty[0], species, level, 32, 0, 0, OT_ID_PLAYER_ID, 0);
+# [decomp:src/script_pokemon_util.c:128] - fixedIV 32 is USE_RANDOM_IVS and hasFixedPersonality 0,
+# so the PID and the IVs are rolled RIGHT THERE, in four draws, with NO nature rejection loop (that
+# lives in CreateMonWithNature, which only the real encounter path uses). Species and level are
+# operands we write.
+#
+# WHY THERE IS NO DRIFT, AND IT IS THE WHOLE POINT: `setptr` and `setwildbattle` both return FALSE,
+# and the field engine runs commands in a loop until one returns TRUE. So all four setptrs and the
+# generation happen BACK TO BACK IN ONE FRAME with nothing in between - not a frame boundary, not
+# the per-frame consumer, nothing. The four draws are a pure function of the seed we just wrote.
+#
+# So NOTHING may be put between them that yields. `playse`/`waitse` would; the battle starting is
+# the feedback instead.
+
+SCR_SETWILDBATTLE = 0xB6
+SCR_DOWILDBATTLE = 0xB7
+
+MAX_SPECIES = 411           # the internal table's last entry
+MAX_LEVEL = 100
+
+
+def build_wild_battle_script(seed, species, level, item=0, address=None):
+    """Set gRngValue, then have the ROM roll a wild Pokemon from it and start the battle.
+
+    The four draws that follow the seed are exactly PID-low, PID-high, IV word 1, IV word 2, so the
+    mon is decided in advance - species, level, shininess, nature, ability, gender and all six IVs.
+    Use `frlgsim.lcg.draws(seed, 4)` to say what it will be, and check it rather than trusting it.
+    """
+    address = rom_map.GRNG_VALUE if address is None else int(address)
+    species, level, item = int(species), int(level), int(item)
+    if not 1 <= species <= MAX_SPECIES:
+        raise RngScriptError(f"species is 1..{MAX_SPECIES}, got {species}")
+    if not 1 <= level <= MAX_LEVEL:
+        raise RngScriptError(f"level is 1..{MAX_LEVEL}, got {level}")
+    if not 0 <= item <= 0xFFFF:
+        raise RngScriptError(f"item is a u16, got {item}")
+    body = build_seed_script(seed, address=address, sound=None)
+    if body[-1] != SCR_END:
+        raise RngScriptError("the seed script must end with end (0x02)")
+    body = body[:-1]                                    # the battle replaces the end
+    body += (bytes([SCR_SETWILDBATTLE]) + species.to_bytes(2, "little")
+             + bytes([level]) + item.to_bytes(2, "little"))
+    body += bytes([SCR_DOWILDBATTLE])                   # this one yields, and stops the script
+    if len(body) > MAX_RAM_SCRIPT_SIZE:
+        raise RngScriptError(f"{len(body)} bytes will not fit in {MAX_RAM_SCRIPT_SIZE}")
+    return body
+
+
+def predict_wild_mon(seed, tid, sid):
+    """-> {personality, ivs, shiny, ...}: what build_wild_battle_script's four draws will make.
+
+    BOTH personality half-orders are reported, because `Random32()` is `Random() | (Random() << 16)`
+    and C does not order the operands of `|` - the three mons bs51/bs52 recovered all read
+    low-half-first, but that was CreateMonWithNature's call site, and this is CreateBoxMon's.
+    It matters less than it looks: the shiny test is TID ^ SID ^ PIDhigh ^ PIDlow, which is
+    SYMMETRIC under swapping the halves, and the IVs come from the two draws after. So shininess
+    and every IV are the same either way, and only the nature, ability and gender differ.
+    """
+    from . import lcg
+    (first, second, third, fourth), _ = lcg.draws(int(seed), 4)
+    ivs = (third & 31, (third >> 5) & 31, (third >> 10) & 31,
+           fourth & 31, (fourth >> 5) & 31, (fourth >> 10) & 31)
+    out = {"ivs": ivs, "iv_total": sum(ivs), "draws": (first, second, third, fourth)}
+    for name, personality in (("low_first", first | (second << 16)),
+                              ("high_first", second | (first << 16))):
+        value = (int(tid) ^ int(sid) ^ (personality >> 16) ^ (personality & 0xFFFF))
+        out[name] = {"personality": personality, "shiny_value": value, "shiny": value < 8,
+                     "nature": personality % 25, "ability_num": personality & 1}
+    out["shiny"] = out["low_first"]["shiny"]
+    assert out["shiny"] == out["high_first"]["shiny"], "the shiny test is symmetric in the halves"
+    return out

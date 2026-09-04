@@ -27,6 +27,7 @@ from .gift_composer import (
 )
 import dataclasses
 
+from . import rng_script
 from . import ereader_trainer, mevent_pokemon, mystery_event, stamp_rally, wonder_card
 
 
@@ -603,7 +604,8 @@ MEVENT_NPC_STATUS = 55          # our marker; initramscript leaves the status un
 
 
 def build_mevent_npc_script(*, map_group=MAP_GROUP_PALLET_TOWN, map_num=MAP_NUM_PALLET_TOWN,
-                            object_id=PALLET_TOWN_OBJECT_FAT_MAN, lines=None):
+                            object_id=PALLET_TOWN_OBJECT_FAT_MAN, lines=None,
+                            field_script=None):
     """`initramscript`: bind a field script to ANY map and ANY object event, not just the Mystery
     Gift delivery man.
 
@@ -627,13 +629,16 @@ def build_mevent_npc_script(*, map_group=MAP_GROUP_PALLET_TOWN, map_num=MAP_NUM_
     [decomp:src/mystery_gift.c:186], which only passes for MAP_UNDEFINED / object 0xFF. The card is
     intact in the save; the menu just will not show it, and the next session sees HAS_NO_CARD.
     """
-    lines = lines or (
-        "The MYSTERY EVENT reached me before\n"
-        "it reached you, {PLAYER}.",
-        "Nobody told me what to say, so I am\n"
-        "saying this instead.",
-    )
-    field_script = build_talk_script(lines, slug=GIFT_MEVENT_NPC)
+    if field_script is None:
+        lines = lines or (
+            "The MYSTERY EVENT reached me before\n"
+            "it reached you, {PLAYER}.",
+            "Nobody told me what to say, so I am\n"
+            "saying this instead.",
+        )
+        field_script = build_talk_script(lines, slug=GIFT_MEVENT_NPC)
+    elif lines is not None:
+        raise ValueError("give lines or a field_script, not both")
 
     script = mystery_event.MysteryEventScript()
     # initramscript sets no status of its own, so it would answer 0 whether it ran or not. A marker
@@ -680,11 +685,72 @@ MEVENT_NPC_GIFT = WonderGift(
 )
 
 
+GIFT_RNG_SHINY_DITTO = "rng-shiny-ditto"
+RNG_SHINY_DITTO_FLAG_ID = 1013
+
+SPECIES_DITTO = 132
+RNG_DITTO_LEVEL = 50
+
+# The seed is not a nice round number and could not be: it is the ANSWER to "which gRngValue makes
+# CreateMon's next four draws a shiny Ditto with these IVs", found by walking the LCG orbit with a
+# sliding window over 25 million candidates. For GURVAN's TID 57189 / SID 58811 it gives shiny
+# value 3 (SHINY needs < 8) and IVs 31/23/27/18/30/30 - 159 of 186, with a perfect HP.
+# lcg.draws(seed, 4) recomputes all of it; rng_script.predict_wild_mon states it.
+RNG_DITTO_SEED = 0x81F6816D
+
+
+def build_rng_shiny_ditto_script(seed=RNG_DITTO_SEED, species=SPECIES_DITTO,
+                                 level=RNG_DITTO_LEVEL, **kwargs):
+    """The Mystery Event that installs "talk to this man and fight a Pokemon we chose".
+
+    The field script sets gRngValue and calls setwildbattle in the SAME FRAME, so the four draws
+    that build the mon are a pure function of the seed - no timing, no frame precision, nothing
+    asked of the player but to talk to an NPC. See frlgsim/rng_script.py for why there is no drift.
+    """
+    return build_mevent_npc_script(
+        field_script=rng_script.build_wild_battle_script(seed, species, level), **kwargs)
+
+
+RNG_SHINY_DITTO_GIFT = WonderGift(
+    slug=GIFT_RNG_SHINY_DITTO,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="A rare POKEMON in PALLET TOWN",
+        body=(
+            "Something strange has been seen",
+            "in the south of PALLET TOWN.",
+            "Talk to the man there, and bring",
+            "a POKE BALL.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=RNG_SHINY_DITTO_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "Something strange was seen in\n"
+                "the south of PALLET TOWN."),
+        ),
+    )),
+    completed_message=(
+        "Talk to the man in the south of\n"
+        "PALLET TOWN."),
+    mevent=build_rng_shiny_ditto_script(),
+)
+
+
 __all__ = [
     "CELEBI_GIFT", "DIR_WEST", "GIFT_MEVENT_PROBE", "GIFT_PORYGON_TMS",
     "GIFT_VISITING_TRAINER",
     "GIFT_MEVENT_CELEBI", "MEVENT_CELEBI_GIFT", "MEVENT_CELEBI_FLAG_ID",
     "GIFT_MEVENT_NPC", "MEVENT_NPC_GIFT", "MEVENT_NPC_FLAG_ID",
+    "GIFT_RNG_SHINY_DITTO", "RNG_SHINY_DITTO_GIFT", "RNG_SHINY_DITTO_FLAG_ID",
+    "RNG_DITTO_SEED", "SPECIES_DITTO", "build_rng_shiny_ditto_script",
     "build_mevent_npc_script",
     "MEVENT_PROBE_GIFT", "MEVENT_PROBE_FLAG_ID", "MEVENT_PROBE_STATUS",
     "build_mevent_celebi_script",
