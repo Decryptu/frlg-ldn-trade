@@ -5,7 +5,7 @@ into frlgsim.sim.Sim unchanged; every message in both directions is kept in ``me
 from collections import deque
 
 from . import (barrier as barriermod, block, charmap, ereader_trainer, linkplayer, mg_link,
-               mg_script, rfu)
+               mg_script, rfu, wonder_news)
 from . import mystery_gift as mg
 from .mystery_gift import (MG_LINKID_CLIENT_SCRIPT, MG_LINKID_GAME_DATA, MG_LINKID_GAME_STAT,
                            MG_LINKID_READY_END, MG_LINKID_RESPONSE)
@@ -364,9 +364,20 @@ class MysteryGiftClientEngine:
             self.saved_card = bytes(self.recv_buffer[:332])
             self.info(f"[mg] WONDER CARD SAVED: {describe_wonder_card(self.saved_card)}")
         elif instr == mg_script.CLI_SAVE_NEWS:
-            self.saved_news = bytes(self.recv_buffer[:444])
-            self._pending_send = (MG_LINKID_RESPONSE, (0).to_bytes(4, "little"), 4)
-            self.info("[mg] Wonder News saved")
+            # IsWonderNewsSameAsSaved compares the whole 444-byte struct against what is already
+            # saved [decomp:src/mystery_gift.c:140]; the verdict travels back as MG_LINKID_RESPONSE,
+            # FALSE when the news was taken and TRUE when the console kept what it had
+            # [mystery_gift_client.c:210]. Invalid news is not saved but still answers FALSE.
+            news = bytes(self.recv_buffer[:wonder_news.WONDER_NEWS_SIZE])
+            same = (self.saved_news is not None
+                    and wonder_news.validate(self.saved_news)
+                    and self.saved_news == news)
+            if not same and wonder_news.validate(news):
+                self.saved_news = news
+            self._pending_send = (MG_LINKID_RESPONSE,
+                                  (1 if same else 0).to_bytes(4, "little"), 4)
+            self.info("[mg] Wonder News already held, keeping it" if same
+                      else "[mg] WONDER NEWS SAVED: " + wonder_news.describe(news))
         elif instr == mg_script.CLI_RUN_MEVENT_SCRIPT:
             self.activation_scripts.append(bytes(self.recv_buffer))
             self.info("[mg] mystery-event script received (recorded, not executed)")

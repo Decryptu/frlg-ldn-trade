@@ -3,7 +3,7 @@ a Mystery Event wrapper runs right after an accepted stamp to make its reward el
 
 from dataclasses import dataclass
 
-from . import charmap, ereader_trainer
+from . import charmap, ereader_trainer, wonder_news
 from .mystery_gift import CARD_TYPE_STAMP
 from .wonder_card import (
     SPECIES_CELEBI, SPECIES_CLAYDOL, WONDER_CARD_SIZE, build_wonder_card,
@@ -38,14 +38,31 @@ MON_CANT_GIVE = 2
 
 @dataclass(frozen=True)
 class MysteryGiftDistribution:
-    card: bytes
-    ram_script: bytes
+    card: bytes | None
+    ram_script: bytes | None
     stamp: bytes | None = None
     activation_script: bytes | None = None
     install_activation_script: bytes | None = None
     trainer: bytes | None = None
+    news: bytes | None = None
 
     def __post_init__(self):
+        if self.news is not None:
+            # Wonder News travels alone: it has no flagId, no metadata and no delivery script,
+            # so a news distribution carries neither card nor RAM script.
+            object.__setattr__(self, "news", bytes(self.news))
+            if self.card is not None or self.ram_script is not None:
+                raise ValueError("a Wonder News distribution carries no card or RAM script")
+            if len(self.news) != wonder_news.WONDER_NEWS_SIZE:
+                raise ValueError(
+                    f"Wonder News must be {wonder_news.WONDER_NEWS_SIZE} bytes")
+            if not wonder_news.validate(self.news):
+                raise ValueError("news id 0 fails ValidateWonderNews")
+            if self.stamp is not None or self.trainer is not None:
+                raise ValueError("Wonder News cannot carry a stamp or a visiting trainer")
+            return
+        if self.card is None or self.ram_script is None:
+            raise ValueError("a Mystery Gift distribution needs a card and a RAM script")
         object.__setattr__(self, "card", bytes(self.card))
         object.__setattr__(self, "ram_script", bytes(self.ram_script))
         if len(self.card) != WONDER_CARD_SIZE:
@@ -74,6 +91,10 @@ class MysteryGiftDistribution:
     @property
     def has_trainer(self):
         return self.trainer is not None
+
+    @property
+    def is_news(self):
+        return self.news is not None
 
 
 def build_stamp_rally_card(*, flag_id=STAMP_RALLY_FLAG_ID):

@@ -89,17 +89,14 @@ def build_trade_app_data(profile, host_session_id):
     return inactive, activate_trade_app_data(inactive, host_session_id)
 
 
-def build_union_room_app_data(profile, host_session_id, activity=None, trade_board=None):
-    """Advertisement for the Union Room (the middle NPC on Pokemon Center 2F).
+def _build_activity_app_data(profile, host_session_id, activity, trade_board=None):
+    """The advertisement every "we are a FRLG host doing X" beacon shares; only `activity` differs.
 
-    The trade and Wonder Card beacons are invisible there: IsPartnerActivityAcceptable drops every
-    activity but the ones the room's accept lists carry [src/data/union_room.h:398-453]. The default
-    is the bare IN_UNION_ROOM a console standing in the room accepts and connects to (u03).
+    The console's listen task keeps a candidate only if IsPartnerActivityAcceptable matches the
+    activity against the accept list of the link group it is searching in
+    [src/data/union_room.h:398-453; union_room.c:1590], so this byte alone decides which of the
+    console's menus we are visible in.
     """
-    if activity is None:
-        # IN_UNION_ROOM | ACTIVITY_NONE: IsPartnerActivityIncompatible [link_rfu_2.c:2933] requires
-        # partner->activity == IN_UNION_ROOM exactly, so the trade intent must NOT be advertised.
-        activity = beacon.IN_UNION_ROOM
     app_data = bytearray(beacon.mutate_beacon(
         CAPTURED_TRADE_BEACON, name=profile.discovery_name,
         trainer_id=profile.discovery_trainer_id))
@@ -130,30 +127,38 @@ def build_union_room_app_data(profile, host_session_id, activity=None, trade_boa
     return inactive, activate_trade_app_data(inactive, host_session_id)
 
 
+def build_union_room_app_data(profile, host_session_id, activity=None, trade_board=None):
+    """Advertisement for the Union Room (the middle NPC on Pokemon Center 2F).
+
+    The trade and Wonder Card beacons are invisible there: IsPartnerActivityAcceptable drops every
+    activity but the ones the room's accept lists carry [src/data/union_room.h:398-453]. The default
+    is the bare IN_UNION_ROOM a console standing in the room accepts and connects to (u03).
+    """
+    if activity is None:
+        # IN_UNION_ROOM | ACTIVITY_NONE: IsPartnerActivityIncompatible [link_rfu_2.c:2933] requires
+        # partner->activity == IN_UNION_ROOM exactly, so the trade intent must NOT be advertised.
+        activity = beacon.IN_UNION_ROOM
+    return _build_activity_app_data(profile, host_session_id, activity,
+                                    trade_board=trade_board)
+
+
 def build_wonder_card_app_data(profile, host_session_id):
-    app_data = bytearray(beacon.mutate_beacon(
-        CAPTURED_TRADE_BEACON, name=profile.discovery_name,
-        trainer_id=profile.discovery_trainer_id))
-    pia_name = profile.session_name.encode("utf-8")[:64]
-    app_data[0x17:0x1B] = len(pia_name).to_bytes(4, "big")
-    app_data[0x1B] = beacon.PIA_NAME_UTF8
-    app_data[0x1C:beacon.PIA_HDR] = b"\x00" * 64
-    app_data[0x1C:0x1C + len(pia_name)] = pia_name
+    """Mystery Gift -> Wonder Cards -> Friend (sAcceptedActivityIds_WonderCard)."""
+    return _build_activity_app_data(profile, host_session_id,
+                                    beacon.ACTIVITY_WONDER_CARD)
 
-    record = bytearray(transport._b85_decode(
-        app_data[beacon.PIA_HDR:])[:beacon.RECORD_SIZE]).ljust(
-            beacon.RECORD_SIZE, b"\x00")
-    record[10:12] = bytes(host_session_id)[:2].ljust(2, b"\x00")
-    _apply_profile_to_search_word(record, profile)
-    offset = beacon.SEARCH_WORD_OFFSET
-    search_word = int.from_bytes(record[offset:offset + 2], "little")
-    search_word &= ~(beacon.SEARCH_ACTIVITY_MASK | beacon.SEARCH_HAS_CARD
-                     | beacon.SEARCH_STARTED_ACTIVITY)
-    search_word |= beacon.ACTIVITY_WONDER_CARD
-    record[offset:offset + 2] = search_word.to_bytes(2, "little")
 
-    inactive = bytes(app_data[:beacon.PIA_HDR]) + beacon.b85_encode(bytes(record))
-    return inactive, activate_trade_app_data(inactive, host_session_id)
+def build_wonder_news_app_data(profile, host_session_id):
+    """Mystery Gift -> Wonder News -> Friend.
+
+    The Friend listen task filters on exactly ACTIVITY_WONDER_NEWS
+    [sAcceptedActivityIds_WonderNews, src/data/union_room.h:406], so a Wonder Card beacon is
+    invisible on this screen and vice versa. The compatibility hasNews bit is NOT consulted here:
+    HasWonderCardOrNewsByLinkGroup [union_room.c:3777] is only reached from
+    Task_ListenForWonderDistributor, the Wireless path.
+    """
+    return _build_activity_app_data(profile, host_session_id,
+                                    beacon.ACTIVITY_WONDER_NEWS)
 
 
 def activate_trade_app_data(app_data, host_session_id):

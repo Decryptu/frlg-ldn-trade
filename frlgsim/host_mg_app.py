@@ -2,9 +2,9 @@
 and overrides only the build/startup-log/progress seams."""
 
 from . import (charmap, config as configmod, gift_registry, host_session,
-               ldntrace, mystery_gift_attempts)
+               ldntrace, mystery_gift_attempts, wonder_news)
 from .host_app import HostApplication
-from .host_beacon import build_wonder_card_app_data
+from .host_beacon import build_wonder_card_app_data, build_wonder_news_app_data
 from .host_mystery_gift import (
     MG_CLOSE, MG_DONE, MG_GIFT, MG_START, HostMysteryGiftEngine,
     MysteryGiftTiming,
@@ -12,14 +12,20 @@ from .host_mystery_gift import (
 from .host_pia import HostPeerProtocol
 from .linkplayer import HOST_NAME_PAD
 from .mg_server import (
-    SERVER_RESULT_NAMES, SVR_MSG_CARD_SENT, SVR_MSG_GIFT_SENT_1, SVR_MSG_STAMP_SENT)
+    SERVER_RESULT_NAMES, SVR_MSG_CARD_SENT, SVR_MSG_GIFT_SENT_1, SVR_MSG_NEWS_SENT,
+    SVR_MSG_STAMP_SENT)
 
 MysteryGiftPayload = configmod.MysteryGiftPayload
 MysteryGiftDistribution = configmod.MysteryGiftDistribution
 MysteryGiftRunConfig = configmod.MysteryGiftRunConfig
+WonderNewsPayload = configmod.WonderNewsPayload
 
 
 class MysteryGiftHostApplication(HostApplication):
+    # The server results that mean the console actually kept something.
+    SUCCESS_RESULTS = (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT, SVR_MSG_GIFT_SENT_1)
+    ACTIVITY_NOUN = "Wonder Card"
+
     def __init__(self, config, *, distribution=None, **kwargs):
         super().__init__(config, **kwargs)
         self.card = None
@@ -58,8 +64,7 @@ class MysteryGiftHostApplication(HostApplication):
             distribution=self.distribution, link_player=link_player,
             trust_pia=self.config.trust_pia, timing=timing, log=self.log)
         self.session = host_session.HostSession(engine=engine, log=self.log)
-        inactive, active = build_wonder_card_app_data(
-            self.profile, self.session.rfu.host_session_id)
+        inactive, active = self._build_app_data()
         self.tracer = (ldntrace.Tracer(self.ldn.capture_path, log=self.log)
                        if self.ldn.capture_path else None)
         self.network = self.transport_factory(
@@ -79,6 +84,11 @@ class MysteryGiftHostApplication(HostApplication):
             tracer=self.tracer, log=self.log)
         self._last_state = self.session.activity.state
         return link_player
+
+    def _build_app_data(self):
+        """Which of the console's menus this host is visible in; the activity byte is the only difference."""
+        return build_wonder_card_app_data(
+            self.profile, self.session.rfu.host_session_id)
 
     def _log_identity(self, link_player):
         wire = link_player.pack(name_pad=HOST_NAME_PAD)
@@ -138,7 +148,7 @@ class MysteryGiftHostApplication(HostApplication):
             self._last_state = state
             message = {
                 MG_START: "LinkPlayer exchange complete; waiting for the console's gift client.",
-                MG_GIFT: "Sending the Wonder Card conversation.",
+                MG_GIFT: f"Sending the {self.ACTIVITY_NOUN} conversation.",
                 MG_CLOSE: "Gift conversation finished; closing the RFU link.",
                 MG_DONE: "Mystery Gift session complete.",
             }.get(state)
@@ -149,6 +159,15 @@ class MysteryGiftHostApplication(HostApplication):
             self.info("Result: " + SERVER_RESULT_NAMES.get(
                 engine.result, f"code {engine.result}"))
 
+    def _success_message(self, result):
+        if result == SVR_MSG_GIFT_SENT_1:
+            return ("Visiting trainer delivered. On the Switch, go to SEVEN ISLAND and talk to "
+                    "the old woman in the house in town to battle it; the Wonder Card's own "
+                    "message is with the delivery man in any Pokemon Center.")
+        noun = "Stamp" if result == SVR_MSG_STAMP_SENT else "Wonder Card"
+        return (f"{noun} delivered. On the Switch, talk to the delivery man "
+                "on the second floor of any Pokemon Center to receive the gift.")
+
     def _save_received(self):
         """Nothing to save: the gift travels outward only."""
 
@@ -156,20 +175,11 @@ class MysteryGiftHostApplication(HostApplication):
         joined = super().run()
         engine = self.session.activity if self.session is not None else None
         self.delivery_succeeded = bool(
-            engine is not None
-            and engine.result in (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT,
-                                  SVR_MSG_GIFT_SENT_1))
+            engine is not None and engine.result in self.SUCCESS_RESULTS)
         if self.delivery_succeeded:
-            if engine.result == SVR_MSG_GIFT_SENT_1:
-                print("Visiting trainer delivered. On the Switch, go to SEVEN ISLAND and talk to "
-                      "the old woman in the house in town to battle it; the Wonder Card's own "
-                      "message is with the delivery man in any Pokemon Center.")
-            else:
-                noun = "Stamp" if engine.result == SVR_MSG_STAMP_SENT else "Wonder Card"
-                print(f"{noun} delivered. On the Switch, talk to the delivery man "
-                      "on the second floor of any Pokemon Center to receive the gift.")
+            print(self._success_message(engine.result))
         elif engine is not None and engine.result is not None:
-            print("Session finished without delivering a card: "
+            print("Session finished without delivering anything: "
                   + SERVER_RESULT_NAMES.get(engine.result, f"code {engine.result}"))
         if joined and self.config.attempt_log_dir:
             try:
@@ -181,3 +191,47 @@ class MysteryGiftHostApplication(HostApplication):
             except OSError as exc:
                 self.info(f"Attempt ledger write failed: {exc}")
         return joined
+
+
+class WonderNewsHostApplication(MysteryGiftHostApplication):
+    """The Wonder News half of the Mystery Gift menu.
+
+    Everything below the server script is the Wonder Card host: the same LDN network, the same RFU
+    parent, the same MysteryGiftLink framing. Only two things change - the advertisement's activity
+    byte (22, or the console's News screen never lists us) and the server script, which sends 444
+    bytes of news and then reads the console's own verdict on whether it kept them.
+    """
+
+    SUCCESS_RESULTS = (SVR_MSG_NEWS_SENT,)
+    ACTIVITY_NOUN = "Wonder News"
+
+    def _build_app_data(self):
+        return build_wonder_news_app_data(
+            self.profile, self.session.rfu.host_session_id)
+
+    def _log_identity(self, link_player):
+        wire = link_player.pack(name_pad=HOST_NAME_PAD)
+        payload = self.config.payload
+        news = self.distribution.news
+        self.info(f"Host identity: OT={self.profile.name!r}, "
+                  f"TID=0x{self.profile.tid:04x}, SID=0x{self.profile.sid:04x}")
+        self.info("Host LinkPlayer display identity: "
+                  f"name_bytes={wire[8:16].hex()} "
+                  f"language={int.from_bytes(wire[26:28], 'little')}")
+        self.info(f"RFU parent identity: raw={self.session.rfu.host_session_id.hex()} "
+                  f"u16=0x{int.from_bytes(self.session.rfu.host_session_id, 'little'):04x}")
+        self.info(f"News: {payload.news!r}; {payload.spec.description}; "
+                  + wonder_news.describe(news) + f", {len(news)}B")
+        self.info("A console that already holds these exact 444 bytes answers "
+                  "MG_LINKID_RESPONSE with TRUE and keeps what it has; pass --news-id to make the "
+                  "same text new again.")
+        self.info("Advertising ACTIVITY_WONDER_NEWS. On the Switch choose "
+                  "Mystery Gift -> Wonder News -> Friend.")
+
+    def _hosting_instructions(self):
+        return ("Hosting Wonder News. On the Switch choose "
+                "Mystery Gift -> Wonder News -> Friend.")
+
+    def _success_message(self, result):
+        return ("Wonder News delivered. On the Switch it is under Mystery Gift -> Wonder News; "
+                "the man in the house in CERULEAN CITY hands over a BERRY for it.")

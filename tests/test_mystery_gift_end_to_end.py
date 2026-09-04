@@ -41,7 +41,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from frlgsim import (  # noqa: E402
     beacon, gbaframe, host_mystery_gift, linkplayer, mg_script, mg_server, ni,
-    mg_link, reliable, rfu, wonder_card,
+    mg_link, reliable, rfu, stamp_rally, wonder_card, wonder_news,
 )
 from frlgsim import mystery_gift as mg  # noqa: E402
 from frlgsim.host_session import HostSession  # noqa: E402
@@ -464,6 +464,30 @@ def test_legendary_beast_cutscene_reaches_the_console_over_the_impaired_stack():
     assert run.engine.result == mg_server.SVR_MSG_CARD_SENT
     assert run.console.saved_card == payload[0]
     assert run.console.saved_ram_script[:len(payload[1])] == payload[1]
+
+
+def test_wonder_news_reaches_the_console_over_the_impaired_stack():
+    """The News path puts a 444-byte message and a console-authored answer on the same radio.
+
+    A Wonder Card is 332 bytes: one header block plus two fragments. News is 444, so it is one
+    fragment longer, and unlike the card the console then has to get a MG_LINKID_RESPONSE back to
+    us before the session can end. Both directions have to survive the same impairments before a
+    hardware run can attribute a stall to anything else.
+    """
+    news = wonder_news.BERRY_NEWS.build()
+    distribution = stamp_rally.MysteryGiftDistribution(None, None, news=news)
+    run = _run_full_stack(payload=distribution)
+
+    assert run.console.result == mg_script.CLI_MSG_NEWS_RECEIVED
+    assert run.engine.result == mg_server.SVR_MSG_NEWS_SENT and run.engine.gift_sent
+    assert run.console.saved_news == news
+    assert run.console.saved_card is None and run.console.saved_ram_script is None
+    assert [ident for ident, _payload in run.console.messages_received] == [
+        mg.MG_LINKID_CLIENT_SCRIPT,     # sClientScript_SendGameData
+        mg.MG_LINKID_CLIENT_SCRIPT,     # sClientScript_SaveNews
+        mg.MG_LINKID_NEWS,
+        mg.MG_LINKID_CLIENT_SCRIPT,     # sClientScript_NewsReceived
+    ]
 
 
 def test_the_shared_link_bring_up_completes_below_the_gift():

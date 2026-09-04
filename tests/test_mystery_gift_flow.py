@@ -23,7 +23,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from frlgsim import (  # noqa: E402
     block, charmap, ereader_trainer, host_mystery_gift, linkplayer, mg_link, mg_script,
-    mg_server, rfu, trade, wonder_card,
+    mg_server, rfu, trade, wonder_card, wonder_news,
 )
 from frlgsim import mystery_gift as mg  # noqa: E402
 
@@ -267,7 +267,8 @@ class ConsoleClientModel:
     RECV_READY, RECV_RECEIVING, RECV_FINISHED = 0, 1, 2
 
     def __init__(self, *, flag_id=0, max_stamps=0, metadata_icon=0,
-                 stamps=(), toss_answer=0, echo_delay=4, consume_latency=2):
+                 stamps=(), toss_answer=0, echo_delay=4, consume_latency=2,
+                 saved_news=None):
         self.lp = linkplayer.LinkPlayer(name="ASH", version=linkplayer.VERSION_FIRE_RED,
                                         player_id=1)
         self.toss_answer = toss_answer
@@ -316,6 +317,7 @@ class ConsoleClientModel:
         self.saved_card = None
         self.saved_ram_script = None
         self.saved_trainer = None
+        self.saved_news = None if saved_news is None else bytes(saved_news)
         self.dynamic_msg = None
         self.result = None
         self.messages_received = []
@@ -474,6 +476,19 @@ class ConsoleClientModel:
             for var in range(0x40B6, 0x40BD):
                 self.vars[var] = 0
             self.flags.discard(0x3D8)
+        elif instr == mg_script.CLI_SAVE_NEWS:
+            # IsWonderNewsSameAsSaved is a byte compare of the whole struct against the saved news
+            # [mystery_gift.c:140]; SaveWonderNews refuses id 0 [ValidateWonderNews, :113]. Either
+            # way the console answers with MG_LINKID_RESPONSE: FALSE saved, TRUE kept what it had
+            # [mystery_gift_client.c:210].
+            news = bytes(self.recv_buffer[:wonder_news.WONDER_NEWS_SIZE])
+            same = (self.saved_news is not None
+                    and wonder_news.validate(self.saved_news)
+                    and self.saved_news == news)
+            if not same and wonder_news.validate(news):
+                self.saved_news = news
+            self._pending_send = (mg.MG_LINKID_RESPONSE,
+                                  (1 if same else 0).to_bytes(4, "little"), 4)
         elif instr == mg_script.CLI_SAVE_RAM_SCRIPT:
             # InitRamScript_NoObjectEvent clamps to script[995] [src/script.c:577].
             self.saved_ram_script = bytes(self.recv_buffer[:995])

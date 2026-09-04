@@ -42,6 +42,9 @@ The code, the install instructions and the CLI reference live in the
   reward sequence.
 - [Porygon TM gift](porygon_tm_gift.md) — a composed event delivering TM29 and TM46 with a
   Clefairy delivery scene.
+- [Wonder News](wonder_news.md) — the other column of the console's Mystery Gift menu: the 444-byte
+  struct, the activity byte that makes the host visible on that screen, and the one gift path where
+  the console answers back.
 - [What the gift link can still carry](mystery_gift_untried.md) — the whole capability surface of
   the Mystery Gift session: what has been sent, what is closed with evidence, and what is left.
 

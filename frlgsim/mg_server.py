@@ -2,10 +2,10 @@
 run() advances until it blocks and publishes ``action`` as ("send", ident, payload, size), ("recv", ident)
 or ("done", server_msg_id); the caller acknowledges with on_sent()/on_received()."""
 
-from . import ereader_trainer, mg_script
+from . import ereader_trainer, mg_script, wonder_news
 from .mystery_gift import (
     MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT, MG_LINKID_DYNAMIC_MSG,
-    MG_LINKID_EREADER_TRAINER, MG_LINKID_GAME_DATA, MG_LINKID_RAM_SCRIPT,
+    MG_LINKID_EREADER_TRAINER, MG_LINKID_GAME_DATA, MG_LINKID_NEWS, MG_LINKID_RAM_SCRIPT,
     MG_LINKID_READY_END, MG_LINKID_RESPONSE, MG_LINKID_STAMP,
 )
 from .wonder_card import WONDER_CARD_SIZE
@@ -21,6 +21,7 @@ SVR_CHECK_GAME_DATA = "SVR_CHECK_GAME_DATA"
 SVR_CHECK_EXISTING_CARD = "SVR_CHECK_EXISTING_CARD"
 SVR_READ_RESPONSE = "SVR_READ_RESPONSE"
 SVR_LOAD_CARD = "SVR_LOAD_CARD"
+SVR_LOAD_NEWS = "SVR_LOAD_NEWS"
 SVR_LOAD_RAM_SCRIPT = "SVR_LOAD_RAM_SCRIPT"
 SVR_LOAD_CLIENT_SCRIPT = "SVR_LOAD_CLIENT_SCRIPT"
 SVR_LOAD_MSG = "SVR_LOAD_MSG"
@@ -48,6 +49,8 @@ SVR_MSG_GIFT_SENT_1 = 13
 SERVER_RESULT_NAMES = {
     SVR_MSG_NOTHING_SENT: "nothing sent",
     SVR_MSG_CARD_SENT: "Wonder Card sent",
+    SVR_MSG_NEWS_SENT: "Wonder News sent",
+    SVR_MSG_HAS_NEWS: "the console already had this news",
     SVR_MSG_STAMP_SENT: "stamp sent",
     SVR_MSG_HAS_CARD: "the console already had this card",
     SVR_MSG_HAS_STAMP: "the console already had this stamp",
@@ -92,6 +95,43 @@ _SCRIPT_CLIENT_CANCELED = (
     (SVR_SEND,),
     (SVR_RECV, MG_LINKID_READY_END),
     (SVR_RETURN, SVR_MSG_CLIENT_CANCELED),
+)
+
+# sServerScript_HasNews [decomp:src/mystery_gift_scripts.c:119]
+_SCRIPT_HAS_NEWS = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_HAD_NEWS),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_HAS_NEWS),
+)
+
+# sServerScript_SendNews [decomp:src/mystery_gift_scripts.c:126]. The response is the console's own
+# verdict, not a player prompt: TRUE means it kept what it already had, so only FALSE continues to the
+# success script. There is no toss prompt and no flagId compare anywhere on the News path.
+_SCRIPT_SEND_NEWS = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SAVE_NEWS),
+    (SVR_SEND,),
+    (SVR_LOAD_NEWS,),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_RESPONSE),
+    (SVR_READ_RESPONSE,),
+    (SVR_GOTO_IF_EQ, True, _SCRIPT_HAS_NEWS),
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_NEWS_RECEIVED),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_NEWS_SENT),
+)
+
+# gMysteryGiftServerScript_SendWonderNews [decomp:src/mystery_gift_scripts.c:174] minus its leading
+# SVR_COPY_SAVED_NEWS: the news comes from configuration, not from a save block we do not have.
+SCRIPT_SEND_WONDER_NEWS = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_GAME_DATA),
+    (SVR_COPY_GAME_DATA,),
+    (SVR_CHECK_GAME_DATA,),
+    (SVR_GOTO_IF_EQ, False, _SCRIPT_CANT_SEND),
+    (SVR_GOTO, _SCRIPT_SEND_NEWS),
 )
 
 # sServerScript_SendCard [decomp:src/mystery_gift_scripts.c:140]
@@ -257,18 +297,35 @@ class MysteryGiftServer:
     # [decomp:src/script.c:578]; a longer delivery script is truncated mid-bytecode.
     MAX_RAM_SCRIPT_SIZE = 995
 
-    def __init__(self, card, ram_script, *, stamp=None, activation_script=None,
-                 install_activation_script=None, trainer=None, script=None,
-                 log=lambda *a: None):
-        self.card = bytes(card)
-        self.ram_script = bytes(ram_script)
-        if len(self.ram_script) > self.MAX_RAM_SCRIPT_SIZE:
+    def __init__(self, card=None, ram_script=None, *, news=None, stamp=None,
+                 activation_script=None, install_activation_script=None, trainer=None,
+                 script=None, log=lambda *a: None):
+        self.news = None if news is None else bytes(news)
+        if self.news is not None:
+            # Wonder News is a session of its own: no card, no flagId, no delivery script.
+            if card is not None or ram_script is not None:
+                raise MysteryGiftServerError(
+                    "a Wonder News session carries no Wonder Card and no RAM script")
+            if len(self.news) != wonder_news.WONDER_NEWS_SIZE:
+                raise MysteryGiftServerError(
+                    f"Wonder News must be exactly {wonder_news.WONDER_NEWS_SIZE} bytes, "
+                    f"got {len(self.news)}")
+            if not wonder_news.validate(self.news):
+                raise MysteryGiftServerError(
+                    "news id 0 fails ValidateWonderNews; the console would keep nothing")
+        elif card is None or ram_script is None:
             raise MysteryGiftServerError(
-                f"delivery RAM script is {len(self.ram_script)} bytes; the console "
-                f"only saves the first {self.MAX_RAM_SCRIPT_SIZE}")
-        if len(self.card) != WONDER_CARD_SIZE:
-            raise MysteryGiftServerError(
-                f"Wonder Card must be exactly {WONDER_CARD_SIZE} bytes, got {len(self.card)}")
+                "a Mystery Gift session needs either a Wonder Card and RAM script, or news")
+        self.card = None if card is None else bytes(card)
+        self.ram_script = None if ram_script is None else bytes(ram_script)
+        if self.news is None:
+            if len(self.ram_script) > self.MAX_RAM_SCRIPT_SIZE:
+                raise MysteryGiftServerError(
+                    f"delivery RAM script is {len(self.ram_script)} bytes; the console "
+                    f"only saves the first {self.MAX_RAM_SCRIPT_SIZE}")
+            if len(self.card) != WONDER_CARD_SIZE:
+                raise MysteryGiftServerError(
+                    f"Wonder Card must be exactly {WONDER_CARD_SIZE} bytes, got {len(self.card)}")
         self.stamp = None if stamp is None else bytes(stamp)
         self.activation_script = (None if activation_script is None
                                   else bytes(activation_script))
@@ -295,12 +352,18 @@ class MysteryGiftServer:
             if self.stamp is not None:
                 raise MysteryGiftServerError(
                     "a stamp rally and a visiting trainer cannot share one session")
+        if self.news is not None and (self.stamp is not None or self.trainer is not None):
+            raise MysteryGiftServerError(
+                "Wonder News cannot share a session with a stamp rally or a visiting trainer")
         self.is_stamp_distribution = self.stamp is not None
         self.is_trainer_distribution = self.trainer is not None
+        self.is_news_distribution = self.news is not None
         self.log = log
         self.info = getattr(log, "info", log)
         if script is not None:
             self.script = script
+        elif self.is_news_distribution:
+            self.script = SCRIPT_SEND_WONDER_NEWS
         elif self.is_stamp_distribution:
             self.script = SCRIPT_SEND_STAMP_EVENT
         elif self.is_trainer_distribution:
@@ -325,6 +388,8 @@ class MysteryGiftServer:
 
     @property
     def card_flag_id(self):
+        if self.card is None:
+            raise MysteryGiftServerError("this session carries no Wonder Card")
         return int.from_bytes(self.card[0:2], "little")
 
     def run(self):
@@ -446,6 +511,9 @@ class MysteryGiftServer:
 
     def _do_svr_load_client_script(self, script):
         self._loaded = (MG_LINKID_CLIENT_SCRIPT, script, len(script))
+
+    def _do_svr_load_news(self):
+        self._loaded = (MG_LINKID_NEWS, self.news, len(self.news))
 
     def _do_svr_load_card(self):
         self._loaded = (MG_LINKID_CARD, self.card, len(self.card))

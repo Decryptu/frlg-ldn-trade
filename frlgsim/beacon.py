@@ -14,6 +14,7 @@ RFU_SERIAL_GAME = 0x0002
 ACTIVITY_TRADE = 4
 ACTIVITY_SEARCH = 12
 ACTIVITY_WONDER_CARD = 21
+ACTIVITY_WONDER_NEWS = 22
 # A console standing in the Union Room advertises ACTIVITY_SEARCH and its search accepts only
 # ACTIVITY_SEARCH back (sAcceptedActivityIds_Init, LINK_GROUP_UNION_ROOM_INIT; union_room.c sets it
 # with SetHostRfuGameData(ACTIVITY_SEARCH, 0, FALSE)). Once players are in the room the resume search

@@ -3,6 +3,12 @@
 from Mystery Gift -> Wonder Cards -> Friend and collects the gift from the delivery man in any Pokemon Center.
 
     sudo -E ./.venv/bin/python -u frlgmg_host.py --live
+
+With --news the same host serves the other half of the console's Mystery Gift menu instead: the
+console picks us from Mystery Gift -> Wonder News -> Friend and the man in the house in CERULEAN CITY
+hands over a BERRY for what it read.
+
+    sudo -E ./.venv/bin/python -u frlgmg_host.py --live --news
 """
 
 import argparse
@@ -18,8 +24,9 @@ if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
 from frlgsim import (config as configmod, gift_artifact, gift_registry, host_cli,
-                     trade_runtime)  # noqa: E402
-from frlgsim.host_mg_app import MysteryGiftHostApplication  # noqa: E402
+                     trade_runtime, wonder_news)  # noqa: E402
+from frlgsim.host_mg_app import (  # noqa: E402
+    MysteryGiftHostApplication, WonderNewsHostApplication)
 from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
 
 HOST_GIFT_CHOICES = gift_registry.GIFT_REGISTRY.live_choices
@@ -50,10 +57,21 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         description=__doc__, formatter_class=argparse.RawTextHelpFormatter)
     if file_config is None:
         file_config = configmod.load_project_host_file_config()
-    parser.add_argument("--gift", choices=gift_registry.GIFT_REGISTRY.live_choices,
-                        default=GIFT_BEAST_CUTSCENE,
-                        help=gift_registry.GIFT_REGISTRY.format_live_gift_help())
+    payload_group = parser.add_mutually_exclusive_group()
+    payload_group.add_argument(
+        "--gift", choices=gift_registry.GIFT_REGISTRY.live_choices,
+        default=GIFT_BEAST_CUTSCENE,
+        help=gift_registry.GIFT_REGISTRY.format_live_gift_help())
+    payload_group.add_argument(
+        "--news", nargs="?", const=wonder_news.DEFAULT_NEWS, default=None,
+        choices=wonder_news.news_choices(), metavar="NAME",
+        help=wonder_news.format_news_help())
     gift_registry.add_flag_id_argument(parser)
+    parser.add_argument(
+        "--news-id", type=int, default=None, metavar="ID",
+        help=("override the news id (1..65535). A console keeps news only when it differs from "
+              "what it already holds [IsWonderNewsSameAsSaved], so bump this to re-send the same "
+              "text to the same console"))
     parser.add_argument(
         "--client-ready-idle-frames", type=_client_ready_idle_frames,
         default=None, metavar="N",
@@ -108,9 +126,16 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
 def build_run_config(parser, args):
     profile, ldn, role = host_cli.build_host_config(parser, args)
     try:
-        flag_id = gift_registry.resolve_flag_id(args)
-        payload = configmod.MysteryGiftPayload(
-            gift=args.gift, flag_id=flag_id)
+        if args.news is not None:
+            if getattr(args, "_flag_id_explicit", False):
+                parser.error("--flag-id belongs to a Wonder Card; Wonder News has no flagId")
+            payload = configmod.WonderNewsPayload(
+                news=args.news, news_id=args.news_id)
+        else:
+            if args.news_id is not None:
+                parser.error("--news-id is only meaningful with --news")
+            payload = configmod.MysteryGiftPayload(
+                gift=args.gift, flag_id=gift_registry.resolve_flag_id(args))
         return configmod.MysteryGiftRunConfig(
             profile=profile, ldn=ldn, role=role,
             payload=payload, trust_pia=args.trust_pia,
@@ -143,6 +168,8 @@ def main(argv=None):
         parser.error("hosting only supports live mode; omit --no-live")
     config = build_run_config(parser, args)
     distribution = None
+    if args.make_artifact and args.news is not None:
+        parser.error("--make-artifact disassembles a delivery RAM script; Wonder News has none")
     if args.make_artifact:
         distribution = config.payload.build_distribution()
         definition = gift_registry.GIFT_REGISTRY.entry(args.gift).definition
@@ -155,7 +182,9 @@ def main(argv=None):
         print(f"wrote Mystery Gift artifact: {artifact_path}")
     if os.geteuid() != 0:
         parser.error("live LDN hosting requires root; run with sudo -E")
-    app = MysteryGiftHostApplication(
+    application = (WonderNewsHostApplication if args.news is not None
+                   else MysteryGiftHostApplication)
+    app = application(
         config, distribution=distribution,
         log=trade_runtime.ConsoleLog(args.verbose))
     joined = app.run()

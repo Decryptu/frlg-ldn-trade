@@ -210,6 +210,23 @@ compiler. Porygon displays a Porygon card, makes Clefairy appear three tiles to 
 and delivers TM29 Psychic followed by TM46 Thief. See the [Porygon TM Gift
 guide](docs/porygon_tm_gift.md) for live, export, injection, and test commands.
 
+### Distribute Wonder News
+
+The console's Mystery Gift menu has a second column, and `--news` serves it. Wonder News is 444
+bytes of title and body with no flag ID, no delivery script and no gift attached: the reward is a
+BERRY from the man in the house in Cerulean City. On the Switch choose **Mystery Gift → Wonder News
+→ Friend** — a Wonder Card host is not listed on that screen, and vice versa.
+
+```bash
+sudo -E ./.venv/bin/python -u frlgmg_host.py --news
+sudo -E ./.venv/bin/python -u frlgmg_host.py --news berry --news-id 7
+```
+
+A console keeps news only when it differs from what it already holds, so re-sending the identical
+text is a deliberate no-op; `--news-id N` changes one field and makes the same text land again. See
+[the Wonder News guide](docs/wonder_news.md) for the struct, the advertisement change it needs, and
+the one place where the console answers the host back.
+
 See [the Mystery Gift distributor guide](MYSTERY_GIFT_DISTRIBUTOR.md) for the protocol flow, payload,
 test commands, and why the Switch requires the Friend path rather than Wireless Communication.
 New events can be assembled from validated delivery stages, rewards, messages, sprites, battles,

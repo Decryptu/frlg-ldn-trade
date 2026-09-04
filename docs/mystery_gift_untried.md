@@ -31,6 +31,15 @@ them execute something on the console, and we use one:
   `BattleTowerEReaderTrainer` as ident 26, battled in the house on Seven Island. Detail in the
   protocol notes.
 
+## Built, not yet on hardware
+
+- **Wonder News on the Friend path** (`--news`, session 23) — the whole second column of the
+  console's menu: `ACTIVITY_WONDER_NEWS` in the advertisement, `SCRIPT_SEND_WONDER_NEWS`, and the
+  `MG_LINKID_RESPONSE` the console sends back to say whether it kept the news. Proven offline
+  against both console models (`tests/test_wonder_news.py`, the impaired-radio full stack, and
+  `scratchpad/mg_client_harness.py --news`), including the HasNews branch. Full write-up in
+  [Wonder News](wonder_news.md). Nothing about it has been on the air yet.
+
 ## Closed — do not re-open
 
 - **Mystery Gift → Wonder Cards → Wireless Communication.** Blocked at the serial-number gate: the
@@ -52,24 +61,7 @@ them execute something on the console, and we use one:
 
 ## Open, roughly in order of value
 
-### 1. Wonder News (Friend path)
-
-The console's Mystery Gift menu is two axes — {Wonder Cards, Wonder News} x {Wireless, Friend} — and
-we have only ever served Cards x Friend. News is a 444-byte payload: `id`, `sendType`, `bgType`, a
-40-byte title and ten 40-byte body lines [`struct WonderNews`, `global.h:646`]. Receiving it sets a
-berry reward that the man in `CeruleanCity_House4` hands over: one berry from a Friend
-(`NEWS_REWARD_RECV_SMALL`), four from a non-Friend source — the latter unreachable, see above.
-
-What it needs: the beacon must advertise `ACTIVITY_WONDER_NEWS` (22) rather than 21, because the
-Friend listen task filters on exactly that one id [`sAcceptedActivityIds_WonderNews`,
-`src/data/union_room.h:406`; `IsPartnerActivityAcceptable`, `union_room.c:1590`]. Then a server
-script using `SVR_LOAD_NEWS` against a client script using `CLI_SAVE_NEWS` (9). Note the client
-answers `CLI_SAVE_NEWS` with an `MG_LINKID_RESPONSE` saying whether it kept the news — the card path
-has no equivalent. The `hasNews` advertisement bit is only consulted on the Wireless path
-[`HasWonderCardOrNewsByLinkGroup`, `union_room.c:3777`], but its position in our game-data word is
-not yet identified either way.
-
-### 2. The Mystery Event VM
+### 1. The Mystery Event VM
 
 `CLI_RUN_MEVENT_SCRIPT` runs a bytecode our field scripts cannot reach. Live in FRLG:
 
@@ -86,14 +78,14 @@ not yet identified either way.
 Every script must open with `checkcompat`, whose language and version masks are checked against
 `LANGUAGE_MASK`/`VERSION_MASK` [`mystery_event_script.c:103`], and carry a matching `checksum`/`crc`.
 
-### 3. `CLI_RUN_BUFFER_SCRIPT`
+### 2. `CLI_RUN_BUFFER_SCRIPT`
 
 Arbitrary GBA code, 1024 bytes, called with pointers to both save blocks, returning 1 to continue.
 The console reports `CLI_MSG_BUFFER_SUCCESS` or `CLI_MSG_BUFFER_FAILURE` from our own return value.
 This is the mechanism the Berry Glitch fix distributions used. It needs a GBA toolchain and a
 position-independent entry point; everything else is already in place.
 
-### 4. The questionnaire — an input channel from the player
+### 3. The questionnaire — an input channel from the player
 
 The player enters two Easy Chat words at a Poke Mart questionnaire tile; they are stored in
 `gSaveBlock1Ptr->mysteryGift.questionnaireWords` and travel to us inside `MysteryGiftLinkGameData`,
@@ -104,7 +96,7 @@ TRAINER". Our parser already reads the field (`mg_script.LinkGameData.questionna
 uses it. The same struct also carries the player's Easy Chat profile and their Wonder Card stats
 (`CARD_STAT_BATTLES_WON` / `_LOST` / `_NUM_TRADES` / `_NUM_STAMPS`), all currently ignored.
 
-### 5. Event mons that look like event mons
+### 4. Event mons that look like event mons
 
 The official Surf Pichu script pairs `giveegg` with `setmonmodernfatefulencounter` (opcode `0xCD`),
 `setmonmetlocation` (`0xD2`, with the fateful-encounter constant from the generated
@@ -112,7 +104,7 @@ The official Surf Pichu script pairs `giveegg` with `setmonmodernfatefulencounte
 `giveegg` and `setmonmove` but neither of the first two, so nothing we have ever sent is flagged as
 a fateful encounter. Two opcodes and a composer action.
 
-### 6. The smaller official scripts
+### 5. The smaller official scripts
 
 Also verbatim in `data/mystery_event_msg.s`, none recreated:
 

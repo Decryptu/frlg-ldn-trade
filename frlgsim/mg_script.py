@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from . import charmap
 from .mystery_gift import (
     GAME_DATA_VALID_VAR, MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT,
-    MG_LINKID_DYNAMIC_MSG, MG_LINKID_EREADER_TRAINER, MG_LINKID_RAM_SCRIPT, MG_LINKID_STAMP,
-    VERSION_CODE_FIRERED, VERSION_CODE_LEAFGREEN,
+    MG_LINKID_DYNAMIC_MSG, MG_LINKID_EREADER_TRAINER, MG_LINKID_NEWS, MG_LINKID_RAM_SCRIPT,
+    MG_LINKID_STAMP, VERSION_CODE_FIRERED, VERSION_CODE_LEAFGREEN,
 )
 
 # [decomp:include/mystery_gift_client.h:18]
@@ -93,6 +93,32 @@ CLIENT_SCRIPT_SAVE_CARD = client_script(
     CLI_SAVE_RAM_SCRIPT,
     CLI_SEND_READY_END,
     (CLI_RETURN, CLI_MSG_CARD_RECEIVED),
+)
+
+# sClientScript_SaveNews [decomp:src/mystery_gift_scripts.c:51]. The News path is the only one where
+# the console answers a gift with a value: CLI_SAVE_NEWS loads MG_LINKID_RESPONSE with FALSE when it
+# saved the news and TRUE when it already held exactly these 444 bytes [mystery_gift_client.c:210],
+# and CLI_SEND_LOADED ships that answer. The card path has no equivalent.
+CLIENT_SCRIPT_SAVE_NEWS = client_script(
+    (CLI_RECV, MG_LINKID_NEWS),
+    CLI_SAVE_NEWS,
+    CLI_SEND_LOADED,
+    (CLI_RECV, MG_LINKID_CLIENT_SCRIPT),
+    CLI_COPY_RECV,
+)
+
+# sClientScript_HadNews [decomp:src/mystery_gift_scripts.c:59]
+CLIENT_SCRIPT_HAD_NEWS = client_script(
+    CLI_SEND_READY_END,
+    (CLI_RETURN, CLI_MSG_HAD_NEWS),
+)
+
+# sClientScript_NewsReceived [decomp:src/mystery_gift_scripts.c:64]. CLI_MSG_NEWS_RECEIVED is a success
+# message, so the console saves by itself and then sets the berry reward for a Friend source
+# [GetClientResultMessage, mystery_gift_menu.c:905; WonderNews_SetReward, :1367].
+CLIENT_SCRIPT_NEWS_RECEIVED = client_script(
+    CLI_SEND_READY_END,
+    (CLI_RETURN, CLI_MSG_NEWS_RECEIVED),
 )
 
 # The visiting trainer rides the same card session: CLI_RECV_EREADER_TRAINER memcpys the 188 bytes

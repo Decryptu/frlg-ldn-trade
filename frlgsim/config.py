@@ -5,7 +5,7 @@ import tomllib
 from typing import Any, Mapping
 
 from . import (beacon, charmap, gift_registry, linkplayer, ni, stamp_rally,
-               uroom_chat, wonder_card)
+               uroom_chat, wonder_card, wonder_news)
 
 
 VERSIONS = {
@@ -501,6 +501,38 @@ class MysteryGiftPayload:
             self.gift, flag_id=self.flag_id)
 
 
+@dataclass(frozen=True)
+class WonderNewsPayload:
+    """The other half of the console's Mystery Gift menu: {Wonder Cards, Wonder News} x {Wireless, Friend}.
+
+    News has no flagId and no receipt flag, so nothing here mirrors MysteryGiftPayload.flag_id. What
+    decides whether a console keeps the news is a byte-for-byte compare against the news it already
+    holds [IsWonderNewsSameAsSaved, decomp:src/mystery_gift.c:140], so `news_id` overrides the id to
+    make the same text land again on a console that already took it.
+    """
+    news: str = wonder_news.DEFAULT_NEWS
+    news_id: int | None = None
+
+    def __post_init__(self):
+        choices = wonder_news.news_choices()
+        if self.news not in choices:
+            raise ValueError(f"news must be one of {', '.join(choices)}")
+        if self.news_id is not None and (type(self.news_id) is not int
+                                         or not 0 < self.news_id <= 0xFFFF):
+            raise ValueError("news_id must be between 1 and 65535")
+        self.build_news()
+
+    @property
+    def spec(self):
+        return wonder_news.NEWS_REGISTRY[self.news]
+
+    def build_news(self):
+        return wonder_news.build_news(self.news, news_id=self.news_id)
+
+    def build_distribution(self):
+        return MysteryGiftDistribution(None, None, news=self.build_news())
+
+
 def _mystery_gift_host_defaults():
     return HostOptions(
         skip_encryption=True,
@@ -527,8 +559,8 @@ class MysteryGiftRunConfig:
     def __post_init__(self):
         if not isinstance(self.profile, TrainerProfile):
             raise ValueError("profile must be a TrainerProfile")
-        if not isinstance(self.payload, MysteryGiftPayload):
-            raise ValueError("payload must be a MysteryGiftPayload")
+        if not isinstance(self.payload, (MysteryGiftPayload, WonderNewsPayload)):
+            raise ValueError("payload must be a MysteryGiftPayload or WonderNewsPayload")
         if not isinstance(self.ldn, LdnConfig):
             raise ValueError("ldn must be an LdnConfig")
         if not isinstance(self.role, HostOptions):
