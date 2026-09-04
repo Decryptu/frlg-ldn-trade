@@ -81,7 +81,8 @@ that is the Wireless path, and it is closed. A Friend source is always the small
 ## Running it
 
     ./scratchpad/run_mg_news.sh wnNN                    # or: run_mg_fast.sh wnNN --news --version firered
-    (them) Mystery Gift -> Wonder News (Actus) -> "you have no news, input one?" -> Friend (Ami)
+    (them) Mystery Gift -> the second menu entry (Wonder News, under Wonder Cards)
+           -> the "you have no news, input one?" message -> Friend (Ami)
     (them) pick PkCamp from the list
 
 A console that already holds news goes straight to the news display instead of the input prompt;
