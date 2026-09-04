@@ -1,6 +1,6 @@
 # Legendary-Beast Mystery Gift
 
-The `mystery_stamps` branch adds one focused payload to the hardware-proven Mystery Gift host: a
+One focused payload of the hardware-proven Mystery Gift host: a
 deliveryman cutscene that gives two rare berries and a Master Ball, then starts a wild legendary
 beast battle. The host, binary exporter, and save injector all select this payload by default.
 Their only gift-specific controls are `--gift` and `--flag-id`; each named gift owns all of its

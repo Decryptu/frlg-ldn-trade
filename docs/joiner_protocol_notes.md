@@ -1074,68 +1074,57 @@ Tool: `scratchpad/battle_blocks.py <host capture> [lo] [hi]` reassembles three s
 console's blocks, ours, and our echo of the console's own commands -- and prints each as a link
 buffer record with which side still owes an ack. It found both bugs. Run it on every battle capture.
 
-UNKNOWN, and the next piece of work: a real turn. `--battle-fight` answers `CHOOSEACTION` with
-`B_ACTION_USE_MOVE` and then `CHOOSEMOVE` with slot 0 at the opposing battler. Everything up to the
-action prompt is proven; the turn itself -- `MOVEANIMATION`, `HEALTHBARUPDATE`, damage, fainting,
-`CHOOSEPOKEMON` on a faint, `EXPUPDATE` -- has never run. The console computes all of it; we still
-only answer, so this should be runs rather than redesign.
+### The turn itself, on hardware (u27, u28)
 
-### Open: an intermittent disconnect during the battle's party exchange
+FACT: a complete Union Room battle runs in both directions. u27: our Machamp KOs the console's two
+mons - `MOVEANIMATION`, `HEALTHBARUPDATE`, `FAINTINGCRY`, `FAINTANIMATION`, `CHOOSEPOKEMON`,
+`DRAWPARTYSTATUSSUMMARY`, `SWITCHINANIM`, then `ENDLINKBATTLE` outcome 2, the console's save and the
+normal close. u28: the losing side, two level-5 mons of ours knocked out by the console's Chansey,
+`CHOOSEPOKEMON` for our battler answered with the other party slot, `ENDLINKBATTLE` outcome 1.
+Every controller command a two-mon link battle can emit has now run on hardware in both directions.
+u29, u30 and u32 repeated it. The console computes all of it; we only answer.
 
-FACT (u21, u22, u25 against u19, u20, u23, u24): about half of battle runs end with the console
-showing "erreur de connexion, rapprochez-vous" at the vs screen, during the three 200-byte party
-blocks of CB2_HandleStartBattle states 3/7/11. It is not the party data: u25 failed with the same
-party that u19, u20, u23 and u24 completed with.
+### Open: our datagrams are sometimes held between the socket and the air
 
-FACT (u25 wire at the disconnect): we were 11 fragments into sending our own 17-fragment party block
-3, the console had gone quiet apart from K frames, we had just echoed its own last fragment
-(mp1 SEND_BLOCK index 16), and it sent 'D' 0.4 s later.
-
-NOT THE CAUSE, checked: the console's K-frame `mid` field climbing 1,2,3,4 before the disconnect
-looks like a retry counter giving up. u19 completed a whole battle with it reaching 5.
-
-UNKNOWN. The next step is offline and costs no runs: diff a failing capture against a succeeding one
-across the whole party exchange with `scratchpad/battle_blocks.py` and `scratchpad/host_decode.py`.
-
-### The battle disconnect: our transmit path stalls (session 20, offline)
-
-FACT (u21, u22, u25 host captures + station logs + air captures): every "erreur de connexion" during
-the party exchange begins with OUR datagrams being held below the UDP socket for 0.1-0.75 s. The
+FACT (u21, u22, u25, u26): a battle run can end with the console showing "erreur de connexion,
+rapprochez-vous", and it begins with OUR datagrams being held 0.1-1.1 s below the UDP socket. The
 console's Pia window froze, it kept retransmitting its own frames and we received every one of them;
-the adapter's per-station `tx packets` counter (mac80211 `tx_stats`, counted at `ieee80211_tx_dequeue`)
-did not move for the whole blackout while the host kept emitting ~90 datagrams/s with monotonic Pia
-header nonces; the air capture shows our frames absent for the blackout and released as one burst
-(u22: 71 frames in 200 ms). The console's power-management bit was never set. u22's console resumed
-receiving us for 70 ms and disconnected anyway: the game had already taken the link-loss path
-(`LMAN_MSG_LINK_LOSS_DETECTED_AND_DISCONNECTED` -> `RfuSetErrorParams`, link_rfu_2.c:2312), which on
-the Switch path always prints "rapprochez-vous" (`CB2_PrintErrorMessage`, link.c:1521).
+the host kept emitting ~90 datagrams/s with monotonic Pia header nonces and no EAGAIN; the air
+capture shows our frames absent for the blackout and released as one burst (u22: 71 frames in
+200 ms). The console's power-management bit was never set. It is not the party data: u25 failed with
+the party that u19, u20, u23 and u24 completed with.
+
+FACT: the game had already taken the link-loss path by the time frames resumed
+(`LMAN_MSG_LINK_LOSS_DETECTED_AND_DISCONNECTED` -> `RfuSetErrorParams`, link_rfu_2.c:2312, which on
+the Switch path always prints "rapprochez-vous", `CB2_PrintErrorMessage`, link.c:1521). u22's console
+resumed receiving us for 70 ms and disconnected anyway.
 
 FACT: mac80211's monitor loopback of our own frames (emitted at TX status = the rtw88 USB URB
 completion) lags sendto by a median 594 ms, quantised at ~610 ms multiples, in every run, while the
 console acknowledges the same frame within 15 ms and the console's frames align to the host clock
-within 1 ms. TX completions are reported late and in batches; the transmitter is not.
+within 1 ms. TX completions are reported late and in batches; the transmitter is not. Use our own
+frames' air timestamps for ORDER only.
 
-DEDUCTION, from the 7.0 mac80211 source: `ieee80211_tx_dequeue` holds a station's frames only for the
-AQL airtime check (inert for rtw88: `HAS_RATE_CONTROL` and no rate with count>0 is ever reported, so
-no airtime is charged), a queue stop reason (rtw88 sets one only for a hardware scan; our RX never
-gapped) or `IEEE80211_TXQ_STOP` from block-ack session setup (no ADDBA request exists in any air
-capture although the station is registered HT-capable and rtw88 asks for one). Which gate, or whether
-the driver's own `rtw_tx_work` is what stops dequeuing, is UNKNOWN and is what `scratchpad/txq_sampler.sh`
-(started by run_host.sh) records at 50 ms during the next run.
+CORRECTION (session 21, measured): an earlier reading of this blamed `ieee80211_tx_dequeue` and the
+station's mac80211 txq. That was the wrong queue. The host's UDP socket is SO_BINDTODEVICE'd to
+`ldn-tap`, and the vendor reads that tap **in Python** and injects the 802.11 frame with AF_PACKET on
+`ldn-mon` (ldn/__init__.py:1795-1858, wlan.py:1115-1144), so our datagrams never enter the AP vif's
+TX path at all. Measured with kprobes: `ieee80211_subif_start_xmit` fired 0 times in u29 while
+`tun_net_xmit` fired 17549 and `ieee80211_monitor_start_xmit` 24705 in u30. Every station-txq
+observation (empty queue, frozen dequeue counters, aqm backlog 0, AQL, block-ack, the qdisc) sits
+DOWNSTREAM of a userspace hop and never distinguished "the kernel is holding it" from "Python has not
+injected it yet". mac80211's power-save buffer, the hypothesis that reading produced, is dead on
+direct evidence: `ieee80211_tx_h_unicast_ps_buf` returned TX_QUEUED zero times in u29 and u30.
 
 The console-side re-send mechanics seen in u25 are the decomp's, not a fault: the child re-enqueues
 every fragment missing from its own echo bitmask (`HandleSendFailure`, link_rfu_2.c:1015) and the
 receiver ORs fragments into a bitmask (`receivedFlags |= 1 << index`), so duplicated or reordered
 echoes are harmless. What is not harmless is the 0.1 s hole that started it.
 
-FACT (u27, 2026-09-04): a complete Union Room battle with the per-block echo gate: two KOs by our
-Machamp, `FAINTINGCRY`, `FAINTANIMATION`, `CHOOSEPOKEMON`, `DRAWPARTYSTATUSSUMMARY`, `SWITCHINANIM`,
-then `ENDLINKBATTLE` outcome 2, the console's save and the normal close. No hole-guard event in the
-run and no transmit hold longer than 220 ms in the 50 ms debugfs sampler.
-FACT (u28): the losing side too. Two level-5 mons of ours, both knocked out by the console's Chansey:
-`CHOOSEPOKEMON` for our battler answered with the other party slot, `SWITCHINANIM`, the second faint,
-`ENDLINKBATTLE` outcome 1 and the normal close. Every controller command a two-mon link battle can
-emit has now run on hardware in both directions.
+UNKNOWN: which of the three stages holds the frame. The hold has not reproduced since (u27-u32 are
+six clean runs), so the next run is a trap set rather than a search: `scratchpad/txpath_trace.bt`
+partitions the path into g_tap (the tap ring), g_py (inside Python) and g_mon (mac80211/rtw88), and
+`scratchpad/txpath.py` names the growing gauge at a hold.
 
 ## Our beacon was missing the Supported Rates element, and the console mirrored the gap (u30/u31, 2026-09-04)
 

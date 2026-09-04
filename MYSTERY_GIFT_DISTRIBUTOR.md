@@ -1,7 +1,7 @@
 # FireRed Mystery Gift Distributor
 
-Hand a real Switch FireRed/LeafGreen save a Wonder Card + delivery RAM script over LDN. On the
-`mystery_stamps` branch, the default card runs the repeatable legendary-beast cutscene. Select
+Hand a real Switch FireRed/LeafGreen save a Wonder Card + delivery RAM script over LDN. The
+default card runs the repeatable legendary-beast cutscene. Select
 `--gift celebi` for the original level-50 Celebi payload. Each gift owns its card text, icon,
 rewards, and delivery script; the live CLI selects the gift rather than editing its contents.
 The composed `--gift porygon-tm-gift` event distributes TM29 Psychic and TM46 Thief with a Porygon

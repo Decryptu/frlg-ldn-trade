@@ -163,8 +163,8 @@ Dex, or game-completion defaults that do not have CLI flags.
 ### Distribute a Mystery Gift
 
 `frlgmg_host.py` advertises on the hardware-compatible Friend path and sends a Wonder Card plus a
-delivery RAM script. On `mystery_stamps`, the default payload is the repeatable legendary-beast
-cutscene; use `--gift celebi` for the composed level-50 Celebi card.
+delivery RAM script. The default payload is the repeatable legendary-beast cutscene; use
+`--gift celebi` for the composed level-50 Celebi card.
 
 ```bash
 sudo -E ./.venv/bin/python -u frlgmg_host.py \
