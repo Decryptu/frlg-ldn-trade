@@ -466,7 +466,9 @@ def test_the_french_check_passes_language_safe_words_and_flags_guesses():
 
 
 def test_the_phrase_read_off_the_console_gates_a_gift():
-    """mev03 logged GURVAN's four questionnaire ids; they are the key the gate compares against."""
+    """Every session logs the console's four questionnaire ids; they are the key the gate compares
+    against. GURVAN_QUESTIONNAIRE is whatever the console currently holds - the default phrase since
+    bs07 - so this test follows the console rather than pinning a phrase."""
     from frlgsim import easychat_french
     card, ram_script = _probe_card()
     server = mg_server.MysteryGiftServer(
@@ -484,18 +486,24 @@ def test_the_phrase_read_off_the_console_gates_a_gift():
 
 
 def test_the_cli_parses_a_phrase_in_every_form_it_accepts():
+    """Every accepted spelling of the custom phrase mev04/mev06 gated on, plus the default the
+    console holds now (bs07), which is four plain group/index slots."""
     from frlgsim import easychat, easychat_french
     import frlgmg_host
     assert easychat.parse_phrase("species:55,FEELINGS/60,move:177,why") \
-        == easychat_french.GURVAN_QUESTIONNAIRE
+        == easychat_french.GURVAN_QUESTIONNAIRE_CUSTOM
     assert easychat.parse_phrase("0x2a37,0x123c,0x24b1,0x1e25") \
+        == easychat_french.GURVAN_QUESTIONNAIRE_CUSTOM
+    assert easychat.parse_phrase("TRAINER/9,ENDINGS/48,SPEECH/12,TRAINER/11") \
+        == easychat_french.GURVAN_QUESTIONNAIRE
+    assert easychat.parse_phrase("link,with,case,trainer") \
         == easychat_french.GURVAN_QUESTIONNAIRE
 
     args = frlgmg_host.build_parser().parse_args(
         ["--live", "--gift", "mystery-event-probe",
          "--questionnaire", "species:55,FEELINGS/60,move:177,why"])
     config = frlgmg_host.build_run_config(frlgmg_host.build_parser(), args)
-    assert config.payload.questionnaire == easychat_french.GURVAN_QUESTIONNAIRE
+    assert config.payload.questionnaire == easychat_french.GURVAN_QUESTIONNAIRE_CUSTOM
     assert config.payload.build_distribution().is_gated
 
 

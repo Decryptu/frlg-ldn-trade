@@ -47,21 +47,37 @@ CONFIRMED = {
     WORDS["why"]: "POURQUOI",               # MISC/37,      mev03, matches
     WORDS["enjoy"]: "STRESSE",              # FEELINGS/42,  mev02 - NOT "enjoy"
     WORDS["done"]: "FURAX",                 # FEELINGS/60,  mev03 - NOT "done"
+    # bs07, and by the ENCODE direction, which is stronger than a render: the player retyped the
+    # game's own default questionnaire phrase, CONNEXION AVEC LES DRESSEURS, and the console shipped
+    # us these four slots in that order. Word i is slot i because the questionnaire stores four words
+    # in order [mystery_gift.c:84].
+    WORDS["link"]: "CONNEXION",             # TRAINER/9,    bs07, matches
+    WORDS["with"]: "AVEC",                  # ENDINGS/48,   bs07, matches
+    WORDS["case"]: "LES",                   # SPEECH/12,    bs07 - NOT "case"
+    WORDS["trainer"]: "DRESSEURS",          # TRAINER/11,   bs07, matches
 }
 
 # Slots whose French word is not a translation of the English name in `WORDS`. Never compose with
 # these unless the French word is the one you want.
 #
-# HYPOTHESIS (two data points, not a fact): both divergences so far are in EC_GROUP_FEELINGS, while
-# GREETINGS, PEOPLE and MISC have matched five times out of five. The word tables may differ per
-# group rather than uniformly. Do not rely on it; verify.
-DIVERGENT = frozenset({WORDS["enjoy"], WORDS["done"]})
+# HYPOTHESIS, WEAKENED by bs07 and kept only as a lead: the first two divergences were both in
+# EC_GROUP_FEELINGS, but the third is SPEECH/12, so "only FEELINGS diverges" is dead. Eight of eleven
+# observed slots match the English table and three do not, spread over two groups. There is no
+# shortcut; verify each slot you intend to use.
+DIVERGENT = frozenset({WORDS["enjoy"], WORDS["done"], WORDS["case"]})
 
 
 # The phrase this project's French FireRed currently holds in its Poke Mart questionnaire, read off
 # the console in mev03. `SVR_CHECK_QUESTIONNAIRE` compares all four ids in order, so this is the key
 # to `MysteryGiftServer(..., questionnaire=...)`.
-GURVAN_QUESTIONNAIRE = (0x2A37, 0x123C, 0x24B1, 0x1E25)     # AKWAKWAK FURAX AEROBLAST POURQUOI
+# What GURVAN's console currently answers with, read off it in bs07: the game's own DEFAULT French
+# phrase, CONNEXION AVEC LES DRESSEURS. The player reverted it from the custom one, so this is what
+# any `--questionnaire` gate must be set to now. Every Mystery Gift session logs the current four
+# ("Console questionnaire words: ..."), so re-read them rather than trusting this line.
+GURVAN_QUESTIONNAIRE = (0x0209, 0x1030, 0x0E0C, 0x020B)     # CONNEXION AVEC LES DRESSEURS
+# The custom phrase the console held for mev04-mev06, kept because those runs are the proof that the
+# gate refuses a wrong phrase and accepts a right one.
+GURVAN_QUESTIONNAIRE_CUSTOM = (0x2A37, 0x123C, 0x24B1, 0x1E25)   # AKWAKWAK FURAX AEROBLAST POURQUOI
 
 
 class UnverifiedFrenchWord(Exception):
@@ -113,5 +129,5 @@ def observe(value, word, *, divergent=None):
 
 
 __all__ = [
-    "CONFIRMED", "DIVERGENT", "GURVAN_QUESTIONNAIRE", "UnverifiedFrenchWord", "check", "french", "observe", "render",
+    "CONFIRMED", "DIVERGENT", "GURVAN_QUESTIONNAIRE", "GURVAN_QUESTIONNAIRE_CUSTOM", "UnverifiedFrenchWord", "check", "french", "observe", "render",
 ]

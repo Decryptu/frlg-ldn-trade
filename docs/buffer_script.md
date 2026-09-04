@@ -304,12 +304,36 @@ chunks, and `echo_gaps.py` finds it in bs01 as blocks 5-10 (count 1, then 21, 21
 4x252 + 16). The console had been completing five-chunk sends since the first buffer-script run. The
 "the handshake supply runs out at four chunks" hypothesis was dead on evidence already in hand.
 
+## bs07: 1024 bytes, and the cartridge names itself
+
+FACT, 2026-09-04, French FireRed, `--buffer-script memory-dump --dump-address 0x08000000
+--dump-size 1024`, first try. `[mg] received ident 19 (1024 bytes)`, head `7f0000ea24ffae51699aa221`
+- an ARM branch followed by the start of the GBA Nintendo logo. So the payload can read the
+cartridge, and a full 1024-byte dump works on hardware. `echo_gaps.py`: `never=[]` everywhere.
+
+    entry      b 0x08000204
+    title      POKEMON FIRE          [0xA0]
+    game code  BPRF                  [0xAC]  BPR = FireRed, F = French
+    maker      01   fixed 0x96
+    version    0x0a                  [0xBC]
+    header checksum 0x5d, recomputed 0x5d -> VALID
+
+Three things follow:
+
+- **The Switch release ships software version 0x0A**, read off the cartridge rather than inferred.
+  That is the `REVISION >= 0xA` the decomp branches on, so the branches this project has been
+  reading are confirmed to be the ones running. Until now that was an assumption.
+- The header checksum recomputes over 0xA0..0xBC and matches the stored byte, so the 160 bytes are
+  internally consistent: the read is real and not a buffer of stale bytes.
+- ROM is readable at its real address, which is the last thing calling into it was missing. The
+  build is identified; what remains is a symbol address for that exact build.
+
 ## Left
 
-1. ~~bs06: bs05's own command again~~ DONE, above. Next: **bs07, 1024 bytes of the cartridge at 0x08000000**: the
-   GBA header names the build the Switch release ships (0xA0 title, 0xAC game code, 0xBC version),
-   which is what calling into the ROM needs, and it proves 1024 bytes on hardware at the same time.
-   `buffer_script.emulate` now maps ROM, so such a payload is checked offline like any other. `echo_gaps.py` on the capture afterwards: every block
+1. ~~bs06: bs05's own command again~~ ~~bs07: 1024 bytes of ROM~~ Both done, above. Next: **calling into the ROM**, now that the build is
+   identified as BPRF version 0x0A. It needs one function address valid for that exact build; the
+   dump can walk the ROM 1024 bytes at a time to find a signature, or the pret decomp can be built
+   at REVISION 10 and matched. `echo_gaps.py` on the capture afterwards: every block
    must read `never=[]`. That single line is the whole verdict.
 
 2. Writing, rather than reading: the same offsets take a `str` as easily as a `ldr`.
