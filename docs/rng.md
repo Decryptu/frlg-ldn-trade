@@ -191,6 +191,47 @@ ACTUAL      PID 0x026F38B2   nature 17   IVs 31/23/27/18/30/30   shiny
 A wild shiny Lv50 DITTO appeared in PALLET TOWN and was caught. `setwildbattle` needs no grass and
 no encounter roll: it is the code path a scripted battle uses, so it fires wherever the script runs.
 
+## mev11 + bs58: a mon predicted from a seed WE DID NOT SET
+
+mev07 predicted a shiny Ditto and got it, but it *wrote* `gRngValue` first. This one writes nothing
+to the RNG at all. The script read the live state the console had chosen for itself, printed it,
+generated a mon from it, and printed the state again:
+
+```
+BEFORE  0x9A4F5DAA        (read off the console, not set by us)
+AFTER   0x8EEB8648
+```
+
+Predicted offline from `BEFORE` alone, then checked against the caught mon dumped out of
+`gPlayerParty` [bs58]:
+
+| field | predicted | actual |
+|---|---|---|
+| PID | 0x0BF87DD1 | 0x0BF87DD1 |
+| nature | 13 Jolly | 13 Jolly |
+| shiny | no | no |
+| IVs | 25/10/28/9/19/3 | 25/10/28/9/19/3 |
+
+**Seven fields, all of them.** That closes the read-only chain end to end: the address, the atomic
+read, the draw order, and the offset between a reading and the generation - which is **zero**. The
+four draws start at the state that was read.
+
+### The draw count, and the code disagreeing with the console
+
+`distance(BEFORE, AFTER)` is **6**, and `CreateBoxMon` says **4**: `Random32()` for the personality
+(2), no draws for the OT because the player is the OT [decomp:src/pokemon.c:1796], and 2 for the IVs
+[`:1836,1845`]. `CreateScriptedWildMon` adds none [src/script_pokemon_util.c:128].
+
+The extra 2 land **after** the generation, not before it - which is what the seven matching fields
+prove, since a mon built from `advance(BEFORE, 2)` would have had a different PID. Two turns is
+exactly one frame of overworld consumption, the same constant the rate probe measured as the `+2` in
+`2N + 2`.
+
+This is the same family as the stray draw recorded above for wild encounters, and it is worth
+stating plainly: **the decomp is authoritative for what the code does, and it is not the last word
+on what this cartridge does.** Deriving the 4 first is what makes the 6 a finding rather than a
+number.
+
 ## What cannot be done, and what is still open
 
 **Closed: aiming by hand with no live seed.** The state advances 2 turns every frame with no idle
