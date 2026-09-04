@@ -605,6 +605,24 @@ PALLET_TOWN_OBJECT_FAT_MAN = 2
 
 MEVENT_NPC_STATUS = 55          # our marker; initramscript leaves the status untouched
 
+# WHERE TO BIND A SCRIPT THAT WILL BE TALKED TO ON A TIMER, and it is not where mev03 put one.
+# BOTH Pallet Town NPCs are MOVEMENT_TYPE_WANDER_AROUND [decomp:data/maps/PalletTown/map.json], so
+# the fat man walks off mid-countdown and the player has to chase him to press A - which ruins the
+# timing it was pressed for. The player's mother is MOVEMENT_TYPE_FACE_LEFT with flag 0: she never
+# moves, she is never hidden, and she is a step from where the player stands indoors.
+# Group and map numbers are indices into data/maps/map_groups.json; group 3 / num 0 for Pallet Town
+# is confirmed by mev03 and every run since, which is what makes group 4 / num 0 trustworthy.
+MAP_GROUP_PLAYERS_HOUSE = 4
+MAP_NUM_PLAYERS_HOUSE = 0
+PLAYERS_HOUSE_OBJECT_MOM = 1
+
+
+def _at_mom(kwargs):
+    """Bind to the mother unless the caller says otherwise: a stationary object is a hard
+    requirement for anything the player has to talk to at a chosen moment."""
+    return {"map_group": MAP_GROUP_PLAYERS_HOUSE, "map_num": MAP_NUM_PLAYERS_HOUSE,
+            "object_id": PLAYERS_HOUSE_OBJECT_MOM, **kwargs}
+
 
 def build_mevent_npc_script(*, map_group=MAP_GROUP_PALLET_TOWN, map_num=MAP_NUM_PALLET_TOWN,
                             object_id=PALLET_TOWN_OBJECT_FAT_MAN, lines=None,
@@ -763,7 +781,7 @@ def build_rng_seed_reader_script(**kwargs):
     script is also its confirmation: `rng_script.check_two_readings` on two visits to the NPC.
     """
     return build_mevent_npc_script(
-        field_script=build_seed_read_script(), **kwargs)
+        field_script=build_seed_read_script(), **_at_mom(kwargs))
 
 
 RNG_SEED_READER_GIFT = WonderGift(
@@ -773,10 +791,10 @@ RNG_SEED_READER_GIFT = WonderGift(
         title="MYSTERY EVENT",
         subtitle="A man who reads numbers",
         body=(
-            "A man in the south of PALLET",
-            "TOWN can read a number nobody",
-            "is meant to see. Talk to him,",
-            "and talk to him again.",
+            "Your MOM has learned to read a",
+            "number nobody is meant to see.",
+            "Talk to her at home, and then",
+            "talk to her again.",
         ),
         footer1="frlg-ldn-trade",
         default_flag_id=RNG_SEED_READER_FLAG_ID,
@@ -792,9 +810,7 @@ RNG_SEED_READER_GIFT = WonderGift(
                 "a hidden number."),
         ),
     )),
-    completed_message=(
-        "Talk to the man in the south of\n"
-        "PALLET TOWN."),
+    completed_message="Talk to your MOM at home.",
     mevent=build_rng_seed_reader_script(),
 )
 
@@ -811,7 +827,8 @@ def build_rng_rate_probe_script(frames=None, **kwargs):
     hand-timed elapsed anywhere, which is what every previous attempt at this rate had in it.
     """
     build = ({} if frames is None else {"frames": frames})
-    return build_mevent_npc_script(field_script=build_seed_rate_script(**build), **kwargs)
+    return build_mevent_npc_script(field_script=build_seed_rate_script(**build),
+                                   **_at_mom(kwargs))
 
 
 RNG_RATE_PROBE_GIFT = WonderGift(
@@ -821,10 +838,10 @@ RNG_RATE_PROBE_GIFT = WonderGift(
         title="MYSTERY EVENT",
         subtitle="A man who counts",
         body=(
-            "A man in the south of PALLET",
-            "TOWN will read a number, wait,",
-            "and read it again. Tell him to",
-            "start, and write both down.",
+            "Your MOM will read a number,",
+            "wait, and read it again. Talk",
+            "to her at home and write both",
+            "of them down.",
         ),
         footer1="frlg-ldn-trade",
         default_flag_id=RNG_RATE_PROBE_FLAG_ID,
@@ -840,9 +857,7 @@ RNG_RATE_PROBE_GIFT = WonderGift(
                 "something nobody can see."),
         ),
     )),
-    completed_message=(
-        "Talk to the man in the south of\n"
-        "PALLET TOWN."),
+    completed_message="Talk to your MOM at home.",
     mevent=build_rng_rate_probe_script(),
 )
 
@@ -870,10 +885,10 @@ RNG_RATE_PROBE_LONG_GIFT = WonderGift(
         title="MYSTERY EVENT",
         subtitle="The man counts for longer",
         body=(
-            "The man in the south of PALLET",
-            "TOWN will count again, but five",
-            "times as long. Talk to him and",
-            "wait, then press A.",
+            "Your MOM will count again, but",
+            "five times as long. Talk to her",
+            "at home and wait, then press A.",
+            "",
         ),
         footer1="frlg-ldn-trade",
         default_flag_id=RNG_RATE_PROBE_LONG_FLAG_ID,
@@ -889,9 +904,7 @@ RNG_RATE_PROBE_LONG_GIFT = WonderGift(
                 "count for longer this time."),
         ),
     )),
-    completed_message=(
-        "Talk to the man in the south of\n"
-        "PALLET TOWN."),
+    completed_message="Talk to your MOM at home.",
     mevent=build_rng_rate_probe_script(frames=RNG_RATE_PROBE_LONG_FRAMES),
 )
 
@@ -911,7 +924,7 @@ RNG_DRAW_COUNT_PREDICTION = 4
 def build_rng_draw_count_script(**kwargs):
     return build_mevent_npc_script(
         field_script=build_draw_count_script(species=RNG_DRAW_COUNT_SPECIES,
-                                             level=RNG_DRAW_COUNT_LEVEL), **kwargs)
+                                             level=RNG_DRAW_COUNT_LEVEL), **_at_mom(kwargs))
 
 
 RNG_DRAW_COUNT_GIFT = WonderGift(
@@ -921,10 +934,10 @@ RNG_DRAW_COUNT_GIFT = WonderGift(
         title="MYSTERY EVENT",
         subtitle="The man counts a POKEMON",
         body=(
-            "The man in the south of PALLET",
-            "TOWN will read a number, make a",
-            "POKEMON, and read it again.",
-            "Write both down, then fight.",
+            "Your MOM will read a number,",
+            "make a POKEMON, and read it",
+            "again. Write both down, then",
+            "fight what turns up.",
         ),
         footer1="frlg-ldn-trade",
         default_flag_id=RNG_DRAW_COUNT_FLAG_ID,
@@ -940,9 +953,7 @@ RNG_DRAW_COUNT_GIFT = WonderGift(
                 "what it costs to make a POKEMON."),
         ),
     )),
-    completed_message=(
-        "Talk to the man in the south of\n"
-        "PALLET TOWN."),
+    completed_message="Talk to your MOM at home.",
     mevent=build_rng_draw_count_script(),
 )
 
