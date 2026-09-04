@@ -159,14 +159,49 @@ ACTUAL      PID 0x026F38B2   nature 17   IVs 31/23/27/18/30/30   shiny
 A wild shiny Lv50 DITTO appeared in PALLET TOWN and was caught. `setwildbattle` needs no grass and
 no encounter roll: it is the code path a scripted battle uses, so it fires wherever the script runs.
 
-## What cannot be done
+## What cannot be done, and what is still open
 
-**Read the RNG and hit a target by hand.** The state advances 2 turns every frame with no idle
-state, roughly 1 frame in 4096 produces a shiny, and nothing signals which. That is a property of
-the game, not of this tooling. The only actor fast enough to act on a reading is the console itself,
-which means a script — one that reads `gRngValue` once a frame and fires at the right instant would
-alter nothing, but it is still code installed in the save.
+**Closed: aiming by hand with no live seed.** The state advances 2 turns every frame with no idle
+state, ~1 frame in 8192 produces a shiny, and without knowing the seed nothing signals which. Not a
+tooling limit; the game.
 
-Pure observation does work as far as it goes: from one caught Pokemon the exact state is recovered,
-and walking it back gives the 16-bit value the console booted on (`0x8E94` [bs52], `0x1376` [bs54]).
-Those are readings, not levers.
+**Closed: hitting a chosen seed by timing the START press.** Timer 1 runs at F/1 and a frame is
+280,896 cycles, so if the read were frame-aligned every seed would be a multiple of
+`gcd(280896 mod 65536, 65536) = 64`. Recovered seeds are `0xB8C0` (mod 64 = 0), `0x3742` (2),
+`0x8E94` (20), `0x1376` (54). Three of four are not multiples, so there is sub-frame jitter in when
+`REG_TM1CNT_L` is sampled and the press frame does not determine the seed. (Those four are best
+candidates from `predecessors`, not certainties, but the lattice model predicts all four would be
+multiples.)
+
+**OPEN AND BUILDABLE: an NPC that reads the seed out.** With a live reading in the overworld a
+countdown does work, and this is the next thing to build:
+
+```
+copybyte gSpecialVar_0x8000+0, 0x03004220      (opcode 0x15, byte at any address to any address)
+copybyte gSpecialVar_0x8000+1, 0x03004221
+copybyte gSpecialVar_0x8001+0, 0x03004222
+copybyte gSpecialVar_0x8001+1, 0x03004223
+buffernumberstring 0, VAR_0x8000               (0x83)
+msgbox                                          the NPC prints the value
+```
+
+Installed once as a RAM script by `initramscript`, ending in `end` (0x02) so the binding survives and
+can be re-triggered. It alters nothing: `gRngValue` is only read.
+
+**THE ONE BLOCKER: the absolute address of `gSpecialVar_0x8000` is not known.** It is `EWRAM_DATA`
+[decomp:src/event_data.c:16], so it is a link-time global that does NOT move, unlike a save block.
+Find it the way `gRngValue` was found - locate a ROM function that references it (`GetVarPointer`,
+reached from `ScrCmd_setvar` in `gScriptCmdTable`) and read its literal pool, or scan.
+
+Why the countdown then works, with numbers: the state at any future frame is `advance(S, 2n)`, ~1 in
+8192 is shiny, so a target arrives roughly every 8192 frames (~137 s). A miss costs **nothing** -
+unlike Emerald, where every attempt costs a reset and a new unknown seed - because the same NPC can
+be asked again and the target recomputed. Shininess is visible the moment the battle starts, so the
+mon need not even be caught.
+
+The trigger can be the same NPC: `setwildbattle` + `dowildbattle` **read** the RNG (four draws, like
+any encounter) and write nothing, so one A press replaces menu-and-Sweet-Scent navigation and is the
+most precise input the game offers.
+
+What remains a judgement call, not a technical question: installing that script is a write to the
+save, though never to the RNG.
