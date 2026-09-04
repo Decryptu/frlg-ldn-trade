@@ -1169,3 +1169,28 @@ it decides what the console claims to support, and so what the link may use.
 
 The remaining beacon difference from a real Switch is elements 42 (ERP), 45/61 (HT), 127, 255 and 221
 (HT/HE/WMM) - all previously measured as null for the completion rate; they are not re-opened here.
+
+## The battle's pace is the RFU VBlank budget, not our latency (u29/u30/u32, 2026-09-04)
+
+The user sees roughly a second between each step of a link battle (the move landing, the hurt
+animation, the health bar), in both directions, and has since the first battle. It is not a defect
+and there is nothing to tune.
+
+FACT: our datagram turnaround is not the cost. Over the u30 battle window, `udp_in -> next udp_out`
+was median 5.8 ms, p99 16.6 ms, max 17.9 ms across 8204 replies; the console's own turnaround was
+median 8.1 ms. The link ran at 67 udp_in/s and 87 udp_out/s throughout.
+
+FACT: the per-command cadence is identical across runs and unaffected by the beacon/rate-set fix -
+median 800 ms between consecutive `bufferA` commands in u29, u30 and u32 alike. Decomposed
+(battle_blocks.py): a console block is echoed in median 19 ms, but OUR corresponding block appears a
+median 355 ms later.
+
+FACT: that 355 ms is the RFU frame budget. `HostSession.tick` emits "at most one RFU slot per call"
+and is driven at `HOST_VBLANK_SECONDS = 1/59.727` = 16.74 ms. Measured in u32, our outgoing
+inter-send gap is 17 ms for 5035 samples and 16 ms for 413 (plus 2328 near-0 ms gaps, the RFU slot
+and a Pia ack emitted in the same tick). We are exactly at the GBA's VBlank cadence.
+
+DEDUCTION: a controller command's block spans roughly twenty RFU frames, and twenty frames at one per
+VBlank is ~340 ms; a full step is that plus the return leg, giving the observed ~800 ms. Going faster
+means emitting more than one RFU slot per VBlank, which is not what the hardware link does. Do not
+look for a latency bug here, and do not "optimise" the tick.
