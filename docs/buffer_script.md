@@ -188,8 +188,50 @@ whole party), `money` at 0x0290 XORed with `SaveBlock2.encryptionKey` at 0xF20 [
 flags and vars - and, through `memory-dump`, IWRAM, where `gRngValue` lives. None of it is reachable
 by any Mystery Event opcode or any link message.
 
+## bs04, bs05: the primitive works, and the transport under it has a ceiling
+
+**bs04 (save-dump, SaveBlock2, 256 bytes) landed first try.**
+
+    Buffer script dump: 256 bytes of console memory, head c1cfccd0bbc8ffff008065dfbbe59400
+
+which is struct SaveBlock2 exactly as [global.h:327] lays it out: playerName `GURVAN` at 0x00,
+gender 0 at 0x08, trainerId 0xE5BBDF65 at 0x0A, playTimeHours 148 at 0x0E. The trainer id is a
+third independent route to the same value (bs01 and bs03 computed it; this read it out of memory)
+and the play time is checkable on the console's own save screen. save-dump did it WITHOUT KNOWING
+ANY ADDRESS, off the pointers Client_RunBufferScript passes.
+
+**bs05 (save-dump, SaveBlock1 0x34, 608 bytes) failed, and not in the payload.** The console
+printed "erreur de connexion, rapprochez-vous" during transmission and left. FACTS:
+
+- `MGL_Send` chunks at 252 bytes and, before EACH chunk and again before it finishes, waits on
+  `MGL_HasReceived(link->sendPlayerId)` = `GetBlockReceivedStatus()` - a block WE sent
+  [mystery_gift_link.c:155-213,77]. 256 bytes is header + 2 chunks = 3 handshakes; 608 is
+  header + 3 chunks = 4.
+- bs05's log shows `SEND_BLOCK_INIT` rising by exactly 3 and then stopping: the console sent the
+  header and two chunks and waited for a handshake that never came, until the game timed out.
+- `acklag.py`: 1 stall, worst inbound gap 37 ms. NOT the hold.
+- The payload ran. The console repointed its own outgoing message and began transmitting a
+  608-byte message with a valid header. The primitive is sound; the transport is the limit.
+
+HYPOTHESIS (not yet confirmed): our host sends nothing while receiving - `_drain_recv_blocks`
+returns as soon as a chunk leaves the message incomplete - so those handshakes have been satisfied
+by accident, out of the spare copies of our own blocks (`ram_script_block_repeat` 3, so our 2-block
+payload goes out 6 times and 4 land during the console's send window). That supply runs out at four
+chunks. Confirm it before building on it.
+
+PROVEN SAFE TODAY: a dump of 256 bytes or less. The party (600 bytes at SaveBlock1 0x38) can be
+taken in three runs of 200 without any of this being fixed.
+
 ## Left
 
-Writing, rather than reading: the same offsets take a `str` as easily as a `ldr`. And calling into
-the ROM, which needs a real address and therefore a way to identify the build the console is
-running - which the dump can now answer, by reading the ROM header at 0x080000A0.
+**1. The multi-chunk receive (the next job).** `ConsoleClientModel` in tests/test_mystery_gift_flow.py
+does not model the per-chunk handshake at all, which is why 608 passed offline and failed on the
+console: both simulated sides shared our own optimistic assumption. Make the model faithful to
+`MGL_Send` - it may only hand over its next chunk after the host has sent it a block - watch the
+608-byte test fail exactly as bs05 did, then fix the host to answer each chunk, and 1024 should
+follow. Do not chase this on hardware; it reproduces offline once the model is honest.
+
+2. Writing, rather than reading: the same offsets take a `str` as easily as a `ldr`.
+
+3. Calling into the ROM, which needs a real address and therefore a way to identify the build the
+console is running - which the dump can now answer, by reading the ROM header at 0x080000A0.
