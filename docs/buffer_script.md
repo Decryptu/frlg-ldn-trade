@@ -334,7 +334,7 @@ Three things follow:
 - ROM is readable at its real address, which is the last thing calling into it was missing. The
   build is identified; what remains is a symbol address for that exact build.
 
-## `anchors`: asking the machine where it is (built, hardware run pending)
+## `anchors`: asking the machine where it is (PROVEN, bs08)
 
 Every other payload works from the two pointers the console hands us. `anchors` asks the CPU for the
 addresses nothing else can supply, writes eleven words into `client->sendBuffer` and widens
@@ -394,7 +394,7 @@ Read in order:
 - The save blocks are at 0x02024598 and 0x0202553C on this console, which is what a `memory-dump`
   would need and `save-dump` never has to know.
 
-## `save-write`: writing, not just reading (built, hardware run pending)
+## `save-write`: writing, not just reading (PROVEN, bs09/bs10 - it reached flash)
 
 A pointer takes a `strb` as readily as a `ldrb`, so the same two pointers give write access to the
 live save. `save-write` copies its payload tail into the block and then points `link->sendBuffer`
@@ -461,7 +461,7 @@ other end. Three runs, three routes, one answer. The five-entry table right afte
 against the dumps. Nothing in it is inferred from the decomp's ENGLISH rev-10 build; a symbol that
 has not been read off the console does not belong in that file.
 
-## `memory-scan`: searching instead of reading (built, hardware run pending)
+## `memory-scan`: searching instead of reading (PROVEN, bs13)
 
 Every payload before this one reads a window we had to name in advance, 1024 bytes at a time. The
 cartridge is 16 MB. At 1024 bytes a run that is 16384 runs, so the ROM has only ever been read where
@@ -655,7 +655,7 @@ Reads only; writes nothing outside its own image and the two link fields. Proven
 bs18-bs36, eighteen runs, all first try. `docs/easy_chat_french.md` is what they read.
 
 
-## `create-mon` — a ROM call that takes EIGHT arguments (built, hardware run pending)
+## `create-mon` — a ROM call that takes EIGHT arguments (PROVEN, bs43/bs44, 13/13 fields)
 
 `rng-trace` called `Random`: no arguments, a `u16` back, and the LCG's own recurrence to check it
 by. That proves the *mechanism* of a ROM call and nothing about passing anything to one.
@@ -808,7 +808,7 @@ three at no extra cost:
 That last one is the shape worth keeping: `CreateMon` reads live game state that no link message
 carries, and writes it somewhere we can read it back.
 
-## `--create-mon-append`: the write into the player's party (built, hardware run pending)
+## `--create-mon-append`: the write into the player's party (PROVEN, bs45-bs49)
 
 bs43 and bs44 built a mon and read it back; nothing on the console was written. Putting it in the
 party is a different thing — a write to a live save that the console then commits to flash — and it
@@ -965,7 +965,7 @@ address at every party size — if they could disagree the dry run would prove n
 the append writes nothing past `playerParty[6]`, which ends at 0x38 + 600 = 0x290, exactly where
 `money` begins [global.h:774].
 
-## `call` — any ROM function, with arguments we choose (built, hardware run pending)
+## `call` — any ROM function, with arguments we choose (PROVEN, bs50)
 
 `rng-trace` calls a function with whatever happens to be in the registers. `create-mon` calls the
 one function whose signature it was written around. `call` is the general form both are special
@@ -1100,7 +1100,7 @@ limit — all a frame-to-frame gap needs, and useless at encounter range, where 
 thousands to millions. `frlgsim/lcg.py` uses baby-step/giant-step on the affine map instead: 2¹⁷
 operations rather than up to 2³².
 
-## `table-scan` — finding a table by its SHAPE (built, hardware run pending)
+## `table-scan` — finding a table by its SHAPE (PROVEN, bs57)
 
 Every address this project has found by searching rested on a **constant that only one place could
 hold**: RAND_MULT in `Random`'s literal pool [bs13], `0x00450045` in `sEasyChatGroups` [bs16],

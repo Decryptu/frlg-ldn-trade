@@ -32,7 +32,7 @@ on the affine map — 2<sup>17</sup> operations instead of up to 2<sup>32</sup>.
 permutation of all 2<sup>32</sup> states, so a distance ALWAYS exists**; it is only evidence when it
 is small (odds N / 2<sup>32</sup>).
 
-## The rate: proven at the link menu, NOT established in the overworld
+## The rate: exactly 2 turns per frame, and how a wrong number got in here
 
 **This section was wrong until the user challenged it, and the correction matters more than the
 number.** Separate what is exact from what is a wall clock:
@@ -65,13 +65,14 @@ seconds, and a 30-second error in it is entirely ordinary. So **"walking adds dr
 follow from these numbers either** - 2.47 and "2.44 if the five minutes was really five minutes"
 are the same figure within the error of the clock that produced them.
 
-What is left standing, and it is enough: **the RNG never idles.** Tens of thousands of turns pass
-with the player doing nothing, in every overworld run. What is NOT known is the exact rate at which
-they pass outside the link menu.
+**The answer, measured afterwards with no clock at all, is exactly 2 turns per frame** - see
+"Measuring the rate with the clock removed" below (mev09, mev10) and the four press trials, whose
+turn counts are all even. The same rate bs15 found at the link menu. So the retracted figures were
+not a different rate in a different situation; they were a stopwatch being wrong.
 
-**This is why nothing downstream may depend on a measured rate or a wall clock.** One turn is ~8 ms.
-A stopwatch countdown, and human reaction on top of it, is tens of turns of error against a target
-one state wide. The two clocks that need no seconds at all are the ones to build on:
+**The lesson outlives the number, which is why this section stays.** One turn is ~8 ms, so nothing
+downstream may rest on a hand-timed elapsed. The two clocks that need no seconds at all are the ones
+everything here is built on:
 
 - **two seed readings** give the exact turns between them, by `distance()`; that also measures the
   overworld rate properly, for the first time, whenever we want the number for its own sake;
@@ -263,9 +264,22 @@ it generated from.
 
 ## What cannot be done, and what is still open
 
-**Closed: aiming by hand with no live seed.** The state advances 2 turns every frame with no idle
-state, ~1 frame in 8192 produces a shiny, and without knowing the seed nothing signals which. Not a
-tooling limit; the game.
+**Closed, and DONE: read-only prediction.** A live seed is readable in the overworld, the rate is
+exact, the offset from a reading to the generation is zero, and mev11/bs58 predicted seven fields of
+a mon the console built from a state it chose for itself. What is left is aiming, and aiming is a
+human pressing A with a measured 4.5-frame spread - about 1 attempt in 11, ~26 minutes a shiny.
+
+**Closed: aiming with no live seed at all.** The state advances 2 turns every frame with no idle
+state, ~1 frame in 8192 produces a shiny, and without a reading nothing signals which. That was the
+original wall, and reading the seed is what went through it.
+
+**STRUCTURALLY CLOSED, and this is the honest limit: the script cannot be told where to aim.** The
+target has to be computed from a seed read at runtime, but installing a script that knows the target
+needs a Mystery Gift session, which leaves through the title screen and **reseeds** - so a target
+computed before the trip is stale by the time the player is back in the overworld. Field bytecode
+cannot do the shiny search itself (it has `compare` and `goto_if`, not an LCG walk and a shiny
+test). So the human presses A, and the tooling's job is to make the miss free and measurable rather
+than to remove it. `frlgsim/rng_countdown.py`.
 
 **Closed: hitting a chosen seed by timing the START press.** Timer 1 runs at F/1 and a frame is
 280,896 cycles, so if the read were frame-aligned every seed would be a multiple of
@@ -275,8 +289,8 @@ tooling limit; the game.
 candidates from `predecessors`, not certainties, but the lattice model predicts all four would be
 multiples.)
 
-**BUILT: an NPC that reads the seed out** (`--gift rng-seed-reader`). With a live reading in the overworld a
-countdown does work, and this is the next thing to build:
+**BUILT: an NPC that reads the seed out** (`--gift rng-seed-reader`). With a live reading in the
+overworld the countdown works. The six commands are:
 
 ```
 copybyte gSpecialVar_0x8000+0, 0x03004220      (opcode 0x15, byte at any address to any address)
@@ -353,6 +367,15 @@ Two unrelated 32-bit numbers sit ~2**31 apart; these are **2,595** apart, odds 1
 0x020370B4 is `gSpecialVar_0x8000`, the read does not tear, and there is now a live seed readout in
 the overworld. (~130 turns/second against the user's own estimate of twenty seconds - which is an
 estimate, and is NOT recorded here as the overworld rate. That is what the rate probe below is for.)
+
+**WHERE TO BIND IT, learned the hard way.** mev08 through mev13 used the Pallet Town man mev03 had
+used. Both Pallet Town object events are `MOVEMENT_TYPE_WANDER_AROUND`
+[decomp:data/maps/PalletTown/map.json], so he walks off mid-countdown and the player has to chase
+him to press A - which is the one thing a timed press cannot afford; the first calibration trial
+read +39 frames, most of it the chase. Everything binds to the **player's mother** now (group 4, map
+0, object 1): `MOVEMENT_TYPE_FACE_LEFT`, flag 0 so she is never hidden, indoors, a step from where
+the player stands. Nothing in the script depends on the object standing still - the requirement
+comes from what the script is FOR, which is why no test caught it.
 
 ## Measuring the rate with the clock removed instead of improved
 
