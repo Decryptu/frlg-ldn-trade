@@ -2,7 +2,7 @@
 and overrides only the build/startup-log/progress seams."""
 
 from . import (charmap, config as configmod, gift_registry, host_session,
-               ldntrace, mystery_gift_attempts, wonder_news)
+               ldntrace, mystery_event, mystery_gift_attempts, wonder_news)
 from .host_app import HostApplication
 from .host_beacon import build_wonder_card_app_data, build_wonder_news_app_data
 from .host_mystery_gift import (
@@ -114,6 +114,14 @@ class MysteryGiftHostApplication(HostApplication):
                 f"{charmap.decode(trainer[4:12])[:5]!r} (facility class {trainer[1]}), "
                 f"{len(trainer)}B -> battleTower.ereaderTrainer; the console battles it in the "
                 "house on SEVEN ISLAND")
+        if distribution is not None and distribution.has_mevent:
+            self.info(
+                "A Mystery Event script rides with this card: "
+                f"{len(distribution.mevent)}B -> CLI_RUN_MEVENT_SCRIPT; "
+                + mystery_event.describe(distribution.mevent))
+            self.info("The console runs it at the Mystery Gift menu and answers with the script's "
+                      "own status in MG_LINKID_RESPONSE; watch for the "
+                      "'Mystery Event script status' line below.")
         if self.config.client_ready_idle_frames is not None:
             self.info("Mystery Gift timing override: "
                       f"client_ready_idle_frames={self.config.client_ready_idle_frames}")
@@ -160,6 +168,12 @@ class MysteryGiftHostApplication(HostApplication):
                 engine.result, f"code {engine.result}"))
 
     def _success_message(self, result):
+        distribution = getattr(self, "distribution", None)
+        if distribution is not None and distribution.has_mevent:
+            status = self.session.activity.server.mevent_status
+            return ("Mystery Event script ran on the console; it answered with status "
+                    f"{status}. The console saved by itself, so whatever the script wrote is "
+                    "now in the save.")
         if result == SVR_MSG_GIFT_SENT_1:
             return ("Visiting trainer delivered. On the Switch, go to SEVEN ISLAND and talk to "
                     "the old woman in the house in town to battle it; the Wonder Card's own "

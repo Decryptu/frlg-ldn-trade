@@ -352,3 +352,42 @@ def compare_card_flags(our_flag_id, data):
     if our_flag_id == data.flag_id:
         return HAS_SAME_CARD
     return HAS_DIFF_CARD
+
+
+# --- The Mystery Event VM path -------------------------------------------------------------------
+# CLI_RUN_MEVENT_SCRIPT hands client->recvBuffer to the second bytecode interpreter
+# [decomp:src/mystery_gift_client.c:223] and Client_RunMysteryEventScript passes &client->param to
+# MEventScript_Run, which writes the script's status (ctx->data[2]) there
+# [decomp:src/mystery_event_script.c:75]. CLI_LOAD_TOSS_RESPONSE loads exactly client->param into
+# MG_LINKID_RESPONSE [decomp:src/mystery_gift_client.c:204], so the two together are a return channel:
+# whatever the Mystery Event script leaves in its status comes back to us as a u32.
+CLIENT_SCRIPT_SAVE_CARD_AND_MEVENT = client_script(
+    (CLI_RECV, MG_LINKID_CARD),
+    CLI_SAVE_CARD,
+    (CLI_RECV, MG_LINKID_RAM_SCRIPT),
+    CLI_SAVE_RAM_SCRIPT,
+    (CLI_RECV, MG_LINKID_RAM_SCRIPT),
+    CLI_RUN_MEVENT_SCRIPT,
+    CLI_LOAD_TOSS_RESPONSE,
+    CLI_SEND_LOADED,
+    (CLI_RECV, MG_LINKID_CLIENT_SCRIPT),
+    CLI_COPY_RECV,
+)
+
+# The console already holds this card: run the event alone, tossing nothing.
+CLIENT_SCRIPT_RUN_MEVENT = client_script(
+    (CLI_RECV, MG_LINKID_RAM_SCRIPT),
+    CLI_RUN_MEVENT_SCRIPT,
+    CLI_LOAD_TOSS_RESPONSE,
+    CLI_SEND_LOADED,
+    (CLI_RECV, MG_LINKID_CLIENT_SCRIPT),
+    CLI_COPY_RECV,
+)
+
+# The tail both of those branch into. CLI_MSG_CARD_RECEIVED is the only exit that is both a success
+# message and card-shaped, and success is what drives MG_STATE_SAVE_LOAD_GIFT
+# [decomp:src/mystery_gift_menu.c:1379] - without a save the event's writes die at the next reset.
+CLIENT_SCRIPT_MEVENT_DONE = client_script(
+    CLI_SEND_READY_END,
+    (CLI_RETURN, CLI_MSG_CARD_RECEIVED),
+)

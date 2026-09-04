@@ -26,7 +26,7 @@ from .gift_composer import (
 )
 import dataclasses
 
-from . import ereader_trainer, stamp_rally, wonder_card
+from . import ereader_trainer, mystery_event, stamp_rally, wonder_card
 
 
 # pokefirered/include/constants/{items,species,event_objects}.h
@@ -446,8 +446,74 @@ VISITING_TRAINER_GIFT = WonderGift(
 )
 
 
+# --- The Mystery Event VM ------------------------------------------------------------------------
+
+GIFT_MEVENT_PROBE = "mystery-event-probe"
+MEVENT_PROBE_FLAG_ID = 1009
+
+# Marker status. Anything but 42 coming back names which of our assumptions was wrong, so this one
+# script distinguishes every failure mode without a second hardware run:
+#   42  the chain ran to the end AND pointer operands are offsets into our own buffer.
+#   1   the chain ran, but the relocated pointers did not land on our probe bytes.
+#   2   givenationaldex ran and nothing after it did (setstatus never reached).
+#   0   the VM was entered but no command executed.
+#   no response at all: the client script shape, not the VM, is what is wrong.
+MEVENT_PROBE_STATUS = 42
+MEVENT_PROBE_BYTES = b"MEVENT-PROBE-01"
+
+
+def build_mevent_probe_script(*, status=MEVENT_PROBE_STATUS, probe=MEVENT_PROBE_BYTES):
+    """givenationaldex, then a marker status, then a read-only checksum over our own bytes.
+
+    Nothing here writes anything the player could lose. `givenationaldex` is a strict upgrade and a
+    no-op on a save that already has it; `checksum` only reads. It is terminal (it returns TRUE and
+    data[3] is 0 without checkcompat), which is exactly why it goes last: it reports on the
+    relocation without disturbing the status the commands before it left.
+    """
+    script = mystery_event.MysteryEventScript()
+    marker = script.blob(probe)
+    script.givenationaldex().setstatus(status).checksum(marker)
+    return script.assemble()
+
+
+MEVENT_PROBE_GIFT = WonderGift(
+    slug=GIFT_MEVENT_PROBE,
+    card=WonderCardSpec(
+        icon_species=SPECIES_PORYGON,
+        title="MYSTERY EVENT",
+        subtitle="A gift from the MYSTERY EVENT",
+        body=(
+            "The MYSTERY EVENT system has sent",
+            "something to your POKEDEX.",
+            "Check whether it can now record",
+            "POKEMON from other regions.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=MEVENT_PROBE_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "The MYSTERY EVENT has already been\n"
+                "delivered to your POKEDEX."),
+        ),
+    )),
+    completed_message=(
+        "The MYSTERY EVENT has already been\n"
+        "delivered."),
+    mevent=build_mevent_probe_script(),
+)
+
+
 __all__ = [
-    "CELEBI_GIFT", "DIR_WEST", "GIFT_PORYGON_TMS", "GIFT_VISITING_TRAINER",
+    "CELEBI_GIFT", "DIR_WEST", "GIFT_MEVENT_PROBE", "GIFT_PORYGON_TMS",
+    "GIFT_VISITING_TRAINER",
+    "MEVENT_PROBE_GIFT", "MEVENT_PROBE_FLAG_ID", "MEVENT_PROBE_STATUS",
+    "build_mevent_probe_script",
     "GIFT_WORLDS_XP",
     "ITEM_TM29_PSYCHIC",
     "ITEM_TM46_THIEF", "LEGENDARY_BEAST_GIFT", "LEGENDARY_BEAST_GIFT_SHARE", "OBJ_EVENT_GFX_CLEFAIRY",

@@ -66,6 +66,7 @@ class HostMysteryGiftEngine:
                 "install_activation_script": distribution.install_activation_script,
                 "trainer": distribution.trainer,
                 "news": distribution.news,
+                "mevent": distribution.mevent,
             }
         else:
             if card is None or ram_script is None:

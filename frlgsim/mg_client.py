@@ -5,7 +5,7 @@ into frlgsim.sim.Sim unchanged; every message in both directions is kept in ``me
 from collections import deque
 
 from . import (barrier as barriermod, block, charmap, ereader_trainer, linkplayer, mg_link,
-               mg_script, rfu, wonder_news)
+               mg_script, mystery_event, rfu, wonder_news)
 from . import mystery_gift as mg
 from .mystery_gift import (MG_LINKID_CLIENT_SCRIPT, MG_LINKID_GAME_DATA, MG_LINKID_GAME_STAT,
                            MG_LINKID_READY_END, MG_LINKID_RESPONSE)
@@ -145,6 +145,9 @@ class MysteryGiftClientEngine:
         self.saved_news = None
         self.saved_trainer = None
         self.activation_scripts = []
+        self.mevent_results = []
+        self.party_count = 1
+        self.national_dex = False
         self.buffer_scripts = []
         self.dynamic_msg = None
         self.result = None
@@ -379,8 +382,23 @@ class MysteryGiftClientEngine:
             self.info("[mg] Wonder News already held, keeping it" if same
                       else "[mg] WONDER NEWS SAVED: " + wonder_news.describe(news))
         elif instr == mg_script.CLI_RUN_MEVENT_SCRIPT:
-            self.activation_scripts.append(bytes(self.recv_buffer))
-            self.info("[mg] mystery-event script received (recorded, not executed)")
+            # Client_RunMysteryEventScript runs the bytecode in place out of recvBuffer and leaves
+            # ctx->data[2] in client->param [decomp:src/mystery_gift_client.c:257], which is what a
+            # following CLI_LOAD_TOSS_RESPONSE ships back.
+            script = bytes(self.recv_buffer)
+            self.activation_scripts.append(script)
+            result = mystery_event.run(script, party_count=self.party_count)
+            self.mevent_results.append(result)
+            self.param = result.status
+            for effect in result.effects:
+                if effect[0] == "givenationaldex":
+                    self.national_dex = True
+                elif effect[0] == "givepokemon":
+                    self.party_count += 1
+            self.info(f"[mg] MYSTERY EVENT SCRIPT RUN: "
+                      f"{mystery_event.describe(script)} -> {result.ran} commands, stopped at "
+                      f"{result.stopped_at}, status {result.status}, "
+                      f"effects {[effect[0] for effect in result.effects]}")
         elif instr == mg_script.CLI_SAVE_STAMP:
             self.saved_stamp = bytes(self.recv_buffer[:4])
             self.info(f"[mg] stamp saved: {self.saved_stamp.hex()}")

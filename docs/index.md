@@ -45,6 +45,9 @@ The code, the install instructions and the CLI reference live in the
 - [Wonder News](wonder_news.md) — the other column of the console's Mystery Gift menu: the 444-byte
   struct, the activity byte that makes the host visible on that screen, and the one gift path where
   the console answers back.
+- [The Mystery Event VM](mystery_event.md) — the second bytecode the gift link can run: why
+  `checkcompat` is optional, why pointer operands are plain buffer offsets, and the return channel
+  the console opens when a Mystery Event script reports its status back to us.
 - [What the gift link can still carry](mystery_gift_untried.md) — the whole capability surface of
   the Mystery Gift session: what has been sent, what is closed with evidence, and what is left.
 

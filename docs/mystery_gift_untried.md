@@ -20,7 +20,7 @@ them execute something on the console, and we use one:
 | Instruction | What the console does | Sent? |
 |---|---|---|
 | `CLI_SAVE_RAM_SCRIPT` (17) | stores a **field script**; it runs on the next NPC interaction | every gift we ship |
-| `CLI_RUN_MEVENT_SCRIPT` (15) | runs a **Mystery Event bytecode script** — a second VM with its own 17-opcode table [`data/mystery_event_script_cmd_table.s`] | only the stamp rally's tiny activation script |
+| `CLI_RUN_MEVENT_SCRIPT` (15) | runs a **Mystery Event bytecode script** — a second VM with its own 17-opcode table [`data/mystery_event_script_cmd_table.s`] | assembler and gift path built, session 24; see [The Mystery Event VM](mystery_event.md) |
 | `CLI_RUN_BUFFER_SCRIPT` (21) | `func = (void *)gDecompressionBuffer; func(&param, gSaveBlock2Ptr, gSaveBlock1Ptr)` — up to 1024 bytes of our own ARM/THUMB executed with both save-block pointers [`mystery_gift_client.c:274`] | never |
 
 ## Done
@@ -59,33 +59,32 @@ them execute something on the console, and we use one:
 
 ## Open, roughly in order of value
 
-### 1. The Mystery Event VM
+### 1. The Mystery Event VM — built, awaiting its first hardware run
 
-`CLI_RUN_MEVENT_SCRIPT` runs a bytecode our field scripts cannot reach. Live in FRLG:
+Full write-up in [The Mystery Event VM](mystery_event.md). `frlgsim/mystery_event.py` assembles all
+17 commands, `mg_script`/`mg_server` carry them, and `--gift mystery-event-probe` is the first script
+on the air. What is still open is what each opcode does on the console:
 
-- `setenigmaberry` — writes a complete custom berry (name, description, flavours, growth data, and
-  its in-battle held-item effect) into `gSaveBlock1Ptr->enigmaBerry`; `GetBerryInfo` then returns it
-  for `ITEM_ENIGMA_BERRY` [`berry.c:998`]. Note the player still needs the item itself.
-- `givenationaldex` — `EnableNationalPokedex()`.
-- `giveribbon` — a gift ribbon onto a chosen party slot.
+- `setenigmaberry` — the 28-byte `Berry2` (name, description pointers, size, firmness, flavours,
+  growth data) lands; the `itemEffect`/`holdEffect` tail sits at offset 0x516 of
+  `struct ReceivedEnigmaBerry`, past the console's 1024-byte buffer, so it cannot be set from this
+  link. Note the player still needs the item itself.
+- `givenationaldex` — `EnableNationalPokedex()`. In the probe script.
+- `giveribbon` — a gift ribbon onto every non-egg party mon. FRLG has no ribbon UI, so it is
+  invisible on this console; the effect only appears after a transfer.
 - `addrareword` — unlocks an Easy Chat rare word.
 - `givepokemon` — the MEvent version: a whole `struct Pokemon` **plus attached Mail**, and it sets
-  the seen and caught dex flags itself [`mystery_event_script.c:234`].
+  the seen and caught dex flags itself [`mystery_event_script.c:234`]. Status 3 back means the party
+  was full; status 2 means it landed.
 - `addtrainer` — the same visiting trainer we now send, by another route.
+- `initramscript` — a delivery script bound to **any** map group, map and object, not just the
+  Mystery Gift delivery man. Not yet built into the composer.
 
-**`checkcompat` is optional, and omitting it is the way in** (read 2026-09-04, not yet used for a new
-opcode). It looks like a mandatory gate — and it would be an awkward one, because `LANGUAGE_MASK` is
-the English decomp's value and both consoles here are French, which the decomp cannot tell us. But
-`RunScriptCommand` [`script.c:107`] chains commands inside one call until one returns TRUE, and every
-opcode above returns FALSE; only `checkcompat`, `end` and the two dead opcodes yield. So a script
-with no `checkcompat` still runs every command up to `end` in a single pass. `checkcompat` exists
-only to let execution *resume* after itself, via `ctx->data[3]` in `RunMysteryEventScriptCommand`.
-
-Two consequences. Pointer operands are relocated as `operand - ctx->data[1] + ctx->data[0]`, and
-`data[1]` is set only *by* `checkcompat` — omit it and `data[1]` is 0, so every pointer operand is
-simply an offset from the start of our own buffer, with no virtual base to guess. And this is
-already hardware-proven: the stamp rally's activation script is `05 06 00 00 00 02 …` (`runscript`,
-`end`, no `checkcompat`) and has been landing on these French consoles since session 22.
+Two findings came out of building it, both in the write-up. `checkcompat` is optional, which removes
+the unknown French `LANGUAGE_MASK` and makes every pointer operand a plain offset into our own
+buffer. And `CLI_RUN_MEVENT_SCRIPT` + `CLI_LOAD_TOSS_RESPONSE` + `CLI_SEND_LOADED` is a **return
+channel**: `MEventScript_Run` writes the script's status into `client->param`, which is exactly what
+`CLI_LOAD_TOSS_RESPONSE` ships back. The console can now report a u32 of our choosing.
 
 ### 2. `CLI_RUN_BUFFER_SCRIPT`
 

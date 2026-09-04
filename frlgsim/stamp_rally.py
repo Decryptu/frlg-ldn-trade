@@ -45,6 +45,8 @@ class MysteryGiftDistribution:
     install_activation_script: bytes | None = None
     trainer: bytes | None = None
     news: bytes | None = None
+    # Bytecode for the second VM, run by CLI_RUN_MEVENT_SCRIPT [mystery_event.py].
+    mevent: bytes | None = None
 
     def __post_init__(self):
         if self.news is not None:
@@ -58,8 +60,10 @@ class MysteryGiftDistribution:
                     f"Wonder News must be {wonder_news.WONDER_NEWS_SIZE} bytes")
             if not wonder_news.validate(self.news):
                 raise ValueError("news id 0 fails ValidateWonderNews")
-            if self.stamp is not None or self.trainer is not None:
-                raise ValueError("Wonder News cannot carry a stamp or a visiting trainer")
+            if (self.stamp is not None or self.trainer is not None
+                    or self.mevent is not None):
+                raise ValueError(
+                    "Wonder News cannot carry a stamp, a visiting trainer or a Mystery Event")
             return
         if self.card is None or self.ram_script is None:
             raise ValueError("a Mystery Gift distribution needs a card and a RAM script")
@@ -83,6 +87,12 @@ class MysteryGiftDistribution:
             if len(self.trainer) != ereader_trainer.TRAINER_SIZE:
                 raise ValueError(
                     f"a visiting trainer must be {ereader_trainer.TRAINER_SIZE} bytes")
+        if self.mevent is not None:
+            object.__setattr__(self, "mevent", bytes(self.mevent))
+            if self.stamp is not None or self.trainer is not None:
+                raise ValueError(
+                    "a Mystery Event cannot share a session with a stamp rally or a visiting "
+                    "trainer")
 
     @property
     def is_stamp(self):
@@ -95,6 +105,10 @@ class MysteryGiftDistribution:
     @property
     def is_news(self):
         return self.news is not None
+
+    @property
+    def has_mevent(self):
+        return self.mevent is not None
 
 
 def build_stamp_rally_card(*, flag_id=STAMP_RALLY_FLAG_ID):

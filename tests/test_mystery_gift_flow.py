@@ -289,6 +289,9 @@ class ConsoleClientModel:
         self.vars = {var: 0 for var in range(0x40B6, 0x40BD)}
         self.flags = set()
         self.activation_scripts = []
+        self.national_dex = False
+        self.ribbons = []
+        self.rare_words = []
 
         # RFU receive slot for the parent (player 0).
         self.recv_state = self.RECV_READY
@@ -446,6 +449,72 @@ class ConsoleClientModel:
             self._send_wait = self.echo_delay
         return rfu.serialize(words)
 
+
+    def _run_mystery_event(self, payload):
+        """MEventScript_Run over gMysteryEventScriptCmdTable [mystery_event_script.c].
+
+        Written from the decomp, not from frlgsim.mystery_event. Two rules drive it: pointer
+        operands are relocated ``operand - ctx->data[1] + ctx->data[0]`` with data[1] == 0 and
+        data[0] == the buffer, and the chain runs until a command returns TRUE, because
+        ``RunScriptCommand`` loops [script.c:107] and ``MEventScript_Run`` stops as soon as one
+        yields while data[3] is 0. Returns the status left in ctx->data[2], which is what
+        Client_RunMysteryEventScript writes to client->param.
+        """
+        status = 0
+        position = 0
+
+        def read(width):
+            nonlocal position
+            value = int.from_bytes(payload[position:position + width], "little")
+            position += width
+            return value
+
+        def field_script(start):
+            # RunScriptImmediately over the field command table; only what the activation scripts
+            # actually use is modelled [mystery_event_script.c:145].
+            while True:
+                opcode = payload[start]
+                start += 1
+                if opcode == 0x02:                  # end
+                    return
+                if opcode == 0x2A:                  # clearflag
+                    self.flags.discard(int.from_bytes(payload[start:start + 2], "little"))
+                    start += 2
+                elif opcode == 0x16:                # setvar
+                    self.vars[int.from_bytes(payload[start:start + 2], "little")] = (
+                        int.from_bytes(payload[start + 2:start + 4], "little"))
+                    start += 4
+                else:
+                    raise AssertionError(f"unsupported field opcode {opcode:#x}")
+
+        while True:
+            opcode = payload[position]
+            position += 1
+            if opcode == 0:                         # nop
+                continue
+            if opcode == 2:                         # end
+                return status
+            if opcode == 4:                         # setstatus
+                status = read(1)
+            elif opcode == 5:                       # runscript
+                field_script(read(4))
+            elif opcode == 9:                       # givenationaldex
+                self.national_dex = True
+                status = 2
+            elif opcode == 8:                       # giveribbon
+                self.ribbons.append((read(1), read(1)))
+                status = 2
+            elif opcode == 10:                      # addrareword
+                self.rare_words.append(read(1))
+                status = 2
+            elif opcode == 15:                      # checksum: terminal, data[3] is 0
+                expected, start, end = read(4), read(4), read(4)
+                if expected != sum(payload[start:end]) & 0xFFFFFFFF:
+                    status = 1
+                return status
+            else:
+                raise AssertionError(f"unsupported Mystery Event opcode {opcode}")
+
     def _begin_send(self, ident, payload, size):
         self._send_blocks = mg_link.build_message(ident, payload, size)
         self.func = "send"
@@ -508,23 +577,7 @@ class ConsoleClientModel:
         elif instr == mg_script.CLI_RUN_MEVENT_SCRIPT:
             payload = bytes(self.recv_buffer)
             self.activation_scripts.append(payload)
-            assert payload[0] == 5 and payload[5] == 2
-            embedded = int.from_bytes(payload[1:5], "little")
-            while True:
-                opcode = payload[embedded]
-                embedded += 1
-                if opcode == 0x02:
-                    break
-                if opcode == 0x2A:
-                    self.flags.discard(int.from_bytes(payload[embedded:embedded + 2], "little"))
-                    embedded += 2
-                elif opcode == 0x16:
-                    variable = int.from_bytes(payload[embedded:embedded + 2], "little")
-                    value = int.from_bytes(payload[embedded + 2:embedded + 4], "little")
-                    self.vars[variable] = value
-                    embedded += 4
-                else:
-                    raise AssertionError(f"unsupported activation opcode {opcode:#x}")
+            self.param = self._run_mystery_event(payload)
         elif instr == mg_script.CLI_COPY_MSG:
             # memcpy(client->msg, client->recvBuffer, CLIENT_MAX_MSG_SIZE)
             # [mystery_gift_client.c] - a fixed 64 bytes regardless of the

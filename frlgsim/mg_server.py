@@ -2,7 +2,7 @@
 run() advances until it blocks and publishes ``action`` as ("send", ident, payload, size), ("recv", ident)
 or ("done", server_msg_id); the caller acknowledges with on_sent()/on_received()."""
 
-from . import ereader_trainer, mg_script, wonder_news
+from . import ereader_trainer, mg_script, mystery_event, wonder_news
 from .mystery_gift import (
     MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT, MG_LINKID_DYNAMIC_MSG,
     MG_LINKID_EREADER_TRAINER, MG_LINKID_GAME_DATA, MG_LINKID_NEWS, MG_LINKID_RAM_SCRIPT,
@@ -30,6 +30,8 @@ SVR_CHECK_EXISTING_STAMPS = "SVR_CHECK_EXISTING_STAMPS"
 SVR_LOAD_STAMP = "SVR_LOAD_STAMP"
 SVR_LOAD_ACTIVATION = "SVR_LOAD_ACTIVATION"
 SVR_LOAD_EREADER_TRAINER = "SVR_LOAD_EREADER_TRAINER"
+SVR_LOAD_MEVENT = "SVR_LOAD_MEVENT"
+SVR_READ_MEVENT_STATUS = "SVR_READ_MEVENT_STATUS"
 
 # [decomp:include/mystery_gift_server.h:56]
 SVR_MSG_NOTHING_SENT = 0
@@ -58,12 +60,21 @@ SERVER_RESULT_NAMES = {
     SVR_MSG_CLIENT_CANCELED: "the player kept their existing card",
     SVR_MSG_CANT_SEND_GIFT_1: "the console's game data was rejected",
     SVR_MSG_COMM_ERROR: "communication error",
-    SVR_MSG_GIFT_SENT_1: "visiting trainer sent",
+    SVR_MSG_GIFT_SENT_1: "gift sent",
 }
 
 # Native never sets ramScriptSize [decomp:src/mystery_gift_server.c:275], so the RAM script travels as
 # a full 1024-byte message.
 FULL_BUFFER = 0
+
+
+# ctx->data[2] as the stock opcodes leave it; anything else came from our own setstatus.
+MEVENT_STATUS_NAMES = {
+    0: "untouched - no opcode set a status",
+    mystery_event.STATUS_FAILED: "failed: setenigmaberry invalid, or a checksum/crc mismatch",
+    mystery_event.STATUS_SUCCESS: "success",
+    mystery_event.STATUS_INCOMPATIBLE: "incompatible, or givepokemon found a full party",
+}
 
 
 class MysteryGiftServerError(Exception):
@@ -266,6 +277,63 @@ SCRIPT_SEND_VISITING_TRAINER = (
     (SVR_GOTO, _SCRIPT_SEND_TRAINER_ONLY),
 )
 
+# The Mystery Event VM. No native script reaches it over the wireless link -- the stamp rally's
+# activation script is the only CLI_RUN_MEVENT_SCRIPT in the game -- so these are ours. The tail
+# after the mevent send reads MG_LINKID_RESPONSE, which carries the script's own status back.
+_SCRIPT_MEVENT_TAIL = (
+    (SVR_RECV, MG_LINKID_RESPONSE),
+    (SVR_READ_MEVENT_STATUS,),
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_MEVENT_DONE),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_CARD_SENT),
+)
+
+_SCRIPT_SEND_CARD_AND_MEVENT = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SAVE_CARD_AND_MEVENT),
+    (SVR_SEND,),
+    (SVR_LOAD_CARD,),
+    (SVR_SEND,),
+    (SVR_LOAD_RAM_SCRIPT,),
+    (SVR_SEND,),
+    (SVR_LOAD_MEVENT,),
+    (SVR_SEND,),
+    (SVR_GOTO, _SCRIPT_MEVENT_TAIL),
+)
+
+# HAS_SAME_CARD: the console keeps the card it holds and only runs the event, so re-running an
+# event costs nothing and prompts for nothing.
+_SCRIPT_SEND_MEVENT_ONLY = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_RUN_MEVENT),
+    (SVR_SEND,),
+    (SVR_LOAD_MEVENT,),
+    (SVR_SEND,),
+    (SVR_GOTO, _SCRIPT_MEVENT_TAIL),
+)
+
+_SCRIPT_TOSS_PROMPT_MEVENT = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_ASK_TOSS),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_RESPONSE),
+    (SVR_READ_RESPONSE,),
+    (SVR_GOTO_IF_EQ, False, _SCRIPT_SEND_CARD_AND_MEVENT),
+    (SVR_GOTO, _SCRIPT_CLIENT_CANCELED),
+)
+
+SCRIPT_SEND_MYSTERY_EVENT = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_GAME_DATA),
+    (SVR_COPY_GAME_DATA,),
+    (SVR_CHECK_GAME_DATA,),
+    (SVR_GOTO_IF_EQ, False, _SCRIPT_CANT_SEND),
+    (SVR_CHECK_EXISTING_CARD,),
+    (SVR_GOTO_IF_EQ, mg_script.HAS_DIFF_CARD, _SCRIPT_TOSS_PROMPT_MEVENT),
+    (SVR_GOTO_IF_EQ, mg_script.HAS_NO_CARD, _SCRIPT_SEND_CARD_AND_MEVENT),
+    (SVR_GOTO, _SCRIPT_SEND_MEVENT_ONLY),
+)
+
+
 # sServerScript_TossPrompt [decomp:src/mystery_gift_scripts.c:151]
 _SCRIPT_TOSS_PROMPT = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_ASK_TOSS),
@@ -299,7 +367,7 @@ class MysteryGiftServer:
 
     def __init__(self, card=None, ram_script=None, *, news=None, stamp=None,
                  activation_script=None, install_activation_script=None, trainer=None,
-                 script=None, log=lambda *a: None):
+                 mevent=None, script=None, log=lambda *a: None):
         self.news = None if news is None else bytes(news)
         if self.news is not None:
             # Wonder News is a session of its own: no card, no flagId, no delivery script.
@@ -355,6 +423,24 @@ class MysteryGiftServer:
         if self.news is not None and (self.stamp is not None or self.trainer is not None):
             raise MysteryGiftServerError(
                 "Wonder News cannot share a session with a stamp rally or a visiting trainer")
+        self.mevent = None if mevent is None else bytes(mevent)
+        if self.mevent is not None:
+            if len(self.mevent) > mystery_event.MAX_SCRIPT_SIZE:
+                raise MysteryGiftServerError(
+                    f"Mystery Event script is {len(self.mevent)} bytes; the console's receive "
+                    f"buffer is {mystery_event.MAX_SCRIPT_SIZE}")
+            if not mystery_event.decode(self.mevent):
+                raise MysteryGiftServerError("Mystery Event script is empty")
+            if mystery_event.decode(self.mevent)[-1][0] not in mystery_event.TERMINAL_OPCODES:
+                raise MysteryGiftServerError(
+                    "Mystery Event script has no terminal command; the console would carry on "
+                    "decoding the rest of its receive buffer")
+            if self.news is not None or self.stamp is not None or self.trainer is not None:
+                raise MysteryGiftServerError(
+                    "a Mystery Event script cannot share a session with news, a stamp rally or a "
+                    "visiting trainer")
+        self.is_mevent_distribution = self.mevent is not None
+        self.mevent_status = None
         self.is_stamp_distribution = self.stamp is not None
         self.is_trainer_distribution = self.trainer is not None
         self.is_news_distribution = self.news is not None
@@ -368,6 +454,8 @@ class MysteryGiftServer:
             self.script = SCRIPT_SEND_STAMP_EVENT
         elif self.is_trainer_distribution:
             self.script = SCRIPT_SEND_VISITING_TRAINER
+        elif self.is_mevent_distribution:
+            self.script = SCRIPT_SEND_MYSTERY_EVENT
         else:
             self.script = SCRIPT_SEND_WONDER_CARD
         self.cmdidx = 0
@@ -531,6 +619,18 @@ class MysteryGiftServer:
 
     def _do_svr_load_ereader_trainer(self):
         self._loaded = (MG_LINKID_EREADER_TRAINER, self.trainer, len(self.trainer))
+
+    def _do_svr_load_mevent(self):
+        self._loaded = (MG_LINKID_RAM_SCRIPT, self.mevent, len(self.mevent))
+        self.info("Mystery Event script: " + mystery_event.describe(self.mevent))
+
+    def _do_svr_read_mevent_status(self):
+        # ctx->data[2] as MEventScript_Run left it, relayed by CLI_LOAD_TOSS_RESPONSE.
+        self.mevent_status = int.from_bytes(self._received[:4], "little")
+        self.param = self.mevent_status
+        self.trace.append(("mevent_status", self.mevent_status))
+        self.info(f"Mystery Event script status: {self.mevent_status} "
+                  f"({MEVENT_STATUS_NAMES.get(self.mevent_status, 'set by our own setstatus')})")
 
     def _do_svr_load_msg(self, text):
         self._loaded = (MG_LINKID_DYNAMIC_MSG, text, len(text))

@@ -4,7 +4,7 @@ VAR_MYSTERY_GIFT_2..7 = stamp-slot cursors (0 absent, 1 activated, +1 per stage)
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from . import charmap, ereader_trainer
+from . import charmap, ereader_trainer, mystery_event
 from .mystery_gift import (
     CARD_TYPE_GIFT,
     CARD_TYPE_STAMP,
@@ -291,6 +291,9 @@ class WonderGift:
     # A packed BattleTowerEReaderTrainer to push in the same session [ereader_trainer.py]; the
     # card and its script are delivered exactly as for any other gift.
     trainer: bytes | None = None
+    # Assembled Mystery Event bytecode [mystery_event.py], run by the console at the Mystery Gift
+    # menu right after the card is saved. Its status comes back to us as MG_LINKID_RESPONSE.
+    mevent: bytes | None = None
 
 
 def _fail(path, message):
@@ -541,6 +544,26 @@ def validate_definition(definition, *, flag_id=None):
                   "fails ValidateEReaderTrainer; the console would silently clear it")
         if not isinstance(definition.event, GiftSpec):
             _fail(f"{path}.trainer", "a stamp rally cannot also send a visiting trainer")
+    if definition.mevent is not None:
+        if not isinstance(definition.mevent, (bytes, bytearray)):
+            _fail(f"{path}.mevent", "mevent must be assembled bytes from MysteryEventScript")
+        if len(definition.mevent) > mystery_event.MAX_SCRIPT_SIZE:
+            _fail(f"{path}.mevent",
+                  f"a Mystery Event script is at most {mystery_event.MAX_SCRIPT_SIZE} bytes, "
+                  f"got {len(definition.mevent)}")
+        chain = mystery_event.decode(definition.mevent)
+        if not chain or chain[-1][0] not in mystery_event.TERMINAL_OPCODES:
+            _fail(f"{path}.mevent",
+                  "no terminal command; the console would decode past the script into the rest "
+                  "of its receive buffer")
+        if any(opcode in mystery_event.DEAD_OPCODES for opcode, _, _ in chain):
+            _fail(f"{path}.mevent",
+                  "setrecordmixinggift and enableresetrtc both call SetIncompatible in FRLG")
+        if definition.trainer is not None:
+            _fail(f"{path}.mevent",
+                  "a Mystery Event and a visiting trainer cannot share one session")
+        if not isinstance(definition.event, GiftSpec):
+            _fail(f"{path}.mevent", "a stamp rally already uses CLI_RUN_MEVENT_SCRIPT")
     shared = _validate_plan_shape(definition.delivery, f"{path}.delivery")
     if definition.delivery.pre_stages:
         _fail(f"{path}.delivery.pre_stages",
@@ -1046,7 +1069,8 @@ def _compile_gift(definition, flag_id):
         definition.card, flag_id=flag_id,
         card_type=CARD_TYPE_GIFT, max_stamps=0,
         send_type=_SHAREABLE_SEND_TYPES[definition.event.shareable])
-    return MysteryGiftDistribution(card, script, trainer=definition.trainer)
+    return MysteryGiftDistribution(card, script, trainer=definition.trainer,
+                                   mevent=definition.mevent)
 
 
 # Mystery Event bytecode used by CLI_RUN_MEVENT_SCRIPT.
