@@ -52,3 +52,34 @@ def resolve_quote(names=None):
 def resolve_line(names):
     """-> six word ids for one visiting-trainer line."""
     return resolve_words(names, TRAINER_LINE_LENGTH)
+
+
+# [decomp:include/constants/easy_chat.h:15]
+GROUP_NAMES = {
+    0x0: "POKEMON_2", 0x1: "TRAINER", 0x2: "STATUS", 0x3: "BATTLE", 0x4: "GREETINGS",
+    0x5: "PEOPLE", 0x6: "VOICES", 0x7: "SPEECH", 0x8: "ENDINGS", 0x9: "FEELINGS",
+    0xa: "CONDITIONS", 0xb: "ACTIONS", 0xc: "LIFESTYLE", 0xd: "HOBBIES", 0xe: "TIME",
+    0xf: "MISC", 0x10: "ADJECTIVES", 0x11: "EVENTS", 0x12: "MOVE_1", 0x13: "MOVE_2",
+    0x14: "TRENDY_SAYING", 0x15: "POKEMON",
+}
+
+WORD_NAMES = {value: name for name, value in WORDS.items()}
+
+
+def describe_word(value):
+    """A word id as the console holds it, named as far as the ENGLISH table can name it.
+
+    The localized ROMs carry their own group tables, so an id is only a reliable *slot*; what a
+    French console prints there is a separate question. See `easychat_french.CONFIRMED`.
+    """
+    value = int(value) & 0xFFFF
+    if value == UNDEFINED:
+        return "-"
+    group, index = value >> 9, value & 0x1FF
+    slot = f"{GROUP_NAMES.get(group, f'group {group}')}/{index}"
+    name = WORD_NAMES.get(value)
+    return f"{name} [{slot}]" if name else f"0x{value:04x} [{slot}]"
+
+
+def describe_words(values):
+    return " ".join(describe_word(value) for value in values)

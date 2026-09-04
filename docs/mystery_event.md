@@ -195,6 +195,54 @@ Traps the builder enforces:
 - the mon's held item and the mail's `itemId` must agree, because `GiveMailToMon2` sets the held
   item *from the mail*.
 
+### mev02: it works, and it caught something else
+
+`mev02`, French FireRed, first try. Status **2** came back, and the player found a level 30 CELEBI
+in the party holding ORANGE MAIL — without going anywhere near a Pokemon Center. `givepokemon` is
+proven.
+
+The mail read:
+
+    SALUT AMIS / JE SUIS LA / MERCI STRESSE
+
+We sent `hello, friend, i_ve_arrived, thank_you, enjoy`. Four of the five slots printed the word the
+English table promised. `EC_WORD_ENJOY` (FEELINGS/42) printed **STRESSE**.
+
+An Easy Chat word id is `(group << 9) | index` — a *slot*, not a word — and every localized ROM
+carries its own `gEasyChatGroup_*` tables. `frlgsim/easychat_words.py` is generated from the English
+decompilation, so it is mostly right and occasionally wrong, with nothing to warn you. That applies
+to every Easy Chat phrase this project composes: mail, the trainer card profile quote, and the
+visiting trainer's three six-word lines. `frlgsim/easychat_french.py` records what has actually been
+seen on the French console; compose from that.
+
+The cheapest fix is a channel we already had and never read. The Poke Mart questionnaire stores four
+Easy Chat words in `gSaveBlock1Ptr->mysteryGift.questionnaireWords` [`src/mystery_gift.c:84`] and
+**every** Mystery Gift session ships them to us inside `MysteryGiftLinkGameData` [`:361`]. A player
+who fills the questionnaire in French hands us four exact ids on the next run of anything. The host
+now logs them, along with the Easy Chat battle profile and the Wonder Card stats — three things the
+console volunteers that nothing in the game ever reads back.
+
+## The questionnaire, as a password
+
+`SVR_CHECK_QUESTIONNAIRE` compares all four words, in order, exactly
+[`MysteryGift_DoesQuestionnaireMatch`, `src/mystery_gift.c:422`], and puts the verdict in the
+server's `param` where `SVR_GOTO_IF_EQ` can branch on it. No native server script uses it — the idea
+survives only in the official Visiting Trainer card, whose phrase was "GIVE ME AWESOME TRAINER" — so
+the flow is ours to build.
+
+`mg_server.gate_on_questionnaire(script)` splices the check between the shared game-data prefix and
+whatever the script does next, so any distribution can be gated:
+
+    MysteryGiftServer(card, ram_script, questionnaire=phrase,
+                      denied_message="Say the words.")
+
+A console that says the wrong phrase gets our 64-byte message through `CLIENT_SCRIPT_DYNAMIC_ERROR`
+and the session returns `SVR_MSG_NOTHING_SENT`; nothing is sent and nothing is tossed.
+
+The one thing that cannot come from the decompilation is the phrase itself. Four French word ids are
+four slots in a table the English decomp does not have — so the phrase is read off a real console
+first, and only then required.
+
 ## Running it
 
     ./scratchpad/run_mg_fast.sh mevNN --gift mystery-event-probe --version firered

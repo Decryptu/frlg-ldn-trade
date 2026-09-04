@@ -265,3 +265,111 @@ def test_end_to_end_a_console_holding_another_card_is_asked_before_anything_runs
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# --- the questionnaire gate ------------------------------------------------------------------
+
+def _game_data(*, flag_id=0, questionnaire=(), profile=(), battles_won=0, trades=0):
+    from frlgsim import easychat, mystery_gift as mg
+    raw = bytearray(mg_script.GAME_DATA_SIZE)
+    raw[0:4] = mg.GAME_DATA_VALID_VAR.to_bytes(4, "little")
+    raw[4] = raw[8] = raw[0x0C] = raw[0x10] = 1
+    raw[0x14:0x16] = int(flag_id).to_bytes(2, "little")
+    for index, value in enumerate(easychat.resolve_words(questionnaire, 4)):
+        raw[0x16 + 2 * index:0x18 + 2 * index] = int(value).to_bytes(2, "little")
+    for index, value in enumerate(easychat.resolve_words(profile, 6)):
+        raw[0x50 + 2 * index:0x52 + 2 * index] = int(value).to_bytes(2, "little")
+    raw[0x20:0x22] = int(battles_won).to_bytes(2, "little")
+    raw[0x24:0x26] = int(trades).to_bytes(2, "little")
+    raw[0x45:0x4C] = b"GURVAN\xff"
+    return bytes(raw)
+
+
+def _run_server(server, game_data):
+    """Drive the server far enough to resolve the questionnaire branch."""
+    for _ in range(60):
+        action = server.run()
+        if action[0] == "done":
+            return action[1]
+        if action[0] == "send":
+            server.on_sent()
+        elif action[0] == "recv":
+            from frlgsim import mystery_gift as mg
+            if action[1] == mg.MG_LINKID_GAME_DATA:
+                server.on_received(action[1], game_data)
+            else:
+                server.on_received(action[1], b"\x00" * 4)
+    raise AssertionError("server did not finish")
+
+
+def test_the_gate_declines_a_console_that_typed_the_wrong_phrase():
+    from frlgsim import easychat
+    card, ram_script = _probe_card()
+    phrase = easychat.resolve_words(("hello", "friend", "thank_you", "trade"), 4)
+    server = mg_server.MysteryGiftServer(
+        card, ram_script, questionnaire=phrase, denied_message="Say the words.")
+
+    result = _run_server(server, _game_data(questionnaire=("hello", "friend", "thank_you", "get")))
+    assert result == mg_server.SVR_MSG_NOTHING_SENT
+    assert server.questionnaire_matched is False
+    assert ("questionnaire", False) in server.trace
+
+
+def test_the_gate_lets_the_right_phrase_through_to_the_gift():
+    from frlgsim import easychat
+    card, ram_script = _probe_card()
+    phrase = easychat.resolve_words(("hello", "friend", "thank_you", "trade"), 4)
+    server = mg_server.MysteryGiftServer(card, ram_script, questionnaire=phrase)
+
+    result = _run_server(server, _game_data(
+        questionnaire=("hello", "friend", "thank_you", "trade")))
+    assert result == mg_server.SVR_MSG_CARD_SENT
+    assert server.questionnaire_matched is True
+
+
+def test_the_gate_compares_all_four_words_in_order():
+    """MysteryGift_DoesQuestionnaireMatch returns FALSE on the first mismatch, in order
+    [decomp:src/mystery_gift.c:422] - a reordered phrase is a different phrase."""
+    from frlgsim import easychat
+    card, ram_script = _probe_card()
+    phrase = easychat.resolve_words(("hello", "friend", "thank_you", "trade"), 4)
+    server = mg_server.MysteryGiftServer(card, ram_script, questionnaire=phrase)
+
+    result = _run_server(server, _game_data(
+        questionnaire=("friend", "hello", "thank_you", "trade")))
+    assert result == mg_server.SVR_MSG_NOTHING_SENT
+
+
+def test_a_phrase_must_be_exactly_four_words():
+    card, ram_script = _probe_card()
+    with pytest.raises(mg_server.MysteryGiftServerError, match="exactly 4"):
+        mg_server.MysteryGiftServer(card, ram_script, questionnaire=(1, 2, 3))
+
+
+def test_a_refusal_message_longer_than_the_console_copies_is_refused():
+    from frlgsim import easychat
+    card, ram_script = _probe_card()
+    with pytest.raises(mg_server.MysteryGiftServerError, match="copies only"):
+        mg_server.MysteryGiftServer(
+            card, ram_script, questionnaire=easychat.resolve_words((), 4),
+            denied_message="X" * 80)
+
+
+def test_the_console_reports_words_and_card_stats_we_never_asked_for():
+    data = mg_script.parse_link_game_data(_game_data(
+        flag_id=1009, questionnaire=("hello", "friend", "thank_you", "trade"),
+        profile=("hello",), battles_won=3, trades=1))
+
+    assert data.has_questionnaire
+    assert mg_script.card_stat(data, mg_script.CARD_STAT_BATTLES_WON) == 3
+    assert mg_script.card_stat(data, mg_script.CARD_STAT_NUM_TRADES) == 1
+    lines = data.describe_extras()
+    assert any("questionnaire" in line for line in lines)
+    assert any("battle profile" in line for line in lines)
+    assert any("Wonder Card stats" in line for line in lines)
+
+
+def test_an_all_zero_battle_profile_is_not_reported_as_words():
+    """Word 0 is EC_GROUP_POKEMON_2 index 0, which the console rejects and prints as '???'."""
+    data = mg_script.parse_link_game_data(_game_data())
+    assert not any("battle profile" in line for line in data.describe_extras())

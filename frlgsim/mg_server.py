@@ -2,7 +2,7 @@
 run() advances until it blocks and publishes ``action`` as ("send", ident, payload, size), ("recv", ident)
 or ("done", server_msg_id); the caller acknowledges with on_sent()/on_received()."""
 
-from . import ereader_trainer, mg_script, mystery_event, wonder_news
+from . import charmap, easychat, ereader_trainer, mg_script, mystery_event, wonder_news
 from .mystery_gift import (
     MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT, MG_LINKID_DYNAMIC_MSG,
     MG_LINKID_EREADER_TRAINER, MG_LINKID_GAME_DATA, MG_LINKID_NEWS, MG_LINKID_RAM_SCRIPT,
@@ -31,6 +31,9 @@ SVR_LOAD_STAMP = "SVR_LOAD_STAMP"
 SVR_LOAD_ACTIVATION = "SVR_LOAD_ACTIVATION"
 SVR_LOAD_EREADER_TRAINER = "SVR_LOAD_EREADER_TRAINER"
 SVR_LOAD_MEVENT = "SVR_LOAD_MEVENT"
+SVR_CHECK_QUESTIONNAIRE = "SVR_CHECK_QUESTIONNAIRE"
+SVR_GET_CARD_STAT = "SVR_GET_CARD_STAT"
+SVR_LOAD_DENIED_MSG = "SVR_LOAD_DENIED_MSG"
 SVR_READ_MEVENT_STATUS = "SVR_READ_MEVENT_STATUS"
 
 # [decomp:include/mystery_gift_server.h:56]
@@ -77,6 +80,12 @@ MEVENT_STATUS_NAMES = {
 }
 
 
+NUM_QUESTIONNAIRE_WORDS = 4     # [decomp:include/constants/global.h:68]
+
+# What a console that says the wrong phrase reads, through CLIENT_SCRIPT_DYNAMIC_ERROR.
+DEFAULT_DENIED_MESSAGE = charmap.encode("That is not the phrase.") + b"\xff"
+
+
 class MysteryGiftServerError(Exception):
     """The console sent something the server script cannot proceed from."""
 
@@ -87,6 +96,18 @@ _SCRIPT_CANT_SEND = (
     (SVR_SEND,),
     (SVR_RECV, MG_LINKID_READY_END),
     (SVR_RETURN, SVR_MSG_CANT_SEND_GIFT_1),
+)
+
+# Every distribution opens the same way [decomp:src/mystery_gift_scripts.c:174,:185]: push the
+# client script that uploads the console's MysteryGiftLinkGameData, take it, and refuse the session
+# if it fails MysteryGift_ValidateLinkGameData. Named once so a gate can be spliced after it.
+_GAME_DATA_PREFIX = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_GAME_DATA),
+    (SVR_COPY_GAME_DATA,),
+    (SVR_CHECK_GAME_DATA,),
+    (SVR_GOTO_IF_EQ, False, _SCRIPT_CANT_SEND),
 )
 
 # sServerScript_HasCard [decomp:src/mystery_gift_scripts.c:160]
@@ -136,12 +157,7 @@ _SCRIPT_SEND_NEWS = (
 # gMysteryGiftServerScript_SendWonderNews [decomp:src/mystery_gift_scripts.c:174] minus its leading
 # SVR_COPY_SAVED_NEWS: the news comes from configuration, not from a save block we do not have.
 SCRIPT_SEND_WONDER_NEWS = (
-    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
-    (SVR_SEND,),
-    (SVR_RECV, MG_LINKID_GAME_DATA),
-    (SVR_COPY_GAME_DATA,),
-    (SVR_CHECK_GAME_DATA,),
-    (SVR_GOTO_IF_EQ, False, _SCRIPT_CANT_SEND),
+    *_GAME_DATA_PREFIX,
     (SVR_GOTO, _SCRIPT_SEND_NEWS),
 )
 
@@ -213,12 +229,7 @@ STAMP_NEW = 2
 STAMP_ALREADY_PRESENT = 3
 
 SCRIPT_SEND_STAMP_EVENT = (
-    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
-    (SVR_SEND,),
-    (SVR_RECV, MG_LINKID_GAME_DATA),
-    (SVR_COPY_GAME_DATA,),
-    (SVR_CHECK_GAME_DATA,),
-    (SVR_GOTO_IF_EQ, False, _SCRIPT_CANT_SEND),
+    *_GAME_DATA_PREFIX,
     (SVR_CHECK_RALLY_CARD,),
     (SVR_GOTO_IF_EQ, mg_script.HAS_DIFF_CARD, _SCRIPT_STAMP_TOSS_PROMPT),
     (SVR_GOTO_IF_EQ, mg_script.HAS_NO_CARD, _SCRIPT_INSTALL_CARD_AND_STAMP),
@@ -265,12 +276,7 @@ _SCRIPT_TOSS_PROMPT_TRAINER = (
 )
 
 SCRIPT_SEND_VISITING_TRAINER = (
-    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
-    (SVR_SEND,),
-    (SVR_RECV, MG_LINKID_GAME_DATA),
-    (SVR_COPY_GAME_DATA,),
-    (SVR_CHECK_GAME_DATA,),
-    (SVR_GOTO_IF_EQ, False, _SCRIPT_CANT_SEND),
+    *_GAME_DATA_PREFIX,
     (SVR_CHECK_EXISTING_CARD,),
     (SVR_GOTO_IF_EQ, mg_script.HAS_DIFF_CARD, _SCRIPT_TOSS_PROMPT_TRAINER),
     (SVR_GOTO_IF_EQ, mg_script.HAS_NO_CARD, _SCRIPT_SEND_CARD_AND_TRAINER),
@@ -321,12 +327,7 @@ _SCRIPT_TOSS_PROMPT_MEVENT = (
 )
 
 SCRIPT_SEND_MYSTERY_EVENT = (
-    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
-    (SVR_SEND,),
-    (SVR_RECV, MG_LINKID_GAME_DATA),
-    (SVR_COPY_GAME_DATA,),
-    (SVR_CHECK_GAME_DATA,),
-    (SVR_GOTO_IF_EQ, False, _SCRIPT_CANT_SEND),
+    *_GAME_DATA_PREFIX,
     (SVR_CHECK_EXISTING_CARD,),
     (SVR_GOTO_IF_EQ, mg_script.HAS_DIFF_CARD, _SCRIPT_TOSS_PROMPT_MEVENT),
     (SVR_GOTO_IF_EQ, mg_script.HAS_NO_CARD, _SCRIPT_SEND_CARD_AND_MEVENT),
@@ -347,17 +348,42 @@ _SCRIPT_TOSS_PROMPT = (
 # gMysteryGiftServerScript_SendWonderCard [decomp:src/mystery_gift_scripts.c:185] minus its two leading
 # SVR_COPY_SAVED_* (card/script come from configuration; DisableWonderCardSending is deliberately not applied).
 SCRIPT_SEND_WONDER_CARD = (
-    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
-    (SVR_SEND,),
-    (SVR_RECV, MG_LINKID_GAME_DATA),
-    (SVR_COPY_GAME_DATA,),
-    (SVR_CHECK_GAME_DATA,),
-    (SVR_GOTO_IF_EQ, False, _SCRIPT_CANT_SEND),
+    *_GAME_DATA_PREFIX,
     (SVR_CHECK_EXISTING_CARD,),
     (SVR_GOTO_IF_EQ, mg_script.HAS_DIFF_CARD, _SCRIPT_TOSS_PROMPT),
     (SVR_GOTO_IF_EQ, mg_script.HAS_NO_CARD, _SCRIPT_SEND_CARD),
     (SVR_GOTO, _SCRIPT_HAS_CARD),
 )
+
+
+# --- The questionnaire gate ----------------------------------------------------------------------
+# SVR_CHECK_QUESTIONNAIRE compares all four Easy Chat words the player typed at the Poke Mart clerk
+# against a phrase we choose, exactly [MysteryGift_DoesQuestionnaireMatch, decomp:src/mystery_gift.c:422].
+# No native server script ever uses it, so this whole flow is ours: a password on a gift. The official
+# Visiting Trainer card is the only known use of the idea, with "GIVE ME AWESOME TRAINER".
+#
+# TRAP: the four words are IDS, and an id is a slot in a per-language table. What a FRENCH player
+# types produces French ids, which the English decomp cannot tell us - so the phrase has to be read
+# off a real console first. The host logs it from every session [easychat_french.py].
+_SCRIPT_QUESTIONNAIRE_DENIED = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_DYNAMIC_ERROR),
+    (SVR_SEND,),
+    (SVR_LOAD_DENIED_MSG,),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_NOTHING_SENT),
+)
+
+
+def gate_on_questionnaire(script):
+    """Splice a questionnaire check between the game-data prefix and whatever the script does next."""
+    if tuple(script[:len(_GAME_DATA_PREFIX)]) != _GAME_DATA_PREFIX:
+        raise MysteryGiftServerError(
+            "only a script that opens with the standard game-data prefix can be gated")
+    return (_GAME_DATA_PREFIX
+            + ((SVR_CHECK_QUESTIONNAIRE,),
+               (SVR_GOTO_IF_EQ, False, _SCRIPT_QUESTIONNAIRE_DENIED))
+            + tuple(script[len(_GAME_DATA_PREFIX):]))
 
 
 class MysteryGiftServer:
@@ -367,7 +393,8 @@ class MysteryGiftServer:
 
     def __init__(self, card=None, ram_script=None, *, news=None, stamp=None,
                  activation_script=None, install_activation_script=None, trainer=None,
-                 mevent=None, script=None, log=lambda *a: None):
+                 mevent=None, questionnaire=None, denied_message=None,
+                 script=None, log=lambda *a: None):
         self.news = None if news is None else bytes(news)
         if self.news is not None:
             # Wonder News is a session of its own: no card, no flagId, no delivery script.
@@ -439,6 +466,19 @@ class MysteryGiftServer:
                 raise MysteryGiftServerError(
                     "a Mystery Event script cannot share a session with news, a stamp rally or a "
                     "visiting trainer")
+        self.questionnaire = None if questionnaire is None else tuple(
+            int(word) & 0xFFFF for word in questionnaire)
+        if self.questionnaire is not None and len(self.questionnaire) != NUM_QUESTIONNAIRE_WORDS:
+            raise MysteryGiftServerError(
+                f"a questionnaire phrase is exactly {NUM_QUESTIONNAIRE_WORDS} Easy Chat words, "
+                f"got {len(self.questionnaire)}")
+        self.denied_message = (DEFAULT_DENIED_MESSAGE if denied_message is None
+                               else charmap.encode(denied_message) + b"\xff")
+        if len(self.denied_message) > mg_script.CLIENT_MAX_MSG_SIZE:
+            raise MysteryGiftServerError(
+                f"the refusal message encodes to {len(self.denied_message)} bytes; the console "
+                f"copies only {mg_script.CLIENT_MAX_MSG_SIZE}")
+        self.questionnaire_matched = None
         self.is_mevent_distribution = self.mevent is not None
         self.mevent_status = None
         self.is_stamp_distribution = self.stamp is not None
@@ -458,6 +498,8 @@ class MysteryGiftServer:
             self.script = SCRIPT_SEND_MYSTERY_EVENT
         else:
             self.script = SCRIPT_SEND_WONDER_CARD
+        if self.questionnaire is not None and script is None:
+            self.script = gate_on_questionnaire(self.script)
         self.cmdidx = 0
         self.param = None
         self.action = None
@@ -543,6 +585,11 @@ class MysteryGiftServer:
     def _do_svr_copy_game_data(self):
         self.game_data = mg_script.parse_link_game_data(self._received)
         self.info("Console identified itself: " + self.game_data.describe())
+        for line in self.game_data.describe_extras():
+            # Free every session: the console volunteers all of this and nothing in the game ever
+            # reads it back. On a French console the word ids are the only ground truth for what a
+            # slot actually prints [easychat_french.py].
+            self.info(line)
 
     def _do_svr_check_game_data(self):
         self.param = mg_script.validate_link_game_data(self.game_data)
@@ -619,6 +666,28 @@ class MysteryGiftServer:
 
     def _do_svr_load_ereader_trainer(self):
         self._loaded = (MG_LINKID_EREADER_TRAINER, self.trainer, len(self.trainer))
+
+    def _do_svr_check_questionnaire(self):
+        """Port of MysteryGift_DoesQuestionnaireMatch [decomp:src/mystery_gift.c:422]: all four
+        word ids, exactly, in order."""
+        typed = tuple(self.game_data.questionnaire_words)
+        self.param = typed == self.questionnaire
+        self.trace.append(("questionnaire", self.param))
+        self.questionnaire_matched = bool(self.param)
+        self.info("Questionnaire gate: console typed "
+                  + easychat.describe_words(typed) + "; we require "
+                  + easychat.describe_words(self.questionnaire)
+                  + (" -> MATCH" if self.param else " -> no match, declining the gift"))
+
+    def _do_svr_get_card_stat(self, stat):
+        """MysteryGift_GetCardStatFromLinkData [decomp:src/mystery_gift_server.c:200]: a counter the
+        console keeps for the card it holds. Never used by a native send script."""
+        self.param = mg_script.card_stat(self.game_data, stat)
+        self.trace.append(("card_stat", stat, self.param))
+        self.info(f"Wonder Card stat {mg_script.CARD_STAT_NAMES.get(stat, stat)}: {self.param}")
+
+    def _do_svr_load_denied_msg(self):
+        self._loaded = (MG_LINKID_DYNAMIC_MSG, self.denied_message, len(self.denied_message))
 
     def _do_svr_load_mevent(self):
         self._loaded = (MG_LINKID_RAM_SCRIPT, self.mevent, len(self.mevent))

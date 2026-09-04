@@ -4,7 +4,7 @@ past the script are stale. A client script's declared size is 8 bytes per comman
 
 from dataclasses import dataclass
 
-from . import charmap
+from . import charmap, easychat
 from .mystery_gift import (
     GAME_DATA_VALID_VAR, MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT,
     MG_LINKID_DYNAMIC_MSG, MG_LINKID_EREADER_TRAINER, MG_LINKID_NEWS, MG_LINKID_RAM_SCRIPT,
@@ -231,6 +231,11 @@ GD_OFF_UNK_10 = 0x10            # low nibble = VERSION_CODE (1 FireRed, 2 LeafGr
 GD_OFF_FLAG_ID = 0x14           # 0 = console holds no Wonder Card
 GD_OFF_QUESTIONNAIRE = 0x16     # u16[NUM_QUESTIONNAIRE_WORDS]
 GD_OFF_CARD_METADATA = 0x20     # struct WonderCardMetadata (36 bytes)
+# struct WonderCardMetadata [decomp:include/global.h:671]: battlesWon, battlesLost, numTrades,
+# iconSpecies, then the stamp arrays.
+GD_OFF_BATTLES_WON = GD_OFF_CARD_METADATA + 0
+GD_OFF_BATTLES_LOST = GD_OFF_CARD_METADATA + 2
+GD_OFF_NUM_TRADES = GD_OFF_CARD_METADATA + 4
 GD_OFF_METADATA_ICON = GD_OFF_CARD_METADATA + 6
 GD_OFF_STAMP_SPECIES = GD_OFF_CARD_METADATA + 8
 GD_OFF_STAMP_IDS = GD_OFF_STAMP_SPECIES + 14
@@ -239,8 +244,38 @@ GD_OFF_PLAYER_NAME = 0x45       # u8[PLAYER_NAME_LENGTH] = 7, with NO terminator
 GD_OFF_TRAINER_ID = 0x4C        # u8[TRAINER_ID_LENGTH]
 PLAYER_NAME_FIELD_SIZE = 7
 GD_OFF_EASY_CHAT = 0x50         # u16[EASY_CHAT_BATTLE_WORDS_COUNT]
+EASY_CHAT_BATTLE_WORDS_COUNT = 6
 GD_OFF_GAME_CODE = 0x5C         # u8[GAME_CODE_LENGTH]
 GD_OFF_VERSION = 0x60           # RomHeaderSoftwareVersion
+
+# [decomp:include/constants/mystery_gift.h:10]
+CARD_STAT_BATTLES_WON = 0
+CARD_STAT_BATTLES_LOST = 1
+CARD_STAT_NUM_TRADES = 2
+CARD_STAT_NUM_STAMPS = 3
+CARD_STAT_MAX_STAMPS = 4
+CARD_STAT_NAMES = {
+    CARD_STAT_BATTLES_WON: "battles won", CARD_STAT_BATTLES_LOST: "battles lost",
+    CARD_STAT_NUM_TRADES: "trades", CARD_STAT_NUM_STAMPS: "stamps collected",
+    CARD_STAT_MAX_STAMPS: "max stamps",
+}
+
+
+def card_stat(data, stat):
+    """Port of MysteryGift_GetCardStatFromLinkData [decomp:src/mystery_gift.c:438]. The counters the
+    console keeps for the card it is holding; nothing in the game ever sends them to a server."""
+    if stat == CARD_STAT_BATTLES_WON:
+        return data.battles_won
+    if stat == CARD_STAT_BATTLES_LOST:
+        return data.battles_lost
+    if stat == CARD_STAT_NUM_TRADES:
+        return data.num_trades
+    if stat == CARD_STAT_NUM_STAMPS:
+        return len(data.stamps)
+    if stat == CARD_STAT_MAX_STAMPS:
+        return data.max_stamps
+    raise ValueError(f"unknown Wonder Card stat {stat}")
+
 
 # [decomp:src/mystery_gift.c:388]
 HAS_NO_CARD = 0
@@ -260,6 +295,10 @@ class LinkGameData:
     version_code: int
     flag_id: int
     metadata_icon_species: int
+    battles_won: int
+    battles_lost: int
+    num_trades: int
+    easy_chat_profile: tuple
     stamp_species: tuple
     stamp_ids: tuple
     max_stamps: int
@@ -289,12 +328,39 @@ class LinkGameData:
         return len(self.raw[GD_OFF_PLAYER_NAME:GD_OFF_PLAYER_NAME + PLAYER_NAME_FIELD_SIZE]
                    .rstrip(b"\xff")) < PLAYER_NAME_FIELD_SIZE
 
+    @property
+    def has_questionnaire(self):
+        return any(word != easychat.UNDEFINED for word in self.questionnaire_words)
+
     def describe(self):
         trainer = (f"TID {self.trainer_id & 0xFFFF}" if self.trainer_id_is_reliable
                    else "TID unavailable (7-character name)")
         return (f"{self.player_name!r} ({trainer}) on {self.version_name}, "
                 + (f"holding card flagId {self.flag_id}" if self.has_card
                    else "holding no Wonder Card"))
+
+    def describe_extras(self):
+        """The Easy Chat words the console volunteers about itself.
+
+        The questionnaire words are the four the player typed at the Poke Mart clerk
+        [decomp:src/mystery_gift.c:361]; SVR_CHECK_QUESTIONNAIRE compares them, which is what makes
+        them a password gate. They are also the only channel that tells us which word id a FRENCH
+        player's phrase actually produces - the English decomp cannot
+        [easychat_french.py].
+        """
+        lines = []
+        if self.has_questionnaire:
+            lines.append("Console questionnaire words: "
+                         + easychat.describe_words(self.questionnaire_words))
+        # An all-zero profile is not empty, it is EC_GROUP_POKEMON_2 index 0, which the console
+        # rejects and prints as "???" [IsECWordInvalid, decomp:src/easy_chat.c:118].
+        if any(word not in (0, easychat.UNDEFINED) for word in self.easy_chat_profile):
+            lines.append("Console Easy Chat battle profile: "
+                         + easychat.describe_words(self.easy_chat_profile))
+        if self.has_card and (self.battles_won or self.battles_lost or self.num_trades):
+            lines.append(f"Console Wonder Card stats: {self.battles_won} battles won, "
+                         f"{self.battles_lost} lost, {self.num_trades} trades")
+        return lines
 
 
 def parse_link_game_data(payload):
@@ -318,6 +384,11 @@ def parse_link_game_data(payload):
         version_code=u32(GD_OFF_UNK_10),
         flag_id=u16(GD_OFF_FLAG_ID),
         metadata_icon_species=u16(GD_OFF_METADATA_ICON),
+        battles_won=u16(GD_OFF_BATTLES_WON),
+        battles_lost=u16(GD_OFF_BATTLES_LOST),
+        num_trades=u16(GD_OFF_NUM_TRADES),
+        easy_chat_profile=tuple(
+            u16(GD_OFF_EASY_CHAT + 2 * i) for i in range(EASY_CHAT_BATTLE_WORDS_COUNT)),
         stamp_species=tuple(u16(GD_OFF_STAMP_SPECIES + 2 * i) for i in range(7)),
         stamp_ids=tuple(u16(GD_OFF_STAMP_IDS + 2 * i) for i in range(7)),
         max_stamps=payload[GD_OFF_MAX_STAMPS],
