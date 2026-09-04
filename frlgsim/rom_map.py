@@ -104,6 +104,35 @@ MYSTERY_GIFT_LINK_SEND = 0x081485F4
 RANDOM = 0x080486B0                 # u16 Random(void)
 SEED_RNG = 0x080486D0               # void SeedRng(u16), whose pool names gRngValue a second time
 
+# --- src/event_data.c and data/event_scripts.s ----------------------------------------------------
+# The special script variables, found by SHAPE (bs57, first try after bs56 lost its answer to a
+# host-side wiring bug). gSpecialVars is a ROM table of POINTERS, so it holds no constant to search
+# for - its entries ARE the addresses being looked for. What it does have is a relation: entries
+# 0..11 point at gSpecialVar_0x8000..0x800B, twelve u16s declared consecutively
+# [decomp:src/event_data.c:16], so each word is exactly 2 above the last. `table-scan` searched
+# 0x08140000..0x08400000 (2.75 MB, 939 frames, ~23 s) for a twelve-word run rising by 2 and found
+# EXACTLY ONE, and the run's first value is the answer itself.
+#
+# Four independent checks, none of them a re-reading of the same measurement:
+#   1. gScriptCmdTable is 214 entries [decomp:data/script_cmd_table.inc] and opens `script_data`
+#      with gSpecialVars immediately after it, so the section starts at 0x081639A8 - 856 =
+#      0x08163650. script_data follows every .text object [ld_script_rev10.ld:318], and the
+#      highest ROM address read as code is 0x08148C74 (bs08's return address), leaving 106 KB for
+#      the ~25 objects linked after mystery_gift_client.o. Consistent.
+#   2. The pointer lands inside EWRAM, 0x02000000..0x02040000.
+#   3. It is ABOVE gPlayerParty (0x02024280, bs47), which is what the EWRAM link order requires:
+#      src/event_data.o comes after src/pokemon.o in sym_ewram_rev10.txt.
+#   4. It is u16-aligned.
+#
+# gSpecialVar_0x8000 may be hardcoded, and a save-block address may not: this is EWRAM_DATA, a
+# link-time global, where SetSaveBlocksPointers re-rolls a save block's base on every battle
+# [decomp:src/load_save.c:75, measured moving 76 bytes between bs45 and bs46].
+G_SPECIAL_VARS = 0x081639A8         # u16 *const gSpecialVars[21], by var id
+G_SPECIAL_VAR_0X8000 = 0x020370B4   # the first entry, read out of the table by the same run
+# The rest follow from the declaration order in event_data.c, which is NOT the table's order.
+# UNCONFIRMED - only entry 0 was read off the console; a dump of G_SPECIAL_VARS settles them.
+G_SPECIAL_VAR_0X8001 = G_SPECIAL_VAR_0X8000 + 2
+
 # --- src/pokemon.c --------------------------------------------------------------------------------
 # gSpeciesInfo, the species table, found by a CONTENT fingerprint rather than by any address
 # (bs38) and confirmed by reading it (bs39).

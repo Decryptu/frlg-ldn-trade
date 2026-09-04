@@ -220,10 +220,35 @@ msgbox                                          the NPC prints the value
 Installed once as a RAM script by `initramscript`, ending in `end` (0x02) so the binding survives and
 can be re-triggered. It alters nothing: `gRngValue` is only read.
 
-**THE ONE BLOCKER: the absolute address of `gSpecialVar_0x8000` is not known.** It is `EWRAM_DATA`
-[decomp:src/event_data.c:16], so it is a link-time global that does NOT move, unlike a save block.
-Find it the way `gRngValue` was found - locate a ROM function that references it (`GetVarPointer`,
-reached from `ScrCmd_setvar` in `gScriptCmdTable`) and read its literal pool, or scan.
+**THE BLOCKER IS GONE (bs57, first try): `gSpecialVar_0x8000` = `0x020370B4`.**
+
+It was found by SHAPE, not by any value. `gSpecialVars` is a ROM table of pointers, so it holds no
+constant to search for — its entries *are* the addresses being looked for. But entries 0..11 point
+at `gSpecialVar_0x8000..0x800B`, twelve `u16`s declared consecutively [decomp:src/event_data.c:16],
+so each word sits exactly 2 above the last. `table-scan` (docs/buffer_script.md) searched
+0x08140000..0x08400000 for a twelve-word run rising by 2, found **exactly one** in 2.75 MB, and the
+run's first value is the answer:
+
+| symbol | address | how |
+|---|---|---|
+| `gSpecialVars` | `0x081639A8` | the only twelve-word run rising by 2 in 2.75 MB [bs57] |
+| `gSpecialVar_0x8000` | `0x020370B4` | that run's first entry, read out by the same run [bs57] |
+
+Four checks, none a re-reading of the same measurement: `gScriptCmdTable` is 214 entries and opens
+`script_data` with `gSpecialVars` right after it, putting the section at 0x08163650 — above the
+highest address read as code (0x08148C74, bs08) by 106 KB, which is what the ~25 objects linked
+after `mystery_gift_client.o` need; the pointer lands in EWRAM; it is above `gPlayerParty`
+(0x02024280), as the EWRAM link order requires since `event_data.o` follows `pokemon.o`; and it is
+`u16`-aligned.
+
+It may be hardcoded for the same reason `gRngValue` may: it is `EWRAM_DATA`, a link-time global.
+A save-block address may not.
+
+**Still to confirm on the console**: only entry 0 was read. `gSpecialVar_0x8001` is +2 by the
+declaration order, which the script needs and which a dump of `gSpecialVars` would settle — but
+the script itself is the better test. Talk to the NPC twice and check that the two printed values
+satisfy the LCG recurrence at a plausible distance apart: a wrong address prints something that
+does not, which is the same proof bs15 used to settle `gRngValue` itself.
 
 Why the countdown then works, with numbers: the state at any future frame is `advance(S, 2n)`, ~1 in
 8192 is shiny, so a target arrives roughly every 8192 frames (~137 s). A miss costs **nothing** -

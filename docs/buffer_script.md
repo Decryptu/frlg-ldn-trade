@@ -1165,3 +1165,28 @@ script of `copybyte` x4 from 0x03004220..23 into `gSpecialVar_0x8000`/`0x8001`, 
 `buffernumberstring` and `msgbox`. `gSpecialVar_0x8000` is `EWRAM_DATA`, a link-time global that
 does not move — unlike a save block, which `SetSaveBlocksPointers` re-rolls on every battle — so
 naming it as a constant is sound in a way naming a save address never is.
+
+## bs56, bs57: the table found by its shape (2026-09-04)
+
+**bs57: `gSpecialVars` = 0x081639A8, `gSpecialVar_0x8000` = 0x020370B4.** 939 frames, ~23 s,
+2.75 MB searched, and **exactly one** twelve-word run rising by 2 in all of it. The console held
+its link throughout (child frames tracked parent polls 1:1, `never=[]`). The four consistency
+checks are in `frlgsim/rom_map.py` beside the symbols.
+
+**bs56 ran the same search and got the same answer, and we threw it away.** The payload returned 1
+and put its run count in the 4-byte channel — `*param = 1`, so the table was already found — but
+ident 19 came back with **4 bytes instead of 528**, because `config.py` carried the answer shape as
+two hand-maintained tuples (`is_dump` and the `buffer_decode` list) and a new payload has to be
+added to *both*. `table-scan` was in neither.
+
+**The lesson is not "add it to the list", it is that the list was the wrong shape.** The offline
+harness passed every time, because it builds its distribution directly and had been told the size by
+hand — so the one path that was never exercised offline was the one the hardware run uses. Both
+tuples are now a single set beside the payloads (`buffer_script.DUMP_SCRIPTS`,
+`DECODED_SCRIPTS`), with `DECODED <= DUMP <= SCRIPT_REGISTRY` asserted at import, and a test walks
+`DUMP_SCRIPTS` building each payload's real distribution. A payload that answers with bytes and is
+not wired to collect them now fails offline instead of costing a run.
+
+This is the same family as the `run_mg_fast.sh --dump-file` trap already recorded here: **a new
+payload has to be added to lists it cannot see.** Every one of those found so far has been a
+hand-maintained duplicate of something derivable.
