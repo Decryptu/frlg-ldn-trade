@@ -550,6 +550,107 @@ def describe_rng_trace(dump):
     return lines
 
 
+# --- call: any function in the ROM, with arguments we choose --------------------------------------
+# rng-trace calls a function with whatever is already in the registers; create-mon calls the one
+# function whose signature it was written around. This is the general form: an address, up to eight
+# argument words, and the r0 that comes back, plus one address watched either side of the call.
+#
+# The convention is bs42's disassembly of CreateMon's prologue, proven on hardware by bs43 and
+# bs44: r0..r3, then [sp+0], [sp+4], [sp+8], [sp+12] at the moment of the call, and the callee does
+# not pop them. asm/call.s pushes the sixteen bytes for every call - a function taking fewer simply
+# never reads them.
+#
+# `watch` is what makes an answer evidence: SeedRng returns nothing at all [decomp:src/random.c:15],
+# so only reading gRngValue before and after says whether the seed took.
+
+CALL = "call"
+CALL_FUNCTION_OFFSET = 0x04
+CALL_ARGC_OFFSET = 0x08
+CALL_ARGS_OFFSET = 0x0C
+CALL_WATCH_OFFSET = 0x2C
+CALL_RESULT_OFFSET = 0x30
+CALL_MAX_ARGS = 8
+CALL_ANSWER_SIZE = 24
+
+
+def build_call(function, args=(), watch=0):
+    """The `call` payload: a THUMB function pointer, up to eight argument words, a watched address.
+
+    `function` 0 calls nothing, which reads `watch` twice and is how the send path is checked with
+    the ROM left out. `watch` 0 watches nothing.
+    """
+    function, watch = int(function), int(watch)
+    args = [int(a) & 0xFFFFFFFF for a in args]
+    if len(args) > CALL_MAX_ARGS:
+        raise BufferScriptError(
+            f"the call passes at most {CALL_MAX_ARGS} arguments - four in r0..r3 and four on the "
+            f"stack, which is what bs43/bs44 proved - got {len(args)}")
+    if function:
+        if not function & 1:
+            raise BufferScriptError(
+                f"0x{function:X} is an ARM pointer; the ROM is THUMB, so a callable address has "
+                "bit 0 set (the `bx` selects the state from it)")
+        if not ROM_BASE <= function < SCAN_MAX_ADDRESS:
+            raise BufferScriptError(
+                f"0x{function:X} is not in the cartridge; calling it would run whatever is there")
+    if watch:
+        if watch % 4:
+            raise BufferScriptError(f"0x{watch:X} is not word aligned")
+        if not SCAN_MIN_ADDRESS <= watch < SCAN_MAX_ADDRESS:
+            raise BufferScriptError(
+                f"0x{watch:X} is outside the memory the CPU can read: "
+                f"0x{SCAN_MIN_ADDRESS:X}..0x{SCAN_MAX_ADDRESS:X}")
+    code = bytearray(payload(CALL))
+    def put(offset, value):
+        code[offset:offset + 4] = (value & 0xFFFFFFFF).to_bytes(4, "little")
+    put(CALL_FUNCTION_OFFSET, function)
+    put(CALL_ARGC_OFFSET, len(args))
+    put(CALL_WATCH_OFFSET, watch)
+    for index, value in enumerate(args):
+        put(CALL_ARGS_OFFSET + 4 * index, value)
+    return bytes(code)
+
+
+def call_parameters(code):
+    """-> {function, argc, args, watch} read back out of a built payload."""
+    code = bytes(code)
+    def word(offset):
+        return int.from_bytes(code[offset:offset + 4], "little")
+    argc = word(CALL_ARGC_OFFSET)
+    return {"function": word(CALL_FUNCTION_OFFSET), "argc": argc, "watch": word(CALL_WATCH_OFFSET),
+            "args": [word(CALL_ARGS_OFFSET + 4 * i) for i in range(CALL_MAX_ARGS)][:argc]}
+
+
+def read_call(dump):
+    """-> what the call answered, from the 24 bytes it sent back."""
+    dump = bytes(dump)
+    if len(dump) < CALL_ANSWER_SIZE:
+        raise BufferScriptError(f"a call answers with {CALL_ANSWER_SIZE} bytes, got {len(dump)}")
+    words = [int.from_bytes(dump[i:i + 4], "little") for i in range(0, CALL_ANSWER_SIZE, 4)]
+    calls, function, argc, returned, before, after = words
+    return {"calls": calls, "function": function, "argc": argc, "returned": returned,
+            "before": before, "after": after}
+
+
+def describe_call(dump, expected=None):
+    """The same, as lines to log, with `expected` CHECKED against the watched word after the call."""
+    got = read_call(dump)
+    lines = [f"call: 0x{got['function']:08X} with {got['argc']} argument(s) in {got['calls']} "
+             f"call(s), returned 0x{got['returned']:08X} ({got['returned'] & 0xFFFF} as a u16)"]
+    if got["function"] == 0:
+        lines[0] = (f"call: nothing was called ({got['calls']} call(s)); the two reads of the "
+                    "watched word are the whole answer")
+    lines.append(f"   watched word: 0x{got['before']:08X} before -> 0x{got['after']:08X} after"
+                 + (" (unchanged)" if got["before"] == got["after"] else ""))
+    if expected is not None:
+        expected &= 0xFFFFFFFF
+        lines.append(f"   expected 0x{expected:08X} after the call: "
+                     + ("IT HOLDS - the call ran and did what it was called for"
+                        if got["after"] == expected else
+                        "IT DOES NOT - the call did not do what it was called for"))
+    return lines
+
+
 # --- create-mon: a ROM call that takes EIGHT arguments -------------------------------------------
 # bs15 called Random: no arguments, a u16 back. CreateMon [0x08041150, bs42] is the other end of the
 # range - four arguments in r0..r3 and four on the stack, in whole words, at the moment of the call:
@@ -974,6 +1075,13 @@ SCRIPT_REGISTRY = {
         "of a window of mostly-pointers - a whole Easy Chat group in one run (--gather-address, "
         "--gather-count, --gather-stride; reads only, writes nothing)",
         None),
+    CALL: BufferScriptSpec(
+        CALL,
+        "CALL ANY ROM FUNCTION with arguments we choose - up to eight words, r0..r3 then the "
+        "stack - and send back its r0 with one address read either side of the call "
+        "(--call-address, --call-arg, --call-watch). The payload itself writes nothing; what the "
+        "CALLEE writes is the whole risk, so the address has to have been read as code first",
+        None),
 }
 
 
@@ -1093,7 +1201,9 @@ PATCHED_SPANS = {
     # words and the 100 bytes CreateMon writes into the image itself.
     CREATE_MON: ((CREATE_MON_FUNCTION_OFFSET,
                   CREATE_MON_PARTY_OFFSET - CREATE_MON_FUNCTION_OFFSET + 4),),
-
+    # The operands and the six result words: everything a built call differs from the payload by.
+    CALL: ((CALL_FUNCTION_OFFSET,
+            CALL_RESULT_OFFSET - CALL_FUNCTION_OFFSET + CALL_ANSWER_SIZE),),
 }
 
 

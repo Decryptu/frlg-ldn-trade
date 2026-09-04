@@ -3,7 +3,7 @@ run() advances until it blocks and publishes ``action`` as ("send", ident, paylo
 or ("done", server_msg_id); the caller acknowledges with on_sent()/on_received()."""
 
 from . import (buffer_script, charmap, easychat, ereader_trainer, mg_script,
-               mystery_event, wonder_news)
+               mystery_event, rom_map, wonder_news)
 from .mystery_gift import (
     MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT, MG_LINKID_DYNAMIC_MSG,
     MG_LINKID_EREADER_TRAINER, MG_LINKID_GAME_DATA, MG_LINKID_NEWS, MG_LINKID_RAM_SCRIPT,
@@ -617,6 +617,11 @@ class MysteryGiftServer:
             raise MysteryGiftServerError(
                 f"create-mon answers with exactly {buffer_script.CREATE_MON_ANSWER_SIZE} bytes, "
                 f"got {self.buffer_dump_size}")
+        if self.buffer_decode == buffer_script.CALL \
+                and self.buffer_dump_size != buffer_script.CALL_ANSWER_SIZE:
+            raise MysteryGiftServerError(
+                f"a call answers with exactly {buffer_script.CALL_ANSWER_SIZE} bytes, "
+                f"got {self.buffer_dump_size}")
         if self.buffer_decode == buffer_script.RNG_TRACE:
             asked = buffer_script.trace_parameters(self.buffer_code)
             if self.buffer_dump_size != buffer_script.trace_answer_size(asked["samples"]):
@@ -943,6 +948,20 @@ class MysteryGiftServer:
                 self.info(f"  {line}")
             trace = buffer_script.read_rng_trace(self.buffer_dump)
             self.trace.append(("buffer_trace", trace["taken"], trace["address"]))
+            return
+        if self.buffer_decode == buffer_script.CALL:
+            # Taken from the payload we actually sent, not plumbed alongside it: when the function
+            # is SeedRng the watched word after the call HAS TO BE the first argument, because
+            # SeedRng assigns the u16 outright [decomp:src/random.c:15]. Nothing else is predicted,
+            # so nothing else is claimed.
+            asked = buffer_script.call_parameters(self.buffer_code)
+            expected = (asked["args"][0] & 0xFFFF
+                        if asked["function"] == rom_map.thumb(rom_map.SEED_RNG) and asked["args"]
+                        else None)
+            for line in buffer_script.describe_call(self.buffer_dump, expected):
+                self.info(f"  {line}")
+            got = buffer_script.read_call(self.buffer_dump)
+            self.trace.append(("buffer_call", got["function"], got["returned"]))
             return
         if self.buffer_decode == buffer_script.CREATE_MON:
             asked = buffer_script.create_mon_parameters(self.buffer_code)

@@ -545,6 +545,12 @@ class BufferScriptPayload:
     trace_call: int = 0
     trace_samples: int = buffer_script.TRACE_SAMPLE_CAPACITY
     trace_max_calls: int | None = None
+    # call: any ROM function, with arguments we choose. `call_watch` is one address read either
+    # side of the call, which for a function returning nothing - SeedRng - is the only evidence
+    # that it ran and did what it was called for.
+    call_address: int | None = None
+    call_args: tuple = ()
+    call_watch: int = 0
     # string-gather: an array of pointers to follow, and how far apart they are. This is the one
     # payload that dereferences, so the answer is the strings rather than a window around them.
     gather_address: int | None = None
@@ -614,6 +620,16 @@ class BufferScriptPayload:
         elif self.trace_address is not None or self.trace_call:
             raise ValueError(
                 f"a word to sample is only meaningful with {buffer_script.RNG_TRACE}")
+        if self.script == buffer_script.CALL:
+            if self.call_address is None:
+                raise ValueError(
+                    f"{buffer_script.CALL} needs the function to call (--call-address); 0 calls "
+                    "nothing, which checks the send path with the ROM left out")
+            object.__setattr__(self, "dump_size", buffer_script.CALL_ANSWER_SIZE)
+        elif self.call_address is not None or self.call_args or self.call_watch:
+            raise ValueError(
+                f"a function to call with chosen arguments is only meaningful with "
+                f"{buffer_script.CALL}")
         if self.script == buffer_script.STRING_GATHER:
             if self.gather_address is None:
                 raise ValueError(
@@ -659,7 +675,8 @@ class BufferScriptPayload:
         return self.script in (buffer_script.MEMORY_DUMP, buffer_script.SAVE_DUMP,
                                buffer_script.ANCHORS, buffer_script.SAVE_WRITE,
                                buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE,
-                               buffer_script.STRING_GATHER, buffer_script.CREATE_MON)
+                               buffer_script.STRING_GATHER, buffer_script.CREATE_MON,
+                               buffer_script.CALL)
 
     @property
     def spec(self):
@@ -678,6 +695,9 @@ class BufferScriptPayload:
             return buffer_script.build_memory_scan(
                 self.scan_word, self.scan_start, self.scan_end,
                 self.scan_blocks, self.scan_max_calls)
+        if self.script == buffer_script.CALL:
+            return buffer_script.build_call(
+                self.call_address, self.call_args, self.call_watch)
         if self.script == buffer_script.STRING_GATHER:
             return buffer_script.build_string_gather(
                 self.gather_address, self.gather_count, self.gather_stride,
@@ -709,7 +729,8 @@ class BufferScriptPayload:
             buffer_dump_size=self.dump_size if self.is_dump else None,
             buffer_decode=(self.script if self.script in
                            (buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE,
-                            buffer_script.STRING_GATHER, buffer_script.CREATE_MON)
+                            buffer_script.STRING_GATHER, buffer_script.CREATE_MON,
+                            buffer_script.CALL)
                            else None))
 
 

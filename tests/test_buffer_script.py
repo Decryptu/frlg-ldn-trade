@@ -1951,3 +1951,141 @@ def test_the_party_append_refuses_a_party_that_is_not_in_ewram():
         with pytest.raises(buffer_script.BufferScriptError):
             buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
                                            party_append=True, **kwargs)
+
+
+# --- call: any ROM function, with arguments we choose --------------------------------------------
+# The fixture is again the console's OWN code: SeedRng as bs14 read it out of the cartridge, twelve
+# bytes and its literal pool. It is the function the RNG work needs to call, and executing it under
+# unicorn is what proves the payload before a run is spent on it.
+
+SEED_RNG_CODE_BASE = 0x080486D0
+SEED_RNG_CODE = bytes.fromhex(
+    "0004000c"      # lsls r0,r0,#16 ; lsrs r0,r0,#16   -> the u16 SeedRng takes
+    "01490860"      # ldr r1,[pc,#4] ; str r0,[r1]      -> gRngValue = seed
+    "70470000"      # bx lr          ; (padding)
+    "20420003")     # .word 0x03004220   &gRngValue
+
+
+def test_the_committed_seed_rng_bytes_are_the_function_the_decomp_describes():
+    """Same discipline as the Random fixture: check it against the things that cannot both be
+    coincidence - the pool word, the u16 truncation, and where it sits in the map."""
+    assert int.from_bytes(SEED_RNG_CODE[12:16], "little") == GRNG_VALUE
+    assert SEED_RNG_CODE[:4] == b"\x00\x04\x00\x0c"     # lsls #16 then lsrs #16: the u16
+    assert SEED_RNG_CODE[8:10] == b"\x70\x47"           # bx lr
+    assert SEED_RNG_CODE_BASE == rom_map.SEED_RNG
+
+
+def test_the_call_operands_are_where_we_patch_them():
+    code = buffer_script.build_call(SEED_RNG_CODE_BASE | 1, [0xB8C0], watch=GRNG_VALUE)
+    assert buffer_script.call_parameters(code) == {
+        "function": SEED_RNG_CODE_BASE | 1, "argc": 1, "args": [0xB8C0], "watch": GRNG_VALUE}
+    # It must still be recognisable as the payload it was built from [PATCHED_SPANS].
+    assert buffer_script.describe(code).startswith(buffer_script.CALL)
+
+
+def test_the_call_refuses_what_would_hang_or_run_rubbish():
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call(SEED_RNG_CODE_BASE, [0])          # ARM pointer: bit 0 clear
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call(0x02000001, [0])                  # not in the cartridge
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call(SEED_RNG_CODE_BASE | 1, [0] * 9)  # nine arguments
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call(SEED_RNG_CODE_BASE | 1, [0], watch=GRNG_VALUE + 1)  # unaligned
+
+
+@needs_unicorn
+def test_the_call_seeds_the_console_s_own_rng_and_the_watch_proves_it():
+    """bs15 called Random and read the word either side; this calls SeedRng, whose return value is
+    nothing at all - so the watched word is the ONLY evidence the call did anything."""
+    seed = 0xB8C0
+    memory = {SEED_RNG_CODE_BASE: SEED_RNG_CODE,
+              GRNG_VALUE: (0x3C22BA3A).to_bytes(4, "little")}
+    run = buffer_script.emulate(
+        buffer_script.build_call(SEED_RNG_CODE_BASE | 1, [seed], watch=GRNG_VALUE),
+        memory=memory, send_size=buffer_script.CALL_ANSWER_SIZE)
+    got = buffer_script.read_call(run.pending_send)
+    assert got["calls"] == 1 and got["argc"] == 1
+    assert got["before"] == 0x3C22BA3A, "the state the console was on before we touched it"
+    assert got["after"] == seed, "SeedRng assigns the u16 outright [decomp:src/random.c:15]"
+    assert any("IT HOLDS" in line for line in buffer_script.describe_call(run.pending_send, seed))
+
+
+@needs_unicorn
+def test_the_call_truncates_to_a_u16_because_the_callee_does():
+    """SeedRng takes a u16 and the console's own two shifts throw the top half away. Passing more
+    than 16 bits is therefore not an error we can refuse - it is a fact about the answer."""
+    memory = {SEED_RNG_CODE_BASE: SEED_RNG_CODE, GRNG_VALUE: b"\0\0\0\0"}
+    run = buffer_script.emulate(
+        buffer_script.build_call(SEED_RNG_CODE_BASE | 1, [0xDEADB8C0], watch=GRNG_VALUE),
+        memory=memory, send_size=buffer_script.CALL_ANSWER_SIZE)
+    assert buffer_script.read_call(run.pending_send)["after"] == 0xB8C0
+
+
+@needs_unicorn
+def test_the_call_returns_what_the_callee_returned():
+    """Random returns a u16 in r0, so calling it through the general path must bring that back -
+    and it must be the top half of the state the same call left behind."""
+    memory = _console_memory(0x00001234)
+    run = buffer_script.emulate(
+        buffer_script.build_call(RANDOM_CODE_BASE | 1, [], watch=GRNG_VALUE),
+        memory=memory, send_size=buffer_script.CALL_ANSWER_SIZE)
+    got = buffer_script.read_call(run.pending_send)
+    assert got["before"] == 0x00001234
+    assert got["after"] == buffer_script.rand_step(0x00001234)
+    assert got["returned"] == got["after"] >> 16
+
+
+@needs_unicorn
+def test_calling_nothing_still_reads_the_watched_word_twice():
+    """--call-address 0 is the send path with the ROM left out, the way --create-mon-call 0 is."""
+    run = buffer_script.emulate(
+        buffer_script.build_call(0, [], watch=GRNG_VALUE),
+        memory={GRNG_VALUE: (0xABCD1234).to_bytes(4, "little")},
+        send_size=buffer_script.CALL_ANSWER_SIZE)
+    got = buffer_script.read_call(run.pending_send)
+    assert (got["function"], got["returned"]) == (0, 0)
+    assert got["before"] == got["after"] == 0xABCD1234
+    assert any("nothing was called" in line
+               for line in buffer_script.describe_call(run.pending_send))
+
+
+# Eight arguments, hand-assembled THUMB: sum r0..r3 and the four stack words and return the total.
+# Powers of two go in, so the sum names EXACTLY which slots arrived - a missing or duplicated
+# argument cannot cancel out. This is the mechanism bs43/bs44 proved for CreateMon, checked here
+# for the general payload that is meant to reach every other function with it.
+EIGHT_ARG_CODE_BASE = 0x08100000
+EIGHT_ARG_CODE = bytes.fromhex(
+    "4018"      # adds r0, r0, r1
+    "8018"      # adds r0, r0, r2
+    "c018"      # adds r0, r0, r3
+    "0099" "4018"   # ldr r1,[sp,#0]  ; adds r0, r0, r1
+    "0199" "4018"   # ldr r1,[sp,#4]  ; adds r0, r0, r1
+    "0299" "4018"   # ldr r1,[sp,#8]  ; adds r0, r0, r1
+    "0399" "4018"   # ldr r1,[sp,#12] ; adds r0, r0, r1
+    "7047")     # bx lr
+
+
+@needs_unicorn
+def test_all_eight_arguments_arrive_in_the_slots_the_prologue_reads():
+    args = [1, 2, 4, 8, 16, 32, 64, 128]
+    run = buffer_script.emulate(
+        buffer_script.build_call(EIGHT_ARG_CODE_BASE | 1, args),
+        memory={EIGHT_ARG_CODE_BASE: EIGHT_ARG_CODE},
+        send_size=buffer_script.CALL_ANSWER_SIZE)
+    got = buffer_script.read_call(run.pending_send)
+    assert got["argc"] == 8
+    assert got["returned"] == sum(args) == 255, (
+        "each argument is a distinct bit, so the total says which slots arrived: "
+        f"missing {255 - got['returned']:#04x}")
+
+
+@needs_unicorn
+def test_a_call_that_passes_fewer_arguments_leaves_the_stack_slots_it_did_not_set_at_zero():
+    """The sixteen bytes are pushed for every call, so a function taking four still reads four
+    zeros if it looks - which is what makes passing fewer safe rather than undefined."""
+    run = buffer_script.emulate(
+        buffer_script.build_call(EIGHT_ARG_CODE_BASE | 1, [1, 2, 4, 8]),
+        memory={EIGHT_ARG_CODE_BASE: EIGHT_ARG_CODE},
+        send_size=buffer_script.CALL_ANSWER_SIZE)
+    assert buffer_script.read_call(run.pending_send)["returned"] == 15

@@ -148,6 +148,23 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help=("with --buffer-script rng-trace: how many frames to sample, 1..%d"
               % buffer_script.TRACE_SAMPLE_CAPACITY))
     parser.add_argument(
+        "--call-address", type=lambda v: int(v, 0), default=None, metavar="ADDR",
+        help=("with --buffer-script call: the ROM function to call, as a THUMB pointer (bit 0 "
+              "set). 0x%08X is SeedRng and 0x%08X is Random [rom_map.py, read off this console in "
+              "bs14]. 0 calls nothing, which checks the send path with the ROM left out"
+              % (rom_map.thumb(rom_map.SEED_RNG), rom_map.thumb(rom_map.RANDOM))))
+    parser.add_argument(
+        "--call-arg", type=lambda v: int(v, 0), action="append", default=None, metavar="VALUE",
+        help=("with --buffer-script call: one argument word, repeatable, up to eight. The first "
+              "four go in r0..r3 and the rest on the stack at [sp+0..12], which is where bs42 "
+              "read CreateMon's own prologue taking them and what bs43/bs44 proved on hardware"))
+    parser.add_argument(
+        "--call-watch", type=lambda v: int(v, 0), default=0, metavar="ADDR",
+        help=("with --buffer-script call: one word read immediately BEFORE and immediately AFTER "
+              "the call, both returned. 0x%08X is gRngValue. For a function that returns nothing, "
+              "such as SeedRng, this is the only evidence the call did what it was called for"
+              % rom_map.GRNG_VALUE))
+    parser.add_argument(
         "--create-mon-call", type=lambda v: int(v, 0), default=None, metavar="ADDR",
         help=("with --buffer-script create-mon: the ROM function to call with EIGHT arguments, a "
               "THUMB pointer. The default is CreateMon at 0x%08X, read off this console in bs42; "
@@ -330,6 +347,9 @@ def build_run_config(parser, args):
             if args.buffer_script != buffer_script.RNG_TRACE \
                     and (args.trace_address is not None or args.trace_call):
                 parser.error(f"--trace-* belongs to --buffer-script {buffer_script.RNG_TRACE}")
+            if args.buffer_script != buffer_script.CALL \
+                    and (args.call_address is not None or args.call_arg or args.call_watch):
+                parser.error(f"--call-* belongs to --buffer-script {buffer_script.CALL}")
             if args.buffer_script != buffer_script.STRING_GATHER \
                     and args.gather_address is not None:
                 parser.error(
@@ -344,6 +364,8 @@ def build_run_config(parser, args):
                 scan_max_calls=args.scan_max_calls,
                 trace_address=args.trace_address, trace_call=args.trace_call,
                 trace_samples=args.trace_samples,
+                call_address=args.call_address, call_args=tuple(args.call_arg or ()),
+                call_watch=args.call_watch,
                 gather_address=args.gather_address, gather_count=args.gather_count,
                 gather_stride=args.gather_stride, gather_maxlen=args.gather_maxlen,
                 create_mon_call=args.create_mon_call,
