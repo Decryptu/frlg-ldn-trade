@@ -98,10 +98,20 @@ def main(argv=None):
     parser.add_argument("--tid", type=int, default=57189)
     parser.add_argument("--sid", type=int, default=58811)
     parser.add_argument("--frames", type=int, default=20000)
+    parser.add_argument("--target-frames", type=int, default=None, metavar="N",
+                        help="not a hunt, a CALIBRATION: print the state N frames ahead and when "
+                             "to press, so the miss can be measured against a target we chose")
     parser.add_argument("--aimed-at", type=lambda v: int(v, 0), default=None, metavar="STATE",
                         help="the state the last press was aiming at: report the miss instead")
     args = parser.parse_args(argv)
     state = rng_script.seed_from_printed(args.low, args.high)
+    if args.target_frames is not None:
+        target = lcg.advance(state, TURNS_PER_FRAME * args.target_frames)
+        print(f"read     0x{state:08X}")
+        print(f"target   0x{target:08X}   {args.target_frames:,} frames ahead")
+        print(f"press A  {args.target_frames / FPS:.2f} s after the press that gave the reading")
+        print("  then:  --aimed-at 0x%08X <the new LO> <the new HI>" % target)
+        return 0
     if args.aimed_at is not None:
         miss = press_error(args.aimed_at, state)
         print(f"aimed at 0x{args.aimed_at:08X}, read 0x{state:08X}")
