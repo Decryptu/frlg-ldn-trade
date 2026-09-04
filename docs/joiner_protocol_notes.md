@@ -1201,7 +1201,11 @@ look for a latency bug here, and do not "optimise" the tick.
 A second payload the Mystery Gift session can carry, never sent before this one. Written from the
 decomp, proven offline against `ConsoleClientModel`, and **confirmed on retail hardware first try**
 (vt01, FireRed, 2026-09-04): ident 26 went out in two blocks 24.3 s into the session, the console
-returned READY_END and saved, and the old woman on Seven Island offered the battle against RED.
+returned READY_END and saved, the old woman on Seven Island offered the battle, and the full 3v3
+against RED ran to a player win. The whole path is therefore confirmed end to end - our checksum and
+struct offsets pass ValidateEReaderTrainer on retail hardware, CreateBattleTowerMon builds the three
+Lv70 mons we sent, and the post-battle scene (farewellPlayerWon, the heal, the walk back to Room1)
+plays out.
 
 FACT: `CLI_RECV_EREADER_TRAINER` (client instruction 18, link ident `MG_LINKID_EREADER_TRAINER` = 26)
 memcpys the received buffer into `gSaveBlock2Ptr->battleTower.ereaderTrainer` and calls
