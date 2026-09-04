@@ -29,6 +29,17 @@ How each one was obtained, because that is what makes it trustworthy:
   ROM call and the identity of the function, checked by the LCG's own arithmetic - and the first
   time this project has called into the console's ROM at all.
 
+- `memory-scan` again (bs38) found gSpeciesInfo by a CONTENT fingerprint - three species whose
+  base stats are all 100, giving one word at two entry offsets so that it is visible whatever the
+  stride - and the gaps between the three hits MEASURED the entry stride at 28. bs39 dumped the
+  table: 34 of 34 entries byte-identical to the decomp's data. bs37, the run before, scanned the
+  whole 16 MB for a needle built on a 26-byte stride and found nothing, which is what put the
+  layout in question in the first place.
+- `memory-scan` on that address (bs40) found every function carrying &gSpeciesInfo in its literal
+  pool, and dumps at two of them (bs41, bs42) disassemble as src/battle_ai_switch_items.c and as
+  CreateMon/CreateBoxMon. bs41 REFUTED the first guess at the object boundary; bs42 confirmed the
+  second.
+
 Nothing here is inferred from the English build. A symbol that has not been read off the console does
 not belong in this file.
 """
@@ -92,6 +103,73 @@ MYSTERY_GIFT_LINK_SEND = 0x081485F4
 # CALLED on hardware in bs15, 96 times, with the recurrence checked either side of every call.
 RANDOM = 0x080486B0                 # u16 Random(void)
 SEED_RNG = 0x080486D0               # void SeedRng(u16), whose pool names gRngValue a second time
+
+# --- src/pokemon.c --------------------------------------------------------------------------------
+# gSpeciesInfo, the species table, found by a CONTENT fingerprint rather than by any address
+# (bs38) and confirmed by reading it (bs39).
+#
+# bs37 looked for a word built from friendship/growthRate/eggGroups and found NOTHING in the whole
+# 16 MB - the first full-cartridge scan this project has run, and a clean negative. The needle was
+# not wrong about the DATA: recomputing bs06's five party mons' six stats each from the decomp's
+# base stats, IVs, EVs, level and nature reproduces what the console stored, 30 out of 30, so the
+# French cartridge holds the English decomp's species values exactly. It was wrong about the
+# LAYOUT. struct SpeciesInfo as the decomp declares it is 26 bytes by ISO alignment (its widest
+# member is u16), and at a 26-byte stride bs37's needle sat at entry offset 18, which with a
+# 4-aligned table is NEVER word-aligned - and `memory-scan` reads with `ldmia`, so it can only see
+# word-aligned matches. Zero hits was the only answer it could have given.
+#
+# bs38's needle is the one value that survives every hypothesis for the stride and the table's own
+# alignment: Mew, Celebi and Jirachi have all six base stats at 100, so bytes 0x00..0x05 of those
+# three entries are 0x64 and the word appears at entry offset 0 AND offset 2 - one of the two is
+# always aligned. Three hits, no false positives in 4 MB, gaps 2800 and 4424. Those gaps are 100
+# and 158 entries at 28 bytes, so the stride is 28: the decomp's 26 declared bytes plus two of
+# padding. bs39 then dumped the table and compared it to the decomp entry by entry - 34 of 34
+# byte-identical, and the padding is 00 00 on every one of them, so it is padding and not a field
+# the decomp is missing.
+#
+# The link order said where to look and was right a THIRD time (after src/random.o in bs13 and
+# src/easy_chat.o in bs16): src/pokemon.o is the 26th .rodata entry in ld_script.ld, so the table
+# had to sit early in rodata and below src/easy_chat.o's word data, which bs17 had already
+# measured at 0x083DE2C8.
+GSPECIES_INFO = 0x0824CDFC
+SPECIES_INFO_STRIDE = 28            # sizeof is 26 in the decomp's struct; the ROM pads it to 28
+SPECIES_INFO_SLOTS = 412            # NUM_SPECIES, SPECIES_EGG included
+# What bs38 actually returned, kept so the address above can be checked against its own evidence:
+# the three all-100 species, at GSPECIES_INFO + SPECIES_INFO_STRIDE * species.
+SPECIES_INFO_ALL_100 = (151, 251, 409)                       # Mew, Celebi, Jirachi
+BS38_SPECIES_INFO_HITS = (0x0824DE80, 0x0824E970, 0x0824FAB8)
+
+# The functions, found by scanning for GSPECIES_INFO itself (bs40) and disassembling where the hits
+# landed (bs41, bs42). 31 hits in 0x08028000..0x08048800; the block from 0x080413C0 up is
+# src/pokemon.o's, bounded above by src/trig.o and src/random.o - neither of which references the
+# table - and below by a 15.6 KB gap that is src/battle_controller_link_opponent.o, which does not
+# reference it either. bs41 checked the boundary the honest way and REFUTED a first guess: the
+# hits at 0x0803CC54 disassemble as src/battle_ai_switch_items.c:88, not as pokemon.o.
+#
+# CreateMon is identified instruction for instruction against [decomp:src/pokemon.c:1755], and by
+# two constants the decomp fixes independently: it calls SetMonData with field 56 (MON_DATA_LEVEL)
+# and then with field 64 (MON_DATA_MAIL) carrying 255 (MAIL_NONE), in that order, between
+# CreateBoxMon and CalculateMonStats.
+CREATE_MON = 0x08041150             # void CreateMon(mon, species, level, fixedIV,
+                                    #   hasFixedPersonality, fixedPersonality, otIdType, fixedOtId)
+                                    # args 5..8 go on the stack; the first four are r0..r3
+CREATE_BOX_MON = 0x080411C0         # the same signature on a struct BoxPokemon
+ZERO_MON_DATA = 0x08041090          # CreateMon's first call
+SET_MON_DATA = 0x08043A78           # SetMonData(mon, field, &value)
+CALCULATE_MON_STATS = 0x08041B78    # CreateMon's last call
+
+# --- read off the console but NOT yet confirmed by disassembling the function itself -------------
+# Named by call count and by the shape of the access, which is weaker evidence than the entries
+# above. Kept apart so nothing downstream mistakes them for measurements.
+PROBABLE = (
+    # CreateBoxMon calls one function 20 times, which is what SetBoxMonData does there.
+    ("SetBoxMonData", 0x08043BCC),
+    # Indexed by a move id at a 12-byte stride with offset 1 compared against zero, which is
+    # struct BattleMove's `power` [decomp:include/pokemon.h]. Read in bs41.
+    ("gBattleMoves", 0x0824927C),
+    # bs41: called with TRUE immediately before `Random() % 3` [battle_ai_switch_items.c:88].
+    ("HasSuperEffectiveMoveAgainstOpponents", 0x0803CD94),
+)
 
 # --- gcc's THUMB-to-ARM call veneers ------------------------------------------------------------
 # Client_RunBufferScript reaches our ARM payload through one of these, which is why lr comes back

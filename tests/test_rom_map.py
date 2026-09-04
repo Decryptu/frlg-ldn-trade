@@ -97,3 +97,59 @@ def test_the_client_func_table_bs12_read_is_the_one_in_the_map():
     assert [(name, address) for name, address, _thumb in read] == list(rom_map.CLIENT_FUNCS)
     assert all(is_thumb for _n, _a, is_thumb in read)
     assert read[7][1] == rom_map.CLIENT_RUN_BUFFER_SCRIPT
+
+
+BS39_DUMP_AT = 0x0824CDC0            # --dump-address bs39 was launched with
+
+
+def test_the_species_table_address_reproduces_bs38s_three_hits():
+    """The map's address and stride ARE bs38's measurement: the three species whose base stats are
+    all 100 must land exactly on the three addresses the scan returned, with no slack. A wrong
+    stride or a base off by one entry breaks this immediately."""
+    computed = tuple(rom_map.GSPECIES_INFO + rom_map.SPECIES_INFO_STRIDE * species
+                     for species in rom_map.SPECIES_INFO_ALL_100)
+
+    assert computed == rom_map.BS38_SPECIES_INFO_HITS
+    # and the gaps are what said the stride is 28 rather than the decomp's 26
+    gaps = [b - a for a, b in zip(computed, computed[1:])]
+    assert gaps == [100 * 28, 158 * 28] == [2800, 4424]
+
+
+def test_the_species_table_sits_below_the_easy_chat_data_link_order_predicted():
+    """src/pokemon.o is the 26th .rodata entry and src/easy_chat.o the 104th, so the whole table
+    must end below the word data bs17 measured at 0x083DE2C8."""
+    end = rom_map.GSPECIES_INFO + rom_map.SPECIES_INFO_STRIDE * rom_map.SPECIES_INFO_SLOTS
+
+    assert rom_map.GSPECIES_INFO > 0x08200000        # in .rodata, past all of .text
+    assert end < 0x083DE2C8
+
+
+def test_the_pokemon_functions_are_ordered_as_pokemon_c_declares_them():
+    """CreateMon is defined immediately before CreateBoxMon and calls it [pokemon.c:1755-1766],
+    and every one of them is below src/random.o, which link order puts two objects later."""
+    assert rom_map.ZERO_MON_DATA < rom_map.CREATE_MON < rom_map.CREATE_BOX_MON
+    assert rom_map.CREATE_BOX_MON < rom_map.CALCULATE_MON_STATS < rom_map.SET_MON_DATA
+    assert rom_map.SET_MON_DATA < rom_map.RANDOM
+
+
+def test_create_mon_is_thumb_and_callable():
+    """--trace-call takes a THUMB pointer; an even address here would fault the console."""
+    for address in (rom_map.CREATE_MON, rom_map.CREATE_BOX_MON, rom_map.CALCULATE_MON_STATS):
+        assert address % 2 == 0
+        assert rom_map.thumb(address) == address + 1
+
+
+def test_the_species_table_dump_is_the_table():
+    """bs39 dumped 1024 bytes from 60 before the base. Bulbasaur is species 1, so its entry must
+    start exactly one stride in, and its base stats are fixed game data."""
+    dump = _dump("bs39_dump.bin")
+    start = rom_map.GSPECIES_INFO - BS39_DUMP_AT
+
+    bulbasaur = dump[start + rom_map.SPECIES_INFO_STRIDE:][:10]
+    assert list(bulbasaur) == [45, 49, 49, 45, 65, 65, 12, 3, 45, 64]
+    # species 0 is the SPECIES_NONE placeholder and is all zeros on the console
+    assert dump[start:start + rom_map.SPECIES_INFO_STRIDE] == bytes(rom_map.SPECIES_INFO_STRIDE)
+    # the two bytes the decomp does not declare are padding, on every entry the dump covers
+    for species in range(1, 34):
+        entry = dump[start + species * rom_map.SPECIES_INFO_STRIDE:][:rom_map.SPECIES_INFO_STRIDE]
+        assert entry[26:28] == b"\x00\x00", species
