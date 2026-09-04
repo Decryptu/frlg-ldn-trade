@@ -188,6 +188,13 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               "no Pokemon can be destroyed. A full party writes nothing and says so. This is the "
               "player's LIVE SAVE and the console commits it to flash: needs --write-unsafe"))
     parser.add_argument(
+        "--create-mon-append-dry-run", action="store_true",
+        help=("with --buffer-script create-mon: the SAME run as --create-mon-append - the same "
+              "call, the same arithmetic on the same gSaveBlock1Ptr - with the two stores that "
+              "would change the save left out. It reports the party count and the address it "
+              "WOULD have written, and reads that slot's current 100 bytes back so the answer "
+              "says what a real run would overwrite. Writes nothing, so it needs no override"))
+    parser.add_argument(
         "--create-mon-destination", type=lambda v: int(v, 0), default=0, metavar="ADDR",
         help=("with --buffer-script create-mon: copy the finished 100 bytes to this address in "
               "the console's memory. The mon is BUILT in our own image either way, so without "
@@ -315,7 +322,7 @@ def build_run_config(parser, args):
                     f"{buffer_script.CREATE_MON}, the two that write the console's memory")
             if args.buffer_script != buffer_script.CREATE_MON \
                     and (args.create_mon_call is not None or args.create_mon_destination
-                         or args.create_mon_append):
+                         or args.create_mon_append or args.create_mon_append_dry_run):
                 parser.error(
                     f"--create-mon-* belongs to --buffer-script {buffer_script.CREATE_MON}")
             if args.buffer_script != buffer_script.MEMORY_SCAN and args.scan_word is not None:
@@ -347,7 +354,8 @@ def build_run_config(parser, args):
                 create_mon_ot_id_type=args.create_mon_ot_id_type,
                 create_mon_ot_id=args.create_mon_ot_id,
                 create_mon_destination=args.create_mon_destination,
-                create_mon_append=args.create_mon_append)
+                create_mon_append=args.create_mon_append,
+                create_mon_append_dry_run=args.create_mon_append_dry_run)
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")

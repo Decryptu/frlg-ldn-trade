@@ -843,8 +843,33 @@ bytes in the party, so neither builds.
 `playerPartyCount` coming back in the party word is also a reading in its own right — the console
 says how many mons it was holding, which nothing else in a buffer-script run reports.
 
+### The dry run, and why it is worth a run of its own
+
+`--create-mon-append-dry-run` is the **same run with the two stores left out** — the same ROM call,
+the same arithmetic on the same `gSaveBlock1Ptr`. It reports the party count and the address it
+*would* have written, and reads that slot's current 100 bytes back in place of the mon it built,
+so the answer says what a real run would overwrite. Nothing is written, so it needs no override.
+
+It earns a hardware run because of something easy to miss: **no payload had ever used `r2`.**
+`trainer-id-probe` and `save-dump` use `r1 = gSaveBlock2Ptr`; everything since has used absolute
+addresses or `r0`. The append is the first thing to depend on `r2` being `gSaveBlock1Ptr`, and on
+`playerPartyCount` being where `global.h:772` says. A dry run settles both before a byte moves,
+and it is the only thing that would catch a `playerPartyCount` that disagreed with what is
+actually in the party — before a store rather than after.
+
+    ./scratchpad/run_mg_fast.sh bsNN --buffer-script create-mon --create-mon-append-dry-run \
+        --create-mon-species 59 --create-mon-level 30 --create-mon-iv 31 \
+        --create-mon-personality 0x3ADF0001 --create-mon-ot-id-type 0 --version firered
+
+Three things make the answer checkable. The address must be `gSaveBlock1Ptr + 0x38 + 100 * count`
+— and `anchors` reports `gSaveBlock1Ptr` directly, so the two can be compared. The count must
+match what the player can see on their own screen. And the slot's 100 bytes must be **zero**; the
+log says `DO NOT APPEND` if they are not.
+
 ### What is left
 
-The hardware run. `--create-mon-destination` and `--create-mon-append` are both proven offline,
-including that the append writes nothing past `playerParty[6]` — which ends at 0x38 + 600 = 0x290,
-exactly where `money` begins [global.h:774].
+The two hardware runs, dry then real. `--create-mon-destination`, `--create-mon-append` and the
+dry run are all proven offline, including that the dry run and the real append compute the *same*
+address at every party size — if they could disagree the dry run would prove nothing — and that
+the append writes nothing past `playerParty[6]`, which ends at 0x38 + 600 = 0x290, exactly where
+`money` begins [global.h:774].

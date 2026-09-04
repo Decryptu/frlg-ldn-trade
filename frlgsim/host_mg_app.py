@@ -323,7 +323,11 @@ class BufferScriptHostApplication(MysteryGiftHostApplication):
                 + (f", personality 0x{asked['fixed_personality']:08X}"
                    if asked["has_fixed_personality"] else ", personality rolled")
                 + ". The 100 bytes are built INSIDE OUR OWN IMAGE"
-                + (" and then APPENDED TO THE PLAYER'S PARTY at playerParty[playerPartyCount], "
+                + (" and then NOTHING: this is the DRY RUN of the party append. It computes "
+                   "the slot from gSaveBlock1Ptr and reads back what is there, with the two "
+                   "stores that would change the save left out"
+                   if asked["party_append"] == buffer_script.PARTY_APPEND_DRY_RUN else
+                   " and then APPENDED TO THE PLAYER'S PARTY at playerParty[playerPartyCount], "
                    "which WRITES THEIR LIVE SAVE and reaches flash when the console saves; the "
                    "slot is the first FREE one, so no Pokemon can be overwritten"
                    if asked["party_append"] else

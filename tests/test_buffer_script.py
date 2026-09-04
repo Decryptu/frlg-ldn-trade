@@ -1757,3 +1757,95 @@ def test_bs43_and_bs44_dumps_still_read_without_a_party_word():
 
     assert result["mon"] == mon and result["party"] is None
     assert result["calls"] == 1 and result["function"] == CREATE_MON_ADDRESS
+
+
+@needs_unicorn
+def test_the_dry_run_writes_nothing_and_reads_back_the_slot_it_would_have_written():
+    """The dry run is the real append with the two stores left out - same call, same arithmetic on
+    the same gSaveBlock1Ptr. What makes it worth a hardware run of its own is that NO payload had
+    ever used r2 before, and an append computes its destination from it."""
+    before = _party_sav1(1)
+    code = buffer_script.build_create_mon(
+        CREATE_MON_ADDRESS, species=59, level=30,
+        party_append=buffer_script.PARTY_APPEND_DRY_RUN)
+
+    run = buffer_script.emulate(
+        code, sav1=before, memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
+    result = buffer_script.read_create_mon(run.pending_send)
+
+    assert run.sav1 == before, "the dry run changed the save"
+    assert result["party"] == {"count_before": 1, "slot": 1,
+                               "status": buffer_script.PARTY_WRITE_DRY_RUN}
+    # The address it WOULD have written, computed the same way the real append computes it.
+    assert result["destination"] == (buffer_script.SAV1_ADDRESS + buffer_script.SAV1_PARTY
+                                     + buffer_script.PARTY_MON_SIZE)
+    # And the 100 bytes are the SLOT's, not the mon's: an empty slot reads as zeros.
+    assert result["mon"] == bytes(buffer_script.PARTY_MON_SIZE)
+
+
+@needs_unicorn
+def test_the_dry_run_computes_the_same_address_the_real_append_writes():
+    """The two runs must not be able to disagree, or the dry run proves nothing about the real
+    one. Same arguments, same save, at every party size."""
+    for count in range(buffer_script.PARTY_SIZE):
+        sav1 = _party_sav1(count)
+        stub = {rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL}
+        dry = buffer_script.read_create_mon(buffer_script.emulate(
+            buffer_script.build_create_mon(
+                CREATE_MON_ADDRESS, species=59, level=30,
+                party_append=buffer_script.PARTY_APPEND_DRY_RUN),
+            sav1=sav1, memory=stub).pending_send)
+        real = buffer_script.read_create_mon(buffer_script.emulate(
+            buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
+                                           party_append=True),
+            sav1=sav1, memory=stub).pending_send)
+
+        assert dry["destination"] == real["destination"]
+        assert dry["party"]["slot"] == real["party"]["slot"] == count
+        assert dry["party"]["count_before"] == real["party"]["count_before"] == count
+
+
+@needs_unicorn
+def test_the_dry_run_over_an_occupied_slot_says_do_not_append():
+    """If playerPartyCount ever disagreed with what is actually in the party, the dry run is what
+    would catch it - before a store, not after."""
+    sav1 = bytearray(_party_sav1(1))
+    start = buffer_script.SAV1_PARTY + buffer_script.PARTY_MON_SIZE
+    sav1[start:start + buffer_script.PARTY_MON_SIZE] = b"\xCC" * buffer_script.PARTY_MON_SIZE
+    code = buffer_script.build_create_mon(
+        CREATE_MON_ADDRESS, species=59, level=30,
+        party_append=buffer_script.PARTY_APPEND_DRY_RUN)
+
+    run = buffer_script.emulate(
+        code, sav1=bytes(sav1), memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
+    lines = buffer_script.describe_create_mon(
+        run.pending_send, buffer_script.create_mon_parameters(code))
+
+    assert run.sav1 == bytes(sav1)
+    assert any("DO NOT APPEND" in line for line in lines), lines
+
+
+@needs_unicorn
+def test_the_dry_run_of_a_full_party_reports_full_not_a_slot():
+    code = buffer_script.build_create_mon(
+        CREATE_MON_ADDRESS, species=59, level=30,
+        party_append=buffer_script.PARTY_APPEND_DRY_RUN)
+
+    run = buffer_script.emulate(
+        code, sav1=_party_sav1(buffer_script.PARTY_SIZE),
+        memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
+    result = buffer_script.read_create_mon(run.pending_send)
+
+    assert result["party"]["status"] == buffer_script.PARTY_WRITE_FULL
+    assert result["destination"] == 0
+
+
+def test_the_cli_takes_the_dry_run_without_an_override_and_refuses_both_at_once():
+    run = _run_config(["--buffer-script", "create-mon", "--create-mon-species", "59",
+                       "--create-mon-append-dry-run"])
+    asked = buffer_script.create_mon_parameters(run.payload.build_distribution().buffer_code)
+    assert asked["party_append"] == buffer_script.PARTY_APPEND_DRY_RUN
+
+    with pytest.raises((ValueError, SystemExit)):
+        _run_config(["--buffer-script", "create-mon", "--create-mon-append",
+                     "--create-mon-append-dry-run", "--write-unsafe"])

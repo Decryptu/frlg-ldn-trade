@@ -35,6 +35,11 @@
 @ touched, so this cannot destroy a Pokemon however wrong everything else is. A full party writes
 @ NOTHING and says so, the way `givepokemon` answers 3 instead of 2.
 @
+@ `party_append` = 2 is the DRY RUN: the same call and the same arithmetic on the same r2, with
+@ the two `str`s that would change the save left out. It reports the count and the address it
+@ WOULD have written, and reads that slot's current 100 bytes back in place of the mon, so the
+@ answer says what a real run would overwrite. Nothing on the console is touched.
+@
 @ `destination` is the general form: an absolute address to copy the 100 bytes to. It does not
 @ touch the party count and it is not what a party write should use.
 @
@@ -46,7 +51,7 @@
 @   0x000  b .Lcode
 @   0x004  function        THUMB pointer to CreateMon, or 0 to call nothing
 @   0x008  destination     absolute address to copy the finished mon to, or 0
-@   0x00C  party_append    1 = append to gSaveBlock1Ptr's party instead
+@   0x00C  party_append    1 = append to gSaveBlock1Ptr's party instead; 2 = DRY RUN
 @   0x010  species         u16 in a word (the callee masks it itself)
 @   0x014  level           u8 in a word
 @   0x018  fixedIV         u8 in a word; 32 or more means "roll them" [USE_RANDOM_IVS]
@@ -60,7 +65,9 @@
 @   0x038  RESULT  where the mon was built - our own load address + 0x3C
 @   0x03C  RESULT  100 bytes: struct Pokemon as the ROM left it
 @   0x0A0  RESULT  the party word: countBefore | slot << 8 | status << 16
-@                  status 0 = no party write asked for, 1 = appended, 2 = the party was full
+@                  status 0 = none asked for, 1 = appended, 2 = the party was full,
+@                          3 = DRY RUN: nothing written, and the 100 bytes above are the
+@                          slot's CURRENT contents rather than the mon we built
 @   0x0A4  32 bytes of guard
 @   0x0C4  the code
 @
@@ -146,7 +153,7 @@ _start:
     bx      ip                      @ INTO THE ROM
     add     sp, sp, #16             @ the callee leaves its stack arguments to us
 
-    ldr     r0, [r4, #0x0C]         @ party_append?
+    ldr     r0, [r4, #0x0C]         @ party mode: 0 none, 1 append, 2 dry run
     cmp     r0, #0
     beq     .Labsolute
 
@@ -154,14 +161,37 @@ _start:
     cmp     r1, #6                  @ PARTY_SIZE
     bcs     .Lfull
     mov     r2, #100                @ sizeof(struct Pokemon)
-    mla     r0, r1, r2, r6
-    add     r0, r0, #0x38           @ &playerParty[count]: the first FREE slot, never an occupied one
+    mla     r7, r1, r2, r6
+    add     r7, r7, #0x38           @ &playerParty[count]: the first FREE slot, never an occupied one
+    str     r7, [r4, #0x30]         @ reported either way: the address this run WOULD write
     orr     r3, r1, r1, lsl #8      @ countBefore | slot << 8; they are the same by construction
+    cmp     r0, #2
+    beq     .Ldryrun
+
     orr     r3, r3, #0x10000        @ status 1: appended
     str     r3, [r4, #0xA0]
     add     r1, r1, #1
     strb    r1, [r6, #0x34]         @ and the console can see it
+    mov     r0, r7
     b       .Lcopy
+
+@ THE DRY RUN. Everything above this point is the real thing - the same call, the same arithmetic
+@ on the same r2 - and the two `str`s that would change the save are the only difference. Instead
+@ it reads the slot's CURRENT 100 bytes back into the answer, in place of the mon it built, so the
+@ run says what a real one would overwrite. An empty slot reads as 100 zero bytes.
+.Ldryrun:
+    orr     r3, r3, #0x30000        @ status 3: nothing was written
+    str     r3, [r4, #0xA0]
+    add     r0, r4, #0x3C
+    mov     r1, r7
+    mov     r2, #100
+.Ldryloop:
+    ldrb    r3, [r1], #1
+    strb    r3, [r0], #1
+    subs    r2, r2, #1
+    bne     .Ldryloop
+    b       .Lsend
+
 .Lfull:
     orr     r3, r1, #0x20000        @ status 2: the party is full, nothing written
     str     r3, [r4, #0xA0]
@@ -171,8 +201,8 @@ _start:
     ldr     r0, [r4, #0x08]
     cmp     r0, #0
     beq     .Lsend
+    str     r0, [r4, #0x30]         @ the address written, before the loop advances it
 .Lcopy:
-    str     r0, [r4, #0x30]         @ the address actually written, before the loop advances it
     add     r1, r4, #0x3C
     mov     r2, #100                @ byte at a time: no alignment demanded of the destination
 .Lcopyloop:

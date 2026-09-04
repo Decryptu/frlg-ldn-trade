@@ -596,11 +596,18 @@ SAV1_PARTY = 0x38
 PARTY_WRITE_NONE = 0                # no party write was asked for
 PARTY_WRITE_APPENDED = 1            # written at slot == the count that was there, count raised
 PARTY_WRITE_FULL = 2                # six mons already: nothing written, nothing changed
+PARTY_WRITE_DRY_RUN = 3             # nothing written, and the 100 bytes are the SLOT'S contents
 PARTY_WRITE_STATUS = {
     PARTY_WRITE_NONE: "no party write was asked for",
     PARTY_WRITE_APPENDED: "APPENDED to the player's party, and the count was raised",
     PARTY_WRITE_FULL: "the party was already full - NOTHING was written",
+    PARTY_WRITE_DRY_RUN: "DRY RUN - nothing was written; the 100 bytes are what is in that slot",
 }
+
+# The value that goes in the image, by what was asked for.
+PARTY_APPEND_NO = 0
+PARTY_APPEND_WRITE = 1
+PARTY_APPEND_DRY_RUN = 2
 
 # NUM_SPECIES [decomp:include/constants/species.h]: 412 slots with SPECIES_EGG at 411, and 0 is
 # SPECIES_NONE. CreateBoxMon indexes gSpeciesInfo AND gLevelUpLearnsets by this, and the second is
@@ -659,12 +666,20 @@ def build_create_mon(function, species, level, *, fixed_iv=USE_RANDOM_IVS,
     has_fixed_personality = int(has_fixed_personality)
     fixed_personality, fixed_ot_id = int(fixed_personality), int(fixed_ot_id)
     destination = int(destination)
-    party_append = 1 if party_append else 0
+    if party_append is True:
+        party_append = PARTY_APPEND_WRITE
+    elif party_append is False or party_append is None:
+        party_append = PARTY_APPEND_NO
+    party_append = int(party_append)
+    if party_append not in (PARTY_APPEND_NO, PARTY_APPEND_WRITE, PARTY_APPEND_DRY_RUN):
+        raise BufferScriptError(
+            f"party_append is {PARTY_APPEND_NO} (no), {PARTY_APPEND_WRITE} (append) or "
+            f"{PARTY_APPEND_DRY_RUN} (dry run), got {party_append}")
     if party_append and destination:
         raise BufferScriptError(
             "a party append computes its own destination from gSaveBlock1Ptr; an absolute address "
             "as well would be two answers to the same question")
-    if party_append and not function:
+    if party_append == PARTY_APPEND_WRITE and not function:
         raise BufferScriptError(
             "with no function to call the mon is a hundred zero bytes, and appending those would "
             "put a corrupt entry in the player's party")
@@ -764,17 +779,29 @@ def describe_create_mon(dump, expected=None):
     from . import mon as monlib             # here: it reads the decomp at import
     result = read_create_mon(dump)
     raw = result["mon"]
+    party = result["party"]
+    dry = bool(party and party["status"] == PARTY_WRITE_DRY_RUN)
     lines = [f"create-mon: {result['calls']} call(s), built at 0x{result['built_at']:08X}"
              + (f", calling 0x{result['function']:08X}" if result["function"]
                 else ", calling nothing")
-             + (f", written to 0x{result['destination']:08X}" if result["destination"] else "")]
-    party = result["party"]
+             + ((f", WOULD have written 0x{result['destination']:08X}" if dry else
+                 f", written to 0x{result['destination']:08X}") if result["destination"] else "")]
     if party and party["status"] != PARTY_WRITE_NONE:
         lines.append(
             f"   party: {PARTY_WRITE_STATUS.get(party['status'], party['status'])}"
             f" - the console held {party['count_before']} mon(s)"
             + (f" and this one is slot {party['slot'] + 1} of {PARTY_SIZE}"
-               if party["status"] == PARTY_WRITE_APPENDED else ""))
+               if party["status"] == PARTY_WRITE_APPENDED else
+               f", so a real run would write slot {party['slot'] + 1} of {PARTY_SIZE}"
+               if party["status"] == PARTY_WRITE_DRY_RUN else ""))
+    if party and party["status"] == PARTY_WRITE_DRY_RUN:
+        slot = result["mon"]
+        lines.append(
+            "   the slot a real run would write holds "
+            + ("100 ZERO BYTES - it is empty, and nothing would be overwritten"
+               if slot == bytes(PARTY_MON_SIZE) else
+               f"something: head {slot[:16].hex()} - DO NOT APPEND until this is understood"))
+        return lines
     if not result["function"]:
         lines.append("   nothing was called, so the 100 bytes are the buffer as it was sent")
         return lines
