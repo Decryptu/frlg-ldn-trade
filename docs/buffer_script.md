@@ -127,6 +127,16 @@ Three things came with it:
 - The run crashed AFTER the session, in the host's last printed line (`self.engine`, which never
   existed - the engine is `self.session.activity`). Fixed, with a test.
 
+The message itself came out wrong, and that is worth keeping: the console printed
+`ly. code ran and read yourTRAINER IDc`. `charmap.encode` drops every character it does not know,
+**newline included**, so `"...your\nTRAINER ID..."` went out as one 47-character line, overflowed
+window 1's pixel buffer and wrapped around inside it. The game's line break is 0xFE, and the repo
+already had the convention (`split("\n")`, join on 0xFE) in two other places. `mg_server`'s message
+encoder now uses it and refuses, offline, both a third line and a line wider than the ROM's own
+longest string in that window - "A WONDER CARD has been received", 31 characters
+[decomp:src/strings.c:1291]. Window 1 is 28 tiles by 4 [mystery_gift_menu.c:97,524] and the ROM
+itself prints two lines in it, so two lines were always fine; only the missing 0xFE was not.
+
 ## Left
 
 `CLI_RUN_BUFFER_SCRIPT` is the general case of every other opcode, so what is left is what to write,

@@ -265,3 +265,44 @@ def test_the_success_message_reads_the_status_off_the_running_engine():
     assert "0xE5BBDF65" in message
     assert BufferScriptHostApplication._success_message(
         SimpleNamespace(session=None), mg_server.SVR_MSG_GIFT_SENT_1)
+
+
+# --- the console's message window -----------------------------------------------------------
+
+def test_a_newline_becomes_the_games_line_break():
+    """bs01 printed 'ly. code ran and read yourTRAINER IDc' on the console: charmap.encode drops
+    every character it does not know, newline included, so the two lines went out as one 47-
+    character line and wrapped around inside window 1."""
+    from frlgsim import charmap
+
+    encoded = mg_server._encode_message("first line\nsecond line", None)
+
+    assert encoded == charmap.encode("first line") + b"\xFE" + charmap.encode("second line") + b"\xff"
+    assert mg_server.DEFAULT_BUFFER_SUCCESS_MESSAGE.count(0xFE) == 1
+    assert mg_server.DEFAULT_BUFFER_FAILURE_MESSAGE.count(0xFE) == 1
+
+
+def test_a_line_too_long_for_the_window_is_refused_offline():
+    """31 characters is the ROM's own longest line in this window, gText_WonderCardReceivedFrom
+    [decomp:src/strings.c:1291]. The message bs01 sent was 47 and wrapped."""
+    mg_server._encode_message("A WONDER CARD has been received", None)
+    with pytest.raises(mg_server.MysteryGiftServerError, match="wraps around"):
+        mg_server._encode_message("The code ran and read your TRAINER ID correctly.", None)
+
+
+def test_more_lines_than_the_window_holds_are_refused_offline():
+    with pytest.raises(mg_server.MysteryGiftServerError, match="2 lines"):
+        mg_server._encode_message("one\ntwo\nthree", None)
+
+
+def test_every_default_message_fits_the_window():
+    from frlgsim import charmap
+
+    for message in (mg_server.DEFAULT_BUFFER_SUCCESS_MESSAGE,
+                    mg_server.DEFAULT_BUFFER_FAILURE_MESSAGE,
+                    mg_server.DEFAULT_DENIED_MESSAGE):
+        assert len(message) <= mg_script.CLIENT_MAX_MSG_SIZE
+        lines = message.rstrip(b"\xff").split(b"\xFE")
+        assert len(lines) <= mg_server.MAX_MESSAGE_LINES
+        for line in lines:
+            assert len(charmap.decode(line)) <= mg_server.MAX_MESSAGE_LINE_CHARS

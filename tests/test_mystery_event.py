@@ -347,12 +347,19 @@ def test_a_phrase_must_be_exactly_four_words():
 
 
 def test_a_refusal_message_longer_than_the_console_copies_is_refused():
+    """Two bounds, and the tighter one bites first: a line wider than the message window wraps
+    around inside it (bs01), well before 64 bytes is reached. Pre-encoded bytes skip the line
+    check and still have to fit what CLI_COPY_MSG copies."""
     from frlgsim import easychat
     card, ram_script = _probe_card()
-    with pytest.raises(mg_server.MysteryGiftServerError, match="copies only"):
+    with pytest.raises(mg_server.MysteryGiftServerError, match="wraps around"):
         mg_server.MysteryGiftServer(
             card, ram_script, questionnaire=easychat.resolve_words((), 4),
             denied_message="X" * 80)
+    with pytest.raises(mg_server.MysteryGiftServerError, match="copies only"):
+        mg_server.MysteryGiftServer(
+            card, ram_script, questionnaire=easychat.resolve_words((), 4),
+            denied_message=b"\x00" * 80)
 
 
 def test_the_console_reports_words_and_card_stats_we_never_asked_for():

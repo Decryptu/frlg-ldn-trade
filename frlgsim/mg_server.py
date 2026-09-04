@@ -95,23 +95,50 @@ DEFAULT_DENIED_MESSAGE = charmap.encode("That is not the phrase.") + b"\xff"
 # the payload ran, ran with the arguments the decomp says it gets, and read the real save.
 BUFFER_EXPECT_TRAINER_ID = buffer_script.EXPECT_TRAINER_ID
 
-# Both printed by the console itself, through CLI_MSG_BUFFER_SUCCESS / _FAILURE.
-DEFAULT_BUFFER_SUCCESS_MESSAGE = charmap.encode(
-    "The code ran and read your\nTRAINER ID correctly.") + b"\xff"
-DEFAULT_BUFFER_FAILURE_MESSAGE = charmap.encode(
-    "The code ran but read the wrong\nvalue.") + b"\xff"
+# What AddTextPrinterToWindow1 draws into: window 1 of sMainWindows, 28 tiles wide and 4 high
+# [decomp:src/mystery_gift_menu.c:97,524] - two lines. The ROM's own longest string in it is
+# gText_WonderCardReceivedFrom's first line, "A WONDER CARD has been received", 31 characters
+# [decomp:src/strings.c:1291]. bs01 proved what happens past that: a 47-character line overflowed
+# the window's pixel buffer and wrapped around it, printing "ly. code ran and read yourTRAINER IDc"
+# on the console.
+MAX_MESSAGE_LINES = 2
+MAX_MESSAGE_LINE_CHARS = 31
 
 
 def _encode_message(text, default):
-    """A 64-byte CLI_COPY_MSG payload, from a str, ready bytes, or the default."""
+    """A CLI_COPY_MSG payload, from a str, ready bytes, or the default.
+
+    `\n` becomes 0xFE, the game's line break. charmap.encode DROPS characters it does not know,
+    newline included, so encoding a two-line message with it alone silently produces one long line
+    - which is exactly what went out in bs01.
+    """
     if text is None:
         return default
-    encoded = bytes(text) if isinstance(text, (bytes, bytearray)) else charmap.encode(text) + b"\xff"
+    if isinstance(text, (bytes, bytearray)):
+        encoded = bytes(text)
+    else:
+        lines = text.split("\n")
+        if len(lines) > MAX_MESSAGE_LINES:
+            raise MysteryGiftServerError(
+                f"the console's message window holds {MAX_MESSAGE_LINES} lines, got {len(lines)}")
+        for line in lines:
+            if len(line) > MAX_MESSAGE_LINE_CHARS:
+                raise MysteryGiftServerError(
+                    f"line {line!r} is {len(line)} characters; the window fits about "
+                    f"{MAX_MESSAGE_LINE_CHARS} and a longer one wraps around inside it")
+        encoded = b"\xFE".join(charmap.encode(line) for line in lines) + b"\xff"
     if len(encoded) > mg_script.CLIENT_MAX_MSG_SIZE:
         raise MysteryGiftServerError(
             f"the message encodes to {len(encoded)} bytes; the console copies only "
             f"{mg_script.CLIENT_MAX_MSG_SIZE}")
     return encoded
+
+
+# Both printed by the console itself, through CLI_MSG_BUFFER_SUCCESS / _FAILURE.
+DEFAULT_BUFFER_SUCCESS_MESSAGE = _encode_message(
+    "The code ran and read your\nTRAINER ID correctly.", None)
+DEFAULT_BUFFER_FAILURE_MESSAGE = _encode_message(
+    "The code ran but read the\nwrong value.", None)
 
 
 class MysteryGiftServerError(Exception):
@@ -562,12 +589,8 @@ class MysteryGiftServer:
             raise MysteryGiftServerError(
                 f"a questionnaire phrase is exactly {NUM_QUESTIONNAIRE_WORDS} Easy Chat words, "
                 f"got {len(self.questionnaire)}")
-        self.denied_message = (DEFAULT_DENIED_MESSAGE if denied_message is None
-                               else charmap.encode(denied_message) + b"\xff")
-        if len(self.denied_message) > mg_script.CLIENT_MAX_MSG_SIZE:
-            raise MysteryGiftServerError(
-                f"the refusal message encodes to {len(self.denied_message)} bytes; the console "
-                f"copies only {mg_script.CLIENT_MAX_MSG_SIZE}")
+        # Same window, same trap: a refusal message wraps around inside it just as bs01's did.
+        self.denied_message = _encode_message(denied_message, DEFAULT_DENIED_MESSAGE)
         self.questionnaire_matched = None
         self.is_mevent_distribution = self.mevent is not None
         self.mevent_status = None
