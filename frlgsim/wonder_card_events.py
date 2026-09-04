@@ -26,7 +26,7 @@ from .gift_composer import (
 )
 import dataclasses
 
-from . import ereader_trainer, mystery_event, stamp_rally, wonder_card
+from . import ereader_trainer, mevent_pokemon, mystery_event, stamp_rally, wonder_card
 
 
 # pokefirered/include/constants/{items,species,event_objects}.h
@@ -509,10 +509,89 @@ MEVENT_PROBE_GIFT = WonderGift(
 )
 
 
+GIFT_MEVENT_CELEBI = "mystery-event-celebi"
+MEVENT_CELEBI_FLAG_ID = 1010
+
+SPECIES_CELEBI_MEVENT = 251
+MOVE_CONFUSION = 93
+MOVE_RECOVER = 105
+MOVE_HEAL_BELL = 215
+MOVE_ANCIENT_POWER = 246
+
+# Read as three lines of three on the console's mail screen.
+MEVENT_CELEBI_MAIL_WORDS = (
+    "hello", "friend", "",
+    "i_ve_arrived", "", "",
+    "thank_you", "enjoy", "",
+)
+
+
+def build_mevent_celebi_script(*, nickname="CELEBI", level=30):
+    """`givepokemon`: a whole struct Pokemon plus the struct Mail that follows it.
+
+    The only route on this link to a Pokemon carrying Mail, and the only one that writes the
+    Pokedex itself. No `setstatus` follows it on purpose - `givepokemon` leaves 2 for success and 3
+    for a full party, and that is exactly the answer worth reading back.
+    """
+    mon = mevent_pokemon.build_party_mon(
+        SPECIES_CELEBI_MEVENT, level,
+        moves=(MOVE_CONFUSION, MOVE_RECOVER, MOVE_HEAL_BELL, MOVE_ANCIENT_POWER),
+        pp=(25, 20, 5, 5),
+        nickname=nickname,
+        ot_name="PkCamp",
+        held_item=mevent_pokemon.ITEM_ORANGE_MAIL)
+    mail = mevent_pokemon.build_mail(
+        MEVENT_CELEBI_MAIL_WORDS, player_name="PkCamp",
+        species=SPECIES_CELEBI_MEVENT, item_id=mevent_pokemon.ITEM_ORANGE_MAIL)
+    payload = mevent_pokemon.build_givepokemon_payload(mon, mail)
+
+    script = mystery_event.MysteryEventScript()
+    script.givepokemon(script.blob(payload)).end()
+    return script.assemble()
+
+
+MEVENT_CELEBI_GIFT = WonderGift(
+    slug=GIFT_MEVENT_CELEBI,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CELEBI_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="A POKEMON with a letter",
+        body=(
+            "A POKEMON has been sent straight to",
+            "your party, and it is carrying MAIL.",
+            "There is no need to visit a POKEMON",
+            "CENTER for this one.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=MEVENT_CELEBI_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "The POKEMON was sent straight to\n"
+                "your party, {PLAYER}."),
+            Message(
+                "Read the MAIL it is holding to see\n"
+                "the message that came with it."),
+        ),
+    )),
+    completed_message=(
+        "The POKEMON went straight to your\n"
+        "party."),
+    mevent=build_mevent_celebi_script(),
+)
+
+
 __all__ = [
     "CELEBI_GIFT", "DIR_WEST", "GIFT_MEVENT_PROBE", "GIFT_PORYGON_TMS",
     "GIFT_VISITING_TRAINER",
+    "GIFT_MEVENT_CELEBI", "MEVENT_CELEBI_GIFT", "MEVENT_CELEBI_FLAG_ID",
     "MEVENT_PROBE_GIFT", "MEVENT_PROBE_FLAG_ID", "MEVENT_PROBE_STATUS",
+    "build_mevent_celebi_script",
     "build_mevent_probe_script",
     "GIFT_WORLDS_XP",
     "ITEM_TM29_PSYCHIC",

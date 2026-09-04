@@ -163,6 +163,38 @@ pushed by `CLI_COPY_MSG`, so an arbitrary on-screen message with a save is avail
   `SVR_READ_MEVENT_STATUS`; the status lands in `server.mevent_status` and in the host log.
 - `frlgsim/gift_composer.py` — `WonderGift.mevent` takes assembled bytes and validates them.
 
+## `givepokemon`: the only Pokemon on this link that can carry Mail
+
+`frlgsim/mevent_pokemon.py` builds the payload — a 100-byte encrypted party mon followed by the
+34-byte `struct Mail` the console reads at `pointer + sizeof(struct Pokemon)`. `--gift
+mystery-event-celebi` ships one.
+
+Three things make this opcode worth more than the field-script `givemon` our delivery scripts
+already compile to:
+
+- **Mail.** Nothing else on the gift link can attach any. `ItemIsMail` gates it, so the mon's held
+  item must be one of the twelve mail items [`src/mail_data.c:167`], and `GiveMailToMon2` then
+  copies our whole struct into `gSaveBlock1Ptr->mail` verbatim [`:100`] — words, sender name,
+  trainer id, species and item are all ours.
+- **It writes the Pokedex itself**, `FLAG_SET_SEEN` and `FLAG_SET_CAUGHT` on the national number,
+  before the player ever sees the mon.
+- **It lands at the Mystery Gift menu**, not at the delivery man. The mon is in the party the moment
+  the menu closes, with no Pokemon Center visit — which is also how you tell the event apart from
+  the card's own delivery script.
+
+The status is the outcome: **2** for success, **3** for a full party, in which case nothing is
+written at all. Do not put a `setstatus` after `givepokemon` — that answer is the point.
+
+Traps the builder enforces:
+
+- the mon's `mail` byte must be `MAIL_NONE` (0xFF) going in; a zero there is mail slot 0, which the
+  console reads as real mail the player never received;
+- `personality == otId` makes the encryption key 0, and a mon then validates both shuffled and
+  unshuffled, so an unshuffled one could ship;
+- the party tail must be derived, not zeroed — a zero tail reads back as level 0;
+- the mon's held item and the mail's `itemId` must agree, because `GiveMailToMon2` sets the held
+  item *from the mail*.
+
 ## Running it
 
     ./scratchpad/run_mg_fast.sh mevNN --gift mystery-event-probe --version firered

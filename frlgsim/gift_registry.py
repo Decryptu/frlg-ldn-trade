@@ -165,6 +165,7 @@ def build_default_registry():
     registry.register_definition(wonder_card_events.WORLDS_XP_GIFT)
     registry.register_definition(wonder_card_events.VISITING_TRAINER_GIFT)
     registry.register_definition(wonder_card_events.MEVENT_PROBE_GIFT)
+    registry.register_definition(wonder_card_events.MEVENT_CELEBI_GIFT)
     return registry
 
 
