@@ -846,6 +846,55 @@ RNG_RATE_PROBE_GIFT = WonderGift(
 )
 
 
+GIFT_RNG_RATE_PROBE_LONG = "rng-rate-probe-3000"
+RNG_RATE_PROBE_LONG_FLAG_ID = 1017
+RNG_RATE_PROBE_LONG_FRAMES = 3000
+
+# mev09 measured 1,202 turns over exactly 600 frames. TWO MODELS FIT THAT ONE POINT and they are
+# not the same claim:
+#
+#   exactly 2 per frame plus a constant 2   -> turns = 2N + 2   -> 6002 at N=3000
+#   a rate slightly above 2 (2.003333)      -> turns = 2.0033N  -> 6010 at N=3000
+#
+# Over an 8192-frame countdown they diverge by ~27 turns against a target ONE STATE wide, so the
+# difference is the difference between aiming and missing. Only the frame count changes between
+# this probe and the 600-frame one; `lcg.distance` is exact, so the answer is unambiguous.
+RNG_RATE_PROBE_LONG_PREDICTIONS = {"constant overhead (2N+2)": 2 * RNG_RATE_PROBE_LONG_FRAMES + 2,
+                                   "rate above 2 (2.003333N)": 6010}
+
+RNG_RATE_PROBE_LONG_GIFT = WonderGift(
+    slug=GIFT_RNG_RATE_PROBE_LONG,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="The man counts for longer",
+        body=(
+            "The man in the south of PALLET",
+            "TOWN will count again, but five",
+            "times as long. Talk to him and",
+            "wait, then press A.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=RNG_RATE_PROBE_LONG_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "The man in PALLET TOWN will\n"
+                "count for longer this time."),
+        ),
+    )),
+    completed_message=(
+        "Talk to the man in the south of\n"
+        "PALLET TOWN."),
+    mevent=build_rng_rate_probe_script(frames=RNG_RATE_PROBE_LONG_FRAMES),
+)
+
+
 GIFT_MASTER_BALL = "master-ball"
 MASTER_BALL_FLAG_ID = 1014
 

@@ -328,3 +328,23 @@ def test_a_rate_that_is_not_two_is_reported_as_such_rather_than_rounded():
     assert not any("EXACTLY" in line for line in lines)
     with pytest.raises(rng_script.RngScriptError):
         rng_script.measure_rate(before, after, 0)
+
+
+def test_the_two_rate_models_are_told_apart_by_the_frame_count_and_only_that():
+    """mev09's 1,202 turns over 600 frames fits both `2N+2` and `2.003333N`. They diverge by ~27
+    turns over an 8192-frame countdown, against a target one state wide, so the run that separates
+    them changes the frame count and nothing else."""
+    from frlgsim import wonder_card_events as events
+
+    short = gift_composer.build_seed_rate_script(frames=600)
+    long = gift_composer.build_seed_rate_script(frames=events.RNG_RATE_PROBE_LONG_FRAMES)
+
+    def without_delay(script):
+        return [(op, operand) for _o, op, operand in _walk(script) if op != _OP_DELAY]
+
+    assert without_delay(short) == without_delay(long), \
+        "only the delay's operand may differ between the two probes"
+    assert events.RNG_RATE_PROBE_LONG_PREDICTIONS["constant overhead (2N+2)"] == 6002
+    assert (events.RNG_RATE_PROBE_LONG_PREDICTIONS["rate above 2 (2.003333N)"]
+            != events.RNG_RATE_PROBE_LONG_PREDICTIONS["constant overhead (2N+2)"]), \
+        "a run that cannot come out two ways is not a test"
