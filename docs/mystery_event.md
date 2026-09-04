@@ -299,6 +299,35 @@ per-language word table — so those 807 words are the same word in every langua
 and need no verification at all. `easychat.species_word(55)` and `easychat.move_word(177)` build
 them, and they reproduce `0x2a37` and `0x24b1` exactly. Compose from those wherever you can.
 
+### mev04 and mev06: both branches on hardware
+
+Proven on the French FireRed, deliberately in that order — the refusal first, because a gate that
+passes cannot be told apart from a gate that is not wired up at all.
+
+**mev04**, requiring the player's phrase with the last word changed: the console read *"Those are
+not the words."* and returned to the menu. Nothing sent, nothing saved, nothing tossed; the session
+returned `SVR_MSG_NOTHING_SENT`. The host log shows the whole comparison:
+
+    Questionnaire gate: console typed POKEMON/55 (language-safe) done [FEELINGS/60]
+      MOVE_1/177 (language-safe) why [MISC/37]; we require ... hello [GREETINGS/15]
+      -> no match, declining the gift
+
+**mev06**, requiring the real phrase: `-> MATCH`, the card and the Mystery Event went out, status 42
+came back, clean close.
+
+Between them, **mev05** is worth keeping. The gate matched and the entire gift went out — card,
+delivery script, Mystery Event, status 42 returned — and then the console sent the RFU disconnect
+1.4 s after our final client script instead of `READY_END`. That is the same *"erreur de connexion"*
+the hold produces, so it was classified before being explained: `acklag.py` put the worst inbound gap
+at **51 ms** against a 15 ms baseline, nowhere near the hold's 0.1–1.1 s. Ordinary intermittency, and
+because the console never reached the success message it never saved. The retry went through.
+
+These runs also confirmed the card/RAM-script coupling from the outside, in both directions. While
+the Pallet Town script was installed every session logged `holding no Wonder Card` — that is
+`MysteryGift_LoadLinkGameData` reporting `flagId` 0 because `ValidateSavedWonderCard` fails on
+`ValidateRamScript`. And once mev06 delivered a card, the Pallet Town NPC went back to his own
+dialogue: `CLI_SAVE_RAM_SCRIPT` took the slot back, exactly as predicted.
+
 ## Running it
 
     ./scratchpad/run_mg_fast.sh mevNN --gift mystery-event-probe --version firered
