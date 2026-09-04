@@ -220,3 +220,18 @@ def test_the_union_room_does_not_reseed_either():
     Room the state would descend from the console's own trainer id. It is 2.1 BILLION turns away.
     Mystery Gift (bs15) and the Union Room are both ruled out now."""
     assert lcg.distance(0xDF65, CONSOLE_MONS["bs54 Mankey"][2]) > 1 << 30
+
+
+def test_the_overworld_never_stops_turning_the_rng():
+    """bs55: a Mankey caught, then FIVE MINUTES standing still touching nothing, then a Rattata by
+    Sweet Scent. 43,702 turns between the two states - which at exactly 2 a frame is 365.8 s, and
+    the two catches were ~368 s apart by the clock (message sends, so a couple of seconds late).
+
+    So idling costs the same as anything else, and it is the same rate bs15 measured at the Mystery
+    Gift link menu on 95 of 95 gaps. This is the measurement that says reading the RNG and acting on
+    it BY HAND is impossible: there is no state in which it waits for the player."""
+    mankey, rattata = 0xC57E0CF6, 0x50281FE4
+    turns = lcg.distance(mankey, rattata)
+    assert turns == 43702
+    assert turns % 2 == 0, "two turns a frame leaves no odd distance between two frames"
+    assert lcg.seconds(turns, per_frame=2) == pytest.approx(365.8, abs=0.5)
