@@ -2,6 +2,10 @@
 
 # name -> (ARM machine code, sha256 of the asm source it was assembled from)
 PAYLOADS = {
+    'anchors': (
+        bytes.fromhex('08c04fe2103090e500c083e504e083e508d083e50c0083e5101083e5142083e5183083e514c090e51cc083e518c090e520c083e51cc090e524c083e53cc090e528c083e52cc0a0e3b4c3c0e10100a0e31eff2fe1'),
+        'b53f6f7ed2bf9f104a26846eeed00570d69e1229d5e21faf74e244aaef733fb6',
+    ),
     'memory-dump': (
         bytes.fromhex('10309fe53c3080e50c309fe5b433c0e10100a0e31eff2fe10000000000000000'),
         'fab2c7ad00c6e8099271ac8627b6e3892175429d4aea1be295a678eda303398d',

@@ -328,12 +328,41 @@ Three things follow:
 - ROM is readable at its real address, which is the last thing calling into it was missing. The
   build is identified; what remains is a symbol address for that exact build.
 
+## `anchors`: asking the machine where it is (built, hardware run pending)
+
+Every other payload works from the two pointers the console hands us. `anchors` asks the CPU for the
+addresses nothing else can supply, writes eleven words into `client->sendBuffer` and widens
+`link->sendSize` to 44. It does not repoint anything: CLI_LOAD_TOSS_RESPONSE has already aimed
+`link->sendBuffer` at `client->sendBuffer` [MysteryGiftClient_InitSendWord, mystery_gift_client.c:91],
+so filling that buffer is enough. (Both simulated consoles now honour a RESIZED send as well as a
+repointed one - `ClientState.send_changed` - because MGL_Send reads both fields at send time.)
+
+| word | what |
+| --- | --- |
+| 0 | `sub ip, pc, #8`: where the console put our code. gDecompressionBuffer = 0x0201C000 is a DEDUCTION from ld_script.ld; this measures it. |
+| 1 | `lr`: **the address IN ROM of the instruction after the call** in Client_RunBufferScript [mystery_gift_client.c:276], bit 0 set because the caller is THUMB. |
+| 2 | `sp`, so the stack, in IWRAM. |
+| 3 | `r0` = `&client->param`, so where AllocZeroed put the client in gHeap. |
+| 4-5 | gSaveBlock2Ptr, gSaveBlock1Ptr. |
+| 6-9 | the four AllocZeroed buffers: sendBuffer, recvBuffer, script, msg. |
+| 10 | `link->sendBuffer` as InitSend left it; it must equal word 6, or the offsets this project computes from r0 are wrong. |
+
+Word 1 is the point. It is an absolute ROM address of a code site we can name in the decomp, so it
+anchors the whole cartridge: anything whose distance from that call site is known becomes callable.
+bs07 identified the build (BPRF version 0x0A); this locates it.
+
+`buffer_script.describe_anchors` prints the eleven words and every consistency check it can make -
+that the return address is inside the cartridge, that word 0 is the deduced 0x0201C000, that word 10
+equals word 6 - because an address that looks plausible but is not self-consistent is worse than no
+address. The host logs those lines itself.
+
+    ./scratchpad/run_mg_fast.sh bsNN --buffer-script anchors --version firered
+
 ## Left
 
-1. ~~bs06: bs05's own command again~~ ~~bs07: 1024 bytes of ROM~~ Both done, above. Next: **calling into the ROM**, now that the build is
-   identified as BPRF version 0x0A. It needs one function address valid for that exact build; the
-   dump can walk the ROM 1024 bytes at a time to find a signature, or the pret decomp can be built
-   at REVISION 10 and matched. `echo_gaps.py` on the capture afterwards: every block
+1. ~~bs06: bs05's own command again~~ ~~bs07: 1024 bytes of ROM~~ Both done, above. Next: **bs08,
+   `--buffer-script anchors`**, which turns the ROM anchor from a plan into a number. Then: **calling into the ROM**, with the build identified
+   (BPRF version 0x0A) and, after bs08, a known address inside it. `echo_gaps.py` on the capture afterwards: every block
    must read `never=[]`. That single line is the whole verdict.
 
 2. Writing, rather than reading: the same offsets take a `str` as easily as a `ldr`.

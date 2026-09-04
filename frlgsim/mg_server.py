@@ -912,6 +912,10 @@ class MysteryGiftServer:
         head = self.buffer_dump[:16].hex()
         self.info(f"Buffer script dump: {len(self.buffer_dump)} bytes of console memory, "
                   f"head {head}")
+        if self.buffer_dump_size == buffer_script.ANCHORS_SIZE:
+            # A run whose whole answer is eleven words must not leave them as a hex head.
+            for line in buffer_script.describe_anchors(self.buffer_dump):
+                self.info(f"  {line}")
 
     def _do_svr_load_buffer_verdict_msg(self):
         text = (self.buffer_success_message if self.buffer_matched

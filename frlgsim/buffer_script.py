@@ -99,6 +99,54 @@ class BufferScriptSpec:
 
 MEMORY_DUMP = "memory-dump"
 SAVE_DUMP = "save-dump"
+ANCHORS = "anchors"
+
+# The eleven words `anchors` sends back, in order. The first four cannot be obtained any other way.
+ANCHORS_FIELDS = (
+    "code",             # where the console put our payload: gDecompressionBuffer, measured
+    "return_address",   # into ROM, after the call in Client_RunBufferScript; THUMB, so bit 0 set
+    "stack_pointer",
+    "client_param",     # r0
+    "save_block_2",     # r1
+    "save_block_1",     # r2
+    "client_send_buffer",
+    "client_recv_buffer",
+    "client_script",
+    "client_msg",
+    "link_send_buffer",  # as MysteryGiftLink_InitSend left it; must equal client_send_buffer
+)
+ANCHORS_SIZE = 4 * len(ANCHORS_FIELDS)
+
+
+def read_anchors(dump):
+    """-> {field: u32} for the bytes `anchors` sent back."""
+    dump = bytes(dump)
+    if len(dump) < ANCHORS_SIZE:
+        raise BufferScriptError(
+            f"the anchors payload sends {ANCHORS_SIZE} bytes, got {len(dump)}")
+    return {name: int.from_bytes(dump[4 * i:4 * i + 4], "little")
+            for i, name in enumerate(ANCHORS_FIELDS)}
+
+
+def describe_anchors(dump):
+    """The same, as lines to log. Every consistency check this can make, it makes: an answer that
+    looks plausible but is not self-consistent is worse than no answer."""
+    a = read_anchors(dump)
+    lines = [f"{name:<19} 0x{a[name]:08X}" for name in ANCHORS_FIELDS]
+    rom = a["return_address"]
+    lines.append(
+        f"-> the ROM call site is 0x{rom & ~1:08X} ({'THUMB' if rom & 1 else 'ARM'} caller), "
+        "the instruction after the call in Client_RunBufferScript [mystery_gift_client.c:276]")
+    if not 0x08000000 <= (rom & ~1) < 0x0A000000:
+        lines.append("   WARNING: that is not in the cartridge; the anchor is not what we think")
+    lines.append(
+        f"-> gDecompressionBuffer is 0x{a['code']:08X} "
+        + ("(the 0x0201C000 deduction holds)" if a["code"] == 0x0201C000
+           else "(NOT the deduced 0x0201C000 - docs/buffer_script.md is wrong)"))
+    if a["link_send_buffer"] != a["client_send_buffer"]:
+        lines.append("   WARNING: link->sendBuffer is not client->sendBuffer; "
+                     "the struct offsets this project computes from r0 are wrong")
+    return lines
 
 # save-dump's operands, from its disassembly: ldr [pc,#36] -> 0x2C, [pc,#24] -> 0x30,
 # [pc,#16] -> 0x34. Proven by emulating a patched payload, not by trusting these.
@@ -131,6 +179,11 @@ SCRIPT_REGISTRY = {
         MEMORY_DUMP,
         "read out any region of the console's memory by repointing the console's own outgoing "
         "message at it (needs --dump-address; reads only, writes nothing)",
+        None),
+    ANCHORS: BufferScriptSpec(
+        ANCHORS,
+        "ask the machine where it is: our own load address, the RETURN ADDRESS INTO ROM, the stack "
+        "and the client's five buffers (writes only its own outgoing buffer)",
         None),
 }
 
@@ -263,10 +316,25 @@ class ClientState:
     send_buffer: int
     send_size: int
     send_ident: int
+    armed_buffer: int = _SEND_BUFFER_ADDRESS    # what CLI_LOAD_TOSS_RESPONSE's InitSend left
+    armed_size: int = 4
 
     @property
     def send_repointed(self):
-        return self.send_buffer != _SEND_BUFFER_ADDRESS
+        """The payload aimed the console's outgoing message at another address."""
+        return self.send_buffer != self.armed_buffer
+
+    @property
+    def send_resized(self):
+        """It kept the address and changed how much goes out - `anchors` fills client->sendBuffer
+        itself, so it only has to widen the size."""
+        return self.send_size != self.armed_size
+
+    @property
+    def send_changed(self):
+        """MGL_Send reads BOTH fields at send time [mystery_gift_link.c:166], so either one makes
+        what goes out different from the 4-byte response that was armed."""
+        return self.send_repointed or self.send_resized
 
 
 @dataclass
@@ -391,7 +459,8 @@ def emulate(code, *, param=0, sav2=b"", sav1=b"", memory=None, send_size=4,
         param=read_word(CLIENT_PARAM),
         send_buffer=read_word(CLIENT_LINK + LINK_SEND_BUFFER),
         send_size=read_half(CLIENT_LINK + LINK_SEND_SIZE),
-        send_ident=read_half(CLIENT_LINK + LINK_SEND_IDENT))
+        send_ident=read_half(CLIENT_LINK + LINK_SEND_IDENT),
+        armed_buffer=_SEND_BUFFER_ADDRESS, armed_size=send_size)
     try:
         pending = bytes(uc.mem_read(client.send_buffer, client.send_size))
     except unicorn.UcError:

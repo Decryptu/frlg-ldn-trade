@@ -549,12 +549,17 @@ class BufferScriptPayload:
         if self.script != buffer_script.SAVE_DUMP and self.dump_offset:
             raise ValueError(
                 f"an offset into a save block is only meaningful with {buffer_script.SAVE_DUMP}")
+        if self.script == buffer_script.ANCHORS:
+            # It reports a fixed set of words; --dump-size means nothing to it.
+            object.__setattr__(self, "dump_size", buffer_script.ANCHORS_SIZE)
         if self.is_dump:
             self.build_code()       # every operand check, before a console is involved
 
     @property
     def is_dump(self):
-        return self.script in (buffer_script.MEMORY_DUMP, buffer_script.SAVE_DUMP)
+        """Anything whose answer comes back as bytes on ident 19 rather than the 4-byte channel."""
+        return self.script in (buffer_script.MEMORY_DUMP, buffer_script.SAVE_DUMP,
+                               buffer_script.ANCHORS)
 
     @property
     def spec(self):

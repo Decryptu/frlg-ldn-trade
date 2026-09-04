@@ -505,9 +505,10 @@ class ConsoleClientModel:
             raise AssertionError(
                 "the payload never returned 1: on the console the Mystery Gift menu hangs")
         self.param = param
-        if run.client.send_repointed:
-            # MysteryGiftLink_InitSend kept the pointer, so the send reads from wherever the
-            # payload left it, at send time [mystery_gift_link.c:59,166].
+        if run.client.send_changed:
+            # MysteryGiftLink_InitSend kept the pointer and the size is read at send time too, so
+            # what goes out is whatever the payload left in those two fields
+            # [mystery_gift_link.c:59,166] - repointed, resized, or both.
             self._pending_send = (run.client.send_ident, run.pending_send, run.client.send_size)
 
     def step(self, parent_row, echo_row=None):

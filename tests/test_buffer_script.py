@@ -665,3 +665,60 @@ def test_a_dump_can_be_aimed_at_the_cartridge():
         buffer_script.build_memory_dump(buffer_script.ROM_HEADER_TITLE, 16),
         rom=b"\x00" * 0xA0 + b"POKEMON LEAF")
     assert seeded.pending_send[:12] == b"POKEMON LEAF"
+
+
+# --- anchors: where the machine says it is -----------------------------------------------------
+
+def test_the_anchors_payload_reports_every_address_it_promises():
+    """Offline this can only check the shape and the plumbing - the emulator's values are ones it
+    chose. The point of the payload is the run on hardware, where `return_address` is a real ROM
+    address and `code` measures a number this project has so far only deduced."""
+    run = buffer_script.emulate(buffer_script.payload(buffer_script.ANCHORS))
+
+    assert run.done and run.client.send_size == buffer_script.ANCHORS_SIZE
+    anchors = buffer_script.read_anchors(run.pending_send)
+    assert set(anchors) == set(buffer_script.ANCHORS_FIELDS)
+    # It writes into the buffer InitSend already aimed at, so it must not have repointed anything.
+    assert run.client.send_buffer == anchors["client_send_buffer"] == anchors["link_send_buffer"]
+    assert anchors["code"] == buffer_script.GDECOMPRESSION_BUFFER
+    assert anchors["save_block_2"] == buffer_script.SAV2_ADDRESS
+    assert anchors["save_block_1"] == buffer_script.SAV1_ADDRESS
+    assert anchors["stack_pointer"] == buffer_script.STACK_POINTER
+    # client->sendBuffer and the struct are separate allocations in the model, so the offline run
+    # cannot check that they are laid out as gHeap lays them out; describe_anchors does that on the
+    # bytes a console sends back.
+
+
+def test_the_anchors_description_calls_out_an_answer_that_is_not_self_consistent():
+    """An address that looks plausible but is not consistent is worse than no address, so the
+    description checks what it can rather than printing eleven numbers."""
+    good = bytearray(buffer_script.ANCHORS_SIZE)
+    fields = list(buffer_script.ANCHORS_FIELDS)
+    def put(name, value):
+        i = fields.index(name)
+        good[4 * i:4 * i + 4] = value.to_bytes(4, "little")
+    put("code", 0x0201C000)
+    put("return_address", 0x0815A2C1)          # in ROM, THUMB caller
+    put("client_send_buffer", 0x02001800)
+    put("link_send_buffer", 0x02001800)
+    lines = "\n".join(buffer_script.describe_anchors(bytes(good)))
+    assert "the ROM call site is 0x0815A2C0 (THUMB caller)" in lines
+    assert "the 0x0201C000 deduction holds" in lines
+    assert "WARNING" not in lines
+
+    put("return_address", 0x02001001)          # not in the cartridge
+    put("code", 0x02020000)                    # not where ld_script.ld says
+    put("link_send_buffer", 0x02009999)        # not client->sendBuffer
+    lines = "\n".join(buffer_script.describe_anchors(bytes(good)))
+    assert "not in the cartridge" in lines
+    assert "NOT the deduced 0x0201C000" in lines
+    assert "link->sendBuffer is not client->sendBuffer" in lines
+
+
+def test_the_cli_builds_an_anchors_session_with_its_own_fixed_size():
+    run = _run_config(["--buffer-script", "anchors"])
+    distribution = run.payload.build_distribution()
+
+    assert run.payload.is_dump                      # the answer comes back as bytes, not the u32
+    assert distribution.buffer_dump_size == buffer_script.ANCHORS_SIZE
+    assert distribution.card is None

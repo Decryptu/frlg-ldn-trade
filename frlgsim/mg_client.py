@@ -483,12 +483,15 @@ class MysteryGiftClientEngine:
                           "next frame, forever")
             self.info("[mg] BUFFER SCRIPT NEVER FINISHES: " + self.error)
             return
-        if run.client.send_repointed:
-            # The payload pointed the console's own outgoing message somewhere else. What goes out
-            # is read from there at send time, CRC included [decomp:src/mystery_gift_link.c:166],
-            # so the armed 4-byte response becomes however many bytes of memory it asked for.
+        if run.client.send_changed:
+            # The payload changed the console's own outgoing message - its address, its length, or
+            # both. What goes out is read from those two fields at send time, CRC included
+            # [decomp:src/mystery_gift_link.c:166], so the armed 4-byte response becomes however
+            # many bytes it asked for, from wherever it left the pointer.
             self._pending_send = (run.client.send_ident, run.pending_send, run.client.send_size)
-            self.info(f"[mg] BUFFER SCRIPT REPOINTED THE SEND: "
+            what = ("REPOINTED THE SEND" if run.client.send_repointed
+                    else "WIDENED THE SEND")
+            self.info(f"[mg] BUFFER SCRIPT {what}: "
                       f"link->sendBuffer=0x{run.client.send_buffer:08X}, "
                       f"link->sendSize={run.client.send_size}; ident {run.client.send_ident} now "
                       f"carries console memory, head {run.pending_send[:16].hex()}")
