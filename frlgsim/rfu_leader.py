@@ -34,9 +34,11 @@ def _parent_ni_fields(slot):
             (value >> rfu.PARENT_LLSF_PHASE_SHIFT) & 3)
 
 
-# The console emits slots slightly faster than this host echoes them; a lagging echo makes its
-# SendLastBlock re-send fragments we already hold and its retry loop ends in an RFU error.
-ECHO_MAX = 2
+# Safety valve only. With duplicate coalescing the queue never holds more than the distinct commands
+# of one console block (a 252-byte chunk is 21 fragments plus its INIT), so reaching this means the
+# echo has stopped draining and something else is already wrong. Dropping a DISTINCT command here is
+# never correct - see ChildEcho.
+ECHO_MAX = 64
 
 
 def _normalize_child_cmd(slot):
@@ -44,6 +46,85 @@ def _normalize_child_cmd(slot):
         rfu.COMM_SLOT_LENGTH, b"\x00"))
     cmd[0] &= rfu.FRAG_INDEX_MASK
     return bytes(cmd)
+
+
+class ChildEcho:
+    """Row one of the parent's 70-byte gRecvCmds table: the console's own commands mirrored back.
+
+    This is not a courtesy. `MysteryGiftClient_Init(client, 1, 0)` gives the client sendPlayerId 1 -
+    its own multiplayer id - so `MGL_Send` gates every chunk on `MGL_HasReceived(1)`
+    [mystery_gift_link.c:176,205], which is `gRfu.blockReceived[1]`, set only when the console's OWN
+    block comes back complete through this row [RfuHandleReceiveCommand, link_rfu_2.c:1125 loops over
+    every player including the child itself; RfuMain1_Child fills gRecvCmds from the parent table,
+    :970]. Its block sender waits on the same mirror: HandleBlockSend holds the INIT until it sees the
+    INIT echoed and SendLastBlock repeats the last fragment until it sees that echoed, then re-sends
+    every fragment missing from the mirrored bitmask [link_rfu_2.c:1366-1416].
+
+    So a dropped echo of a DISTINCT fragment is a lost fragment, permanently: bs05 asked for a
+    608-byte dump, the old bound (keep the newest 2) dropped the echoes of fragments 13, 16, 17 and
+    18 of a 21-fragment chunk when the console emitted them in bursts of two and four, the console
+    re-sent exactly those four (HandleSendFailure) and errored before our echo of the re-send
+    arrived. A REPEAT is different: the console re-sends the same fragment every frame while it waits,
+    and echoing each repeat is what put the mirror 0.5 s behind in lg122. Coalescing repeats and never
+    dropping distinct commands fixes both: one entry is enough, because the console is waiting to see
+    that command once.
+    """
+
+    def __init__(self, max_backlog=ECHO_MAX, coalesce=True):
+        self.max_backlog = max_backlog
+        # coalesce=False with max_backlog=2 is the historical policy (lg122..bs05): keep the newest
+        # two commands and drop the rest. Kept reachable so a test can show what it costs.
+        self.coalesce = coalesce
+        self._queue = deque()
+        self._pending = set()
+        self.cmd = rfu.idle_slot()
+        self.backlog_peak = 0
+        self.dropped = 0           # distinct commands lost to the safety valve; must stay 0
+        self.coalesced = 0         # repeats folded into an entry already waiting
+        self.progress = 0
+        self.emissions = 0
+        self.last_cmd = None
+        self.blocks = []
+
+    def append(self, cmd):
+        cmd = bytes(cmd)
+        if self.coalesce and cmd in self._pending:
+            self.coalesced += 1
+            return
+        self._queue.append(cmd)
+        self._pending.add(cmd)
+        self.backlog_peak = max(self.backlog_peak, len(self._queue))
+        while len(self._queue) > self.max_backlog:
+            self._pending.discard(self._queue.popleft())
+            self.dropped += 1
+            self.progress += 1
+
+    def next_row(self):
+        """The row to publish this frame. With nothing queued the last one stands, as the console's own
+        RFU does not clear a mirrored command it has already acted on."""
+        if self._queue:
+            self.cmd = self._queue.popleft()
+            self._pending.discard(self.cmd)
+            self.progress += 1
+            self.emissions += 1
+            self.last_cmd = self.cmd
+            self._record(self.cmd)
+        return self.cmd
+
+    def _record(self, cmd):
+        w0 = int.from_bytes(cmd[0:2], "little")
+        if (w0 & rfu.RFUCMD_MASK) == rfu.SEND_BLOCK_INIT:
+            count = int.from_bytes(cmd[2:4], "little")
+            if self.blocks and not self.blocks[-1]["indices"]:
+                self.blocks[-1]["count"] = count
+            else:
+                self.blocks.append({"count": count, "indices": set()})
+        elif (w0 & rfu.RFUCMD_MASK) == rfu.SEND_BLOCK and self.blocks:
+            self.blocks[-1]["indices"].add(w0 & rfu.FRAG_INDEX_MASK)
+
+    @property
+    def backlog(self):
+        return len(self._queue)
 
 
 class RFULeader:
@@ -72,33 +153,9 @@ class RFULeader:
         self.state = WAIT_CONNECT
         self.connect_id = None
         self.child_cmd = rfu.idle_slot()
-        # Native RFU reflects every child command into row one; keeping only the newest loses block
-        # fragments and the console retries until it disconnects.
-        self._echo_queue = deque()
-        self._echo_cmd = rfu.idle_slot()
-        self.echo_backlog_peak = 0
-        self.echo_dropped = 0
-        # Entries that have LEFT the echo queue, sent or dropped. Monotonic, so a caller can record
-        # `echo_progress + echo_backlog` when a block lands and wait for progress to reach it: that
-        # is the point at which everything queued behind that block has been mirrored back.
-        self.echo_progress = 0
-        # The last child command actually mirrored back into row one. u23: counting entries out of
-        # the queue is not enough, because ECHO_MAX drops fragments and the console re-sends them,
-        # so a counter says "echoed" for a fragment that has not gone out yet. Callers that must not
-        # answer before the console has seen its own block compare against this.
-        self.last_echo_cmd = None
-        # Echoes actually EMITTED, drops excluded. `last_echo_cmd` alone is ambiguous: two blocks
-        # can end in a byte-identical fragment -- u24 died on a CHOOSEMOVE whose last fragment
-        # matched the previous battler's -- so a caller pairs the content with a mark taken when its
-        # block landed and requires an emission after it.
-        self.echo_emissions = 0
-        # u26: one record per console block whose SEND_BLOCK_INIT we have echoed, with the set of
-        # fragment indices actually EMITTED for it (re-sends included, drops excluded). A block is
-        # returned to the console only when every index 0..count-1 is in the set; the last fragment
-        # alone is not enough, because ECHO_MAX can have dropped an earlier one that the console
-        # re-sends later, and answering before that re-send is echoed clears an exec-flag bit that
-        # is not set yet. Consecutive INIT echoes with no fragment between them are one block.
-        self.echo_blocks = []
+        # Native RFU reflects every child command into row one, and the console's own block sender and
+        # MGL_Send both wait on that reflection; see ChildEcho.
+        self._echo = ChildEcho()
         self.child_game_data = None
         self.k_acks = 0
         self.uni_in = 0
@@ -222,12 +279,7 @@ class RFULeader:
         if self.state != UNI or rec.get("cmd") is None:
             return "uni_early"
         self.child_cmd = _normalize_child_cmd(rec["cmd"])
-        self._echo_queue.append(self.child_cmd)
-        self.echo_backlog_peak = max(self.echo_backlog_peak, len(self._echo_queue))
-        while len(self._echo_queue) > ECHO_MAX:
-            self._echo_queue.popleft()
-            self.echo_dropped += 1
-            self.echo_progress += 1
+        self._echo.append(self.child_cmd)
         self.uni_in += 1
         return "uni"
 
@@ -269,34 +321,56 @@ class RFULeader:
                     rfu.COMM_SLOT_LENGTH, b"\x00")
             else:
                 parent_cmd = rfu.serialize(parent_words)
-            if self._echo_queue:
-                self._echo_cmd = self._echo_queue.popleft()
-                self.echo_progress += 1
-                self.echo_emissions += 1
-                self.last_echo_cmd = self._echo_cmd
-                self._record_echo(self._echo_cmd)
-            table = rfu.pack_recv_cmds([parent_cmd, self._echo_cmd])
+            table = rfu.pack_recv_cmds([parent_cmd, self._echo.next_row()])
             self.uni_out += 1
             return self._wrap_parent_t(rfu.parent_uni_slot(table, self.bm_slot))
         return None
-
-    def _record_echo(self, cmd):
-        w0 = int.from_bytes(cmd[0:2], "little")
-        if (w0 & rfu.RFUCMD_MASK) == rfu.SEND_BLOCK_INIT:
-            count = int.from_bytes(cmd[2:4], "little")
-            if self.echo_blocks and not self.echo_blocks[-1]["indices"]:
-                self.echo_blocks[-1]["count"] = count
-            else:
-                self.echo_blocks.append({"count": count, "indices": set()})
-        elif (w0 & rfu.RFUCMD_MASK) == rfu.SEND_BLOCK and self.echo_blocks:
-            self.echo_blocks[-1]["indices"].add(w0 & rfu.FRAG_INDEX_MASK)
 
     @property
     def echo_backlog(self):
         """Child commands received but not yet mirrored back into row one. While this is non-zero
         the console has not seen its own last block returned, so anything we say about that block
         would arrive before the block itself [u18, see host_trade._next_parent_words]."""
-        return len(self._echo_queue)
+        return self._echo.backlog
+
+    @property
+    def echo_progress(self):
+        """Entries that have LEFT the echo queue. Monotonic, so a caller can record
+        `echo_progress + echo_backlog` when a block lands and wait for progress to reach it: that is
+        the point at which everything queued behind that block has been mirrored back."""
+        return self._echo.progress
+
+    @property
+    def echo_emissions(self):
+        """Echoes actually EMITTED. `last_echo_cmd` alone is ambiguous: two blocks can end in a
+        byte-identical fragment -- u24 died on a CHOOSEMOVE whose last fragment matched the previous
+        battler's -- so a caller pairs the content with a mark taken when its block landed and
+        requires an emission after it."""
+        return self._echo.emissions
+
+    @property
+    def last_echo_cmd(self):
+        """The last child command actually mirrored back into row one."""
+        return self._echo.last_cmd
+
+    @property
+    def echo_blocks(self):
+        """One record per console block whose SEND_BLOCK_INIT we have echoed, with the set of fragment
+        indices emitted for it (u26). A block is returned to the console only when every index
+        0..count-1 is in the set; the last fragment alone is not enough."""
+        return self._echo.blocks
+
+    @property
+    def echo_backlog_peak(self):
+        return self._echo.backlog_peak
+
+    @property
+    def echo_dropped(self):
+        return self._echo.dropped
+
+    @property
+    def echo_coalesced(self):
+        return self._echo.coalesced
 
     def disconnect_frame(self):
         if self.connect_id is None:

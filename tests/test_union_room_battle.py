@@ -455,13 +455,44 @@ def test_the_leader_keeps_one_echo_record_per_console_block():
     """SEND_BLOCK_INIT opens a record (repeated INITs with no fragment between are one block); each
     emitted SEND_BLOCK adds its index; drops add nothing."""
     from frlgsim import rfu, rfu_leader
-    rec = rfu_leader.RFULeader.__new__(rfu_leader.RFULeader)
-    rec.echo_blocks = []
+    rec = rfu_leader.ChildEcho()
     init = (rfu.SEND_BLOCK_INIT).to_bytes(2, "little") + (3).to_bytes(2, "little") + bytes(10)
     frag = lambda i: (rfu.SEND_BLOCK | i).to_bytes(2, "little") + bytes(12)
     for cmd in (init, init, frag(0), frag(2), frag(2), init, frag(0)):
-        rec._record_echo(cmd)
-    assert rec.echo_blocks == [{"count": 3, "indices": {0, 2}}, {"count": 3, "indices": {0}}]
+        rec._record(cmd)
+    assert rec.blocks == [{"count": 3, "indices": {0, 2}}, {"count": 3, "indices": {0}}]
+
+
+def test_the_echo_never_drops_a_distinct_child_command():
+    """The console's own block sender and MGL_Send both wait on row one, and the console cannot ask
+    for one fragment back - it only sees that its mirrored bitmask is short. So a distinct command
+    dropped from the relay costs a whole HandleSendFailure repair round (bs05 lost fragments 13, 16,
+    17 and 18 of a 21-fragment chunk to a bound of two and never recovered)."""
+    from frlgsim import rfu, rfu_leader
+    echo = rfu_leader.ChildEcho()
+    frags = [(rfu.SEND_BLOCK | i).to_bytes(2, "little") + bytes(12) for i in range(8)]
+    for cmd in frags:                                 # a burst of eight, as one flush of its queue
+        echo.append(cmd)
+    assert echo.dropped == 0 and echo.backlog == 8
+    assert [echo.next_row() for _ in frags] == frags
+
+
+def test_the_echo_folds_away_a_repeat_that_is_still_waiting():
+    """SendLastBlock re-sends the same fragment every frame while it waits [link_rfu_2.c:1398], and
+    mirroring each repeat is what put the row one behind by 0.5 s in lg122. One entry is enough: the
+    console is waiting to see that command once."""
+    from frlgsim import rfu, rfu_leader
+    echo = rfu_leader.ChildEcho()
+    last = (rfu.SEND_BLOCK | 20).to_bytes(2, "little") + bytes(12)
+    for _ in range(30):
+        echo.append(last)
+    assert echo.backlog == 1 and echo.coalesced == 29 and echo.dropped == 0
+    assert echo.next_row() == last
+    # With nothing queued the row stands, as the console's RFU keeps acting on what it last saw.
+    assert echo.next_row() == last
+    # A repeat that arrives after the mirror has gone out is a new question and is answered again.
+    echo.append(last)
+    assert echo.backlog == 1
 
 
 def test_the_echo_wait_cannot_deadlock_for_ever():

@@ -12,6 +12,12 @@ live console:
 * ``MGL_Receive``'s header/chunk stepping, ident check and final CRC.
 * ``MysteryGiftClient_Run``'s one-command-per-frame script execution out of a
   buffer we filled.
+* the console's OWN block coming back on row one of the parent's table. The client is
+  ``MysteryGiftClient_Init(client, 1, 0)``, so its sendPlayerId is its own multiplayer id and
+  ``MGL_Send`` gates every chunk on ``MGL_HasReceived(1)`` [mystery_gift_link.c:176,205] - the
+  mirror, not anything the host says. Its RFU block sender waits on the same mirror
+  [HandleBlockSend / SendLastBlock / HandleSendFailure, link_rfu_2.c:1366-1416]. Modelling this is
+  what makes a lost echo visible offline; bs05 lost four fragments to it on hardware.
 
 Run standalone (no pytest needed):   python tests/test_mystery_gift_flow.py
 """
@@ -23,7 +29,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from frlgsim import (  # noqa: E402
     block, buffer_script, charmap, ereader_trainer, host_mystery_gift, linkplayer, mg_link,
-    mg_script, mg_server, rfu, trade, wonder_card, wonder_news,
+    mg_script, mg_server, rfu, rfu_leader, trade, wonder_card, wonder_news,
 )
 from frlgsim import mystery_gift as mg  # noqa: E402
 
@@ -264,19 +270,30 @@ def test_server_refuses_invalid_game_data():
 
 
 # --- console model ------------------------------------------------------------------------------
+class _Mirror:
+    """gRfu.recvBlock[GetMultiplayerId()] in the shape ``block.BlockSender`` reads."""
+
+    __slots__ = ("receiving", "count", "flags", "last_index")
+
+    def __init__(self, receiving, count, flags, last_index):
+        self.receiving = receiving
+        self.count = count
+        self.flags = flags
+        self.last_index = last_index
+
+
 class ConsoleClientModel:
     """The Switch side: RFU block receive gate + MysteryGiftLink + client script engine."""
 
     RECV_READY, RECV_RECEIVING, RECV_FINISHED = 0, 1, 2
 
     def __init__(self, *, flag_id=0, max_stamps=0, metadata_icon=0,
-                 stamps=(), toss_answer=0, echo_delay=4, consume_latency=2,
+                 stamps=(), toss_answer=0, consume_latency=2,
                  saved_news=None, trainer_id=CONSOLE_TRAINER_ID,
                  save_trainer_id=None):
         self.lp = linkplayer.LinkPlayer(name="ASH", version=linkplayer.VERSION_FIRE_RED,
                                         player_id=1)
         self.toss_answer = toss_answer
-        self.echo_delay = echo_delay
         # Frames between a block completing in the RFU receive callback and
         # MGL_Receive getting around to consuming it. The exact interleaving of
         # RfuHandleReceiveCommand and the client task within one frame is not
@@ -336,8 +353,22 @@ class ConsoleClientModel:
 
         self._send_blocks = []
         self._sender = None
-        self._send_wait = 0
+        self._send_stage = 0            # MGL_Send's link->state: 0 header, 1 chunks, 3 finishing
         self._pending_send = None
+
+        # gRfu.recvBlock[1] / gRfu.blockReceived[1]: this console's OWN commands mirrored back by the
+        # parent in row one of its 70-byte table. RfuHandleReceiveCommand runs the same block gate over
+        # every player including the child itself [link_rfu_2.c:1125], RfuMain1_Child fills gRecvCmds
+        # from the parent table [:970], and MGL_Send waits on the result.
+        self.own_state = self.RECV_READY
+        self.own_count = 0
+        self.own_flags = 0
+        self.own_last_index = -1
+        self.own_block_received = False
+        self.own_dropped_inits = 0      # an INIT mirrored back while the previous block is unconsumed
+        self.own_redundant_inits = 0
+        self.own_fragments_mirrored = 0
+        self.own_resends = 0            # fragments re-sent because their echo never came back
 
     # --- RFU receive side ----------------------------------------------------------------------
     def _feed_parent_row(self, row):
@@ -379,6 +410,74 @@ class ConsoleClientModel:
                 self.dropped_fragments += 1
         return rec
 
+    def _feed_own_row(self, row):
+        """RfuHandleReceiveCommand for i == our own multiplayer id [link_rfu_2.c:1125]."""
+        if row is None:
+            return
+        rec = rfu.parse_slot(row)
+        if rec is None:
+            return
+        if rec["op"] == rfu.SEND_BLOCK_INIT:
+            if self.own_state == self.RECV_READY:
+                self.own_count = rec["count"]
+                self.own_flags = 0
+                self.own_last_index = -1
+                self.own_state = self.RECV_RECEIVING
+                self.own_block_received = False
+            elif self.own_state == self.RECV_RECEIVING:
+                self.own_redundant_inits += 1
+            else:
+                # RECV_STATE_FINISHED: MGL_Send has not consumed the previous block, so this INIT is
+                # discarded and the console waits for fragments that will never be accepted.
+                self.own_dropped_inits += 1
+        elif rec["op"] == rfu.SEND_BLOCK:
+            # SendLastBlock reads the raw mirrored command word, `(u8)gRecvCmds[mpId][0]`
+            # [link_rfu_2.c:1408], so the index it compares against is tracked whatever state the
+            # receive slot is in; only the bitmask and the completion flag are gated on RECEIVING
+            # [RfuHandleReceiveCommand, :1152].
+            index = rec["index"]
+            self.own_last_index = index
+            if self.own_state == self.RECV_RECEIVING:
+                if not (self.own_flags >> index) & 1:
+                    self.own_fragments_mirrored += 1
+                self.own_flags |= 1 << index
+                if self.own_flags == block.all_received_mask(self.own_count):
+                    self.own_state = self.RECV_FINISHED
+                    self.own_block_received = True
+
+    def _own_mirror(self):
+        """What ``BlockSender`` calls its ack: gRfu.recvBlock[GetMultiplayerId()]."""
+        return _Mirror(self.own_state == self.RECV_RECEIVING or self.own_state == self.RECV_FINISHED,
+                       self.own_count, self.own_flags, self.own_last_index)
+
+    def _reset_own_received(self):
+        """MGL_ResetReceived(sendPlayerId) -> Rfu_ResetBlockReceivedFlag [link_rfu_2.c:1060]."""
+        self.own_block_received = False
+        self.own_state = self.RECV_READY
+
+    def _own_tick(self):
+        """One VBlank of the console's RFU block send, and a count of the repairs it costs.
+
+        A SEND_BLOCK that is not the last fragment while the sender is holding is HandleSendFailure
+        re-queueing a fragment missing from the console's own mirrored bitmask [link_rfu_2.c:1015,
+        1404]: proof that an echo of ours never came back. bs05 showed exactly four of these on the
+        wire (fragments 13, 16, 17, 18)."""
+        words = self._sender.tick(self._own_mirror())
+        if self._sender.state == block.HOLD:
+            w0 = words[0]
+            if ((w0 & rfu.RFUCMD_MASK) == rfu.SEND_BLOCK
+                    and (w0 & rfu.FRAG_INDEX_MASK) != self._sender.count - 1):
+                self.own_resends += 1
+        return rfu.serialize(words)
+
+    def _new_own_sender(self, data):
+        """Rfu_InitBlockSend: no watchdog and no pacing - the console re-sends every frame until its
+        own command comes back, and never gives up on its own [link_rfu_2.c:1366-1416]."""
+        sender = block.BlockSender(data, owner=1, trust_pia=False,
+                                   watchdog_init=1 << 30, watchdog_hold=1 << 30)
+        sender.HOLD_RESEND_GAP = 0
+        return sender
+
     @property
     def _consumable(self):
         return self.block_received and self._received_age >= self.consume_latency
@@ -411,8 +510,10 @@ class ConsoleClientModel:
             # payload left it, at send time [mystery_gift_link.c:59,166].
             self._pending_send = (run.client.send_ident, run.pending_send, run.client.send_size)
 
-    def step(self, parent_row):
+    def step(self, parent_row, echo_row=None):
+        """One VBlank: row 0 of the parent's table is the host's command, row 1 is ours mirrored back."""
         rec = self._feed_parent_row(parent_row)
+        self._feed_own_row(echo_row)
         if self.block_received:
             self._received_age += 1
         if self.phase != "gift":
@@ -423,16 +524,22 @@ class ConsoleClientModel:
         if rec is not None and rec["op"] == rfu.SEND_BLOCK_REQ and self.phase == "wait_req":
             # Both sides Rfu_InitBlockSend their 200-byte LinkPlayerBlock.
             self.phase = "exchange"
-            self._sender = block.BlockSender(
-                linkplayer.build_block(self.lp).ljust(200, b"\x00"), owner=1, trust_pia=True)
+            self._sender = self._new_own_sender(
+                linkplayer.build_block(self.lp).ljust(200, b"\x00"))
         if self._consumable and self.host_link_player is None:
             parsed, ok = linkplayer.parse_block(bytes(self.recv_buf))
             assert ok, "host LinkPlayer block failed the GameFreak magic check"
             self.host_link_player = parsed
             self._reset_received()
         if self._sender is not None and not self._sender.done:
-            return rfu.serialize(self._sender.tick(None))
-        self._sender = None
+            return self._own_tick()
+        if self._sender is not None:
+            # Task_PlayerExchange case 4/5: every player's block is complete - our own mirrored copy
+            # included - before LinkPlayerFromBlock and Rfu_ResetBlockReceivedFlag [link_rfu_2.c:1864].
+            if not self.own_block_received:
+                return rfu.idle_slot()
+            self._reset_own_received()
+            self._sender = None
         if self.host_link_player is not None and not self.standby_sent:
             # union_room.c:2391 SetLinkStandbyCallback, once.
             self.standby_sent = True
@@ -464,22 +571,33 @@ class ConsoleClientModel:
         return rfu.idle_slot()
 
     def _step_send(self):
-        if self._send_wait > 0:
-            self._send_wait -= 1
+        """MGL_Send [mystery_gift_link.c:150].
+
+        state 0 sends the {ident, crc, size} header with no gate. Every step after it waits on
+        ``MGL_HasReceived(link->sendPlayerId)``, and sendPlayerId is 1 - THIS console's own
+        multiplayer id - so what it waits for is its own block mirrored back by the parent, complete,
+        in row one. One wait before each chunk (state 1) and one more after the last (state 3).
+        """
+        if self._sender is not None:
+            row = self._own_tick()
+            if self._sender.done:
+                self._sender = None
+            return row
+
+        if self._send_stage == 0:
+            self._sender = self._new_own_sender(self._send_blocks.pop(0))
+            self._send_stage = 1
+            return self._own_tick()
+
+        if not self.own_block_received:
             return rfu.idle_slot()
-        if self._sender is None:
-            if not self._send_blocks:
-                self.func = "run"
-                return rfu.idle_slot()
-            self._sender = block.BlockSender(
-                self._send_blocks.pop(0), owner=1, trust_pia=True)
-        words = self._sender.tick(None)
-        if self._sender.done:
-            self._sender = None
-            # MGL_Send waits for its own block to come back through the parent's
-            # row-1 echo before starting the next one.
-            self._send_wait = self.echo_delay
-        return rfu.serialize(words)
+        self._reset_own_received()
+        if self._send_blocks:
+            self._sender = self._new_own_sender(self._send_blocks.pop(0))
+            return self._own_tick()
+        self._send_stage = 0
+        self.func = "run"
+        return rfu.idle_slot()
 
 
     def _run_mystery_event(self, payload):
@@ -549,6 +667,7 @@ class ConsoleClientModel:
 
     def _begin_send(self, ident, payload, size):
         self._send_blocks = mg_link.build_message(ident, payload, size)
+        self._send_stage = 0
         self.func = "send"
 
     def _run_one_command(self):
@@ -638,8 +757,21 @@ class ConsoleClientModel:
 
 
 def _drive(console, *, max_frames=4000, card=None, ram_script=None,
-           distribution=None, timing=None, require_completion=True):
-    """Run the engine against the console model until both sides are finished."""
+           distribution=None, timing=None, require_completion=True,
+           echo=None, child_burst=1, burst_every=120):
+    """Run the engine against the console model until both sides are finished.
+
+    The parent's table has two live rows and the console reads both: row 0 is the host's own
+    gSendCmd, row 1 is the console's last command mirrored back [ReadAllPlayerRecvCmds,
+    link_rfu_2.c:743]. The mirror is not decoration - the console's block sender and MGL_Send both
+    wait on it - so the relay here is the real :class:`rfu_leader.ChildEcho`, the same object the live
+    host publishes from.
+
+    ``child_burst``/``burst_every`` model the console's RfuSendQueue flushing: every ``burst_every``
+    frames the next ``child_burst`` commands are held and handed over together, as bs05's console did
+    twice a second (two at ts 283831, four at ts 283833). A relay that drops on a burst loses those
+    fragments for good, and the console has no way to know which.
+    """
     if distribution is not None:
         card, ram_script = distribution.card, distribution.ram_script
     elif card is None:
@@ -655,14 +787,21 @@ def _drive(console, *, max_frames=4000, card=None, ram_script=None,
               if distribution is not None else
               host_mystery_gift.HostMysteryGiftEngine(card, ram_script, **kwargs))
     close_rows = 0
+    echo = rfu_leader.ChildEcho() if echo is None else echo
+    held = []
     for frame in range(max_frames):
         parent_row = rfu.serialize(engine.tick())
-        child_row = console.step(parent_row)
+        child_row = console.step(parent_row, echo.next_row())
         if console.func == "done" and close_rows < 4:
             # Rfu_SetCloseLinkCallback [mystery_gift_menu.c:1248].
             child_row = rfu.serialize(rfu.close_link_words(1))
             close_rows += 1
-        engine.feed_child_slot(child_row)
+        held.append(child_row)
+        if len(held) >= (child_burst if frame % burst_every < child_burst else 1):
+            for row in held:
+                echo.append(rfu_leader._normalize_child_cmd(row))
+                engine.feed_child_slot(row)
+            held.clear()
         if engine.disconnect_requested:
             engine.mark_disconnect_sent()
             return engine, frame
@@ -1051,3 +1190,19 @@ def _run():
 
 if __name__ == "__main__":
     sys.exit(1 if _run() else 0)
+
+
+def test_the_host_status_line_reports_the_state_of_row_one():
+    """A live run must be able to say, from its own log, whether it gave the console back everything
+    it sent - the one number that decided bs05."""
+    card, ram_script = wonder_card.build_default_gift()
+    said = []
+    engine = host_mystery_gift.HostMysteryGiftEngine(card, ram_script, log=said.append)
+    engine.echo_backlog, engine.echo_backlog_peak = 1, 4
+    engine.echo_coalesced, engine.echo_dropped = 37, 0
+    engine._report_status()
+    assert "row-one echo backlog 1 (peak 4), 37 repeat(s) folded, none dropped" in said[-1]
+
+    engine.echo_dropped = 2
+    engine._report_status()
+    assert "2 DROPPED" in said[-1]

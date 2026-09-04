@@ -450,7 +450,18 @@ class HostMysteryGiftEngine:
             f"current idle run {self._idle_run}/"
             f"{self.timing.client_ready_idle_frames}) "
             f"vs parent polls {self._parent_polls}, "
-            f"opcodes seen: {ops}" + self._gift_status_detail())
+            f"opcodes seen: {ops}" + self._echo_status_detail()
+            + self._gift_status_detail())
+
+    def _echo_status_detail(self):
+        """Row one health. The console's own block sender and MGL_Send both wait on the mirror, and a
+        DROPPED distinct command is a fragment it must repair blind (bs05). Anything but 0 here is the
+        first thing to read after a stall."""
+        dropped = getattr(self, "echo_dropped", 0)
+        return (f"; row-one echo backlog {getattr(self, 'echo_backlog', 0)} "
+                f"(peak {getattr(self, 'echo_backlog_peak', 0)}), "
+                f"{getattr(self, 'echo_coalesced', 0)} repeat(s) folded, "
+                + (f"{dropped} DROPPED" if dropped else "none dropped"))
 
     def _gift_status_detail(self):
         if self.state != MG_GIFT:

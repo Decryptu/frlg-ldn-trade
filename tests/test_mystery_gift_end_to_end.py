@@ -248,12 +248,16 @@ class ScriptedMysteryGiftConsole:
                     # Row 0 of the parent's gRecvCmds echo table is its own
                     # gSendCmd [ReadAllPlayerRecvCmds, link_rfu_2.c:743].
                     rows = dict(rec["slots"])
-                    self._out_rows.append(self._console_row(rows[0]))
+                    # Row 1 is this console's own last command mirrored back by the leader. Its block
+                    # sender and MGL_Send both wait on it [ChildEcho, rfu_leader.py], so the model
+                    # gets the whole table it would see on hardware, not just the host's half.
+                    self._out_rows.append(
+                        self._console_row(rows[0], rows.get(1)))
             elif rec["type"] == gbaframe.TYPE_D:
                 self.disconnect_seen = True
 
-    def _console_row(self, parent_row):
-        row = self.console.step(parent_row)
+    def _console_row(self, parent_row, echo_row=None):
+        row = self.console.step(parent_row, echo_row)
         if self.console.func == "done" and self.close_rows_sent < self._close_rows:
             # The client task is finished, so the menu hands the link to
             # Rfu_SetCloseLinkCallback [mystery_gift_menu.c:1248] and the console

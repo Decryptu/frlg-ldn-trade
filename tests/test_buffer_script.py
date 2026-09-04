@@ -15,7 +15,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from frlgsim import (  # noqa: E402
-    buffer_script, host_mystery_gift, mg_script, mg_server, stamp_rally,
+    buffer_script, host_mystery_gift, mg_script, mg_server, rfu, rfu_leader, stamp_rally,
 )
 from frlgsim.buffer_payloads import PAYLOADS  # noqa: E402
 from test_mystery_gift_flow import CONSOLE_TRAINER_ID, ConsoleClientModel, _drive  # noqa: E402
@@ -542,3 +542,109 @@ def test_no_dump_file_and_no_dump_are_both_harmless(tmp_path):
             config=SimpleNamespace(payload=payload), info=lambda *a: None)
         BufferScriptHostApplication._write_dump(app)
     assert not (tmp_path / "x").exists()
+
+
+# --- bs05: the multi-chunk receive and the row-one mirror --------------------------------------
+#
+# bs05 asked the console for 608 bytes of SaveBlock1 and it timed out into "erreur de connexion".
+# The capture says why, exactly. `MysteryGiftClient_Init(client, 1, 0)` gives the client sendPlayerId
+# 1 - its own multiplayer id - so `MGL_Send` gates every chunk on `MGL_HasReceived(1)`
+# [mystery_gift_link.c:176,205]: the console's OWN block, mirrored back by us in row one of the
+# parent's 70-byte table, complete. Its RFU block sender waits on the same mirror
+# [HandleBlockSend / SendLastBlock / HandleSendFailure, link_rfu_2.c:1366-1416].
+#
+# bs05's console sent a 21-fragment chunk and emitted it partly in bursts (two at its frame 283831,
+# four at 283833). The leader's echo queue kept only the newest two, so the echoes of fragments 13,
+# 16, 17 and 18 were never sent - and those four are exactly the ones the console then re-sent. The
+# echo of that repair was itself dropped and the console gave up.
+#
+# The mechanism is size-independent; 608 bytes is simply three 21-fragment chunks instead of one.
+
+def _dump_dist(size, block_id=buffer_script.SAVE_BLOCK_2, offset=0):
+    return stamp_rally.MysteryGiftDistribution(
+        card=None, ram_script=None,
+        buffer_code=buffer_script.build_save_dump(block_id, offset, size),
+        buffer_dump_size=size)
+
+
+@needs_unicorn
+def test_the_console_makes_no_progress_without_its_own_block_mirrored_back():
+    """The gate itself. Withhold row one and the console never finishes its first block, however
+    long the host waits - which is why nothing about this was visible offline before."""
+    console = ConsoleClientModel(flag_id=0)
+    engine = host_mystery_gift.HostMysteryGiftEngine(
+        distribution=_dump_dist(608),
+        timing=host_mystery_gift.MysteryGiftTiming(client_ready_idle_frames=10))
+    for _ in range(4000):
+        child_row = console.step(rfu.serialize(engine.tick()), None)   # no mirror, ever
+        engine.feed_child_slot(child_row)
+
+    assert console.host_link_player is None      # it never got past its LinkPlayer block
+    assert engine.child_link_player is None
+    assert console.own_block_received is False
+
+
+@needs_unicorn
+@pytest.mark.parametrize("size", [256, 608, 1024])
+def test_the_console_reads_out_a_multi_chunk_dump(size):
+    """608 bytes is header + three chunks, so four rounds of the MGL_Send handshake instead of the
+    two a 256-byte dump needs. Each one is the console's own block coming back."""
+    console = ConsoleClientModel(flag_id=0)
+
+    engine, _frames = _drive(console, distribution=_dump_dist(size))
+
+    assert len(engine.server.buffer_dump) == size
+    assert int.from_bytes(
+        engine.server.buffer_dump[buffer_script.SAV2_PLAYER_TRAINER_ID:
+                                  buffer_script.SAV2_PLAYER_TRAINER_ID + 4],
+        "little") == CONSOLE_TRAINER_ID
+    assert console.result == mg_script.CLI_MSG_BUFFER_SUCCESS
+    # Nothing was mirrored back late enough to make the console repeat itself.
+    assert console.own_resends == 0
+
+
+@needs_unicorn
+def test_a_bursting_console_still_gets_every_fragment_of_its_dump_back():
+    """The bs05 shape: the console hands its commands over four at a time. Not one distinct command
+    may be dropped from the mirror - the console cannot tell which one is missing, only that its
+    bitmask is short, and each repair round is another chance to lose it."""
+    echo = rfu_leader.ChildEcho()
+    console = ConsoleClientModel(flag_id=0)
+
+    engine, _frames = _drive(console, distribution=_dump_dist(608),
+                             echo=echo, child_burst=4, burst_every=1)
+
+    assert len(engine.server.buffer_dump) == 608
+    assert console.result == mg_script.CLI_MSG_BUFFER_SUCCESS
+    assert echo.dropped == 0
+    assert echo.coalesced > 0            # the repeats it folds away are what used to cause the lag
+    assert console.own_dropped_inits == 0
+    assert console.own_resends == 0      # it never had to repair a block
+
+
+@needs_unicorn
+def test_the_old_echo_bound_makes_the_console_repair_its_own_block():
+    """bs05's mechanism, reproduced offline and measured. Keep only the newest two child commands and
+    a burst of four loses two of them; the console cannot ask for a specific fragment, it can only
+    notice its own bitmask is short and re-queue everything missing (HandleSendFailure), and each
+    repair round is another burst's worth of chances to lose the repair as well.
+
+    The model's console is infinitely patient, so it still gets there. bs05's did not: its repairs
+    for fragments 13, 16, 17 and 18 went out at 11.626-11.663 s, our echo of 13 was dropped a second
+    time, and it declared link loss at 11.790. What is asserted here is therefore the drop and the
+    repair traffic, which are what the capture shows - not a give-up threshold, which is not
+    measured."""
+    legacy = rfu_leader.ChildEcho(max_backlog=2, coalesce=False)
+    strays = ConsoleClientModel(flag_id=0)
+    _drive(strays, distribution=_dump_dist(608), echo=legacy, child_burst=4, burst_every=1)
+
+    assert legacy.dropped > 0
+    assert strays.own_resends > 0
+
+    fixed = rfu_leader.ChildEcho()
+    console = ConsoleClientModel(flag_id=0)
+    engine, _frames = _drive(console, distribution=_dump_dist(608),
+                             echo=fixed, child_burst=4, burst_every=1)
+
+    assert fixed.dropped == 0 and console.own_resends == 0
+    assert len(engine.server.buffer_dump) == 608

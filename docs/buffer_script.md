@@ -181,7 +181,10 @@ at any offset on any console and any build. Up to 1024 bytes a run - `MGL_Receiv
 
 The evidence line is `Buffer script dump: N bytes of console memory, head ...`. Both simulated
 consoles honour a repointed send, so the whole session is proven offline first, including that the
-host accepts 1024 bytes on an ident that normally carries 4.
+host accepts 1024 bytes on an ident that normally carries 4:
+
+    ./.venv/bin/python scratchpad/mg_client_harness.py --buffer-script save-dump \
+        --dump-block sav1 --dump-offset 0x38 --dump-size 608
 
 What this reaches that nothing else does: `SaveBlock1.playerParty` at 0x0038 (PIDs and IVs of the
 whole party), `money` at 0x0290 XORed with `SaveBlock2.encryptionKey` at 0xF20 [money.c], the bag,
@@ -201,37 +204,79 @@ and the play time is checkable on the console's own save screen. save-dump did i
 ANY ADDRESS, off the pointers Client_RunBufferScript passes.
 
 **bs05 (save-dump, SaveBlock1 0x34, 608 bytes) failed, and not in the payload.** The console
-printed "erreur de connexion, rapprochez-vous" during transmission and left. FACTS:
+printed "erreur de connexion, rapprochez-vous" during transmission and left. The payload ran: the
+console repointed its own outgoing message and began transmitting a 608-byte message with a valid
+header, and `acklag.py` reported 1 stall with a worst inbound gap of 37 ms, so it was not the hold
+either. The primitive was sound and the transport lost a byte of bookkeeping.
 
-- `MGL_Send` chunks at 252 bytes and, before EACH chunk and again before it finishes, waits on
-  `MGL_HasReceived(link->sendPlayerId)` = `GetBlockReceivedStatus()` - a block WE sent
-  [mystery_gift_link.c:155-213,77]. 256 bytes is header + 2 chunks = 3 handshakes; 608 is
-  header + 3 chunks = 4.
-- bs05's log shows `SEND_BLOCK_INIT` rising by exactly 3 and then stopping: the console sent the
-  header and two chunks and waited for a handshake that never came, until the game timed out.
-- `acklag.py`: 1 stall, worst inbound gap 37 ms. NOT the hold.
-- The payload ran. The console repointed its own outgoing message and began transmitting a
-  608-byte message with a valid header. The primitive is sound; the transport is the limit.
+## What the handshake actually waits for (bs05, settled from the capture)
 
-HYPOTHESIS (not yet confirmed): our host sends nothing while receiving - `_drain_recv_blocks`
-returns as soon as a chunk leaves the message incomplete - so those handshakes have been satisfied
-by accident, out of the spare copies of our own blocks (`ram_script_block_repeat` 3, so our 2-block
-payload goes out 6 times and 4 land during the console's send window). That supply runs out at four
-chunks. Confirm it before building on it.
+`MGL_Send` chunks at 252 bytes and waits on `MGL_HasReceived(link->sendPlayerId)` before each chunk
+and once more before it finishes [mystery_gift_link.c:176,205]. The first reading of that - a block
+WE sent - was WRONG, and the correction is the whole finding:
 
-PROVEN SAFE TODAY: a dump of 256 bytes or less. The party (600 bytes at SaveBlock1 0x38) can be
-taken in three runs of 200 without any of this being fixed.
+    MysteryGiftClient_Create -> MysteryGiftClient_Init(sClient, 1, 0)   [mystery_gift_client.c:33]
+                                                       ^sendPlayerId
+
+**sendPlayerId is 1: the console's OWN multiplayer id.** `MGL_HasReceived(1)` is
+`gRfu.blockReceived[1]`, and on a child that is set only when the console's own block comes back
+COMPLETE through row one of the parent's 70-byte gRecvCmds table - the copy WE mirror.
+`RfuHandleReceiveCommand` runs the block reassembler over every player including the child itself
+[link_rfu_2.c:1125], and `RfuMain1_Child` fills gRecvCmds from the parent's table, its own row
+included [:970]. Its RFU block sender waits on the same mirror: `HandleBlockSend` holds the INIT
+until it sees the INIT mirrored, and `SendLastBlock` repeats the last fragment until it sees THAT
+mirrored, then re-queues every fragment missing from the mirrored bitmask - `HandleSendFailure`
+[link_rfu_2.c:1366-1416]. The console cannot name the fragment it is missing. It can only notice its
+own bitmask is short and send everything again.
+
+Our leader bounded that mirror at the newest two commands and dropped the rest (`ECHO_MAX = 2`,
+added after lg122, where an unbounded FIFO fell 0.5 s behind). bs05's console emitted its 21-fragment
+chunk partly in bursts - two commands in its frame 283831, four in 283833 - and the bound ate them:
+
+    scratchpad/echo_gaps.py scratchpad/bs05.pcap
+    [  4] t=  10.992 count= 21 sent= 21/21 mirrored= 20/21 never=[13] repaired_by_console=[13, 16, 17, 18]
+
+Fragments 13, 16, 17 and 18 were never mirrored, and 13, 16, 17, 18 are exactly what the console then
+re-sent (11.626-11.663 s). Our echo of the repair for 16, 17 and 18 went out; the repair for 13 was
+dropped a SECOND time, and the console declared link loss at 11.790. Run the same tool over bs01,
+bs03 and bs04 and every block reads `never=[]` - bs04 had bursts of three and four too, and two
+repairs, but each repair was mirrored and it recovered. Across five captures the only run that died
+is the only run with a fragment we never gave back.
+
+608 bytes is not a ceiling, then, and 256 is not a safe number: three 21-fragment chunks are simply
+three times the exposure of one. bs04 got lucky.
+
+## The fix (offline; hardware confirmation is bs06)
+
+`rfu_leader.ChildEcho` replaces the bound. Two rules, and each answers one of the two failures:
+
+- **Never drop a distinct command.** A dropped fragment is a repair round the console runs blind.
+- **Coalesce a repeat that is still waiting.** SendLastBlock re-sends the same fragment every frame
+  while it waits, and mirroring each of those repeats is what put lg122's row one 0.5 s behind. One
+  entry is enough: the console is waiting to see that command once. A repeat that arrives after the
+  mirror has gone out is a new question and is answered again.
+
+Because the child sends exactly one command per parent frame it receives [MscCallback_Child
+increments `childSendCount` only on `recv.newDataFlag`, link_rfu_2.c:600], mirror in and mirror out
+are 1:1 and the queue cannot grow on its own; with repeats folded away it never held more than four
+in any test. Nothing extra goes on the air - the same parent frames carry the same rows.
+
+`ConsoleClientModel` (tests/test_mystery_gift_flow.py) now models the mirror rather than a fixed
+`echo_delay`: an own-row receive slot with the decomp's block gate, `BlockSender` fed that slot as
+its ack with no watchdog, and MGL_Send waiting on `blockReceived[1]` before each chunk and once at
+the end. Its `_drive` relay is the real `ChildEcho`, and `child_burst`/`burst_every` reproduce the
+console flushing its RfuSendQueue. Measured over a 608-byte dump, bursts of four every frame:
+
+    policy                       echoes dropped   console repairs   frames
+    max_backlog=2, no coalesce              628               156     1255
+    ChildEcho (current)                       0                 0     1011
 
 ## Left
 
-**1. The multi-chunk receive (the next job).** `ConsoleClientModel` in tests/test_mystery_gift_flow.py
-does not model the per-chunk handshake at all, which is why 608 passed offline and failed on the
-console: both simulated sides shared our own optimistic assumption. Make the model faithful to
-`MGL_Send` - it may only hand over its next chunk after the host has sent it a block - watch the
-608-byte test fail exactly as bs05 did, then fix the host to answer each chunk, and 1024 should
-follow. Do not chase this on hardware; it reproduces offline once the model is honest.
+1. **bs06: 608 bytes on hardware**, then 1024. `echo_gaps.py` on the capture afterwards: every block
+   must read `never=[]`. That single line is the whole verdict.
 
 2. Writing, rather than reading: the same offsets take a `str` as easily as a `ldr`.
 
 3. Calling into the ROM, which needs a real address and therefore a way to identify the build the
-console is running - which the dump can now answer, by reading the ROM header at 0x080000A0.
+   console is running - which the dump can now answer, by reading the ROM header at 0x080000A0.
