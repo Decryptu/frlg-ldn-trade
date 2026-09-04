@@ -92,6 +92,29 @@ Re-sending the identical news to the same console is a no-op by design — it an
 host reports "the console already had this news". Pass `--news-id N` to change the id and the same
 text lands again.
 
+## On hardware (`wn01`, 2026-09-04, first try)
+
+A French FireRed (`GURVAN`, TID 57189) holding Wonder Card flagId 1008 took the news in 18 seconds
+with no retries, no stall and no hold:
+
+```
+ident 16  sClientScript_SendGameData
+ident 17  MysteryGiftLinkGameData — GURVAN, FireRed, holding card flagId 1008
+ident 16  sClientScript_SaveNews
+ident 23  MG_LINKID_NEWS — 444 bytes in three blocks
+ident 19  MG_LINKID_RESPONSE — FALSE: the console saved it
+ident 16  sClientScript_NewsReceived
+ident 20  READY_END                              -> SVR_MSG_NEWS_SENT
+```
+
+The advertisement in the capture carries activity 22 throughout, with the `startedActivity` bit
+flipping on when the console joined. The console saved by itself, closed the link normally, and the
+Wonder Card it was holding was untouched — news and cards do not displace each other.
+
+Confirmed on the console afterwards: the news renders correctly under Mystery Gift → Wonder News,
+and the man in the Cerulean City house handed over a berry. That closes the loop the decompilation
+describes, from `WonderNews_SetReward(WONDER_NEWS_RECV_FRIEND)` to the item in the bag.
+
 ## Checking it offline first
 
     ./.venv/bin/python scratchpad/mg_client_harness.py --news                     # the send path

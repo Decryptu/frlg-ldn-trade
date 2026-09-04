@@ -31,14 +31,12 @@ them execute something on the console, and we use one:
   `BattleTowerEReaderTrainer` as ident 26, battled in the house on Seven Island. Detail in the
   protocol notes.
 
-## Built, not yet on hardware
-
-- **Wonder News on the Friend path** (`--news`, session 23) — the whole second column of the
-  console's menu: `ACTIVITY_WONDER_NEWS` in the advertisement, `SCRIPT_SEND_WONDER_NEWS`, and the
-  `MG_LINKID_RESPONSE` the console sends back to say whether it kept the news. Proven offline
-  against both console models (`tests/test_wonder_news.py`, the impaired-radio full stack, and
-  `scratchpad/mg_client_harness.py --news`), including the HasNews branch. Full write-up in
-  [Wonder News](wonder_news.md). Nothing about it has been on the air yet.
+- **Wonder News on the Friend path** (`--news`, session 23, hardware run `wn01`) — the whole second
+  column of the console's menu: `ACTIVITY_WONDER_NEWS` in the advertisement,
+  `SCRIPT_SEND_WONDER_NEWS`, and the `MG_LINKID_RESPONSE` the console sends back to say whether it
+  kept the news — the only gift path where the console answers us. Delivered to a French FireRed
+  first try; the news displayed correctly and the man in Cerulean City handed over the berry. Full
+  write-up in [Wonder News](wonder_news.md).
 
 ## Closed — do not re-open
 

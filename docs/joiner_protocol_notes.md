@@ -1254,3 +1254,31 @@ Also fixed here: `easychat.py` had three wrong group ids (CONDITIONS, ACTIONS an
 0x11/0x13/0x16 instead of 0xa/0xb/0x10), so "good", "together", "please" printed other words and
 "awesome" printed "???". The vocabulary is now generated from the decomp into `easychat_words.py`
 (1006 words) by `scripts/gen_easychat_words.py`.
+
+## The advertisement's activity byte alone decides which menu lists us (wn01, 2026-09-04)
+
+FACT (decomp): a console searching for a partner keeps a candidate only if its advertised activity
+appears in the accept list of the link group it is searching in [`IsPartnerActivityAcceptable`,
+union_room.c:1590; `sAcceptedActivityIds`, src/data/union_room.h:398-456]. Most of those lists hold
+exactly one id: `sAcceptedActivityIds_WonderCard` is `{ACTIVITY_WONDER_CARD}` and
+`sAcceptedActivityIds_WonderNews` is `{ACTIVITY_WONDER_NEWS}`.
+
+FACT (hardware, wn01): changing that one byte from 21 to 22 in the record at offset 16 moves the
+host from the console's Wonder Cards screen to its Wonder News screen. Nothing else in the
+advertisement changed - same Pia header, same record, same trainer id, same name - and the console
+listed us, joined, and completed a gift session. This is the first direct confirmation that the
+search word's activity field is what those accept lists are read against, rather than the packed
+`RfuGameData.activity` position inferred from the struct.
+
+FACT (hardware, wn01): the compatibility `hasNews` bit is not needed on the Friend path.
+`HasWonderCardOrNewsByLinkGroup` [union_room.c:3777] is reached only from
+`Task_ListenForWonderDistributor`, the Wireless path, and the run completed without any news bit
+being set anywhere - the same way the Wonder Card host has never needed `hasCard`. Its position in
+our record is still unidentified, and after wn01 there is no reason to look for it.
+
+FACT (hardware, wn01): `MG_LINKID_RESPONSE` (ident 19) travels client -> server in a gift session
+that has no player prompt in it. Every other gift this host sends is one-way. `CLI_SAVE_NEWS` loads
+that response with the console's own verdict - FALSE when it saved the news, TRUE when
+`IsWonderNewsSameAsSaved` matched what it already held [mystery_gift_client.c:210, mystery_gift.c:140]
+- and `sServerScript_SendNews` branches on it [mystery_gift_scripts.c:126]. The console sent it
+4.0 s after the 444-byte ident 23 completed, in the same shape as any other client message.
