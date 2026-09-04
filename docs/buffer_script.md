@@ -931,9 +931,35 @@ answer that looked like a refusal is a third confirmation that the computed addr
 `playerParty[1]`. `buffer_script.EMPTY_PARTY_SLOT` is that shape, and `is_empty_party_slot` is the
 check.
 
+### bs48, bs49: the append, on hardware (2026-09-04, both first try)
+
+bs48 was the dry run at the measured address — the append's own code, not a dump, reading the count
+off 0x02024025 and computing the slot:
+
+    WOULD have written 0x020242E4        = gPlayerParty + 100
+    the console held 1 mon(s), so a real run would write slot 2 of 6
+    the slot ... is EMPTY exactly as ZeroMonData leaves one
+
+bs49 then ran it for real, with the two stores back in and nothing else changed:
+
+    create-mon: 1 call(s), calling 0x08041151, written to 0x020242E4
+       party: APPENDED to the player's party, and the count was raised
+              - the console held 1 mon(s) and this one is slot 2 of 6
+       personality 0x3ADF0001  otId 0xE5BBDF65  checksum VALID  SHINY
+       species 59 ARCANINE  Lv30  nickname 'ARCANIN'  OT 'GURVAN'
+
+13/13 predicted fields, `never=[]` on every console block, one call. The address bs49 wrote is the
+one bs48 said it would, which is what makes the dry run worth having: the two runs cannot disagree
+without one of them being wrong, and they did not.
+
 ### What is left
 
-The real run. `--create-mon-destination`, `--create-mon-append` and the
+Nothing in this line. A Pokemon chosen by us, built by the console's own ROM from eight arguments
+we passed, lands in the player's party through a Mystery Gift link and survives the save.
+
+The next questions are elsewhere: `gRngValue` in a context that matters — an encounter rather than
+the gift menu — and LeafGreen, where every address in `rom_map.py` is FireRed BPRF v0x0A and none
+of it transfers. `--create-mon-destination`, `--create-mon-append` and the
 dry run are all proven offline, including that the dry run and the real append compute the *same*
 address at every party size — if they could disagree the dry run would prove nothing — and that
 the append writes nothing past `playerParty[6]`, which ends at 0x38 + 600 = 0x290, exactly where
