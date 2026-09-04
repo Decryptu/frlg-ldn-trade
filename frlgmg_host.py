@@ -23,10 +23,10 @@ BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
-from frlgsim import (config as configmod, easychat, gift_artifact, gift_registry, host_cli,
-                     trade_runtime, wonder_news)  # noqa: E402
+from frlgsim import (buffer_script, config as configmod, easychat, gift_artifact,  # noqa: E402
+                     gift_registry, host_cli, trade_runtime, wonder_news)
 from frlgsim.host_mg_app import (  # noqa: E402
-    MysteryGiftHostApplication, WonderNewsHostApplication)
+    BufferScriptHostApplication, MysteryGiftHostApplication, WonderNewsHostApplication)
 from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
 
 HOST_GIFT_CHOICES = gift_registry.GIFT_REGISTRY.live_choices
@@ -66,6 +66,11 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         "--news", nargs="?", const=wonder_news.DEFAULT_NEWS, default=None,
         choices=wonder_news.news_choices(), metavar="NAME",
         help=wonder_news.format_news_help())
+    payload_group.add_argument(
+        "--buffer-script", nargs="?", const=buffer_script.TRAINER_ID_PROBE, default=None,
+        choices=buffer_script.script_choices(), metavar="NAME",
+        help=("run native ARM code on the console through CLI_RUN_BUFFER_SCRIPT instead of "
+              "sending a gift: " + buffer_script.format_script_help()))
     gift_registry.add_flag_id_argument(parser)
     parser.add_argument(
         "--questionnaire", default=None, metavar="W1,W2,W3,W4",
@@ -146,6 +151,16 @@ def build_run_config(parser, args):
                 parser.error("--flag-id belongs to a Wonder Card; Wonder News has no flagId")
             payload = configmod.WonderNewsPayload(
                 news=args.news, news_id=args.news_id)
+        elif args.buffer_script is not None:
+            if args.questionnaire is not None:
+                parser.error(
+                    "--questionnaire gates a Wonder Card session; the buffer script server "
+                    "script has no SVR_CHECK_QUESTIONNAIRE branch")
+            if getattr(args, "_flag_id_explicit", False):
+                parser.error("--flag-id belongs to a Wonder Card; a buffer script has no flagId")
+            if args.news_id is not None:
+                parser.error("--news-id is only meaningful with --news")
+            payload = configmod.BufferScriptPayload(script=args.buffer_script)
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")
@@ -188,6 +203,9 @@ def main(argv=None):
     distribution = None
     if args.make_artifact and args.news is not None:
         parser.error("--make-artifact disassembles a delivery RAM script; Wonder News has none")
+    if args.make_artifact and args.buffer_script is not None:
+        parser.error(
+            "--make-artifact disassembles a delivery RAM script; a buffer script has none")
     if args.make_artifact:
         distribution = config.payload.build_distribution()
         definition = gift_registry.GIFT_REGISTRY.entry(args.gift).definition
@@ -201,6 +219,7 @@ def main(argv=None):
     if os.geteuid() != 0:
         parser.error("live LDN hosting requires root; run with sudo -E")
     application = (WonderNewsHostApplication if args.news is not None
+                   else BufferScriptHostApplication if args.buffer_script is not None
                    else MysteryGiftHostApplication)
     app = application(
         config, distribution=distribution,

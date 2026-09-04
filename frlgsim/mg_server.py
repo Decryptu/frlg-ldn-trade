@@ -2,7 +2,8 @@
 run() advances until it blocks and publishes ``action`` as ("send", ident, payload, size), ("recv", ident)
 or ("done", server_msg_id); the caller acknowledges with on_sent()/on_received()."""
 
-from . import charmap, easychat, ereader_trainer, mg_script, mystery_event, wonder_news
+from . import (buffer_script, charmap, easychat, ereader_trainer, mg_script,
+               mystery_event, wonder_news)
 from .mystery_gift import (
     MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT, MG_LINKID_DYNAMIC_MSG,
     MG_LINKID_EREADER_TRAINER, MG_LINKID_GAME_DATA, MG_LINKID_NEWS, MG_LINKID_RAM_SCRIPT,
@@ -35,6 +36,9 @@ SVR_CHECK_QUESTIONNAIRE = "SVR_CHECK_QUESTIONNAIRE"
 SVR_GET_CARD_STAT = "SVR_GET_CARD_STAT"
 SVR_LOAD_DENIED_MSG = "SVR_LOAD_DENIED_MSG"
 SVR_READ_MEVENT_STATUS = "SVR_READ_MEVENT_STATUS"
+SVR_LOAD_BUFFER_SCRIPT = "SVR_LOAD_BUFFER_SCRIPT"
+SVR_READ_BUFFER_STATUS = "SVR_READ_BUFFER_STATUS"
+SVR_LOAD_BUFFER_VERDICT_MSG = "SVR_LOAD_BUFFER_VERDICT_MSG"
 
 # [decomp:include/mystery_gift_server.h:56]
 SVR_MSG_NOTHING_SENT = 0
@@ -84,6 +88,30 @@ NUM_QUESTIONNAIRE_WORDS = 4     # [decomp:include/constants/global.h:68]
 
 # What a console that says the wrong phrase reads, through CLIENT_SCRIPT_DYNAMIC_ERROR.
 DEFAULT_DENIED_MESSAGE = charmap.encode("That is not the phrase.") + b"\xff"
+
+# buffer_expect: compare what the payload returned against the trainer id the console already told
+# us in its MysteryGiftLinkGameData. The two come from different places in the console - our ARM
+# code reads gSaveBlock2Ptr directly, the game data was assembled by the ROM - so a match is proof
+# the payload ran, ran with the arguments the decomp says it gets, and read the real save.
+BUFFER_EXPECT_TRAINER_ID = buffer_script.EXPECT_TRAINER_ID
+
+# Both printed by the console itself, through CLI_MSG_BUFFER_SUCCESS / _FAILURE.
+DEFAULT_BUFFER_SUCCESS_MESSAGE = charmap.encode(
+    "The code ran and read your\nTRAINER ID correctly.") + b"\xff"
+DEFAULT_BUFFER_FAILURE_MESSAGE = charmap.encode(
+    "The code ran but read the wrong\nvalue.") + b"\xff"
+
+
+def _encode_message(text, default):
+    """A 64-byte CLI_COPY_MSG payload, from a str, ready bytes, or the default."""
+    if text is None:
+        return default
+    encoded = bytes(text) if isinstance(text, (bytes, bytearray)) else charmap.encode(text) + b"\xff"
+    if len(encoded) > mg_script.CLIENT_MAX_MSG_SIZE:
+        raise MysteryGiftServerError(
+            f"the message encodes to {len(encoded)} bytes; the console copies only "
+            f"{mg_script.CLIENT_MAX_MSG_SIZE}")
+    return encoded
 
 
 class MysteryGiftServerError(Exception):
@@ -335,6 +363,44 @@ SCRIPT_SEND_MYSTERY_EVENT = (
 )
 
 
+# --- Native code: CLI_RUN_BUFFER_SCRIPT ------------------------------------------------------------
+# No Wonder Card, no toss prompt and no branch on what the console already holds: the payload is not
+# a gift, so this runs the same way whatever card the console is carrying, and it never saves unless
+# the verdict is success. The verdict itself is decided here, from the value the payload left in
+# client->param, and the console is told which one it was in a message we compose.
+_SCRIPT_BUFFER_SUCCESS = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_BUFFER_SUCCESS),
+    (SVR_SEND,),
+    (SVR_LOAD_BUFFER_VERDICT_MSG,),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_GIFT_SENT_1),
+)
+
+# CLIENT_SCRIPT_DYNAMIC_ERROR is the ROM's CLI_MSG_BUFFER_FAILURE exit, proven on hardware by the
+# questionnaire refusal (mev04): our message prints and the console returns to the menu, no save.
+_SCRIPT_BUFFER_FAILURE = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_DYNAMIC_ERROR),
+    (SVR_SEND,),
+    (SVR_LOAD_BUFFER_VERDICT_MSG,),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_NOTHING_SENT),
+)
+
+SCRIPT_RUN_BUFFER_SCRIPT = (
+    *_GAME_DATA_PREFIX,
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_RUN_BUFFER),
+    (SVR_SEND,),
+    (SVR_LOAD_BUFFER_SCRIPT,),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_RESPONSE),
+    (SVR_READ_BUFFER_STATUS,),
+    (SVR_GOTO_IF_EQ, True, _SCRIPT_BUFFER_SUCCESS),
+    (SVR_GOTO, _SCRIPT_BUFFER_FAILURE),
+)
+
+
 # sServerScript_TossPrompt [decomp:src/mystery_gift_scripts.c:151]
 _SCRIPT_TOSS_PROMPT = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_ASK_TOSS),
@@ -393,7 +459,9 @@ class MysteryGiftServer:
 
     def __init__(self, card=None, ram_script=None, *, news=None, stamp=None,
                  activation_script=None, install_activation_script=None, trainer=None,
-                 mevent=None, questionnaire=None, denied_message=None,
+                 mevent=None, buffer_code=None, buffer_expect=None,
+                 buffer_success_message=None, buffer_failure_message=None,
+                 questionnaire=None, denied_message=None,
                  script=None, log=lambda *a: None):
         self.news = None if news is None else bytes(news)
         if self.news is not None:
@@ -408,12 +476,13 @@ class MysteryGiftServer:
             if not wonder_news.validate(self.news):
                 raise MysteryGiftServerError(
                     "news id 0 fails ValidateWonderNews; the console would keep nothing")
-        elif card is None or ram_script is None:
+        elif buffer_code is None and (card is None or ram_script is None):
             raise MysteryGiftServerError(
-                "a Mystery Gift session needs either a Wonder Card and RAM script, or news")
+                "a Mystery Gift session needs a Wonder Card and RAM script, or news, or a "
+                "buffer script")
         self.card = None if card is None else bytes(card)
         self.ram_script = None if ram_script is None else bytes(ram_script)
-        if self.news is None:
+        if self.news is None and buffer_code is None:
             if len(self.ram_script) > self.MAX_RAM_SCRIPT_SIZE:
                 raise MysteryGiftServerError(
                     f"delivery RAM script is {len(self.ram_script)} bytes; the console "
@@ -466,6 +535,27 @@ class MysteryGiftServer:
                 raise MysteryGiftServerError(
                     "a Mystery Event script cannot share a session with news, a stamp rally or a "
                     "visiting trainer")
+        # A CLI_RUN_BUFFER_SCRIPT payload: native ARM the console runs out of
+        # gDecompressionBuffer [buffer_script.py]. It is not a gift, so it shares a session with
+        # nothing else - the client script that runs it neither sends nor saves a card.
+        self.buffer_code = None if buffer_code is None else bytes(buffer_code)
+        if self.buffer_code is not None:
+            buffer_script.validate(self.buffer_code)
+            if any(other is not None for other in
+                   (self.card, self.news, self.stamp, self.trainer, self.mevent)):
+                raise MysteryGiftServerError(
+                    "a buffer script runs on its own: no card, news, stamp rally, visiting "
+                    "trainer or Mystery Event script in the same session")
+        self.buffer_expect = buffer_expect
+        if not (buffer_expect is None or buffer_expect == BUFFER_EXPECT_TRAINER_ID
+                or isinstance(buffer_expect, int)):
+            raise MysteryGiftServerError(
+                f"buffer_expect is a u32, {BUFFER_EXPECT_TRAINER_ID!r} or None, "
+                f"got {buffer_expect!r}")
+        self.buffer_success_message = _encode_message(
+            buffer_success_message, DEFAULT_BUFFER_SUCCESS_MESSAGE)
+        self.buffer_failure_message = _encode_message(
+            buffer_failure_message, DEFAULT_BUFFER_FAILURE_MESSAGE)
         self.questionnaire = None if questionnaire is None else tuple(
             int(word) & 0xFFFF for word in questionnaire)
         if self.questionnaire is not None and len(self.questionnaire) != NUM_QUESTIONNAIRE_WORDS:
@@ -481,6 +571,9 @@ class MysteryGiftServer:
         self.questionnaire_matched = None
         self.is_mevent_distribution = self.mevent is not None
         self.mevent_status = None
+        self.is_buffer_distribution = self.buffer_code is not None
+        self.buffer_status = None
+        self.buffer_matched = None
         self.is_stamp_distribution = self.stamp is not None
         self.is_trainer_distribution = self.trainer is not None
         self.is_news_distribution = self.news is not None
@@ -496,6 +589,8 @@ class MysteryGiftServer:
             self.script = SCRIPT_SEND_VISITING_TRAINER
         elif self.is_mevent_distribution:
             self.script = SCRIPT_SEND_MYSTERY_EVENT
+        elif self.is_buffer_distribution:
+            self.script = SCRIPT_RUN_BUFFER_SCRIPT
         else:
             self.script = SCRIPT_SEND_WONDER_CARD
         if self.questionnaire is not None and script is None:
@@ -700,6 +795,56 @@ class MysteryGiftServer:
         self.trace.append(("mevent_status", self.mevent_status))
         self.info(f"Mystery Event script status: {self.mevent_status} "
                   f"({MEVENT_STATUS_NAMES.get(self.mevent_status, 'set by our own setstatus')})")
+
+    def _do_svr_load_buffer_script(self):
+        self._loaded = (MG_LINKID_RAM_SCRIPT, self.buffer_code, len(self.buffer_code))
+        self.info("buffer script (native ARM code): "
+                  + buffer_script.describe(self.buffer_code))
+
+    def _do_svr_read_buffer_status(self):
+        """Read what the payload left in client->param and decide the verdict.
+
+        The status is whatever our own code chose to write, so only the expectation makes it
+        evidence. With buffer_expect=None any answer counts as success: the console reached
+        CLI_LOAD_TOSS_RESPONSE at all, which already means the payload returned 1.
+        """
+        self.buffer_status = int.from_bytes(self._received[:4], "little")
+        expected, mask, why = self._expected_buffer_status()
+        if expected is None:
+            self.buffer_matched = True
+            self.info(f"Buffer script status: 0x{self.buffer_status:08X} "
+                      f"({self.buffer_status}) - the payload returned 1 and answered")
+        else:
+            self.buffer_matched = (self.buffer_status & mask) == (expected & mask)
+            verdict = "MATCHES" if self.buffer_matched else "DOES NOT MATCH"
+            self.info(f"Buffer script status: 0x{self.buffer_status:08X} {verdict} "
+                      f"0x{expected:08X} ({why})")
+        self.param = self.buffer_matched
+        self.trace.append(("buffer_status", self.buffer_status, self.buffer_matched))
+
+    def _expected_buffer_status(self):
+        """(expected, comparison mask, what the expectation is) for the configured oracle."""
+        if self.buffer_expect is None:
+            return None, 0xFFFFFFFF, "no expectation"
+        if self.buffer_expect != BUFFER_EXPECT_TRAINER_ID:
+            return int(self.buffer_expect) & 0xFFFFFFFF, 0xFFFFFFFF, "the value we asked for"
+        if self.game_data is None:
+            raise MysteryGiftServerError(
+                "buffer_expect=trainer-id needs the console's game data, which this script "
+                "never read")
+        expected = self.game_data.trainer_id & 0xFFFFFFFF
+        if self.game_data.trainer_id_is_reliable:
+            return expected, 0xFFFFFFFF, "the trainer id from the console's own game data"
+        # StringCopy's terminator ate playerTrainerId[0] on the way into the game data
+        # [decomp:src/mystery_gift.c:364], so only the top three bytes are comparable. Our ARM
+        # code read the save directly and is the one telling the truth here.
+        return expected, 0xFFFFFF00, ("the trainer id from the game data, low byte excluded: "
+                                      "a 7-character player name overwrote it")
+
+    def _do_svr_load_buffer_verdict_msg(self):
+        text = (self.buffer_success_message if self.buffer_matched
+                else self.buffer_failure_message)
+        self._loaded = (MG_LINKID_DYNAMIC_MSG, text, len(text))
 
     def _do_svr_load_msg(self, text):
         self._loaded = (MG_LINKID_DYNAMIC_MSG, text, len(text))

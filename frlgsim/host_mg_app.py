@@ -12,8 +12,8 @@ from .host_mystery_gift import (
 from .host_pia import HostPeerProtocol
 from .linkplayer import HOST_NAME_PAD
 from .mg_server import (
-    SERVER_RESULT_NAMES, SVR_MSG_CARD_SENT, SVR_MSG_GIFT_SENT_1, SVR_MSG_NEWS_SENT,
-    SVR_MSG_STAMP_SENT)
+    BUFFER_EXPECT_TRAINER_ID, SERVER_RESULT_NAMES, SVR_MSG_CARD_SENT, SVR_MSG_GIFT_SENT_1,
+    SVR_MSG_NEWS_SENT, SVR_MSG_STAMP_SENT)
 
 MysteryGiftPayload = configmod.MysteryGiftPayload
 MysteryGiftDistribution = configmod.MysteryGiftDistribution
@@ -258,3 +258,52 @@ class WonderNewsHostApplication(MysteryGiftHostApplication):
     def _success_message(self, result):
         return ("Wonder News delivered. On the Switch it is under Mystery Gift -> Wonder News; "
                 "the man in the house in CERULEAN CITY hands over a BERRY for it.")
+
+
+class BufferScriptHostApplication(MysteryGiftHostApplication):
+    """CLI_RUN_BUFFER_SCRIPT: the console executes native ARM code we hand it.
+
+    The last unopened door in the Mystery Gift client, and the only one that is not a gift: no
+    Wonder Card, no flagId, nothing written to the save unless the payload writes it. The console
+    reaches it from the ordinary Wonder Cards -> Friend screen, so the advertisement, the RFU
+    parent and the link framing are all the Wonder Card host's; only the server script differs.
+    """
+
+    SUCCESS_RESULTS = (SVR_MSG_GIFT_SENT_1,)
+    ACTIVITY_NOUN = "buffer script"
+
+    def _log_identity(self, link_player):
+        wire = link_player.pack(name_pad=HOST_NAME_PAD)
+        payload = self.config.payload
+        code = self.distribution.buffer_code
+        self.info(f"Host identity: OT={self.profile.name!r}, "
+                  f"TID=0x{self.profile.tid:04x}, SID=0x{self.profile.sid:04x}")
+        self.info("Host LinkPlayer display identity: "
+                  f"name_bytes={wire[8:16].hex()} "
+                  f"language={int.from_bytes(wire[26:28], 'little')}")
+        self.info(f"RFU parent identity: raw={self.session.rfu.host_session_id.hex()} "
+                  f"u16=0x{int.from_bytes(self.session.rfu.host_session_id, 'little'):04x}")
+        self.info(f"Buffer script: {payload.script!r}; {payload.spec.description}; "
+                  f"{len(code)}B of ARM, {code.hex()}")
+        self.info("The console copies it into gDecompressionBuffer and CALLS IT as "
+                  "func(&param, gSaveBlock2Ptr, gSaveBlock1Ptr) "
+                  "[decomp:src/mystery_gift_client.c:276]. No Wonder Card is sent and none is "
+                  "replaced, so a console holding any card takes this path unprompted.")
+        expect = payload.expect
+        self.info("The evidence line is 'Buffer script status:'. Expecting "
+                  + ("the trainer id the console's own game data carried"
+                     if expect == BUFFER_EXPECT_TRAINER_ID else
+                     "any answer at all" if expect is None else f"0x{int(expect):08X}"))
+        self.info("Advertising ACTIVITY_WONDER_CARDS. On the Switch choose "
+                  "Mystery Gift -> Wonder Cards -> Friend.")
+
+    def _hosting_instructions(self):
+        return ("Hosting a buffer script. On the Switch choose "
+                "Mystery Gift -> Wonder Cards -> Friend.")
+
+    def _success_message(self, result):
+        server = getattr(self.engine, "server", None)
+        status = getattr(server, "buffer_status", None)
+        return ("NATIVE CODE RAN ON THE CONSOLE. It returned "
+                + (f"0x{status:08X}" if status is not None else "an answer")
+                + ", which matched. The console printed our message and saved.")

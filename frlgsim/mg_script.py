@@ -462,3 +462,33 @@ CLIENT_SCRIPT_MEVENT_DONE = client_script(
     CLI_SEND_READY_END,
     (CLI_RETURN, CLI_MSG_CARD_RECEIVED),
 )
+
+
+# --- Native code: the CLI_RUN_BUFFER_SCRIPT path ---------------------------------------------------
+# Client_Run copies the whole receive buffer into gDecompressionBuffer and calls it as a function
+# [decomp:src/mystery_gift_client.c:237], so this is the same shape as the Mystery Event path with
+# the interpreter taken out: send the payload under MG_LINKID_RAM_SCRIPT (ident 25, the one the
+# ident-25 hole guard already covers), run it, and read what it left in client->param through the
+# CLI_LOAD_TOSS_RESPONSE return channel. No Wonder Card is involved: nothing here saves.
+CLIENT_SCRIPT_RUN_BUFFER = client_script(
+    (CLI_RECV, MG_LINKID_RAM_SCRIPT),
+    CLI_RUN_BUFFER_SCRIPT,
+    CLI_LOAD_TOSS_RESPONSE,
+    CLI_SEND_LOADED,
+    (CLI_RECV, MG_LINKID_CLIENT_SCRIPT),
+    CLI_COPY_RECV,
+)
+
+# sClientScript_DynamicSuccess [decomp:src/mystery_gift_scripts.c:87], the ROM's own exit for this
+# path: the console prints a 64-byte message of OUR composing (GetClientResultMessage returns NULL
+# for both buffer messages and the menu falls back to data->clientMsg [mystery_gift_menu.c:943]).
+# CLI_MSG_BUFFER_SUCCESS sets successMsg, which sends the menu on to MG_STATE_SAVE_LOAD_GIFT
+# [mystery_gift_menu.c:1379] - a save. CLIENT_SCRIPT_DYNAMIC_ERROR above is the same script with
+# CLI_MSG_BUFFER_FAILURE, which prints our message and returns to the menu without saving; mev04
+# proved that half on hardware.
+CLIENT_SCRIPT_BUFFER_SUCCESS = client_script(
+    (CLI_RECV, MG_LINKID_DYNAMIC_MSG),
+    CLI_COPY_MSG,
+    CLI_SEND_READY_END,
+    (CLI_RETURN, CLI_MSG_BUFFER_SUCCESS),
+)

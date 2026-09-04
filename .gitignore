@@ -8,6 +8,9 @@
 !/tests/
 !/docs/
 !/scripts/
+# ARM sources for CLI_RUN_BUFFER_SCRIPT payloads; the assembled bytes are committed in
+# frlgsim/buffer_payloads.py and these are what they must still assemble to.
+!/asm/
 !/config/
 !/config/host.toml
 

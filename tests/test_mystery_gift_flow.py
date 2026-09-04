@@ -22,8 +22,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from frlgsim import (  # noqa: E402
-    block, charmap, ereader_trainer, host_mystery_gift, linkplayer, mg_link, mg_script,
-    mg_server, rfu, trade, wonder_card, wonder_news,
+    block, buffer_script, charmap, ereader_trainer, host_mystery_gift, linkplayer, mg_link,
+    mg_script, mg_server, rfu, trade, wonder_card, wonder_news,
 )
 from frlgsim import mystery_gift as mg  # noqa: E402
 
@@ -149,9 +149,12 @@ def test_every_client_script_terminates_execution():
         assert last in stoppers, f"{name} ends with instruction {last}"
 
 
+CONSOLE_TRAINER_ID = 0x47ED8822
+
+
 def _game_data(flag_id=0, version_code=mg.VERSION_CODE_FIRERED,
                magic=mg.GAME_DATA_VALID_VAR, *, max_stamps=0,
-               metadata_icon=0, stamps=()):
+               metadata_icon=0, stamps=(), trainer_id=CONSOLE_TRAINER_ID):
     """Build what MysteryGift_LoadLinkGameData [mystery_gift.c:337] would produce."""
     data = bytearray(mg_script.GAME_DATA_SIZE)
     data[0x00:0x04] = magic.to_bytes(4, "little")
@@ -171,7 +174,7 @@ def _game_data(flag_id=0, version_code=mg.VERSION_CODE_FIRERED,
     data[mg_script.GD_OFF_PLAYER_NAME:
          mg_script.GD_OFF_PLAYER_NAME + 7] = b"\xbf\xc7\xcf\xff\xff\xff\xff"
     data[mg_script.GD_OFF_TRAINER_ID:
-         mg_script.GD_OFF_TRAINER_ID + 4] = (0x47ED8822).to_bytes(4, "little")
+         mg_script.GD_OFF_TRAINER_ID + 4] = trainer_id.to_bytes(4, "little")
     return bytes(data)
 
 
@@ -268,7 +271,8 @@ class ConsoleClientModel:
 
     def __init__(self, *, flag_id=0, max_stamps=0, metadata_icon=0,
                  stamps=(), toss_answer=0, echo_delay=4, consume_latency=2,
-                 saved_news=None):
+                 saved_news=None, trainer_id=CONSOLE_TRAINER_ID,
+                 save_trainer_id=None):
         self.lp = linkplayer.LinkPlayer(name="ASH", version=linkplayer.VERSION_FIRE_RED,
                                         player_id=1)
         self.toss_answer = toss_answer
@@ -285,7 +289,12 @@ class ConsoleClientModel:
         self.max_stamps = max_stamps
         self.game_data = _game_data(
             flag_id=flag_id, max_stamps=max_stamps,
-            metadata_icon=metadata_icon, stamps=stamps)
+            metadata_icon=metadata_icon, stamps=stamps, trainer_id=trainer_id)
+        # What gSaveBlock2Ptr holds, which is what native code reads. Normally the same value the
+        # game data carries; a test can drive them apart to check that the host is really
+        # comparing the two and not just echoing one of them.
+        self.save_trainer_id = trainer_id if save_trainer_id is None else save_trainer_id
+        self.buffer_scripts = []
         self.vars = {var: 0 for var in range(0x40B6, 0x40BD)}
         self.flags = set()
         self.activation_scripts = []
@@ -379,6 +388,20 @@ class ConsoleClientModel:
         self.recv_state = self.RECV_READY
 
     # --- per-VBlank ----------------------------------------------------------------------------
+    def _run_buffer_script(self, payload):
+        sav2 = bytearray(0x1000)
+        sav2[buffer_script.SAV2_PLAYER_TRAINER_ID:
+             buffer_script.SAV2_PLAYER_TRAINER_ID + 4] = (
+                 self.save_trainer_id.to_bytes(4, "little"))
+        param = self.param if isinstance(self.param, int) else 0
+        for _frame in range(8):
+            run = buffer_script.emulate(payload, param=param, sav2=bytes(sav2))
+            param = run.param
+            if run.done:
+                return param
+        raise AssertionError(
+            "the payload never returned 1: on the console the Mystery Gift menu hangs")
+
     def step(self, parent_row):
         rec = self._feed_parent_row(parent_row)
         if self.block_received:
@@ -578,6 +601,14 @@ class ConsoleClientModel:
             payload = bytes(self.recv_buffer)
             self.activation_scripts.append(payload)
             self.param = self._run_mystery_event(payload)
+        elif instr == mg_script.CLI_RUN_BUFFER_SCRIPT:
+            # memcpy(gDecompressionBuffer, client->recvBuffer, MG_LINK_BUFFER_SIZE), then
+            # funcId = FUNC_RUN_BUFFER, which calls it ONCE PER FRAME until it returns 1
+            # [mystery_gift_client.c:237,276]. The repeated call is modelled here and nowhere
+            # else: a payload that returns 0 must not look like a payload that finished.
+            payload = bytes(self.recv_buffer)
+            self.buffer_scripts.append(payload)
+            self.param = self._run_buffer_script(payload)
         elif instr == mg_script.CLI_COPY_MSG:
             # memcpy(client->msg, client->recvBuffer, CLIENT_MAX_MSG_SIZE)
             # [mystery_gift_client.c] - a fixed 64 bytes regardless of the

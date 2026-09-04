@@ -5,7 +5,7 @@ from pathlib import Path
 import tomllib
 from typing import Any, Mapping
 
-from . import (beacon, charmap, gift_registry, linkplayer, ni, stamp_rally,
+from . import (beacon, buffer_script, charmap, gift_registry, linkplayer, ni, stamp_rally,
                uroom_chat, wonder_card, wonder_news)
 
 
@@ -509,6 +509,38 @@ class MysteryGiftPayload:
         return dataclasses.replace(
             distribution, questionnaire=tuple(self.questionnaire),
             denied_message=self.denied_message)
+
+
+@dataclass(frozen=True)
+class BufferScriptPayload:
+    """Native ARM code for CLI_RUN_BUFFER_SCRIPT [buffer_script.py].
+
+    Not a gift: no card, no flagId, no receipt flag, nothing saved unless the payload's answer is
+    the one we demanded. The console reaches it through the ordinary Wonder Cards -> Friend
+    screen, so the advertisement and every layer below the server script are the Wonder Card
+    host's.
+    """
+    script: str = buffer_script.TRAINER_ID_PROBE
+    expect: object = None
+    _expect_explicit: bool = False
+
+    def __post_init__(self):
+        choices = buffer_script.script_choices()
+        if self.script not in choices:
+            raise ValueError(f"buffer script must be one of {', '.join(choices)}")
+        if not self._expect_explicit:
+            object.__setattr__(self, "expect", self.spec.expect)
+
+    @property
+    def spec(self):
+        return buffer_script.SCRIPT_REGISTRY[self.script]
+
+    def build_code(self):
+        return buffer_script.payload(self.script)
+
+    def build_distribution(self):
+        return MysteryGiftDistribution(None, None, buffer_code=self.build_code(),
+                                       buffer_expect=self.expect)
 
 
 @dataclass(frozen=True)

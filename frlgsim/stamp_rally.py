@@ -3,7 +3,7 @@ a Mystery Event wrapper runs right after an accepted stamp to make its reward el
 
 from dataclasses import dataclass
 
-from . import charmap, ereader_trainer, wonder_news
+from . import buffer_script, charmap, ereader_trainer, wonder_news
 from .mystery_gift import CARD_TYPE_STAMP
 from .wonder_card import (
     SPECIES_CELEBI, SPECIES_CLAYDOL, WONDER_CARD_SIZE, build_wonder_card,
@@ -51,8 +51,25 @@ class MysteryGiftDistribution:
     # anything is sent [SVR_CHECK_QUESTIONNAIRE, mg_server.py], and what a wrong one reads.
     questionnaire: tuple | None = None
     denied_message: str | None = None
+    # Native ARM code, run by CLI_RUN_BUFFER_SCRIPT [buffer_script.py], and what its answer is
+    # checked against (mg_server.BUFFER_EXPECT_TRAINER_ID, a u32, or None for "any answer").
+    buffer_code: bytes | None = None
+    buffer_expect: object | None = None
 
     def __post_init__(self):
+        if self.buffer_code is not None:
+            # Not a gift: nothing is sent, nothing is saved, and no Wonder Card is involved, so a
+            # buffer script travels as alone as Wonder News does.
+            object.__setattr__(self, "buffer_code", bytes(self.buffer_code))
+            buffer_script.validate(self.buffer_code)
+            if self.card is not None or self.ram_script is not None:
+                raise ValueError("a buffer script distribution carries no card or RAM script")
+            if any(other is not None for other in
+                   (self.news, self.stamp, self.trainer, self.mevent)):
+                raise ValueError(
+                    "a buffer script cannot share a session with news, a stamp, a visiting "
+                    "trainer or a Mystery Event script")
+            return
         if self.news is not None:
             # Wonder News travels alone: it has no flagId, no metadata and no delivery script,
             # so a news distribution carries neither card nor RAM script.

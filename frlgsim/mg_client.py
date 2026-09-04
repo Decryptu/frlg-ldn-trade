@@ -4,8 +4,8 @@ into frlgsim.sim.Sim unchanged; every message in both directions is kept in ``me
 
 from collections import deque
 
-from . import (barrier as barriermod, block, charmap, ereader_trainer, linkplayer, mg_link,
-               mg_script, mystery_event, rfu, wonder_news)
+from . import (barrier as barriermod, block, buffer_script, charmap, ereader_trainer,
+               linkplayer, mg_link, mg_script, mystery_event, rfu, wonder_news)
 from . import mystery_gift as mg
 from .mystery_gift import (MG_LINKID_CLIENT_SCRIPT, MG_LINKID_GAME_DATA, MG_LINKID_GAME_STAT,
                            MG_LINKID_READY_END, MG_LINKID_RESPONSE)
@@ -430,11 +430,55 @@ class MysteryGiftClientEngine:
                 self.saved_trainer = None
                 self.info("[mg] visiting trainer FAILED ValidateEReaderTrainer - console clears it")
         elif instr == mg_script.CLI_RUN_BUFFER_SCRIPT:
-            self.buffer_scripts.append(bytes(self.recv_buffer))
-            self.param = 1
-            self.info("[mg] buffer (native code) script received - recorded, NOT executed; reporting success")
+            # Client_Run copies the WHOLE receive buffer into gDecompressionBuffer and then calls
+            # it every frame until it returns 1 [decomp:src/mystery_gift_client.c:237,276]. We run
+            # it for real, on a model of the console's memory map, so the offline harness proves
+            # the payload and not just the transport.
+            code = bytes(self.recv_buffer)
+            self.buffer_scripts.append(code)
+            self._run_buffer_script(code)
         else:
             self.info(f"[mg] unknown client instruction {instr} param={param} - ignored")
+
+    def _save_block2_image(self):
+        """As much of struct SaveBlock2 [decomp:include/global.h:327] as a payload can read.
+
+        The trainer id here is the real one. The copy that travels in MysteryGiftLinkGameData can
+        have its low byte eaten by the player name's terminator [decomp:src/mystery_gift.c:364];
+        that divergence is the point of the trainer-id probe, so it must not be modelled away.
+        """
+        sav2 = bytearray(0x1000)
+        name = charmap.encode(self.lp.name)[:7] + b"\xff"
+        sav2[buffer_script.SAV2_PLAYER_NAME:buffer_script.SAV2_PLAYER_NAME + len(name)] = name
+        sav2[buffer_script.SAV2_PLAYER_TRAINER_ID:buffer_script.SAV2_PLAYER_TRAINER_ID + 4] = (
+            (self.lp.trainer_id & 0xFFFFFFFF).to_bytes(4, "little"))
+        return bytes(sav2)
+
+    def _run_buffer_script(self, code):
+        if not buffer_script.emulation_available():
+            self.param = 1
+            self.info("[mg] buffer script received, NOT executed (no unicorn): "
+                      + buffer_script.describe(code))
+            return
+        try:
+            run = buffer_script.emulate(code, param=self.param or 0,
+                                        sav2=self._save_block2_image())
+        except buffer_script.BufferScriptError as exc:
+            # On the console this is a crash or a hang inside the Mystery Gift menu, with no way
+            # back: exactly what the offline harness exists to catch.
+            self.error = f"buffer script would not run on the console: {exc}"
+            self.info("[mg] BUFFER SCRIPT FAILED: " + str(exc))
+            return
+        self.param = run.param
+        if not run.done:
+            self.error = (f"buffer script returned {run.returned}, not "
+                          f"{buffer_script.BUFFER_SCRIPT_DONE}: the console would call it again "
+                          "next frame, forever")
+            self.info("[mg] BUFFER SCRIPT NEVER FINISHES: " + self.error)
+            return
+        self.info(f"[mg] BUFFER SCRIPT RAN: {buffer_script.describe(code)}, "
+                  f"{run.instructions} instructions, returned {run.returned}, "
+                  f"left 0x{run.param:08X} in param")
 
     def _copy_recv_script(self):
         self.script = bytes(self.recv_buffer)

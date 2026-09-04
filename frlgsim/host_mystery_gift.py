@@ -69,6 +69,8 @@ class HostMysteryGiftEngine:
                 "mevent": distribution.mevent,
                 "questionnaire": distribution.questionnaire,
                 "denied_message": distribution.denied_message,
+                "buffer_code": distribution.buffer_code,
+                "buffer_expect": distribution.buffer_expect,
             }
         else:
             if card is None or ram_script is None:
