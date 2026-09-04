@@ -179,3 +179,71 @@ def test_the_console_is_told_the_verdict_in_a_message_we_compose():
 
     assert console.dynamic_msg is not None
     assert console.dynamic_msg.startswith(mg_server.DEFAULT_BUFFER_SUCCESS_MESSAGE)
+
+
+# --- the host CLI ---------------------------------------------------------------------------
+
+def _run_config(argv):
+    import frlgmg_host
+    parser = frlgmg_host.build_parser()
+    return frlgmg_host.build_run_config(parser, parser.parse_args(argv))
+
+
+def test_the_cli_builds_a_buffer_script_session_with_its_own_expectation():
+    run = _run_config(["--buffer-script"])
+
+    assert run.payload.script == buffer_script.TRAINER_ID_PROBE
+    assert run.payload.expect == mg_server.BUFFER_EXPECT_TRAINER_ID
+    distribution = run.payload.build_distribution()
+    assert distribution.buffer_code == buffer_script.payload(buffer_script.TRAINER_ID_PROBE)
+    assert distribution.card is None
+
+
+def test_the_cli_refuses_a_flag_id_or_a_questionnaire_with_a_buffer_script():
+    """Both belong to a Wonder Card session; the buffer script server script has neither."""
+    for argv in (["--buffer-script", "--flag-id", "1009"],
+                 ["--buffer-script", "--questionnaire", "species:55,FEELINGS/60,move:177,why"]):
+        with pytest.raises(SystemExit):
+            _run_config(argv)
+
+
+def test_a_buffer_script_and_a_gift_are_mutually_exclusive_on_the_command_line():
+    import frlgmg_host
+    with pytest.raises(SystemExit):
+        frlgmg_host.build_parser().parse_args(["--buffer-script", "--gift", "celebi"])
+
+
+def test_the_live_application_for_a_buffer_script_is_the_buffer_script_one():
+    from frlgsim.host_mg_app import BufferScriptHostApplication, MysteryGiftHostApplication
+
+    assert issubclass(BufferScriptHostApplication, MysteryGiftHostApplication)
+    assert BufferScriptHostApplication.SUCCESS_RESULTS == (mg_server.SVR_MSG_GIFT_SENT_1,)
+
+
+def test_the_identity_log_names_the_payload_and_the_expectation():
+    """The lines the operator reads before deciding a run is worth the console's time. Called on a
+    stub because the real application needs a radio; what is being checked is that every attribute
+    it reaches for exists on a buffer script session, where there is no card and no flagId."""
+    from types import SimpleNamespace
+
+    from frlgsim import config as configmod, linkplayer
+    from frlgsim.host_mg_app import BufferScriptHostApplication
+
+    lines = []
+    payload = configmod.BufferScriptPayload()
+    app = SimpleNamespace(
+        profile=SimpleNamespace(name="EMU", tid=0x1234, sid=0x5678),
+        session=SimpleNamespace(rfu=SimpleNamespace(host_session_id=b"\x01\x02")),
+        config=SimpleNamespace(payload=payload),
+        distribution=payload.build_distribution(),
+        info=lines.append,
+    )
+
+    BufferScriptHostApplication._log_identity(
+        app, linkplayer.LinkPlayer(name="EMU", version=linkplayer.VERSION_FIRE_RED))
+
+    text = "\n".join(lines)
+    assert buffer_script.TRAINER_ID_PROBE in text
+    assert "gSaveBlock2Ptr" in text
+    assert "Buffer script status:" in text
+    assert "Wonder Cards -> Friend" in text

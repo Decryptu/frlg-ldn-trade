@@ -601,8 +601,10 @@ class MysteryGiftRunConfig:
     def __post_init__(self):
         if not isinstance(self.profile, TrainerProfile):
             raise ValueError("profile must be a TrainerProfile")
-        if not isinstance(self.payload, (MysteryGiftPayload, WonderNewsPayload)):
-            raise ValueError("payload must be a MysteryGiftPayload or WonderNewsPayload")
+        if not isinstance(self.payload,
+                          (MysteryGiftPayload, WonderNewsPayload, BufferScriptPayload)):
+            raise ValueError(
+                "payload must be a MysteryGiftPayload, WonderNewsPayload or BufferScriptPayload")
         if not isinstance(self.ldn, LdnConfig):
             raise ValueError("ldn must be an LdnConfig")
         if not isinstance(self.role, HostOptions):
