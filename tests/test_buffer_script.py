@@ -1363,8 +1363,9 @@ def test_the_create_mon_operands_are_where_we_patch_them():
         ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID,
         destination=0)
     assert buffer_script.create_mon_parameters(code) == {
-        "function": CREATE_MON_ADDRESS, "destination": 0, "species": 151, "level": 30,
-        "fixed_iv": 31, "has_fixed_personality": 1, "fixed_personality": 0x3ADE0000,
+        "function": CREATE_MON_ADDRESS, "destination": 0, "party_append": 0, "species": 151,
+        "level": 30, "fixed_iv": 31, "has_fixed_personality": 1,
+        "fixed_personality": 0x3ADE0000,
         "ot_id_type": buffer_script.OT_ID_PRESET, "fixed_ot_id": GURVAN_OT_ID}
 
 
@@ -1392,7 +1393,7 @@ def test_all_eight_arguments_arrive_where_the_console_s_prologue_reads_them():
     # callee does not pop them [bs42: add sp,#28; pop {r3}; pop {r4-r7}; pop {r0}; bx r0], so a
     # payload that forgot would pop a garbage lr and never reach _RETURN_ADDRESS.
     assert run.returned == buffer_script.BUFFER_SCRIPT_DONE
-    assert run.client.send_size == buffer_script.CREATE_MON_ANSWER_SIZE == 116
+    assert run.client.send_size == buffer_script.CREATE_MON_ANSWER_SIZE == 120
 
 
 @needs_unicorn
@@ -1417,7 +1418,8 @@ def test_with_no_function_nothing_is_called_and_the_send_is_still_repointed():
 
     assert result["function"] == 0
     assert result["mon"] == b"\x00" * buffer_script.PARTY_MON_SIZE
-    assert run.client.send_repointed and run.client.send_size == 116
+    assert result["party"]["status"] == buffer_script.PARTY_WRITE_NONE
+    assert run.client.send_repointed and run.client.send_size == 120
 
 
 def test_the_mon_is_built_inside_our_own_image_and_cannot_reach_the_code():
@@ -1429,7 +1431,7 @@ def test_the_mon_is_built_inside_our_own_image_and_cannot_reach_the_code():
     branch = int.from_bytes(code[:4], "little")
     assert branch >> 24 == 0xEA, "the payload does not open with an unconditional ARM branch"
     code_starts = 8 + (branch & 0xFFFFFF) * 4               # pc reads as the instruction + 8
-    guard_start = buffer_script.CREATE_MON_MON_OFFSET + buffer_script.PARTY_MON_SIZE
+    guard_start = buffer_script.CREATE_MON_PARTY_OFFSET + 4
 
     assert code_starts - guard_start == 32
     assert code[guard_start:code_starts] == b"\x00" * 32
@@ -1564,7 +1566,7 @@ def test_the_cli_builds_a_create_mon_and_defaults_the_call_to_the_address_bs42_r
     distribution = run.payload.build_distribution()
 
     assert distribution.buffer_decode == buffer_script.CREATE_MON
-    assert distribution.buffer_dump_size == buffer_script.CREATE_MON_ANSWER_SIZE == 116
+    assert distribution.buffer_dump_size == buffer_script.CREATE_MON_ANSWER_SIZE == 120
     asked = buffer_script.create_mon_parameters(distribution.buffer_code)
     assert asked["function"] == CREATE_MON_ADDRESS
     assert asked["species"] == 151 and asked["level"] == 30 and asked["fixed_iv"] == 31
@@ -1603,3 +1605,155 @@ def test_a_built_create_mon_and_gather_are_still_named_by_their_own_bytes():
     ).startswith("create-mon")
     assert buffer_script.describe(
         buffer_script.build_string_gather(0x083E0D54, 69)).startswith("string-gather")
+
+
+# --- create-mon --create-mon-append: the write into the player's party ---------------------------
+# This is the one thing in the payload that touches a live save. Its safety is structural rather
+# than checked: the slot is playerParty[playerPartyCount], which is by definition the first FREE
+# one, so an occupied slot is never written whatever else is wrong. These tests are what say that
+# out loud, and the sav1 fixture is shaped like GURVAN's console - one mon in it.
+
+CHANSEY = b"\xAA" * buffer_script.PARTY_MON_SIZE     # a mon that must survive every append
+
+
+def _party_sav1(count, size=0x300):
+    sav1 = bytearray(size)
+    sav1[buffer_script.SAV1_PARTY_COUNT] = count
+    for slot in range(count):
+        start = buffer_script.SAV1_PARTY + slot * buffer_script.PARTY_MON_SIZE
+        sav1[start:start + buffer_script.PARTY_MON_SIZE] = CHANSEY
+    return bytes(sav1)
+
+
+@needs_unicorn
+def test_the_append_writes_the_first_free_slot_and_raises_the_count():
+    code = buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
+                                          party_append=True)
+
+    run = buffer_script.emulate(
+        code, sav1=_party_sav1(1),
+        memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
+    result = buffer_script.read_create_mon(run.pending_send)
+
+    party = buffer_script.SAV1_PARTY
+    size = buffer_script.PARTY_MON_SIZE
+    assert result["party"] == {"count_before": 1, "slot": 1,
+                               "status": buffer_script.PARTY_WRITE_APPENDED}
+    assert run.sav1[party:party + size] == CHANSEY          # the mon that was there is untouched
+    assert run.sav1[party + size:party + 2 * size] == result["mon"]
+    assert run.sav1[buffer_script.SAV1_PARTY_COUNT] == 2
+    # The address is COMPUTED from gSaveBlock1Ptr, never given: the save blocks move between save
+    # loads, so an absolute address for a party slot would be right only until the next boot.
+    assert result["destination"] == buffer_script.SAV1_ADDRESS + party + size
+    assert buffer_script.create_mon_parameters(code)["destination"] == 0
+
+
+@needs_unicorn
+def test_the_append_never_touches_an_occupied_slot_at_any_party_size():
+    for count in range(buffer_script.PARTY_SIZE):
+        code = buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
+                                              party_append=True)
+        run = buffer_script.emulate(
+            code, sav1=_party_sav1(count),
+            memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
+        result = buffer_script.read_create_mon(run.pending_send)
+
+        party, size = buffer_script.SAV1_PARTY, buffer_script.PARTY_MON_SIZE
+        assert result["party"]["slot"] == count
+        assert run.sav1[party:party + count * size] == CHANSEY * count
+        assert run.sav1[party + count * size:party + (count + 1) * size] == result["mon"]
+        assert run.sav1[buffer_script.SAV1_PARTY_COUNT] == count + 1
+
+
+@needs_unicorn
+def test_a_full_party_writes_nothing_and_says_so():
+    """The same shape as `givepokemon` answering 3 instead of 2 [mev02]: a refusal that comes back
+    as an answer, not a failure."""
+    code = buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
+                                          party_append=True)
+
+    run = buffer_script.emulate(
+        code, sav1=_party_sav1(buffer_script.PARTY_SIZE),
+        memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
+    result = buffer_script.read_create_mon(run.pending_send)
+
+    party, size = buffer_script.SAV1_PARTY, buffer_script.PARTY_MON_SIZE
+    assert result["party"] == {"count_before": 6, "slot": 0,
+                               "status": buffer_script.PARTY_WRITE_FULL}
+    assert result["destination"] == 0
+    assert run.sav1[party:party + 6 * size] == CHANSEY * 6
+    assert run.sav1[buffer_script.SAV1_PARTY_COUNT] == buffer_script.PARTY_SIZE
+    assert run.returned == buffer_script.BUFFER_SCRIPT_DONE
+
+
+@needs_unicorn
+def test_the_append_writes_nothing_past_the_party():
+    """playerParty[6] ends at 0x38 + 600 = 0x290, which is `money` [global.h:774]. A slot index
+    that ran over would land on it."""
+    code = buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
+                                          party_append=True)
+    end = buffer_script.SAV1_PARTY + buffer_script.PARTY_SIZE * buffer_script.PARTY_MON_SIZE
+    assert end == 0x290
+
+    for count in (0, 5, 6):
+        run = buffer_script.emulate(
+            code, sav1=_party_sav1(count),
+            memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
+        assert run.sav1[end:] == bytes(len(run.sav1) - end), f"money moved with {count} in the party"
+        assert run.sav1[:buffer_script.SAV1_PARTY_COUNT] == bytes(buffer_script.SAV1_PARTY_COUNT)
+
+
+def test_the_append_refuses_what_would_write_rubbish_or_ask_twice():
+    with pytest.raises(buffer_script.BufferScriptError, match="two answers"):
+        buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
+                                       party_append=True, destination=0x02024598)
+    with pytest.raises(buffer_script.BufferScriptError, match="zero bytes"):
+        buffer_script.build_create_mon(0, species=59, level=30, party_append=True)
+
+
+@needs_unicorn
+def test_end_to_end_the_console_appends_the_mon_to_its_own_party():
+    template = 0x08300000
+    mon = _valid_mon(species=59, level=30, ivs=31, personality=0x3ADF0001, ot_id=GURVAN_OT_ID,
+                     nickname="ARCANIN")
+    console = ConsoleClientModel(flag_id=0, rom_stubs={
+        rom_map.CREATE_MON: buffer_script.create_mon_copy_model(template), template: mon})
+    code = buffer_script.build_create_mon(
+        CREATE_MON_ADDRESS, species=59, level=30, fixed_iv=31,
+        has_fixed_personality=1, fixed_personality=0x3ADF0001,
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID, party_append=True)
+    distribution = stamp_rally.MysteryGiftDistribution(
+        card=None, ram_script=None, buffer_code=code,
+        buffer_dump_size=buffer_script.CREATE_MON_ANSWER_SIZE,
+        buffer_decode=buffer_script.CREATE_MON)
+
+    engine, _frames = _drive(console, distribution=distribution)
+
+    assert engine.server.buffer_matched is True
+    result = buffer_script.read_create_mon(engine.server.buffer_dump)
+    assert result["mon"] == mon
+    assert result["party"]["status"] == buffer_script.PARTY_WRITE_APPENDED
+    assert console.result == mg_script.CLI_MSG_BUFFER_SUCCESS
+
+
+def test_the_cli_refuses_an_append_without_the_deliberate_override():
+    with pytest.raises((ValueError, SystemExit)):
+        _run_config(["--buffer-script", "create-mon", "--create-mon-append"])
+    run = _run_config(["--buffer-script", "create-mon", "--create-mon-species", "59",
+                       "--create-mon-append", "--write-unsafe"])
+    asked = buffer_script.create_mon_parameters(run.payload.build_distribution().buffer_code)
+    assert asked["party_append"] == 1 and asked["destination"] == 0
+
+
+def test_bs43_and_bs44_dumps_still_read_without_a_party_word():
+    """Those runs answered 116 bytes, from before the party word existed. The header and the mon
+    are at the same offsets, so their dumps must still decode - and say `party` is not there
+    rather than invent one."""
+    import struct
+    mon = _valid_mon(species=59, level=30, ivs=31, personality=0x3ADF0001, ot_id=GURVAN_OT_ID)
+    old_answer = struct.pack("<4I", 1, 0, CREATE_MON_ADDRESS, 0x0201C038) + mon
+
+    result = buffer_script.read_create_mon(old_answer)
+
+    assert result["mon"] == mon and result["party"] is None
+    assert result["calls"] == 1 and result["function"] == CREATE_MON_ADDRESS

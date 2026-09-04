@@ -808,9 +808,43 @@ three at no extra cost:
 That last one is the shape worth keeping: `CreateMon` reads live game state that no link message
 carries, and writes it somewhere we can read it back.
 
+## `--create-mon-append`: the write into the player's party (built, hardware run pending)
+
+bs43 and bs44 built a mon and read it back; nothing on the console was written. Putting it in the
+party is a different thing — a write to a live save that the console then commits to flash — and it
+needs two things `--create-mon-destination` does not do.
+
+**The address is computed, never given.** The save blocks *move* between save loads: `anchors`
+(bs08) saw `gSaveBlock2Ptr` at 0x02024598 and `gSaveBlock1Ptr` at 0x0202553C on that boot, and
+nothing promises those again. So the payload uses `r2 = gSaveBlock1Ptr` as the console hands it
+over [mystery_gift_client.c:276] and computes `playerParty[n]` from it —
+`playerPartyCount` is at +0x34 and `playerParty[6]` at +0x38, 100 bytes each [global.h:772]. An
+absolute address for a party slot would be right only until the next boot.
+
+**The slot is always the first free one.** It writes at `slot == playerPartyCount` and then raises
+the count, which is exactly what the game does when a mon is caught. *An occupied slot is never
+touched*, so the write cannot destroy a Pokemon however wrong everything else is — that is
+structural, not a check that could be got past. A full party writes nothing and says so, the same
+shape as `givepokemon` answering 3 instead of 2 (mev02).
+
+The answer grew a fifth word past the mon for it — `countBefore | slot << 8 | status << 16`, where
+status is 0 (not asked), 1 (appended) or 2 (party full) — so the first 116 bytes are still exactly
+what bs43 and bs44 returned and their dumps still read.
+
+    ./scratchpad/run_mg_fast.sh bsNN --buffer-script create-mon --create-mon-append \
+        --write-unsafe --create-mon-species 59 --create-mon-level 30 --create-mon-iv 31 \
+        --create-mon-personality 0x3ADF0001 --create-mon-ot-id-type 0 --version firered
+
+`--write-unsafe` is required, the same deliberate override an out-of-scratch `save-write` takes.
+Two more refusals are built in: an append together with an absolute `--create-mon-destination` is
+two answers to the same question, and an append with `--create-mon-call 0` would put a hundred zero
+bytes in the party, so neither builds.
+
+`playerPartyCount` coming back in the party word is also a reading in its own right — the console
+says how many mons it was holding, which nothing else in a buffer-script run reports.
+
 ### What is left
 
-**Writing the mon into the party.** `--create-mon-destination` exists and is proven offline; on
-hardware it is a live-save write and needs `--write-unsafe` and a deliberate decision, because the
-party count at `gSaveBlock1Ptr + 0x34` would have to be raised to match or the console would not
-see the new mon.
+The hardware run. `--create-mon-destination` and `--create-mon-append` are both proven offline,
+including that the append writes nothing past `playerParty[6]` — which ends at 0x38 + 600 = 0x290,
+exactly where `money` begins [global.h:774].

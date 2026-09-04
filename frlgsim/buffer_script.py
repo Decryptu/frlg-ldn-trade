@@ -567,19 +567,40 @@ def describe_rng_trace(dump):
 CREATE_MON = "create-mon"
 CREATE_MON_FUNCTION_OFFSET = 0x04
 CREATE_MON_DESTINATION_OFFSET = 0x08
-CREATE_MON_SPECIES_OFFSET = 0x0C
-CREATE_MON_LEVEL_OFFSET = 0x10
-CREATE_MON_FIXED_IV_OFFSET = 0x14
-CREATE_MON_HAS_FIXED_PERSONALITY_OFFSET = 0x18
-CREATE_MON_FIXED_PERSONALITY_OFFSET = 0x1C
-CREATE_MON_OT_ID_TYPE_OFFSET = 0x20
-CREATE_MON_FIXED_OT_ID_OFFSET = 0x24
-CREATE_MON_RESULT_OFFSET = 0x28
-CREATE_MON_MON_OFFSET = 0x38
+CREATE_MON_PARTY_APPEND_OFFSET = 0x0C
+CREATE_MON_SPECIES_OFFSET = 0x10
+CREATE_MON_LEVEL_OFFSET = 0x14
+CREATE_MON_FIXED_IV_OFFSET = 0x18
+CREATE_MON_HAS_FIXED_PERSONALITY_OFFSET = 0x1C
+CREATE_MON_FIXED_PERSONALITY_OFFSET = 0x20
+CREATE_MON_OT_ID_TYPE_OFFSET = 0x24
+CREATE_MON_FIXED_OT_ID_OFFSET = 0x28
+CREATE_MON_RESULT_OFFSET = 0x2C
+CREATE_MON_MON_OFFSET = 0x3C
+CREATE_MON_PARTY_OFFSET = 0xA0
 # struct Pokemon [decomp:include/pokemon.h]: an 80-byte BoxPokemon and 20 bytes of party data.
 PARTY_MON_SIZE = 100
+PARTY_SIZE = 6                      # [decomp:include/constants/party_menu.h]
 CREATE_MON_HEADER_SIZE = 16
-CREATE_MON_ANSWER_SIZE = CREATE_MON_HEADER_SIZE + PARTY_MON_SIZE
+# The first 116 bytes are exactly what bs43 and bs44 returned - header then mon - and the party
+# word is an addendum past them, so those dumps still read.
+CREATE_MON_ANSWER_SIZE = CREATE_MON_HEADER_SIZE + PARTY_MON_SIZE + 4
+
+# struct SaveBlock1 [decomp:include/global.h:772]. The payload computes the destination from
+# r2 = gSaveBlock1Ptr rather than taking an absolute address, because the save blocks MOVE between
+# save loads - bs08 saw 0x02024598 and 0x0202553C on that boot and nothing promises those again.
+SAV1_PARTY_COUNT = 0x34
+SAV1_PARTY = 0x38
+
+# The status half of the party word the payload sends back.
+PARTY_WRITE_NONE = 0                # no party write was asked for
+PARTY_WRITE_APPENDED = 1            # written at slot == the count that was there, count raised
+PARTY_WRITE_FULL = 2                # six mons already: nothing written, nothing changed
+PARTY_WRITE_STATUS = {
+    PARTY_WRITE_NONE: "no party write was asked for",
+    PARTY_WRITE_APPENDED: "APPENDED to the player's party, and the count was raised",
+    PARTY_WRITE_FULL: "the party was already full - NOTHING was written",
+}
 
 # NUM_SPECIES [decomp:include/constants/species.h]: 412 slots with SPECIES_EGG at 411, and 0 is
 # SPECIES_NONE. CreateBoxMon indexes gSpeciesInfo AND gLevelUpLearnsets by this, and the second is
@@ -619,18 +640,34 @@ def shiny_personality(tid, sid, low=0):
 
 def build_create_mon(function, species, level, *, fixed_iv=USE_RANDOM_IVS,
                      has_fixed_personality=1, fixed_personality=0,
-                     ot_id_type=OT_ID_PLAYER_ID, fixed_ot_id=0, destination=0):
+                     ot_id_type=OT_ID_PLAYER_ID, fixed_ot_id=0, destination=0,
+                     party_append=False):
     """The create-mon payload, patched with the eight arguments and where to put the result.
 
     `function` is a THUMB pointer (bit 0 set), or 0 to call nothing and answer the zeroed buffer -
-    which is how the send path is checked with the ROM left out of it. `destination` is 0 unless
-    the finished mon is to be copied somewhere, and that is a write to the console's live memory.
+    which is how the send path is checked with the ROM left out of it.
+
+    `party_append` APPENDS the finished mon to the player's party, at slot == the current
+    playerPartyCount, and raises the count - which is what the game does when a mon is caught, so
+    an occupied slot is never touched. The address is computed from r2 = gSaveBlock1Ptr, never
+    given, because the save blocks move between save loads. `destination` is the general form: an
+    absolute address, which does not touch the party count. Either one is a write to the console's
+    live memory and the config layer gates both behind the same override as an unsafe save-write.
     """
     function, species, level = int(function), int(species), int(level)
     fixed_iv, ot_id_type = int(fixed_iv), int(ot_id_type)
     has_fixed_personality = int(has_fixed_personality)
     fixed_personality, fixed_ot_id = int(fixed_personality), int(fixed_ot_id)
     destination = int(destination)
+    party_append = 1 if party_append else 0
+    if party_append and destination:
+        raise BufferScriptError(
+            "a party append computes its own destination from gSaveBlock1Ptr; an absolute address "
+            "as well would be two answers to the same question")
+    if party_append and not function:
+        raise BufferScriptError(
+            "with no function to call the mon is a hundred zero bytes, and appending those would "
+            "put a corrupt entry in the player's party")
     if function:
         if not function & 1:
             raise BufferScriptError(
@@ -664,6 +701,7 @@ def build_create_mon(function, species, level, *, fixed_iv=USE_RANDOM_IVS,
     for offset, value in (
             (CREATE_MON_FUNCTION_OFFSET, function),
             (CREATE_MON_DESTINATION_OFFSET, destination),
+            (CREATE_MON_PARTY_APPEND_OFFSET, party_append),
             (CREATE_MON_SPECIES_OFFSET, species),
             (CREATE_MON_LEVEL_OFFSET, level),
             (CREATE_MON_FIXED_IV_OFFSET, fixed_iv),
@@ -682,6 +720,7 @@ def create_mon_parameters(code):
         return int.from_bytes(code[offset:offset + 4], "little")
     return {"function": word(CREATE_MON_FUNCTION_OFFSET),
             "destination": word(CREATE_MON_DESTINATION_OFFSET),
+            "party_append": word(CREATE_MON_PARTY_APPEND_OFFSET),
             "species": word(CREATE_MON_SPECIES_OFFSET),
             "level": word(CREATE_MON_LEVEL_OFFSET),
             "fixed_iv": word(CREATE_MON_FIXED_IV_OFFSET),
@@ -692,17 +731,27 @@ def create_mon_parameters(code):
 
 
 def read_create_mon(dump):
-    """-> what the call left, from the bytes it sent back."""
+    """-> what the call left, from the bytes it sent back.
+
+    An answer of only header + mon is bs43's and bs44's shape, from before the party word existed;
+    it reads the same and reports `party` as None rather than inventing one.
+    """
     dump = bytes(dump)
-    if len(dump) < CREATE_MON_ANSWER_SIZE:
+    body = CREATE_MON_HEADER_SIZE + PARTY_MON_SIZE
+    if len(dump) < body:
         raise BufferScriptError(
             f"create-mon answers with {CREATE_MON_ANSWER_SIZE} bytes, got {len(dump)}")
     words = [int.from_bytes(dump[i:i + 4], "little")
              for i in range(0, CREATE_MON_HEADER_SIZE, 4)]
     calls, destination, function, built_at = words
+    party = None
+    if len(dump) >= body + 4:
+        raw = int.from_bytes(dump[body:body + 4], "little")
+        party = {"count_before": raw & 0xFF, "slot": (raw >> 8) & 0xFF,
+                 "status": (raw >> 16) & 0xFF}
     return {"calls": calls, "destination": destination, "function": function,
-            "built_at": built_at,
-            "mon": dump[CREATE_MON_HEADER_SIZE:CREATE_MON_HEADER_SIZE + PARTY_MON_SIZE]}
+            "built_at": built_at, "party": party,
+            "mon": dump[CREATE_MON_HEADER_SIZE:body]}
 
 
 def describe_create_mon(dump, expected=None):
@@ -718,7 +767,14 @@ def describe_create_mon(dump, expected=None):
     lines = [f"create-mon: {result['calls']} call(s), built at 0x{result['built_at']:08X}"
              + (f", calling 0x{result['function']:08X}" if result["function"]
                 else ", calling nothing")
-             + (f", copied to 0x{result['destination']:08X}" if result["destination"] else "")]
+             + (f", written to 0x{result['destination']:08X}" if result["destination"] else "")]
+    party = result["party"]
+    if party and party["status"] != PARTY_WRITE_NONE:
+        lines.append(
+            f"   party: {PARTY_WRITE_STATUS.get(party['status'], party['status'])}"
+            f" - the console held {party['count_before']} mon(s)"
+            + (f" and this one is slot {party['slot'] + 1} of {PARTY_SIZE}"
+               if party["status"] == PARTY_WRITE_APPENDED else ""))
     if not result["function"]:
         lines.append("   nothing was called, so the 100 bytes are the buffer as it was sent")
         return lines
@@ -841,8 +897,8 @@ SCRIPT_REGISTRY = {
         CREATE_MON,
         "CALL A ROM FUNCTION THAT TAKES EIGHT ARGUMENTS - CreateMon - and send back the 100-byte "
         "struct Pokemon it built. The mon is built inside our own image, so nothing on the console "
-        "is written unless --create-mon-destination names somewhere (--create-mon-call, "
-        "--create-mon-species, --create-mon-level, --create-mon-personality)",
+        "is written unless --create-mon-append or --create-mon-destination asks for it "
+        "(--create-mon-call, --create-mon-species, --create-mon-level, --create-mon-personality)",
         None),
     STRING_GATHER: BufferScriptSpec(
         STRING_GATHER,
@@ -968,7 +1024,7 @@ PATCHED_SPANS = {
     # Everything from the first operand to the end of the mon: the parameters, the four result
     # words and the 100 bytes CreateMon writes into the image itself.
     CREATE_MON: ((CREATE_MON_FUNCTION_OFFSET,
-                  CREATE_MON_MON_OFFSET - CREATE_MON_FUNCTION_OFFSET + PARTY_MON_SIZE),),
+                  CREATE_MON_PARTY_OFFSET - CREATE_MON_FUNCTION_OFFSET + 4),),
 }
 
 

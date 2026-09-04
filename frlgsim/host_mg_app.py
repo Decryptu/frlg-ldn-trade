@@ -323,7 +323,11 @@ class BufferScriptHostApplication(MysteryGiftHostApplication):
                 + (f", personality 0x{asked['fixed_personality']:08X}"
                    if asked["has_fixed_personality"] else ", personality rolled")
                 + ". The 100 bytes are built INSIDE OUR OWN IMAGE"
-                + (f" and then copied to 0x{asked['destination']:08X}, which WRITES THE CONSOLE'S "
+                + (" and then APPENDED TO THE PLAYER'S PARTY at playerParty[playerPartyCount], "
+                   "which WRITES THEIR LIVE SAVE and reaches flash when the console saves; the "
+                   "slot is the first FREE one, so no Pokemon can be overwritten"
+                   if asked["party_append"] else
+                   f" and then copied to 0x{asked['destination']:08X}, which WRITES THE CONSOLE'S "
                    "LIVE MEMORY" if asked["destination"] else
                    ", so nothing on the console is written")
                 + ". The evidence line is 'create-mon:'.")

@@ -181,6 +181,13 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         "--create-mon-ot-id", type=lambda v: int(v, 0), default=0, metavar="VALUE",
         help="with --buffer-script create-mon --create-mon-ot-id-type 1: the OT id to use")
     parser.add_argument(
+        "--create-mon-append", action="store_true",
+        help=("with --buffer-script create-mon: APPEND the finished mon to the player's party. "
+              "The slot is computed from gSaveBlock1Ptr, never given, and it is always the first "
+              "FREE one - playerParty[playerPartyCount] - so an occupied slot is never touched and "
+              "no Pokemon can be destroyed. A full party writes nothing and says so. This is the "
+              "player's LIVE SAVE and the console commits it to flash: needs --write-unsafe"))
+    parser.add_argument(
         "--create-mon-destination", type=lambda v: int(v, 0), default=0, metavar="ADDR",
         help=("with --buffer-script create-mon: copy the finished 100 bytes to this address in "
               "the console's memory. The mon is BUILT in our own image either way, so without "
@@ -307,7 +314,8 @@ def build_run_config(parser, args):
                     f"--write-unsafe belongs to --buffer-script {buffer_script.SAVE_WRITE} and "
                     f"{buffer_script.CREATE_MON}, the two that write the console's memory")
             if args.buffer_script != buffer_script.CREATE_MON \
-                    and (args.create_mon_call is not None or args.create_mon_destination):
+                    and (args.create_mon_call is not None or args.create_mon_destination
+                         or args.create_mon_append):
                 parser.error(
                     f"--create-mon-* belongs to --buffer-script {buffer_script.CREATE_MON}")
             if args.buffer_script != buffer_script.MEMORY_SCAN and args.scan_word is not None:
@@ -338,7 +346,8 @@ def build_run_config(parser, args):
                 create_mon_personality=args.create_mon_personality,
                 create_mon_ot_id_type=args.create_mon_ot_id_type,
                 create_mon_ot_id=args.create_mon_ot_id,
-                create_mon_destination=args.create_mon_destination)
+                create_mon_destination=args.create_mon_destination,
+                create_mon_append=args.create_mon_append)
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")

@@ -563,6 +563,7 @@ class BufferScriptPayload:
     create_mon_ot_id_type: int = buffer_script.OT_ID_PLAYER_ID
     create_mon_ot_id: int = 0
     create_mon_destination: int = 0
+    create_mon_append: bool = False
     # Where to write the bytes that come back. A dump whose contents only ever reached a log line
     # is a run spent for 16 bytes of head.
     dump_file: str | None = None
@@ -630,7 +631,14 @@ class BufferScriptPayload:
                     "copying the finished mon to 0x%08X writes the console's live memory; that "
                     "needs --write-unsafe, the same deliberate override an out-of-scratch "
                     "save-write takes" % self.create_mon_destination)
-        elif self.create_mon_call is not None or self.create_mon_destination:
+            if self.create_mon_append and not self.write_unsafe:
+                raise ValueError(
+                    "appending the mon to the player's party writes their LIVE SAVE - 100 bytes "
+                    "at playerParty[playerPartyCount] and the count byte - and the console commits "
+                    "it to flash afterwards. That needs --write-unsafe, the same deliberate "
+                    "override an out-of-scratch save-write takes")
+        elif (self.create_mon_call is not None or self.create_mon_destination
+                or self.create_mon_append):
             raise ValueError(
                 f"a function to call with eight arguments is only meaningful with "
                 f"{buffer_script.CREATE_MON}")
@@ -679,7 +687,8 @@ class BufferScriptPayload:
                 has_fixed_personality=int(has_fixed),
                 fixed_personality=self.create_mon_personality if has_fixed else 0,
                 ot_id_type=self.create_mon_ot_id_type, fixed_ot_id=self.create_mon_ot_id,
-                destination=self.create_mon_destination)
+                destination=self.create_mon_destination,
+                party_append=self.create_mon_append)
         if self.script == buffer_script.SAVE_WRITE:
             return buffer_script.build_save_write(
                 self.write_data, self.dump_block, self.dump_offset,
