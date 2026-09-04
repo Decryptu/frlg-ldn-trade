@@ -59,11 +59,13 @@ them execute something on the console, and we use one:
 
 ## Open, roughly in order of value
 
-### 1. The Mystery Event VM — built, awaiting its first hardware run
+### 1. The Mystery Event VM — the VM works on hardware; the opcodes are next
 
 Full write-up in [The Mystery Event VM](mystery_event.md). `frlgsim/mystery_event.py` assembles all
-17 commands, `mg_script`/`mg_server` carry them, and `--gift mystery-event-probe` is the first script
-on the air. What is still open is what each opcode does on the console:
+17 commands, `mg_script`/`mg_server` carry them, and `--gift mystery-event-probe` proved the path on
+retail hardware (`mev01`, first try): the console ran a script with no `checkcompat`, chained past
+the first command, resolved pointer operands as offsets into its own receive buffer, and reported a
+status of our choosing back to us. What is still open is what each opcode does on the console:
 
 - `setenigmaberry` — the 28-byte `Berry2` (name, description pointers, size, firmness, flavours,
   growth data) lands; the `itemEffect`/`holdEffect` tail sits at offset 0x516 of

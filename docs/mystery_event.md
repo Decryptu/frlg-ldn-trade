@@ -172,9 +172,9 @@ Offline first, as always:
     ./.venv/bin/python scratchpad/mg_client_harness.py --gift mystery-event-probe --flag-id 1009
     ./.venv/bin/python -m pytest tests/test_mystery_event.py -q
 
-## The probe script
+## The probe script, and what it proved (mev01, first try)
 
-`mystery-event-probe` is the first script on the air. It is deliberately incapable of losing the
+`mystery-event-probe` was the first script on the air. It is deliberately incapable of losing the
 player anything: `givenationaldex` is a strict upgrade and a no-op on a save that already has the
 National Dex, and `checksum` only reads.
 
@@ -192,3 +192,24 @@ It is also self-diagnosing, because the status comes back:
 
 `checksum` goes last precisely because it is terminal: it reports on the relocation without
 disturbing the status the commands before it left.
+
+**The console answered 42.** Run `mev01`, French FireRed, 2026-09-04, first try: the card and its
+delivery script went out, then the 31-byte event, and 2.2 s later `MG_LINKID_RESPONSE` came back
+carrying 42. The console then saved by itself.
+
+That single number settles four things at once:
+
+1. A Mystery Event script with **no `checkcompat`** runs. The French `LANGUAGE_MASK` is not a
+   question any more.
+2. The chain **continues past the first command**. 42 can only come from `setstatus`, the second
+   command; had execution stopped after one, the status would have been 2 — the value
+   `givenationaldex` leaves behind.
+3. **Pointer operands are offsets into our own buffer.** `checksum` recomputed `CalcByteArraySum`
+   over the range its two relocated pointers named and it matched; a mismatch would have replaced
+   the status with 1.
+4. The **return channel works**. A u32 of our choosing crossed from the console to us.
+
+One incidental bug the run caught: the card's icon showed an Aspicot (Weedle). `SPECIES_PORYGON` in
+`wonder_card_events.py` was 13 — Weedle — where Porygon is 137. It was the `porygon-tms` card's icon
+too. Fixed, and every other species constant was cross-checked against
+`include/constants/species.h`.
