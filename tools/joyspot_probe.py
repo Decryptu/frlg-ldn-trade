@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Advertise one experimental FRLG JoySpot discovery candidate over LDN (research only; the supported
-distributor is frlgmg_host.py). Advertises until Ctrl-C and records whether the Switch joins; never starts Pia,
+distributor is bin/frlgmg_host.py). Advertises until Ctrl-C and records whether the Switch joins; never starts Pia,
 RFU or the gift protocol, so a join is allowed to time out."""
 
 import argparse
@@ -9,7 +9,8 @@ import sys
 import time
 
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# This launcher lives in tools/; the frlgsim package and vendor/ are at the repo root.
 sys.path.insert(0, PROJECT_ROOT)
 
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")

@@ -221,7 +221,7 @@ def test_the_ten_line_news_survives_the_link_unchanged():
 
 
 def test_our_own_receive_client_answers_the_same_way_as_the_console_model():
-    """frlgmg_client.py's client is a second implementation of the same case; keep them agreeing.
+    """bin/frlgmg_client.py's client is a second implementation of the same case; keep them agreeing.
 
     It is the receive direction's console stand-in, so its CLI_SAVE_NEWS has to reproduce the same
     save-or-keep verdict the real console reaches.

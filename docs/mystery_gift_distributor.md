@@ -12,13 +12,13 @@ connection, LinkPlayer exchange, card transfer, save/reboot persistence, and del
 on a Switch. The delivery script remains available after use for later conversations.
 
 ```
-sudo -E ./.venv/bin/python -u frlgmg_host.py --live
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live
 ```
 
 Two hardware profiles are proven end to end. For the ALFA AWUS036ACHM (`mt76x0u`), use:
 
 ```bash
-sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live \
   --phy phy3 --skip-encryption --no-accept-decrypted-ccmp \
   --native-nonce-sequence --session-response-first
 ```
@@ -30,7 +30,7 @@ automatically. If more than one hosting adapter is attached, select the intended
 For the TP-Link Archer T3U (USB `2357:012d`, `rtw88_8822bu`), use:
 
 ```bash
-sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live \
   --skip-encryption --accept-decrypted-ccmp \
   --native-nonce-sequence --session-response-first
 ```
@@ -125,7 +125,7 @@ Switch's valid block, then sends its own block and waits for the standby barrier
 | `frlgsim/config.py` | immutable `MysteryGiftPayload` and `MysteryGiftRunConfig`, composed with the shared trainer/LDN/host models |
 | `frlgsim/host_cli.py` | shared identity, LDN, and Pia CLI parsing used by both host applications |
 | `frlgsim/host_mg_app.py` | Mystery Gift application hooks over the activity-neutral host runtime |
-| `frlgmg_host.py` | thin Mystery Gift CLI and run-config construction |
+| `bin/frlgmg_host.py` | thin Mystery Gift CLI and run-config construction |
 | `frlgsim/wonder_card.py` | shared Celebi and legendary-beast Wonder Card/RAM-script builders |
 | `frlgsim/stamp_rally.py` | shared Stamp Rally card, stamps, activation wrappers, and delivery script |
 | `frlgsim/gift_composer.py` | immutable action definitions, cursor-state validation, and RAM-script compiler |
@@ -190,13 +190,13 @@ Commands used:
 
 ```bash
 # Gate 1
-sudo -E ./.venv/bin/python -u frlgmg_host.py \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
   --live \
   --flag-id 1003 \
   --capture mg-port-hardware.jsonl
 
 # Gate 2
-sudo -E ./.venv/bin/python -u frlgmg_host.py \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
   --live \
   --ot MGHOST \
   --version firered \
@@ -205,7 +205,7 @@ sudo -E ./.venv/bin/python -u frlgmg_host.py \
   --capture mg-cleanup-hardware.jsonl
 
 # Gate 3
-sudo -E ./.venv/bin/python -u frlgmg_host.py \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
   --live \
   --gift beast-cutscene \
   --flag-id 1005 \

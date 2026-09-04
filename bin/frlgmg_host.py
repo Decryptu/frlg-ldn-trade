@@ -2,13 +2,13 @@
 """Distribute a FireRed/LeafGreen Wonder Card over LDN (Mystery Gift, Friend path): the console picks us
 from Mystery Gift -> Wonder Cards -> Friend and collects the gift from the delivery man in any Pokemon Center.
 
-    sudo -E ./.venv/bin/python -u frlgmg_host.py --live
+    sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live
 
 With --news the same host serves the other half of the console's Mystery Gift menu instead: the
 console picks us from Mystery Gift -> Wonder News -> Friend and the man in the house in CERULEAN CITY
 hands over a BERRY for what it read.
 
-    sudo -E ./.venv/bin/python -u frlgmg_host.py --live --news
+    sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live --news
 """
 
 import argparse
@@ -16,7 +16,8 @@ import os
 import sys
 
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# This launcher lives in bin/; the frlgsim package and vendor/ are at the repo root.
 sys.path.insert(0, PROJECT_ROOT)
 
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
@@ -287,7 +288,7 @@ def main(argv=None):
         file_config, shared_path, local_path = \
             host_cli.load_host_file_config_from_argv(argv)
     except (ValueError, SystemExit) as exc:
-        print(f"frlgmg_host.py: error: {exc}", file=sys.stderr)
+        print(f"bin/frlgmg_host.py: error: {exc}", file=sys.stderr)
         return 2
     parser = build_parser(
         file_config, shared_path=shared_path, local_path=local_path)

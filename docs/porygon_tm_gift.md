@@ -20,7 +20,7 @@ An explicit `--flag-id` changes both the saved card flag and the displayed `flag
 Use a save with Mystery Gift already unlocked:
 
 ```bash
-sudo -E ./.venv/bin/python -u frlgmg_host.py \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
   --live \
   --gift porygon-tm-gift \
   --capture porygon-tm-gift-hardware.jsonl

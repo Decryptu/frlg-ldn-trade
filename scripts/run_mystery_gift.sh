@@ -16,7 +16,7 @@ for argument in "$@"; do
     case "$argument" in
         -h|--help|--print-effective-config)
             exec "$PYTHON" \
-                "$PROJECT_ROOT/frlgmg_host.py" "$@"
+                "$PROJECT_ROOT/bin/frlgmg_host.py" "$@"
             ;;
     esac
 done
@@ -55,7 +55,7 @@ while true; do
         "$attempt" "$identity"
 
     set +e
-    sudo -E "$PYTHON" -u "$PROJECT_ROOT/frlgmg_host.py" \
+    sudo -E "$PYTHON" -u "$PROJECT_ROOT/bin/frlgmg_host.py" \
         "${HOST_ARGS[@]}" --id "$identity" --end-on-success \
         --idle-timeout "$IDLE_TIMEOUT_SECONDS" \
         --attempt-log-dir "$ATTEMPT_LOG_DIR"

@@ -124,7 +124,7 @@ unsuccessful attempt, or five minutes without a Switch join or Pia/RFU traffic.
 Use Ctrl-C once to stop the supervisor. For a temporary diagnostic override,
 pass a normal host option after the script name, for example `--verbose`.
 
-`frlgmg_host.py` also exposes the lifecycle controls used by the wrapper:
+`bin/frlgmg_host.py` also exposes the lifecycle controls used by the wrapper:
 `--end-on-success` ends after the safe post-delivery close sequence, and
 `--idle-timeout SECONDS` ends after a specified period without meaningful
 Switch traffic. They are useful for direct, supervised integrations; the shell
@@ -137,10 +137,10 @@ Each joined attempt is also appended to the ignored daily CSV ledger under
 `received_result` is `true` only when the host sent a Wonder Card or Stamp;
 the trainer name and five-digit trainer ID come from the Switch's LinkPlayer
 block. An attempt that fails before that block arrives is retained with blank
-identity fields. For direct `frlgmg_host.py` usage, enable the same ledger with
+identity fields. For direct `bin/frlgmg_host.py` usage, enable the same ledger with
 `--attempt-log-dir logs`.
 
-Every `frlgmg_host.py` option is forwarded by the wrapper. View the
+Every `bin/frlgmg_host.py` option is forwarded by the wrapper. View the
 authoritative list without running preflight or using root:
 
 ```bash

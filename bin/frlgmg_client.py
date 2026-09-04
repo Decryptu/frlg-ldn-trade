@@ -2,7 +2,7 @@
 """Receive a Wonder Card from a real FireRed/LeafGreen console (Mystery Gift client). The console shares
 via Mystery Gift -> Wonder Cards -> Friend -> send; we join its LDN session as the child and save what it pushes.
 
-    sudo -E ./.venv/bin/python -u frlgmg_client.py --live --version firered --language french \\
+    sudo -E ./.venv/bin/python -u bin/frlgmg_client.py --live --version firered --language french \\
         --capture scratchpad/mc1.pcap --out scratchpad/mc1
 
 Outputs (with --out PREFIX): PREFIX_card.bin, PREFIX_ramscript.bin, PREFIX_messages.jsonl, PREFIX_trace.jsonl.
@@ -15,7 +15,8 @@ import signal
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# This launcher lives in bin/; the frlgsim package is at the repo root beside it.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from frlgsim import config as configmod, crypto as cryptomod, sim as simmod  # noqa: E402
 from frlgsim import transport as tmod, pia_connect, mg_client  # noqa: E402
 from frlgsim import trade_runtime as runtime  # noqa: E402

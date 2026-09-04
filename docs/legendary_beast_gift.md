@@ -16,7 +16,7 @@ authored with the composable delivery system; the older byte-exact builder remai
 ## Live Switch distribution
 
 ```bash
-sudo -E ./.venv/bin/python -u frlgmg_host.py \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
   --live \
   --gift beast-cutscene \
   --flag-id 1005 \

@@ -48,6 +48,24 @@ contain this project's adapter compatibility fixes.
 | Intel AX200        | Internal (M.2) | iwlwifi | Unable to be assigned ip |
 | Atheros AR9271 | External       | ath9k_htc | Unable to be assigned ip (most of the time) |
 
+## Layout
+
+| | |
+|---|---|
+| [`bin/`](bin) | the four things you run against a console: `frlgmg_host.py` (Mystery Gift, Wonder News and native code), `frlgmg_client.py` (receive a card from a console), `frlgtrade_host.py` (trade and Union Room host), `frlgtrade.py` (trade joiner) |
+| [`tools/`](tools) | radio diagnostics that hold no game conversation: `ldn_scan.py`, `sniff.py`, `joyspot_probe.py`, `ldn_debug_report.sh` |
+| [`frlgsim/`](frlgsim) | the package everything above is made of: the LDN/Pia transport, the RFU link, the Mystery Gift server and client, the payload builders |
+| [`asm/`](asm) | ARM sources for the payloads the console runs (`scripts/gen_buffer_scripts.py` assembles them into `frlgsim/buffer_payloads.py`) |
+| [`scripts/`](scripts) | setup, deployment and code generation - not things you point at a console |
+| [`config/`](config) | host profiles (`host.toml`, and `host.local.toml` for this machine) |
+| [`docs/`](docs) | the protocol findings, each with its decomp citations |
+| [`tests/`](tests) | `python -m pytest tests/ -q` |
+| [`vendor/`](vendor) | the bundled LDN implementation and the mt7601u AP-mode driver |
+
+Run the entry points from the repo root: `sudo -E ./.venv/bin/python -u bin/frlgmg_host.py ...`.
+They put the root on `sys.path` themselves, so they work from anywhere, but the config files and
+the default output paths are resolved relative to the working directory.
+
 ## Usage
 
 ### Join a Switch-hosted trade
@@ -55,7 +73,7 @@ contain this project's adapter compatibility fixes.
 Use the original joiner when the Switch is the Direct Corner leader:
 
 ```bash
-sudo -E ./.venv/bin/python frlgtrade.py --live -o output.pk3 PARTY1.pk3 PARTY2.pk3
+sudo -E ./.venv/bin/python bin/frlgtrade.py --live -o output.pk3 PARTY1.pk3 PARTY2.pk3
 ```
 
 ### Host a Direct Corner trade
@@ -63,7 +81,7 @@ sudo -E ./.venv/bin/python frlgtrade.py --live -o output.pk3 PARTY1.pk3 PARTY2.p
 Start a Direct Corner host with:
 
 ```bash
-sudo -E ./.venv/bin/python frlgtrade_host.py \
+sudo -E ./.venv/bin/python bin/frlgtrade_host.py \
   -o output.pk3 PARTY1.pk3 PARTY2.pk3
 ```
 
@@ -71,7 +89,7 @@ Linux advertises the group and acts as the trade leader. With the default settin
 second supplied party member (`PARTY2.pk3`) and writes the Pokémon received from the Switch to
 `output.pk3`. Host defaults are loaded from `config/host.toml`, then optional ignored
 `config/host.local.toml`; command-line flags override both. Run
-`frlgtrade_host.py --print-effective-config` to inspect the safe effective profile without root
+`bin/frlgtrade_host.py --print-effective-config` to inspect the safe effective profile without root
 or Wi-Fi hardware.
 
 **Optional Flags (not comprehensive):**
@@ -97,8 +115,8 @@ options for each entry point.
 
 ### Hosting Wi-Fi adapter profiles
 
-These profiles apply when Linux is hosting with `frlgtrade_host.py` or `frlgmg_host.py`; they do not
-change the Switch-hosted `frlgtrade.py` joiner.
+These profiles apply when Linux is hosting with `bin/frlgtrade_host.py` or `bin/frlgmg_host.py`; they do not
+change the Switch-hosted `bin/frlgtrade.py` joiner.
 
 | Adapter | Linux identity | Normal host configuration |
 |---|---|---|
@@ -112,7 +130,7 @@ if the adapter is missing or more than one matches. An explicit `--phy phyN` alw
 For the ALFA, select its actual PHY explicitly and override the receive compatibility mode:
 
 ```bash
-sudo -E ./.venv/bin/python frlgtrade_host.py --phy phyN \
+sudo -E ./.venv/bin/python bin/frlgtrade_host.py --phy phyN \
   --skip-encryption --no-accept-decrypted-ccmp \
   -o output.pk3 PARTY1.pk3 PARTY2.pk3
 ```
@@ -149,10 +167,10 @@ The ID format is decimal `TID[:SID]`:
 
 ```bash
 # Set TID to 12345 and retain DEFAULT_TRAINER.sid
-./.venv/bin/python frlgtrade.py --live --id=12345 PARTY1.pk3 PARTY2.pk3
+./.venv/bin/python bin/frlgtrade.py --live --id=12345 PARTY1.pk3 PARTY2.pk3
 
 # Set TID to 12345 and SID to 34567 while hosting
-sudo -E ./.venv/bin/python frlgtrade_host.py --live --id=12345:34567 PARTY1.pk3 PARTY2.pk3
+sudo -E ./.venv/bin/python bin/frlgtrade_host.py --live --id=12345:34567 PARTY1.pk3 PARTY2.pk3
 ```
 
 Each component must be between 0 and 65535. The resulting 32-bit LinkPlayer ID is encoded as
@@ -162,12 +180,12 @@ Dex, or game-completion defaults that do not have CLI flags.
 
 ### Distribute a Mystery Gift
 
-`frlgmg_host.py` advertises on the hardware-compatible Friend path and sends a Wonder Card plus a
+`bin/frlgmg_host.py` advertises on the hardware-compatible Friend path and sends a Wonder Card plus a
 delivery RAM script. The default payload is the repeatable legendary-beast cutscene; use
 `--gift celebi` for the composed level-50 Celebi card.
 
 ```bash
-sudo -E ./.venv/bin/python -u frlgmg_host.py \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
   --gift beast-cutscene --flag-id 1005 \
   --capture mystery-stamps-hardware.jsonl
 ```
@@ -178,7 +196,7 @@ and retained-CCMP receive normalization are already enabled. For the ALFA, provi
 
 On the Switch choose **Mystery Gift → Wonder Cards → Friend**, then select the Linux host. The save
 must already have Mystery Gift unlocked. The host accepts the same `--ot`, `--version`, and decimal
-`--id TID[:SID]` identity overrides as the trade programs; run `frlgmg_host.py --help` for all gift
+`--id TID[:SID]` identity overrides as the trade programs; run `bin/frlgmg_host.py --help` for all gift
 and transport options.
 
 To retain a readable audit listing of the exact Wonder Card and delivery-script
@@ -186,7 +204,7 @@ bytes sent by a run, add `--make-artifact`. It is disabled by default and writes
 to `artifacts/`; choose another destination with `--artifact-dir DIR`:
 
 ```bash
-sudo -E ./.venv/bin/python -u frlgmg_host.py \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
   --gift worlds-xp --make-artifact --artifact-dir artifacts
 ```
 
@@ -218,8 +236,8 @@ BERRY from the man in the house in Cerulean City. On the Switch choose **Mystery
 → Friend** — a Wonder Card host is not listed on that screen, and vice versa.
 
 ```bash
-sudo -E ./.venv/bin/python -u frlgmg_host.py --news
-sudo -E ./.venv/bin/python -u frlgmg_host.py --news berry --news-id 7
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --news
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --news berry --news-id 7
 ```
 
 A console keeps news only when it differs from what it already holds, so re-sending the identical
@@ -227,18 +245,18 @@ text is a deliberate no-op; `--news-id N` changes one field and makes the same t
 [the Wonder News guide](docs/wonder_news.md) for the struct, the advertisement change it needs, and
 the one place where the console answers the host back.
 
-See [the Mystery Gift distributor guide](MYSTERY_GIFT_DISTRIBUTOR.md) for the protocol flow, payload,
+See [the Mystery Gift distributor guide](docs/mystery_gift_distributor.md) for the protocol flow, payload,
 test commands, and why the Switch requires the Friend path rather than Wireless Communication.
 New events can be assembled from validated delivery stages, rewards, messages, sprites, battles,
 and up to six stamp slots; see the [composable gift authoring guide](docs/mystery_gift_composer.md).
 
 ### Hosting diagnostics
 
-- `ldn_scan.py` prints discoverable LDN networks and decoded FRLG application data.
-- `sniff.py` captures advertisement and management traffic from a monitor-capable radio.
-- `ldn_debug_report.sh` records local radio, interface, route, and NetworkManager state for debugging.
-- `frlgtrade_host.py --capture FILE` writes the host protocol trace as JSONL.
-- `frlgmg_host.py --capture FILE` writes the Mystery Gift host trace as JSONL.
+- `tools/ldn_scan.py` prints discoverable LDN networks and decoded FRLG application data.
+- `tools/sniff.py` captures advertisement and management traffic from a monitor-capable radio.
+- `tools/ldn_debug_report.sh` records local radio, interface, route, and NetworkManager state for debugging.
+- `bin/frlgtrade_host.py --capture FILE` writes the host protocol trace as JSONL.
+- `bin/frlgmg_host.py --capture FILE` writes the Mystery Gift host trace as JSONL.
 
 See [the host design document](docs/frlgtrade_host_design.md) for the component boundaries, protocol
 flow, timing ownership, trainer propagation, and shutdown sequence.

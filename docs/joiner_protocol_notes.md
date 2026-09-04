@@ -5,7 +5,7 @@ nav_order: 2
 
 # Joining as the child: what the console actually does
 
-Findings for the JOINER direction (`frlgtrade.py --live`), where the Switch hosts and this program
+Findings for the JOINER direction (`bin/frlgtrade.py --live`), where the Switch hosts and this program
 is the RFU child. Everything here was measured on retail hardware or read out of the
 [pret/pokefirered](https://github.com/pret/pokefirered) decompilation, and each claim cites its
 source. The GBA release on Switch runs the original ROM inside an emulator, so the decomp is
@@ -216,7 +216,7 @@ Two things that looked like the wall and were not:
 
 ## Console as a Pia child: what it needs from a host
 
-Measured with the receive client (`frlgmg_client.py`, run mc1) against a real Mystery Gift host,
+Measured with the receive client (`bin/frlgmg_client.py`, run mc1) against a real Mystery Gift host,
 and against our host with the type 2 disabled:
 
 - The console child does not finalize on a type 5 Update Session alone. It re-sends its join request
@@ -375,7 +375,7 @@ FACT: once players are inside the room the search switches to `LINK_GROUP_UNION_
 
 Implemented offline: `beacon.ACTIVITY_SEARCH` / `beacon.IN_UNION_ROOM`,
 `host_beacon.build_union_room_app_data(profile, session_id, activity=None)`, the `union_room`
-`HostOptions` field and `frlgtrade_host.py --union-room`. `tests/test_union_room_advertisement.py`
+`HostOptions` field and `bin/frlgtrade_host.py --union-room`. `tests/test_union_room_advertisement.py`
 (7 tests) pins the constants against the decomp, checks the advertisement carries `ACTIVITY_SEARCH`
 with `startedActivity` and the wonder flags clear (matching the console's own
 `SetHostRfuGameData(ACTIVITY_SEARCH, 0, FALSE)`), checks the resume form round-trips, checks every
@@ -691,7 +691,7 @@ the requester here, so its own parental-control setting can turn its request int
 we ever see it — a silent refusal at the prompt is that, not a protocol fault.
 
 Shipped: `frlgsim/uroom_chat.py` (block build/parse/validate), `H_UROOM_CHAT` in `host_trade.py`,
-`--union-room-chat` and repeatable `--chat-message TEXT` on `frlgtrade_host.py`.
+`--union-room-chat` and repeatable `--chat-message TEXT` on `bin/frlgtrade_host.py`.
 
 ### u13, u14: Union Room chat works both ways
 

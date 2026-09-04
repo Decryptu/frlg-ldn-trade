@@ -8,10 +8,10 @@ nav_order: 10
 The live Mystery Gift host has two Stamp Rally events:
 
 ```bash
-sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live \
   --gift solrock-stamp --capture solrock-stamp.jsonl
 
-sudo -E ./.venv/bin/python -u frlgmg_host.py --live \
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live \
   --gift lunatone-stamp --capture lunatone-stamp.jsonl
 ```
 

@@ -21,12 +21,14 @@ has advertised ACTIVITY_SEARCH yet.
 Run standalone (no pytest needed):   python tests/test_union_room_advertisement.py
 """
 
+import functools
 import os
 import sys
+import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import beacon, transport  # noqa: E402
+from frlgsim import beacon, mevent_pokemon, transport  # noqa: E402
 from frlgsim.host_beacon import (  # noqa: E402
     build_trade_app_data, build_union_room_app_data,
 )
@@ -147,6 +149,28 @@ def test_union_room_activity_flag_reaches_host_options():
     assert options.union_room is True
 
 
+@functools.lru_cache(maxsize=1)
+def _party_files():
+    """Two throwaway party files, written where the test can be sure of them.
+
+    These tests used to name PARTY1.pk3 and PARTY2.pk3 relative to the working directory, which
+    only ever worked because two untracked files happened to sit in the repo root; the session-27
+    reorganisation moved them to scratchpad/ and five tests went red. `*.pk3` is gitignored on
+    purpose (CLAUDE.md: never commit one), so this writes its own rather than depending on a file
+    outside the repo.
+    """
+    directory = tempfile.mkdtemp(prefix="frlg-party-")
+    paths = []
+    for name, species, level in (("PARTY1.pk3", 129, 5),        # MAGIKARP, trade fodder
+                                 ("PARTY2.pk3", 113, 26)):      # CHANSEY lv26: the offered slot
+        path = os.path.join(directory, name)
+        with open(path, "wb") as handle:
+            handle.write(mevent_pokemon.build_party_mon(
+                species, level, nickname="FODDER").party_bytes())
+        paths.append(path)
+    return tuple(paths)
+
+
 def _advertised_activity(union_room, union_room_activity=None):
     """Drive the real HostApplication._build_components and read the activity it puts on the air."""
     seen = {}
@@ -157,7 +181,7 @@ def _advertised_activity(union_room, union_room_activity=None):
 
     run = config.TradeRunConfig(
         DEFAULT_TRAINER,
-        config.TradePlan(party_paths=("PARTY1.pk3", "PARTY2.pk3"), trade_slot=1,
+        config.TradePlan(party_paths=_party_files(), trade_slot=1,
                          offered_slots=(1,), trust_pia=True),
         config.LdnConfig(phy="phy7", keys_path=__file__),
         config.HostOptions(union_room=union_room,
@@ -203,7 +227,7 @@ def _advertisements(union_room):
 
     run = config.TradeRunConfig(
         DEFAULT_TRAINER,
-        config.TradePlan(party_paths=("PARTY1.pk3", "PARTY2.pk3"), trade_slot=1,
+        config.TradePlan(party_paths=_party_files(), trade_slot=1,
                          offered_slots=(1,), trust_pia=True),
         config.LdnConfig(phy="phy7", keys_path=__file__),
         config.HostOptions(union_room=union_room))
@@ -250,7 +274,7 @@ def _record(app_data):
 
 
 def test_host_app_registers_the_offered_mon_on_the_board():
-    """The offered slot (1) is PARTY2.pk3, Chansey lv26 on this machine."""
+    """The offered slot (1) is the CHANSEY lv26 that _party_files builds."""
     from frlgsim import host_app as host_app_module
     seen = {}
 
@@ -264,7 +288,7 @@ def test_host_app_registers_the_offered_mon_on_the_board():
 
     run = config.TradeRunConfig(
         DEFAULT_TRAINER,
-        config.TradePlan(party_paths=("PARTY1.pk3", "PARTY2.pk3"), trade_slot=1,
+        config.TradePlan(party_paths=_party_files(), trade_slot=1,
                          offered_slots=(1,), trust_pia=True),
         config.LdnConfig(phy="phy7", keys_path=__file__),
         config.HostOptions(union_room=True, union_room_board_type=beacon.TYPE_NAMES["normal"]))

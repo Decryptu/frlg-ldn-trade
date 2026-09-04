@@ -6,6 +6,15 @@ import os
 import subprocess
 import sys
 
+
+# This tool lives in tools/; the frlgsim package and vendor/ are at the repo root
+# (it used to rely on being run from there, which is no longer where it sits).
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, PROJECT_ROOT)
+BUNDLED_LDN = os.path.join(PROJECT_ROOT, 'vendor', 'LDN')
+if os.path.isdir(BUNDLED_LDN):
+    sys.path.insert(0, BUNDLED_LDN)
+
 import trio
 
 import ldn

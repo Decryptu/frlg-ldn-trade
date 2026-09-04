@@ -50,7 +50,7 @@ fi
 CONFIG_VALUES=""
 USE_EXPLICIT_PHY=false
 if [[ -x "$PYTHON" ]]; then
-    if "$PYTHON" "$PROJECT_ROOT/frlgmg_host.py" \
+    if "$PYTHON" "$PROJECT_ROOT/bin/frlgmg_host.py" \
             --print-effective-config "$@" >/dev/null; then
         pass "Mystery Gift CLI accepts the effective TOML configuration"
     else

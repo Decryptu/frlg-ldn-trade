@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Host a FireRed/LeafGreen Direct Corner trade over LDN.
 
-    sudo -E ./.venv/bin/python -u frlgtrade_host.py --live dummy.pk3 Lola.pk3
+    sudo -E ./.venv/bin/python -u bin/frlgtrade_host.py --live dummy.pk3 Lola.pk3
 """
 
 import argparse
@@ -9,7 +9,8 @@ import os
 import sys
 
 
-PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# This launcher lives in bin/; the frlgsim package and vendor/ are at the repo root.
 sys.path.insert(0, PROJECT_ROOT)
 
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
@@ -144,7 +145,7 @@ def main(argv=None):
         file_config, shared_path, local_path = \
             host_cli.load_host_file_config_from_argv(argv)
     except (ValueError, SystemExit) as exc:
-        print(f"frlgtrade_host.py: error: {exc}", file=sys.stderr)
+        print(f"bin/frlgtrade_host.py: error: {exc}", file=sys.stderr)
         return 2
     parser = build_parser(
         file_config, shared_path=shared_path, local_path=local_path)

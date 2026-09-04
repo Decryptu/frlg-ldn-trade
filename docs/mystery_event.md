@@ -273,7 +273,7 @@ or from the command line, where a word may be an English name, `species:N`, `mov
 `GROUP/INDEX`, or a raw id — the last three because the English names are only a guess outside the
 species and move groups, and a phrase read off a real console arrives as ids:
 
-    frlgmg_host.py --gift ... --questionnaire species:55,FEELINGS/60,move:177,why
+    bin/frlgmg_host.py --gift ... --questionnaire species:55,FEELINGS/60,move:177,why
 
 A console that says the wrong phrase gets our 64-byte message through `CLIENT_SCRIPT_DYNAMIC_ERROR`
 and the session returns `SVR_MSG_NOTHING_SENT`; nothing is sent and nothing is tossed.

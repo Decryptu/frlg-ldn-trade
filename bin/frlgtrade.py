@@ -11,11 +11,11 @@ sim leaves by selecting the trade-menu CANCEL option (REQUEST_CANCEL 0xEEAA), a 
 cancel-to-leave [trade.c:2049].
 
 LIVE (needs the Switch, root, and the ldn/trio/netlink deps):
-    sudo -E python3 frlgtrade.py --live --password PASS dummy.pk3 trademon.pk3 -o received.pk3
-    sudo -E python3 frlgtrade.py --live --trades 6 a.pk3 b.pk3 c.pk3 d.pk3 e.pk3 f.pk3
+    sudo -E python3 bin/frlgtrade.py --live --password PASS dummy.pk3 trademon.pk3 -o received.pk3
+    sudo -E python3 bin/frlgtrade.py --live --trades 6 a.pk3 b.pk3 c.pk3 d.pk3 e.pk3 f.pk3
 
 OFFLINE self-check (replays a captured host stream through the full RX stack - no Switch):
-    python3 frlgtrade.py --replay capture.jsonl dummy.pk3 trademon.pk3
+    python3 bin/frlgtrade.py --replay capture.jsonl dummy.pk3 trademon.pk3
 """
 
 import argparse
@@ -24,7 +24,8 @@ import signal
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# This launcher lives in bin/; the frlgsim package is at the repo root beside it.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from frlgsim import config as configmod, crypto as cryptomod, trade, sim as simmod  # noqa
 from frlgsim import transport as tmod, linkstate as lsmod  # noqa: E402
 from frlgsim import barrier as lsmod_barrier, pia_connect  # noqa: E402

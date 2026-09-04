@@ -79,7 +79,7 @@ once at high speed and once at SuperSpeed. Both events are the same device. With
 ## Bring the adapter interface down before a run
 
 `transport.free_radio()` does this automatically, but a manually raised interface
-still breaks a bare `ldn_scan.py`, because a managed interface that is up holds
+still breaks a bare `tools/ldn_scan.py`, because a managed interface that is up holds
 the radio's channel:
 
 ```text

@@ -1,5 +1,5 @@
 # Published surface: the frlgsim/ simulator package plus the root entry script
-# frlgtrade.py. Everything else is local to this setup.
+# bin/frlgtrade.py. Everything else is local to this setup.
 
 # Ignore every top-level folder except the frlgsim package and tests.
 # This covers utils/, notes/, captures/, .backups/, and venv/.

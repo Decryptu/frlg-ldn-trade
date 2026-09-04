@@ -5,7 +5,7 @@ nav_order: 3
 
 # FRLG trade-host design
 
-`frlgtrade_host.py` makes Linux the FireRed/LeafGreen Direct Corner leader. A single Switch joins
+`bin/frlgtrade_host.py` makes Linux the FireRed/LeafGreen Direct Corner leader. A single Switch joins
 the Linux LDN network, Pia establishes the peer session, and Reliable carries an emulated parent
 RFU link whose game-level endpoint is the leader-side trade state machine.
 
@@ -17,7 +17,7 @@ are architectural boundaries, not extra buffering or protocol translation.
 
 ```mermaid
 flowchart TD
-    CLI[frlgtrade_host.py<br/>CLI and exit status] --> APP[HostApplication<br/>lifecycle and event loop]
+    CLI[bin/frlgtrade_host.py<br/>CLI and exit status] --> APP[HostApplication<br/>lifecycle and event loop]
     PROFILE[TrainerProfile<br/>human-readable identity] --> APP
     APP --> BEACON[host_beacon<br/>discovery records and beacon injector]
     APP --> LDN[HostTransport<br/>LDN AP and UDP :12345]
@@ -212,7 +212,7 @@ game-level RFU policy; increasing the LDN participant limit alone is insufficien
 
 | Source | Responsibility |
 |---|---|
-| `frlgtrade_host.py` | CLI parsing, configuration construction, application entry point |
+| `bin/frlgtrade_host.py` | CLI parsing, configuration construction, application entry point |
 | `frlgsim/host_cli.py` | shared host identity, LDN, Pia, and lifecycle CLI options |
 | `frlgsim/host_app.py` | runtime lifecycle, event loop, output and cleanup |
 | `frlgsim/config.py` | shared trainer, trade-plan, Mystery Gift payload, LDN, role, and run configuration |
