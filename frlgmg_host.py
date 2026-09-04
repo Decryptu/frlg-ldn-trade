@@ -86,6 +86,9 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser.add_argument(
         "--dump-offset", type=lambda v: int(v, 0), default=0, metavar="N",
         help="with --buffer-script save-dump: byte offset into that block. Accepts 0x hex")
+    parser.add_argument(
+        "--dump-file", default=None, metavar="PATH",
+        help="with a dumping --buffer-script: write the bytes that come back to this file")
     gift_registry.add_flag_id_argument(parser)
     parser.add_argument(
         "--questionnaire", default=None, metavar="W1,W2,W3,W4",
@@ -180,7 +183,7 @@ def build_run_config(parser, args):
             payload = configmod.BufferScriptPayload(
                 script=args.buffer_script, dump_address=args.dump_address,
                 dump_block=args.dump_block, dump_offset=args.dump_offset,
-                dump_size=args.dump_size)
+                dump_size=args.dump_size, dump_file=args.dump_file)
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")

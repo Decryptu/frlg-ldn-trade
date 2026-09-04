@@ -301,6 +301,27 @@ class BufferScriptHostApplication(MysteryGiftHostApplication):
         return ("Hosting a buffer script. On the Switch choose "
                 "Mystery Gift -> Wonder Cards -> Friend.")
 
+    def run(self):
+        joined = super().run()
+        self._write_dump()
+        return joined
+
+    def _write_dump(self):
+        engine = self.session.activity if self.session is not None else None
+        dump = getattr(getattr(engine, "server", None), "buffer_dump", None)
+        if not dump:
+            return
+        path = getattr(self.config.payload, "dump_file", None)
+        if path is None:
+            return
+        try:
+            with open(path, "wb") as handle:
+                handle.write(dump)
+        except OSError as exc:
+            self.info(f"could not write the dump to {path}: {exc}")
+            return
+        print(f"wrote {len(dump)} bytes of console memory to {path}")
+
     def _success_message(self, result):
         engine = self.session.activity if self.session is not None else None
         status = getattr(getattr(engine, "server", None), "buffer_status", None)

@@ -529,6 +529,9 @@ class BufferScriptPayload:
     dump_block: str = buffer_script.SAVE_BLOCK_2
     dump_offset: int = 0
     dump_size: int = buffer_script.MAX_BUFFER_SCRIPT_SIZE
+    # Where to write the bytes that come back. A dump whose contents only ever reached a log line
+    # is a run spent for 16 bytes of head.
+    dump_file: str | None = None
 
     def __post_init__(self):
         choices = buffer_script.script_choices()

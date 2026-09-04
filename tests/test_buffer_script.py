@@ -506,3 +506,39 @@ def test_the_cli_builds_both_dumps():
                  ["--buffer-script", "memory-dump", "--dump-address", "0x1", "--dump-size", "0"]):
         with pytest.raises(SystemExit):
             _run_config(argv)
+
+
+def test_a_dump_is_written_to_a_file(tmp_path):
+    """bs04 returned 256 bytes of a real SaveBlock2 and only the first 16 reached the log. A dump
+    that is not kept has spent a console run for a head line."""
+    from types import SimpleNamespace
+
+    from frlgsim.host_mg_app import BufferScriptHostApplication
+
+    path = tmp_path / "bs04_dump.bin"
+    dump = bytes(range(256))
+    app = SimpleNamespace(
+        session=SimpleNamespace(activity=SimpleNamespace(
+            server=SimpleNamespace(buffer_dump=dump))),
+        config=SimpleNamespace(payload=SimpleNamespace(dump_file=str(path))),
+        info=lambda *a: None)
+
+    BufferScriptHostApplication._write_dump(app)
+
+    assert path.read_bytes() == dump
+
+
+def test_no_dump_file_and_no_dump_are_both_harmless(tmp_path):
+    from types import SimpleNamespace
+
+    from frlgsim.host_mg_app import BufferScriptHostApplication
+
+    for server, payload in (
+            (SimpleNamespace(buffer_dump=b"\x01"), SimpleNamespace(dump_file=None)),
+            (SimpleNamespace(buffer_dump=None), SimpleNamespace(dump_file=str(tmp_path / "x"))),
+            (SimpleNamespace(buffer_status=0), SimpleNamespace(dump_file=None))):
+        app = SimpleNamespace(
+            session=SimpleNamespace(activity=SimpleNamespace(server=server)),
+            config=SimpleNamespace(payload=payload), info=lambda *a: None)
+        BufferScriptHostApplication._write_dump(app)
+    assert not (tmp_path / "x").exists()
