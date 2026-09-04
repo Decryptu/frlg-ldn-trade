@@ -492,3 +492,18 @@ CLIENT_SCRIPT_BUFFER_SUCCESS = client_script(
     CLI_SEND_READY_END,
     (CLI_RETURN, CLI_MSG_BUFFER_SUCCESS),
 )
+
+
+# The dump order. CLI_LOAD_TOSS_RESPONSE arms the send FIRST (ident MG_LINKID_RESPONSE, pointing at
+# client->sendBuffer, 4 bytes); the payload then repoints link->sendBuffer and link->sendSize, and
+# CLI_SEND_LOADED transmits from wherever it now points, with the CRC taken over that region at
+# send time [decomp:src/mystery_gift_link.c:166]. Swap the middle two commands and the payload
+# patches fields the InitSend is about to overwrite, and nothing happens.
+CLIENT_SCRIPT_DUMP_MEMORY = client_script(
+    (CLI_RECV, MG_LINKID_RAM_SCRIPT),
+    CLI_LOAD_TOSS_RESPONSE,
+    CLI_RUN_BUFFER_SCRIPT,
+    CLI_SEND_LOADED,
+    (CLI_RECV, MG_LINKID_CLIENT_SCRIPT),
+    CLI_COPY_RECV,
+)

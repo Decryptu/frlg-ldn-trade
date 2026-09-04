@@ -460,9 +460,16 @@ class MysteryGiftClientEngine:
             self.info("[mg] buffer script received, NOT executed (no unicorn): "
                       + buffer_script.describe(code))
             return
+        # Whatever a preceding command already armed. CLI_LOAD_TOSS_RESPONSE leaves a 4-byte send
+        # of MG_LINKID_RESPONSE pointing at client->sendBuffer, and a payload is free to repoint it
+        # before CLI_SEND_LOADED runs.
+        armed_ident, _armed_payload, armed_size = (
+            self._pending_send if self._pending_send is not None
+            else (MG_LINKID_RESPONSE, b"", 4))
         try:
             run = buffer_script.emulate(code, param=self.param or 0,
-                                        sav2=self._save_block2_image())
+                                        sav2=self._save_block2_image(),
+                                        send_size=armed_size, send_ident=armed_ident)
         except buffer_script.BufferScriptError as exc:
             # On the console this is a crash or a hang inside the Mystery Gift menu, with no way
             # back: exactly what the offline harness exists to catch.
@@ -475,6 +482,16 @@ class MysteryGiftClientEngine:
                           f"{buffer_script.BUFFER_SCRIPT_DONE}: the console would call it again "
                           "next frame, forever")
             self.info("[mg] BUFFER SCRIPT NEVER FINISHES: " + self.error)
+            return
+        if run.client.send_repointed:
+            # The payload pointed the console's own outgoing message somewhere else. What goes out
+            # is read from there at send time, CRC included [decomp:src/mystery_gift_link.c:166],
+            # so the armed 4-byte response becomes however many bytes of memory it asked for.
+            self._pending_send = (run.client.send_ident, run.pending_send, run.client.send_size)
+            self.info(f"[mg] BUFFER SCRIPT REPOINTED THE SEND: "
+                      f"link->sendBuffer=0x{run.client.send_buffer:08X}, "
+                      f"link->sendSize={run.client.send_size}; ident {run.client.send_ident} now "
+                      f"carries console memory, head {run.pending_send[:16].hex()}")
             return
         self.info(f"[mg] BUFFER SCRIPT RAN: {buffer_script.describe(code)}, "
                   f"{run.instructions} instructions, returned {run.returned}, "

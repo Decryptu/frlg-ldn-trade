@@ -394,13 +394,22 @@ class ConsoleClientModel:
              buffer_script.SAV2_PLAYER_TRAINER_ID + 4] = (
                  self.save_trainer_id.to_bytes(4, "little"))
         param = self.param if isinstance(self.param, int) else 0
+        armed = self._pending_send
+        ident, size = (armed[0], armed[2]) if armed else (mg.MG_LINKID_RESPONSE, 4)
         for _frame in range(8):
-            run = buffer_script.emulate(payload, param=param, sav2=bytes(sav2))
+            run = buffer_script.emulate(payload, param=param, sav2=bytes(sav2),
+                                        send_size=size, send_ident=ident)
             param = run.param
             if run.done:
-                return param
-        raise AssertionError(
-            "the payload never returned 1: on the console the Mystery Gift menu hangs")
+                break
+        else:
+            raise AssertionError(
+                "the payload never returned 1: on the console the Mystery Gift menu hangs")
+        self.param = param
+        if run.client.send_repointed:
+            # MysteryGiftLink_InitSend kept the pointer, so the send reads from wherever the
+            # payload left it, at send time [mystery_gift_link.c:59,166].
+            self._pending_send = (run.client.send_ident, run.pending_send, run.client.send_size)
 
     def step(self, parent_row):
         rec = self._feed_parent_row(parent_row)
@@ -608,7 +617,7 @@ class ConsoleClientModel:
             # else: a payload that returns 0 must not look like a payload that finished.
             payload = bytes(self.recv_buffer)
             self.buffer_scripts.append(payload)
-            self.param = self._run_buffer_script(payload)
+            self._run_buffer_script(payload)
         elif instr == mg_script.CLI_COPY_MSG:
             # memcpy(client->msg, client->recvBuffer, CLIENT_MAX_MSG_SIZE)
             # [mystery_gift_client.c] - a fixed 64 bytes regardless of the

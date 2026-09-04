@@ -71,6 +71,7 @@ class HostMysteryGiftEngine:
                 "denied_message": distribution.denied_message,
                 "buffer_code": distribution.buffer_code,
                 "buffer_expect": distribution.buffer_expect,
+                "buffer_dump_size": distribution.buffer_dump_size,
             }
         else:
             if card is None or ram_script is None:

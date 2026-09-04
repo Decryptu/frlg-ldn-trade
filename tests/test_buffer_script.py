@@ -338,3 +338,171 @@ def _game_data_with_trainer_id(trainer_id):
     data[mg_script.GD_OFF_TRAINER_ID:mg_script.GD_OFF_TRAINER_ID + 4] = \
         trainer_id.to_bytes(4, "little")
     return bytes(data)
+
+
+# --- the memory read primitive --------------------------------------------------------------
+
+def test_the_dump_payload_operands_are_where_we_patch_them():
+    """Proven by running it, not by trusting DUMP_TARGET_OFFSET: a patched payload must actually
+    leave link->sendBuffer and link->sendSize holding what we asked for."""
+    run = buffer_script.emulate(buffer_script.build_memory_dump(0x03001234, 512))
+
+    assert run.done
+    assert run.client.send_buffer == 0x03001234
+    assert run.client.send_size == 512
+    assert run.client.send_repointed
+
+
+def test_the_dump_payload_reads_out_the_region_it_was_aimed_at():
+    marker = bytes(range(256)) * 4
+    run = buffer_script.emulate(
+        buffer_script.build_memory_dump(0x03002000, len(marker)),
+        memory={0x03002000: marker})
+
+    assert run.pending_send == marker
+
+
+def test_a_dump_bigger_than_the_link_carries_is_refused():
+    """MGL_Receive rejects anything past MG_LINK_BUFFER_SIZE outright [mystery_gift_link.c:102]."""
+    buffer_script.build_memory_dump(0x02000000, buffer_script.MAX_BUFFER_SCRIPT_SIZE)
+    for size in (0, buffer_script.MAX_BUFFER_SCRIPT_SIZE + 1):
+        with pytest.raises(buffer_script.BufferScriptError, match="MG_LINK_BUFFER_SIZE"):
+            buffer_script.build_memory_dump(0x02000000, size)
+
+
+def test_a_dump_aimed_at_unreadable_memory_is_caught_offline():
+    """On the console CalcCRC16WithTable would walk it before anything is sent."""
+    with pytest.raises(buffer_script.BufferScriptError, match="not readable memory"):
+        buffer_script.emulate(buffer_script.build_memory_dump(0x60000000, 1024))
+
+
+def test_the_dump_client_script_arms_the_send_before_the_payload_repoints_it():
+    """Order is the whole trick. CLI_LOAD_TOSS_RESPONSE must come FIRST: it calls InitSend, which
+    overwrites sendBuffer and sendSize [mystery_gift_client.c:204]. Run the payload before it and
+    the patch is thrown away."""
+    commands = [mg_script.CLIENT_SCRIPT_DUMP_MEMORY[i:i + mg_script.CLIENT_CMD_SIZE]
+                for i in range(0, len(mg_script.CLIENT_SCRIPT_DUMP_MEMORY),
+                               mg_script.CLIENT_CMD_SIZE)]
+    opcodes = [int.from_bytes(cmd[:4], "little") for cmd in commands]
+
+    assert opcodes == [
+        mg_script.CLI_RECV, mg_script.CLI_LOAD_TOSS_RESPONSE, mg_script.CLI_RUN_BUFFER_SCRIPT,
+        mg_script.CLI_SEND_LOADED, mg_script.CLI_RECV, mg_script.CLI_COPY_RECV,
+    ]
+
+
+def _dump_distribution(address=None, size=buffer_script.MAX_BUFFER_SCRIPT_SIZE):
+    address = buffer_script.SAV2_ADDRESS if address is None else address
+    return stamp_rally.MysteryGiftDistribution(
+        card=None, ram_script=None,
+        buffer_code=buffer_script.build_memory_dump(address, size),
+        buffer_dump_size=size)
+
+
+@needs_unicorn
+def test_end_to_end_the_console_reads_out_a_kilobyte_of_its_own_memory():
+    """The whole primitive, through the independently written console model: the console's own
+    outgoing message is repointed at its SaveBlock2 and 1024 bytes come back, with the trainer id
+    at the offset the decomp gives it."""
+    console = ConsoleClientModel(flag_id=0)
+
+    engine, _frames = _drive(console, distribution=_dump_distribution())
+
+    dump = engine.server.buffer_dump
+    assert len(dump) == buffer_script.MAX_BUFFER_SCRIPT_SIZE
+    assert int.from_bytes(
+        dump[buffer_script.SAV2_PLAYER_TRAINER_ID:
+             buffer_script.SAV2_PLAYER_TRAINER_ID + 4], "little") == CONSOLE_TRAINER_ID
+    assert engine.server.buffer_matched is True
+    assert console.result == mg_script.CLI_MSG_BUFFER_SUCCESS
+
+
+@needs_unicorn
+def test_end_to_end_a_short_dump_comes_back_short():
+    console = ConsoleClientModel(flag_id=0)
+
+    engine, _frames = _drive(console, distribution=_dump_distribution(size=64))
+
+    assert len(engine.server.buffer_dump) == 64
+    assert engine.server.buffer_matched is True
+
+
+# --- save-dump: no absolute address needed ----------------------------------------------------
+
+def test_the_save_dump_operands_are_where_we_patch_them():
+    for block, offset, size in ((buffer_script.SAVE_BLOCK_2, 0, 1024),
+                                (buffer_script.SAVE_BLOCK_1, 0x290, 64)):
+        run = buffer_script.emulate(buffer_script.build_save_dump(block, offset, size))
+        base = (buffer_script.SAV2_ADDRESS if block == buffer_script.SAVE_BLOCK_2
+                else buffer_script.SAV1_ADDRESS)
+        assert run.done
+        assert run.client.send_buffer == base + offset
+        assert run.client.send_size == size
+
+
+def test_the_save_dump_reads_either_block_without_knowing_any_address():
+    """The whole point: the console hands the payload gSaveBlock2Ptr and gSaveBlock1Ptr, so this
+    works on a console whose memory layout we have never seen."""
+    sav2 = bytearray(0x1000)
+    sav2[buffer_script.SAV2_PLAYER_TRAINER_ID:
+         buffer_script.SAV2_PLAYER_TRAINER_ID + 4] = (0xE5BBDF65).to_bytes(4, "little")
+    sav1 = bytearray(0x1000)
+    sav1[0x290:0x294] = (0x1234ABCD).to_bytes(4, "little")   # SaveBlock1.money [global.h:774]
+
+    from_sav2 = buffer_script.emulate(
+        buffer_script.build_save_dump(buffer_script.SAVE_BLOCK_2, 0, 16),
+        sav2=bytes(sav2), sav1=bytes(sav1))
+    from_sav1 = buffer_script.emulate(
+        buffer_script.build_save_dump(buffer_script.SAVE_BLOCK_1, 0x290, 16),
+        sav2=bytes(sav2), sav1=bytes(sav1))
+
+    assert int.from_bytes(
+        from_sav2.pending_send[buffer_script.SAV2_PLAYER_TRAINER_ID:
+                               buffer_script.SAV2_PLAYER_TRAINER_ID + 4], "little") == 0xE5BBDF65
+    assert int.from_bytes(from_sav1.pending_send[:4], "little") == 0x1234ABCD
+
+
+def test_a_bad_save_dump_operand_is_refused():
+    with pytest.raises(buffer_script.BufferScriptError, match="block is one of"):
+        buffer_script.build_save_dump("sav3")
+    with pytest.raises(buffer_script.BufferScriptError, match="halfword aligned"):
+        buffer_script.build_save_dump(buffer_script.SAVE_BLOCK_1, 0x291)
+    with pytest.raises(buffer_script.BufferScriptError, match="MG_LINK_BUFFER_SIZE"):
+        buffer_script.build_save_dump(buffer_script.SAVE_BLOCK_2, 0, 4096)
+
+
+@needs_unicorn
+def test_end_to_end_the_console_reads_out_its_save_block_by_pointer():
+    console = ConsoleClientModel(flag_id=0)
+    distribution = stamp_rally.MysteryGiftDistribution(
+        card=None, ram_script=None,
+        buffer_code=buffer_script.build_save_dump(buffer_script.SAVE_BLOCK_2, 0, 256),
+        buffer_dump_size=256)
+
+    engine, _frames = _drive(console, distribution=distribution)
+
+    dump = engine.server.buffer_dump
+    assert len(dump) == 256
+    assert int.from_bytes(
+        dump[buffer_script.SAV2_PLAYER_TRAINER_ID:
+             buffer_script.SAV2_PLAYER_TRAINER_ID + 4], "little") == CONSOLE_TRAINER_ID
+    assert console.result == mg_script.CLI_MSG_BUFFER_SUCCESS
+
+
+def test_the_cli_builds_both_dumps():
+    memory = _run_config(["--buffer-script", "memory-dump", "--dump-address", "0x0201C000"])
+    assert memory.payload.build_distribution().buffer_dump_size == \
+        buffer_script.MAX_BUFFER_SCRIPT_SIZE
+
+    save = _run_config(["--buffer-script", "save-dump", "--dump-block", "sav1",
+                        "--dump-offset", "0x290", "--dump-size", "64"])
+    distribution = save.payload.build_distribution()
+    assert distribution.buffer_dump_size == 64
+    assert distribution.buffer_code == buffer_script.build_save_dump(
+        buffer_script.SAVE_BLOCK_1, 0x290, 64)
+
+    for argv in (["--buffer-script", "memory-dump"],
+                 ["--buffer-script", "trainer-id-probe", "--dump-address", "0x02000000"],
+                 ["--buffer-script", "memory-dump", "--dump-address", "0x1", "--dump-size", "0"]):
+        with pytest.raises(SystemExit):
+            _run_config(argv)

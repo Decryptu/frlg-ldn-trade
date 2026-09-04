@@ -55,6 +55,9 @@ class MysteryGiftDistribution:
     # checked against (mg_server.BUFFER_EXPECT_TRAINER_ID, a u32, or None for "any answer").
     buffer_code: bytes | None = None
     buffer_expect: object | None = None
+    # Set when the payload repoints the console's outgoing message: how many bytes of console
+    # memory MG_LINKID_RESPONSE will carry instead of the usual 4.
+    buffer_dump_size: int | None = None
 
     def __post_init__(self):
         if self.buffer_code is not None:

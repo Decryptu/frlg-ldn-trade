@@ -71,6 +71,21 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         choices=buffer_script.script_choices(), metavar="NAME",
         help=("run native ARM code on the console through CLI_RUN_BUFFER_SCRIPT instead of "
               "sending a gift: " + buffer_script.format_script_help()))
+    parser.add_argument(
+        "--dump-address", type=lambda v: int(v, 0), default=None, metavar="ADDR",
+        help=("with --buffer-script memory-dump: the console address to read out (0x02000000 "
+              "EWRAM, 0x03000000 IWRAM, 0x08000000 ROM). Accepts 0x hex"))
+    parser.add_argument(
+        "--dump-size", type=int, default=buffer_script.MAX_BUFFER_SCRIPT_SIZE, metavar="N",
+        help=("with --buffer-script memory-dump: how many bytes to read, 1..%d "
+              "(MG_LINK_BUFFER_SIZE)" % buffer_script.MAX_BUFFER_SCRIPT_SIZE))
+    parser.add_argument(
+        "--dump-block", choices=buffer_script.SAVE_BLOCKS, default=buffer_script.SAVE_BLOCK_2,
+        help=("with --buffer-script save-dump: which save block to read; sav2 is name, trainer "
+              "id and pokedex, sav1 is party, bag, money, flags and vars"))
+    parser.add_argument(
+        "--dump-offset", type=lambda v: int(v, 0), default=0, metavar="N",
+        help="with --buffer-script save-dump: byte offset into that block. Accepts 0x hex")
     gift_registry.add_flag_id_argument(parser)
     parser.add_argument(
         "--questionnaire", default=None, metavar="W1,W2,W3,W4",
@@ -151,6 +166,8 @@ def build_run_config(parser, args):
                 parser.error("--flag-id belongs to a Wonder Card; Wonder News has no flagId")
             payload = configmod.WonderNewsPayload(
                 news=args.news, news_id=args.news_id)
+        elif args.buffer_script is None and args.dump_address is not None:
+            parser.error("--dump-address needs --buffer-script memory-dump")
         elif args.buffer_script is not None:
             if args.questionnaire is not None:
                 parser.error(
@@ -160,7 +177,10 @@ def build_run_config(parser, args):
                 parser.error("--flag-id belongs to a Wonder Card; a buffer script has no flagId")
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")
-            payload = configmod.BufferScriptPayload(script=args.buffer_script)
+            payload = configmod.BufferScriptPayload(
+                script=args.buffer_script, dump_address=args.dump_address,
+                dump_block=args.dump_block, dump_offset=args.dump_offset,
+                dump_size=args.dump_size)
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")

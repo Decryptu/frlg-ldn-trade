@@ -523,6 +523,12 @@ class BufferScriptPayload:
     script: str = buffer_script.TRAINER_ID_PROBE
     expect: object = None
     _expect_explicit: bool = False
+    # The dumps: memory-dump reads an absolute address, save-dump an offset into a save block
+    # whose pointer the console hands the payload.
+    dump_address: int | None = None
+    dump_block: str = buffer_script.SAVE_BLOCK_2
+    dump_offset: int = 0
+    dump_size: int = buffer_script.MAX_BUFFER_SCRIPT_SIZE
 
     def __post_init__(self):
         choices = buffer_script.script_choices()
@@ -530,17 +536,39 @@ class BufferScriptPayload:
             raise ValueError(f"buffer script must be one of {', '.join(choices)}")
         if not self._expect_explicit:
             object.__setattr__(self, "expect", self.spec.expect)
+        if self.script == buffer_script.MEMORY_DUMP:
+            if self.dump_address is None:
+                raise ValueError(
+                    f"{buffer_script.MEMORY_DUMP} needs an address to read from")
+        elif self.dump_address is not None:
+            raise ValueError(
+                f"an address to dump is only meaningful with {buffer_script.MEMORY_DUMP}")
+        if self.script != buffer_script.SAVE_DUMP and self.dump_offset:
+            raise ValueError(
+                f"an offset into a save block is only meaningful with {buffer_script.SAVE_DUMP}")
+        if self.is_dump:
+            self.build_code()       # every operand check, before a console is involved
+
+    @property
+    def is_dump(self):
+        return self.script in (buffer_script.MEMORY_DUMP, buffer_script.SAVE_DUMP)
 
     @property
     def spec(self):
         return buffer_script.SCRIPT_REGISTRY[self.script]
 
     def build_code(self):
+        if self.script == buffer_script.MEMORY_DUMP:
+            return buffer_script.build_memory_dump(self.dump_address, self.dump_size)
+        if self.script == buffer_script.SAVE_DUMP:
+            return buffer_script.build_save_dump(
+                self.dump_block, self.dump_offset, self.dump_size)
         return buffer_script.payload(self.script)
 
     def build_distribution(self):
-        return MysteryGiftDistribution(None, None, buffer_code=self.build_code(),
-                                       buffer_expect=self.expect)
+        return MysteryGiftDistribution(
+            None, None, buffer_code=self.build_code(), buffer_expect=self.expect,
+            buffer_dump_size=self.dump_size if self.is_dump else None)
 
 
 @dataclass(frozen=True)

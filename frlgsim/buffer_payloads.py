@@ -2,6 +2,14 @@
 
 # name -> (ARM machine code, sha256 of the asm source it was assembled from)
 PAYLOADS = {
+    'memory-dump': (
+        bytes.fromhex('10309fe53c3080e50c309fe5b433c0e10100a0e31eff2fe10000000000000000'),
+        'fab2c7ad00c6e8099271ac8627b6e3892175429d4aea1be295a678eda303398d',
+    ),
+    'save-dump': (
+        bytes.fromhex('24309fe5000053e30130a0010230a01118c09fe50c3083e03c3080e510309fe5b433c0e10100a0e31eff2fe1000000000000000000000000'),
+        '96cbd05d21d8ae1c8ec2093e432d16999f52ed82e4d2f57b7c34f5568ab01ac7',
+    ),
     'trainer-id-probe': (
         bytes.fromhex('ba30d1e1bcc0d1e10c3883e1003080e50100a0e31eff2fe1'),
         '09b4a41aadbc7b8304a41d7b82d04c8ec9c6e600908d0c0b2a85162458f2808c',

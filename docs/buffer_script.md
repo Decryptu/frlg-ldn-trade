@@ -148,9 +148,48 @@ bs03 repeated bs01 exactly - `0xE5BBDF65 MATCHES 0xE5BBDF65` - so native code ex
 reproduced and not a one-off, and it confirmed both fixes on hardware: the message printed on two
 lines as written, and the host's own success line printed instead of crashing.
 
+## The memory read primitive (built, offline only)
+
+`r0` is `&client->param`, so the whole of `struct MysteryGiftClient`
+[decomp:include/mystery_gift_client.h:71] is at a fixed offset from it:
+
+| field | from `r0` |
+| --- | --- |
+| `client->sendBuffer` | 0x10 |
+| `client->link.sendSize` | 0x34 |
+| `client->link.sendBuffer` | 0x3C |
+
+And `MysteryGiftLink_InitSend` stores the **pointer** it is given [mystery_gift_link.c:59], with the
+CRC taken later, at send time, over `link->sendBuffer` for `link->sendSize` bytes
+[mystery_gift_link.c:166]. So a payload that runs between the InitSend and the send can point the
+console's own outgoing message at any address and set its length, and the console reads out that
+region and CRCs it for us. The client script order is the whole trick:
+
+    CLI_RECV -> CLI_LOAD_TOSS_RESPONSE -> CLI_RUN_BUFFER_SCRIPT -> CLI_SEND_LOADED
+
+Swap the middle two and the payload patches fields the InitSend is about to overwrite.
+
+Two payloads use it. `memory-dump` takes an absolute address. `save-dump` needs none: the console
+hands the payload `gSaveBlock2Ptr` in r1 and `gSaveBlock1Ptr` in r2, so it reads either save block
+at any offset on any console and any build. Up to 1024 bytes a run - `MGL_Receive` rejects more
+[mystery_gift_link.c:102].
+
+    ./scratchpad/run_mg_fast.sh bsNN --buffer-script save-dump --dump-block sav2 \
+        --dump-size 256 --version firered
+    ./scratchpad/run_mg_fast.sh bsNN --buffer-script memory-dump --dump-address 0x0201C000 \
+        --version firered
+
+The evidence line is `Buffer script dump: N bytes of console memory, head ...`. Both simulated
+consoles honour a repointed send, so the whole session is proven offline first, including that the
+host accepts 1024 bytes on an ident that normally carries 4.
+
+What this reaches that nothing else does: `SaveBlock1.playerParty` at 0x0038 (PIDs and IVs of the
+whole party), `money` at 0x0290 XORed with `SaveBlock2.encryptionKey` at 0xF20 [money.c], the bag,
+flags and vars - and, through `memory-dump`, IWRAM, where `gRngValue` lives. None of it is reachable
+by any Mystery Event opcode or any link message.
+
 ## Left
 
-`CLI_RUN_BUFFER_SCRIPT` is the general case of every other opcode, so what is left is what to write,
-not whether it runs. In rough order of value once the probe lands: reading `gSaveBlock1Ptr` (bag,
-party, flags, vars - the things no Mystery Event opcode reaches), writing them, and calling into the
-ROM, which needs a real address and therefore a way to identify the build the console is running.
+Writing, rather than reading: the same offsets take a `str` as easily as a `ldr`. And calling into
+the ROM, which needs a real address and therefore a way to identify the build the console is
+running - which the dump can now answer, by reading the ROM header at 0x080000A0.

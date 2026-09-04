@@ -39,6 +39,7 @@ SVR_READ_MEVENT_STATUS = "SVR_READ_MEVENT_STATUS"
 SVR_LOAD_BUFFER_SCRIPT = "SVR_LOAD_BUFFER_SCRIPT"
 SVR_READ_BUFFER_STATUS = "SVR_READ_BUFFER_STATUS"
 SVR_LOAD_BUFFER_VERDICT_MSG = "SVR_LOAD_BUFFER_VERDICT_MSG"
+SVR_READ_BUFFER_DUMP = "SVR_READ_BUFFER_DUMP"
 
 # [decomp:include/mystery_gift_server.h:56]
 SVR_MSG_NOTHING_SENT = 0
@@ -415,6 +416,21 @@ _SCRIPT_BUFFER_FAILURE = (
     (SVR_RETURN, SVR_MSG_NOTHING_SENT),
 )
 
+# The memory dump. Identical to SCRIPT_RUN_BUFFER_SCRIPT except for the client script it pushes -
+# the payload repoints the console's own outgoing message, so what comes back on MG_LINKID_RESPONSE
+# is not the 4-byte return channel but the region we asked for.
+SCRIPT_DUMP_MEMORY = (
+    *_GAME_DATA_PREFIX,
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_DUMP_MEMORY),
+    (SVR_SEND,),
+    (SVR_LOAD_BUFFER_SCRIPT,),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_RESPONSE),
+    (SVR_READ_BUFFER_DUMP,),
+    (SVR_GOTO_IF_EQ, True, _SCRIPT_BUFFER_SUCCESS),
+    (SVR_GOTO, _SCRIPT_BUFFER_FAILURE),
+)
+
 SCRIPT_RUN_BUFFER_SCRIPT = (
     *_GAME_DATA_PREFIX,
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_RUN_BUFFER),
@@ -486,7 +502,7 @@ class MysteryGiftServer:
 
     def __init__(self, card=None, ram_script=None, *, news=None, stamp=None,
                  activation_script=None, install_activation_script=None, trainer=None,
-                 mevent=None, buffer_code=None, buffer_expect=None,
+                 mevent=None, buffer_code=None, buffer_expect=None, buffer_dump_size=None,
                  buffer_success_message=None, buffer_failure_message=None,
                  questionnaire=None, denied_message=None,
                  script=None, log=lambda *a: None):
@@ -573,6 +589,15 @@ class MysteryGiftServer:
                 raise MysteryGiftServerError(
                     "a buffer script runs on its own: no card, news, stamp rally, visiting "
                     "trainer or Mystery Event script in the same session")
+        self.buffer_dump_size = None if buffer_dump_size is None else int(buffer_dump_size)
+        if self.buffer_dump_size is not None:
+            if self.buffer_code is None:
+                raise MysteryGiftServerError(
+                    "a memory dump needs the payload that repoints the send")
+            if not 0 < self.buffer_dump_size <= buffer_script.MAX_BUFFER_SCRIPT_SIZE:
+                raise MysteryGiftServerError(
+                    f"a dump is 1..{buffer_script.MAX_BUFFER_SCRIPT_SIZE} bytes "
+                    f"(MG_LINK_BUFFER_SIZE), got {self.buffer_dump_size}")
         self.buffer_expect = buffer_expect
         if not (buffer_expect is None or buffer_expect == BUFFER_EXPECT_TRAINER_ID
                 or isinstance(buffer_expect, int)):
@@ -597,6 +622,7 @@ class MysteryGiftServer:
         self.is_buffer_distribution = self.buffer_code is not None
         self.buffer_status = None
         self.buffer_matched = None
+        self.buffer_dump = None
         self.is_stamp_distribution = self.stamp is not None
         self.is_trainer_distribution = self.trainer is not None
         self.is_news_distribution = self.news is not None
@@ -613,7 +639,8 @@ class MysteryGiftServer:
         elif self.is_mevent_distribution:
             self.script = SCRIPT_SEND_MYSTERY_EVENT
         elif self.is_buffer_distribution:
-            self.script = SCRIPT_RUN_BUFFER_SCRIPT
+            self.script = (SCRIPT_DUMP_MEMORY if self.buffer_dump_size is not None
+                           else SCRIPT_RUN_BUFFER_SCRIPT)
         else:
             self.script = SCRIPT_SEND_WONDER_CARD
         if self.questionnaire is not None and script is None:
@@ -871,6 +898,20 @@ class MysteryGiftServer:
         # code read the save directly and is the one telling the truth here.
         return expected, 0xFFFFFF00, ("the trainer id from the game data, low byte excluded: "
                                       "a 7-character player name overwrote it")
+
+    def _do_svr_read_buffer_dump(self):
+        """What came back is the region itself, not the 4-byte return channel."""
+        self.buffer_dump = bytes(self._received)
+        self.buffer_matched = len(self.buffer_dump) == self.buffer_dump_size
+        self.param = self.buffer_matched
+        self.trace.append(("buffer_dump", len(self.buffer_dump)))
+        if not self.buffer_matched:
+            self.info(f"Buffer script dump: {len(self.buffer_dump)} bytes, expected "
+                      f"{self.buffer_dump_size}; the payload did not repoint the send")
+            return
+        head = self.buffer_dump[:16].hex()
+        self.info(f"Buffer script dump: {len(self.buffer_dump)} bytes of console memory, "
+                  f"head {head}")
 
     def _do_svr_load_buffer_verdict_msg(self):
         text = (self.buffer_success_message if self.buffer_matched
