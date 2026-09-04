@@ -419,23 +419,23 @@ the DESTINATION inside SaveBlock2 - the console reading out its own save after o
 there, not an echo of what we sent. `echo_gaps.py`: `never=[]` on every block. The console then
 saved. Reading and writing the live save on retail hardware are both proven.
 
-Still open: whether it reached FLASH. The console saved at the end of the session, so it should have;
-the test is a plain `save-dump` of the same offset AFTER the game has been restarted from the title
-screen, which forces the save to be re-read rather than kept in RAM.
+**bs10 proved it reached FLASH.** The player closed the game and reloaded from the title screen, so
+SaveBlock2 was re-read from flash rather than kept in RAM, and a plain `save-dump` of the same offset
+returned `46524c472d4c444e2062733039000000` - "FRLG-LDN bs09" still there. Read, write and persistence
+are all proven on retail hardware, over Mystery Gift, with no Pokemon Center and no trade.
 
 ## Left
 
-1. **bs10: `save-dump --dump-block sav2 --dump-offset 0xB20 --dump-size 16` after a game restart.**
-   Reads only. "FRLG-LDN bs09" coming back proves the write survived the flash round-trip.
-   `echo_gaps.py` on every capture: each block must read `never=[]`, and that one line is the whole
-   transport verdict.
+1. **Calling into the ROM.** The build is identified (bs07: BPRF, software version 0x0A) and located
+   (bs08: 0x08148C74 is the instruction after the call in Client_RunBufferScript). The decomp's
+   `firered_switch` target is GAME_REVISION=10 but matches the ENGLISH rev-10 ROM, and the console
+   runs the French one, so its symbol map cannot be used unchecked. The decisive experiment is
+   read-only and costs one run: `memory-dump` around the anchor. The THUMB literal pool that
+   `Client_RunBufferScript` uses sits just after it and holds the addresses of `gSaveBlock2Ptr`,
+   `gSaveBlock1Ptr` and `gDecompressionBuffer` in the FRENCH build - real symbol addresses, and the
+   method for getting more. `sClientFuncs` nearby would hand over eight ROM function addresses at
+   once, every one of them nameable in the decomp.
 
-2. **Calling into the ROM.** The build is identified (bs07: BPRF, software version 0x0A) and now
-   located (bs08: 0x08148C74 is the instruction after the call in Client_RunBufferScript). The
-   decomp has a `firered_switch` target at GAME_REVISION=10 with its own sha1 and ld script, but it
-   matches the ENGLISH rev-10 ROM and the console runs the French one, so its symbol map cannot be
-   used unchecked. The cheap next step is a `memory-dump` around 0x08148C74: the disassembly either
-   is Client_RunBufferScript or is not, and that settles whether the two builds share a code layout.
+2. **Writing a live field rather than scratch.** `--write-unsafe` exists; what it needs is a reason
+   and a field whose effect the player can check on the console's own screen.
 
-3. **Writing a live field rather than scratch.** `--write-unsafe` exists; what it needs is a reason
-   and a field whose effect can be checked on the console's own screen.
