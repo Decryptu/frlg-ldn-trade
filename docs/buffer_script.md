@@ -424,17 +424,44 @@ SaveBlock2 was re-read from flash rather than kept in RAM, and a plain `save-dum
 returned `46524c472d4c444e2062733039000000` - "FRLG-LDN bs09" still there. Read, write and persistence
 are all proven on retail hardware, over Mystery Gift, with no Pokemon Center and no trade.
 
+## bs11, bs12: the ROM, read as code (2026-09-04, both first try)
+
+bs08 gave one address inside the cartridge. Two read-only dumps turned it into a symbol map, and the
+loop that did it is `scratchpad/rom_read.py`.
+
+**bs11** dumped 1024 bytes at 0x08148A00 and it disassembles as `Client_RunBufferScript` exactly as
+[decomp:src/mystery_gift_client.c:274] writes it - `adds r0,r4,#4` for &client->param, two `ldr`s
+through pointers for the save blocks, and `cmp r0,#1` at 0x08148C74, which is the anchor bs08
+measured from the CPU. The call is `bl 0x081E2230`, a `_call_via_r3` veneer, which is why lr comes
+back pointing into the caller. Its THUMB literal pool holds:
+
+    0x08148C88 -> 0x0201C000   gDecompressionBuffer   (bs08 read the same number from pc)
+    0x08148C8C -> 0x0300422C   &gSaveBlock2Ptr
+    0x08148C90 -> 0x03004228   &gSaveBlock1Ptr
+
+`MysteryGiftClient_CallFunc` follows at 0x08148C94: `sub sp,#32`, eight words copied onto the stack
+from 0x0845DBD0, indexed by `client->funcId` at [r0,#8], called through `_call_via_r1`. That names
+**sClientFuncs and where it is**, and it re-confirms CLIENT_FUNC_ID = 8 from the machine code.
+
+**bs12** dumped that table. Eight THUMB pointers, every one landing on a `push {r4, lr}` bs11's
+disassembly already showed, and entry 7 reading 0x08148C61 - the function bs08 measured from the
+other end. Three runs, three routes, one answer. The five-entry table right after it is
+`sFuncTable` from mystery_gift_server.c, named by what its code does rather than by position:
+0x08148DF0 is `movs r1,#4; str r1,[r0,#8]; movs r0,#0; bx lr`, which is Server_Init's
+`svr->funcId = FUNC_RUN; return SVR_RET_INIT`, and 0x08148DF8 is Server_Done returning SVR_RET_END =
+3 - both constants the ones this repo already used.
+
+`frlgsim/rom_map.py` holds the result with its evidence, and `tests/test_rom_map.py` checks it
+against the dumps. Nothing in it is inferred from the decomp's ENGLISH rev-10 build; a symbol that
+has not been read off the console does not belong in that file.
+
 ## Left
 
-1. **Calling into the ROM.** The build is identified (bs07: BPRF, software version 0x0A) and located
-   (bs08: 0x08148C74 is the instruction after the call in Client_RunBufferScript). The decomp's
-   `firered_switch` target is GAME_REVISION=10 but matches the ENGLISH rev-10 ROM, and the console
-   runs the French one, so its symbol map cannot be used unchecked. The decisive experiment is
-   read-only and costs one run: `memory-dump` around the anchor. The THUMB literal pool that
-   `Client_RunBufferScript` uses sits just after it and holds the addresses of `gSaveBlock2Ptr`,
-   `gSaveBlock1Ptr` and `gDecompressionBuffer` in the FRENCH build - real symbol addresses, and the
-   method for getting more. `sClientFuncs` nearby would hand over eight ROM function addresses at
-   once, every one of them nameable in the decomp.
+1. **Calling into the ROM.** Thirteen function addresses are known and the calling convention is
+   plain: our payload is ARM, the ROM is THUMB, so a call needs `bx` to `address | 1` and a way back.
+   What is missing is a function worth calling - the thirteen we have are the Mystery Gift state
+   machine itself, which we already drive from outside. The next ones to find are reachable the same
+   way: dump a caller, read its `bl` targets, name them by what they do.
 
 2. **Writing a live field rather than scratch.** `--write-unsafe` exists; what it needs is a reason
    and a field whose effect the player can check on the console's own screen.
