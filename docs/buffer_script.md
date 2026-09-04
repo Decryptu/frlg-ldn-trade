@@ -137,6 +137,17 @@ longest string in that window - "A WONDER CARD has been received", 31 characters
 [decomp:src/strings.c:1291]. Window 1 is 28 tiles by 4 [mystery_gift_menu.c:97,524] and the ROM
 itself prints two lines in it, so two lines were always fine; only the missing 0xFE was not.
 
+## bs02, bs03
+
+bs02 is the 40-60% join baseline, not us: the console joined, took 6.5 s to send its Session join
+(bs01 took 1.2 s), and left during RTT liveness before the RFU NI handshake, so it never reached the
+Mystery Gift stage at all. `acklag.py` reported 0 stalls - not the hold. Open item 3, one more data
+point.
+
+bs03 repeated bs01 exactly - `0xE5BBDF65 MATCHES 0xE5BBDF65` - so native code execution is
+reproduced and not a one-off, and it confirmed both fixes on hardware: the message printed on two
+lines as written, and the host's own success line printed instead of crashing.
+
 ## Left
 
 `CLI_RUN_BUFFER_SCRIPT` is the general case of every other opcode, so what is left is what to write,
