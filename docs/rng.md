@@ -312,6 +312,29 @@ rate a script that waits for a target state would run at - the design where the 
 instead of a human with a stopwatch - so it is the number that design needs. `lock=False` measures
 the unlocked case, one variable at a time.
 
+### The answer: exactly 2 turns per frame, settled
+
+| run | frames (exact) | turns (exact) | 2N + 2 |
+|---|---|---|---|
+| mev09 | 600 | 6002 -> no; **1,202** | 1202 |
+| mev10 | 3000 | **6,002** | 6002 |
+
+Two runs, five times apart in N, byte-identical scripts but for the `delay` operand. Both land on
+`2N + 2` to the turn. The competing model - a rate of 2.003333/frame, which fits mev09's single
+point just as well - predicts 6010 at N=3000 and is **refuted**.
+
+So the overworld consumes **exactly 2 turns per frame**, the same rate bs15 measured at the Mystery
+Gift link menu, and the constant +2 is one extra frame of consumption around the `delay` (2 turns),
+not a difference in rate. There is no clock anywhere in this: `lcg.distance` is exact arithmetic and
+the frame counts are what `delay` was told to wait.
+
+**This retires the last of the hand-timed numbers.** "Walking adds draws" (2.472/frame) and the
+"2.44 if the five minutes was really five minutes" reading were both measurement error in a
+stopwatch, exactly as suspected. The rate was 2 all along.
+
+**And it makes the countdown arithmetic exact**: the state n frames after a reading is
+`advance(S, 2n)`, with no estimated constant in it.
+
 Why the countdown then works, with numbers: the state at any future frame is `advance(S, 2n)`, ~1 in
 8192 is shiny, so a target arrives roughly every 8192 frames (~137 s). A miss costs **nothing** -
 unlike Emerald, where every attempt costs a reset and a new unknown seed - because the same NPC can
