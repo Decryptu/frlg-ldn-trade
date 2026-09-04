@@ -112,6 +112,48 @@ def move_word(move):
         f"move {move} is in neither MOVE group's value list, so IsECWordInvalid rejects it")
 
 
+def parse_word(spec):
+    """One Easy Chat word from a command line.
+
+    Accepts an English word name (`hello`), a language-safe id by concept (`species:55`,
+    `move:177`), a group/index pair (`FEELINGS/60`), or a raw number (`0x123c`). The last three
+    exist because the English names are only a guess outside the species and move groups, and a
+    phrase read off a real console arrives as ids.
+    """
+    text = str(spec).strip()
+    if not text:
+        return UNDEFINED
+    lowered = text.lower()
+    if lowered.startswith("species:"):
+        return species_word(int(text.split(":", 1)[1], 0))
+    if lowered.startswith("move:"):
+        return move_word(int(text.split(":", 1)[1], 0))
+    if "/" in text:
+        group_name, _, index = text.partition("/")
+        groups = {name: value for value, name in GROUP_NAMES.items()}
+        group = groups.get(group_name.upper().replace(" ", "_"))
+        if group is None:
+            raise ValueError(f"unknown Easy Chat group {group_name!r}")
+        return word(group, int(index, 0))
+    try:
+        return int(text, 0) & 0xFFFF
+    except ValueError:
+        pass
+    key = lowered.replace(" ", "_").replace("-", "_")
+    if key not in WORDS:
+        raise ValueError(f"unknown easy-chat word {spec!r}")
+    return WORDS[key]
+
+
+def parse_phrase(text, length=4):
+    """A comma-separated phrase -> `length` word ids."""
+    parts = [part for part in str(text).split(",")]
+    if len(parts) != length:
+        raise ValueError(
+            f"a questionnaire phrase is exactly {length} words, got {len(parts)}")
+    return tuple(parse_word(part) for part in parts)
+
+
 def is_language_safe(value):
     """True when the id names a species or a move, which every language prints correctly."""
     value = int(value) & 0xFFFF

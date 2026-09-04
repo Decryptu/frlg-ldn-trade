@@ -474,3 +474,33 @@ def test_the_phrase_read_off_the_console_gates_a_gift():
     server = mg_server.MysteryGiftServer(
         card, ram_script, questionnaire=easychat_french.GURVAN_QUESTIONNAIRE)
     assert _run_server(server, _game_data(flag_id=0)) == mg_server.SVR_MSG_NOTHING_SENT
+
+
+def test_the_cli_parses_a_phrase_in_every_form_it_accepts():
+    from frlgsim import easychat, easychat_french
+    import frlgmg_host
+    assert easychat.parse_phrase("species:55,FEELINGS/60,move:177,why") \
+        == easychat_french.GURVAN_QUESTIONNAIRE
+    assert easychat.parse_phrase("0x2a37,0x123c,0x24b1,0x1e25") \
+        == easychat_french.GURVAN_QUESTIONNAIRE
+
+    args = frlgmg_host.build_parser().parse_args(
+        ["--live", "--gift", "mystery-event-probe",
+         "--questionnaire", "species:55,FEELINGS/60,move:177,why"])
+    config = frlgmg_host.build_run_config(frlgmg_host.build_parser(), args)
+    assert config.payload.questionnaire == easychat_french.GURVAN_QUESTIONNAIRE
+    assert config.payload.build_distribution().is_gated
+
+
+def test_a_phrase_with_the_wrong_number_of_words_is_refused_at_the_cli():
+    from frlgsim import easychat
+    with pytest.raises(ValueError, match="exactly 4 words"):
+        easychat.parse_phrase("hello,friend")
+
+
+def test_news_cannot_be_gated_because_its_script_has_no_branch_for_it():
+    import frlgmg_host
+    parser = frlgmg_host.build_parser()
+    args = parser.parse_args(["--live", "--news", "--questionnaire", "hello,friend,trade,why"])
+    with pytest.raises(SystemExit):
+        frlgmg_host.build_run_config(parser, args)

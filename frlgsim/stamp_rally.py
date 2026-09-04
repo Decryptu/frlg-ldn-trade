@@ -47,6 +47,10 @@ class MysteryGiftDistribution:
     news: bytes | None = None
     # Bytecode for the second VM, run by CLI_RUN_MEVENT_SCRIPT [mystery_event.py].
     mevent: bytes | None = None
+    # Four Easy Chat word ids the console must be holding in its Poke Mart questionnaire before
+    # anything is sent [SVR_CHECK_QUESTIONNAIRE, mg_server.py], and what a wrong one reads.
+    questionnaire: tuple | None = None
+    denied_message: str | None = None
 
     def __post_init__(self):
         if self.news is not None:
@@ -109,6 +113,10 @@ class MysteryGiftDistribution:
     @property
     def has_mevent(self):
         return self.mevent is not None
+
+    @property
+    def is_gated(self):
+        return self.questionnaire is not None
 
 
 def build_stamp_rally_card(*, flag_id=STAMP_RALLY_FLAG_ID):

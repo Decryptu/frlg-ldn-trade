@@ -23,7 +23,7 @@ BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
-from frlgsim import (config as configmod, gift_artifact, gift_registry, host_cli,
+from frlgsim import (config as configmod, easychat, gift_artifact, gift_registry, host_cli,
                      trade_runtime, wonder_news)  # noqa: E402
 from frlgsim.host_mg_app import (  # noqa: E402
     MysteryGiftHostApplication, WonderNewsHostApplication)
@@ -67,6 +67,17 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         choices=wonder_news.news_choices(), metavar="NAME",
         help=wonder_news.format_news_help())
     gift_registry.add_flag_id_argument(parser)
+    parser.add_argument(
+        "--questionnaire", default=None, metavar="W1,W2,W3,W4",
+        help=("require the console to be holding this four-word Easy Chat phrase in its Poke Mart\n"
+              "questionnaire before anything is sent [SVR_CHECK_QUESTIONNAIRE]. Each word is an\n"
+              "English word name, `species:N`, `move:N`, `GROUP/INDEX`, or a raw id. Word ids are\n"
+              "per-language outside the species and move groups, so read the phrase off the target\n"
+              "console first: every session logs the four ids it is holding."))
+    parser.add_argument(
+        "--denied-message", default=None, metavar="TEXT",
+        help=("what a console that does not know the phrase reads (max 63 characters); "
+              "the default is 'That is not the phrase.'"))
     parser.add_argument(
         "--news-id", type=int, default=None, metavar="ID",
         help=("override the news id (1..65535). A console keeps news only when it differs from "
@@ -127,6 +138,10 @@ def build_run_config(parser, args):
     profile, ldn, role = host_cli.build_host_config(parser, args)
     try:
         if args.news is not None:
+            if args.questionnaire is not None:
+                parser.error(
+                    "--questionnaire gates a Wonder Card session; the News server script has no "
+                    "SVR_CHECK_QUESTIONNAIRE branch")
             if getattr(args, "_flag_id_explicit", False):
                 parser.error("--flag-id belongs to a Wonder Card; Wonder News has no flagId")
             payload = configmod.WonderNewsPayload(
@@ -134,8 +149,11 @@ def build_run_config(parser, args):
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")
+            phrase = (None if args.questionnaire is None
+                      else easychat.parse_phrase(args.questionnaire))
             payload = configmod.MysteryGiftPayload(
-                gift=args.gift, flag_id=gift_registry.resolve_flag_id(args))
+                gift=args.gift, flag_id=gift_registry.resolve_flag_id(args),
+                questionnaire=phrase, denied_message=args.denied_message)
         return configmod.MysteryGiftRunConfig(
             profile=profile, ldn=ldn, role=role,
             payload=payload, trust_pia=args.trust_pia,

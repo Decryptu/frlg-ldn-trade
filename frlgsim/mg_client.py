@@ -44,7 +44,8 @@ IDENT_NAMES = {v: k for k, v in vars(mg).items() if k.startswith("MG_LINKID_")}
 
 
 def build_link_game_data(link_player, *, version_code, flag_id=0, game_code=b"BPRE",
-                         software_version=0, max_stamps=0, card_metadata=b""):
+                         software_version=0, max_stamps=0, card_metadata=b"",
+                         questionnaire=(), easy_chat_profile=()):
     """[decomp:src/mystery_gift.c:337]; a 7-character name spills its 0xFF over playerTrainerId[0] natively
     and that is reproduced on purpose."""
     data = bytearray(mg_script.GAME_DATA_SIZE)
@@ -58,6 +59,14 @@ def build_link_game_data(link_player, *, version_code, flag_id=0, game_code=b"BP
         meta = bytes(card_metadata)[:36]
         data[mg_script.GD_OFF_CARD_METADATA:mg_script.GD_OFF_CARD_METADATA + len(meta)] = meta
     data[mg_script.GD_OFF_MAX_STAMPS] = max_stamps & 0xFF
+    # The four words the player typed at the Poke Mart clerk, and their battle profile; both travel
+    # in every session and neither is ever read back by the game [decomp:src/mystery_gift.c:361].
+    for index, value in enumerate(questionnaire[:4]):
+        off = mg_script.GD_OFF_QUESTIONNAIRE + 2 * index
+        data[off:off + 2] = (int(value) & 0xFFFF).to_bytes(2, "little")
+    for index, value in enumerate(easy_chat_profile[:mg_script.EASY_CHAT_BATTLE_WORDS_COUNT]):
+        off = mg_script.GD_OFF_EASY_CHAT + 2 * index
+        data[off:off + 2] = (int(value) & 0xFFFF).to_bytes(2, "little")
     tid = (link_player.trainer_id & 0xFFFFFFFF).to_bytes(4, "little")
     data[mg_script.GD_OFF_TRAINER_ID:mg_script.GD_OFF_TRAINER_ID + 4] = tid
     name = charmap.encode(link_player.name)[:7] + b"\xff"
@@ -91,6 +100,7 @@ class MysteryGiftClientEngine:
     def __init__(self, link_player=None, *, version="firered", language="english",
                  holding_flag_id=0, accept_replacement=True, yes_no_answer=True,
                  game_code=None, software_version=0, trust_pia=False,
+                 questionnaire=(), easy_chat_profile=(),
                  inter_block_gap=DEFAULT_INTER_BLOCK_GAP, log=lambda *a: None):
         self.lp = link_player or linkplayer.LinkPlayer(version=linkplayer.VERSION_FIRE_RED)
         self.mpid = 1
@@ -109,7 +119,8 @@ class MysteryGiftClientEngine:
             game_code = GAME_CODES.get((version, language), b"BPRE")
         self.game_data = build_link_game_data(
             self.lp, version_code=version_code, flag_id=holding_flag_id,
-            game_code=game_code, software_version=software_version)
+            game_code=game_code, software_version=software_version,
+            questionnaire=questionnaire, easy_chat_profile=easy_chat_profile)
         self.holding_flag_id = holding_flag_id
         # CLI_ASK_TOSS param is FALSE for YES (toss the old card) and TRUE for NO; the server gifts on FALSE.
         self.toss_param = 0 if accept_replacement else 1

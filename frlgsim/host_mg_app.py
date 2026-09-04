@@ -2,7 +2,7 @@
 and overrides only the build/startup-log/progress seams."""
 
 from . import (charmap, config as configmod, gift_registry, host_session,
-               ldntrace, mystery_event, mystery_gift_attempts, wonder_news)
+               easychat, ldntrace, mystery_event, mystery_gift_attempts, wonder_news)
 from .host_app import HostApplication
 from .host_beacon import build_wonder_card_app_data, build_wonder_news_app_data
 from .host_mystery_gift import (
@@ -122,6 +122,12 @@ class MysteryGiftHostApplication(HostApplication):
             self.info("The console runs it at the Mystery Gift menu and answers with the script's "
                       "own status in MG_LINKID_RESPONSE; watch for the "
                       "'Mystery Event script status' line below.")
+        if distribution is not None and distribution.is_gated:
+            self.info("QUESTIONNAIRE GATE: nothing is sent unless the console is already holding "
+                      + easychat.describe_words(distribution.questionnaire))
+            self.info("A console that is not gets our refusal message and keeps everything it has. "
+                      "Word ids are per-language outside the species and move groups, so the "
+                      "phrase must have been read off this console first.")
         if self.config.client_ready_idle_frames is not None:
             self.info("Mystery Gift timing override: "
                       f"client_ready_idle_frames={self.config.client_ready_idle_frames}")
@@ -169,6 +175,9 @@ class MysteryGiftHostApplication(HostApplication):
 
     def _success_message(self, result):
         distribution = getattr(self, "distribution", None)
+        if distribution is not None and distribution.is_gated:
+            return ("The console was holding the phrase, so the gift went out. A console that was "
+                    "not would have read the refusal message and kept everything it has.")
         if distribution is not None and distribution.has_mevent:
             status = self.session.activity.server.mevent_status
             return ("Mystery Event script ran on the console; it answered with status "

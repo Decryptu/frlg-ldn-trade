@@ -1,3 +1,4 @@
+import dataclasses
 import argparse
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -477,6 +478,10 @@ class TradeRunConfig:
 class MysteryGiftPayload:
     gift: str = wonder_card.GIFT_CELEBI
     flag_id: int | None = None
+    # A questionnaire phrase gates the whole session: the console must already hold these four Easy
+    # Chat word ids or nothing is sent [SVR_CHECK_QUESTIONNAIRE].
+    questionnaire: tuple | None = None
+    denied_message: str | None = None
 
     def __post_init__(self):
         choices = gift_registry.GIFT_REGISTRY.live_choices
@@ -497,8 +502,13 @@ class MysteryGiftPayload:
         return distribution.card, distribution.ram_script
 
     def build_distribution(self):
-        return gift_registry.GIFT_REGISTRY.build_distribution(
+        distribution = gift_registry.GIFT_REGISTRY.build_distribution(
             self.gift, flag_id=self.flag_id)
+        if self.questionnaire is None:
+            return distribution
+        return dataclasses.replace(
+            distribution, questionnaire=tuple(self.questionnaire),
+            denied_message=self.denied_message)
 
 
 @dataclass(frozen=True)

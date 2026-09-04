@@ -219,7 +219,12 @@ def test_all_three_clis_default_to_the_composed_fixed_level_65_cutscene():
         assert not {"--level", "--item", "--title", "--subtitle"} & options
     host_config = frlgmg_host.build_run_config(
         frlgmg_host.build_parser(), host_args)
-    assert [field.name for field in fields(host_config.payload)] == ["gift", "flag_id"]
+    # The payload names WHICH gift, never how it is built; anything shaping the card itself belongs
+    # in the composed definition. `questionnaire` and `denied_message` are session gating, not gift
+    # content, which is why they are allowed here [SVR_CHECK_QUESTIONNAIRE, mg_server.py].
+    assert [field.name for field in fields(host_config.payload)] == [
+        "gift", "flag_id", "questionnaire", "denied_message"]
+    assert host_config.payload.questionnaire is None
     card, script = host_config.payload.build()
     legacy_card, legacy_script = wonder_card.build_legendary_beast_cutscene_gift()
     assert card == legacy_card
