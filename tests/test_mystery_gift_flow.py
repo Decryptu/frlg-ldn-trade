@@ -290,10 +290,13 @@ class ConsoleClientModel:
     def __init__(self, *, flag_id=0, max_stamps=0, metadata_icon=0,
                  stamps=(), toss_answer=0, consume_latency=2,
                  saved_news=None, trainer_id=CONSOLE_TRAINER_ID,
-                 save_trainer_id=None):
+                 save_trainer_id=None, rom_stubs=None):
         self.lp = linkplayer.LinkPlayer(name="ASH", version=linkplayer.VERSION_FIRE_RED,
                                         player_id=1)
         self.toss_answer = toss_answer
+        # {address: bytes} placed in the emulated cartridge before a payload runs. Our ROM is a
+        # header and zeros, so a payload that CALLS a ROM function has nothing to land on.
+        self.rom_stubs = dict(rom_stubs or {})
         # Frames between a block completing in the RFU receive callback and
         # MGL_Receive getting around to consuming it. The exact interleaving of
         # RfuHandleReceiveCommand and the client task within one frame is not
@@ -502,7 +505,7 @@ class ConsoleClientModel:
         try:
             run = buffer_script.emulate_repeating(
                 payload, param=param, sav2=bytes(sav2), send_size=size, send_ident=ident,
-                max_calls=1200).final
+                memory=self.rom_stubs or None, max_calls=1200).final
         except buffer_script.BufferScriptError as exc:
             raise AssertionError(
                 f"the payload never returned 1: on the console the Mystery Gift menu hangs ({exc})"

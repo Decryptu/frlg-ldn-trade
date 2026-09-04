@@ -654,3 +654,95 @@ like data. Hitting it ends the run and says so, rather than hanging the menu.
 Reads only; writes nothing outside its own image and the two link fields. Proven on hardware
 bs18-bs36, eighteen runs, all first try. `docs/easy_chat_french.md` is what they read.
 
+
+## `create-mon` — a ROM call that takes EIGHT arguments (built, hardware run pending)
+
+`rng-trace` called `Random`: no arguments, a `u16` back, and the LCG's own recurrence to check it
+by. That proves the *mechanism* of a ROM call and nothing about passing anything to one.
+`CreateMon` is the other end of the range:
+
+```c
+void CreateMon(struct Pokemon *mon, u16 species, u8 level, u8 fixedIV,
+               u8 hasFixedPersonality, u32 fixedPersonality, u8 otIdType, u32 fixedOtId)
+```
+
+Four arguments in `r0..r3` and **four on the stack**, which no payload here had passed. The
+console's own prologue is what says where they go, and `asm/create-mon.s` is written against that
+disassembly rather than against a calling convention taken on trust — bs42's dump reads
+
+    08041150  push {r4,r5,r6,r7,lr}    ; sp -= 20
+    08041152  mov  r7, r8
+    08041154  push {r7}                ; sp -= 4
+    08041156  sub  sp, #28             ; sp -= 28, so entry sp is now sp + 52
+    0804115c  ldr  r4, [sp, #52]       -> entry sp +  0   hasFixedPersonality  (masked to u8)
+    0804115e  ldr  r7, [sp, #56]       -> entry sp +  4   fixedPersonality     (NOT masked: u32)
+    08041160  ldr  r5, [sp, #60]       -> entry sp +  8   otIdType             (masked to u8)
+    08041184  ldr  r0, [sp, #64]       -> entry sp + 12   fixedOtId            (u32)
+
+so the four go at `sp+0..sp+12` in whole words at the moment of the call. The callee does not pop
+them (`add sp,#28; pop {r3}; pop {r4-r7}; pop {r0}; bx r0`), so the payload takes the 16 bytes
+back itself — and *returning at all* is the proof that it did, because a payload that forgot would
+pop a garbage `lr`.
+
+### The destination is our own image
+
+`CreateMon` writes 100 bytes wherever it is pointed, and the only interesting address on the
+console is the player's real party — a live save. So the mon is **always built inside the 1024
+bytes we were copied into**, where nothing but the payload can be hurt, and read back out of
+there. There are 32 bytes of guard between the mon and the first instruction, so a struct bigger
+than the 100 the decomp declares still cannot land on an instruction.
+
+`--create-mon-destination ADDR` copies the finished 100 bytes onward afterwards. That is a plain
+byte copy we can see, rather than aiming a ROM function at a save block, and it needs
+`--write-unsafe` — the same deliberate override an out-of-scratch `save-write` takes.
+
+    ./scratchpad/run_mg_fast.sh bsNN --buffer-script create-mon \
+        --create-mon-species 151 --create-mon-level 30 --create-mon-iv 31 \
+        --create-mon-personality 0x3ADE0000 --version firered
+
+`--create-mon-call` defaults to `CreateMon | 1` from `rom_map.py`; `--create-mon-call 0` calls
+nothing at all and answers the zeroed buffer, which checks the send path with the ROM left out of
+it. The answer is a fixed 116 bytes — four header words then the 100-byte `struct Pokemon` — and
+the evidence line is `create-mon:`. `*param`, the 4-byte channel, comes back as the mon's first
+word, which for a real mon is its **personality**.
+
+### Why the answer is self-verifying
+
+A mon that decodes at all already agrees with two arguments: the 48-byte substruct region is
+encrypted with `personality ^ otId` and checksummed, so a valid checksum means those two words are
+the ones the ROM used. `check_create_mon` then checks species, level and the IVs out of the
+decrypted substructs, and `scratchpad/verify_create_mon.py` goes further and predicts the fields
+the ROM *derives* — exp from `gExperienceTables[growthRate][level]`, friendship and the ability
+slot from `gSpeciesInfo`, the initial moveset and its PP from the level-up learnset, and all six
+stats from `CalculateMonStats`. Thirteen predictions; bs39 read the table off the console
+byte-identical to the decomp's, so predicting from the decomp is sound for everything except text.
+
+    ./.venv/bin/python scratchpad/verify_create_mon.py scratchpad/bsNN_dump.bin \
+        --species 151 --level 30 --iv 31 --personality 0x3ADE0000
+
+**The nickname is deliberately not predicted.** `CreateBoxMon` fills it from `gSpeciesNames`
+[pokemon.c:1810], which is the FRENCH table on this cartridge. Whatever comes back is a *reading*
+of it — one species a run, by the same route the Easy Chat vocabulary was read.
+
+And with bs01's TID 57189 / SID 58811, `fixedPersonality` is the whole Gen 3 shiny check:
+`buffer_script.shiny_personality(57189, 58811)` is a value that makes the mon shiny for this
+console, which is possible only because the SECRET id is printed nowhere in the game and was read
+out of the save.
+
+### Proven offline
+
+The emulated cartridge is a header and zeros, so a payload that CALLS a ROM function has nothing
+to land on. Two THUMB stubs stand in for `CreateMon` at whatever address the payload was built to
+call, placed with `memory={address: stub}`, and each answers a different question:
+
+- `CREATE_MON_ARG_MODEL` writes `r0..r3` and the four stack arguments into the destination as
+  eight words, so the answer names each one. It pushes nothing, so `[sp,#0]` *is* the caller's
+  first stack argument — which is the whole point.
+- `create_mon_copy_model(source)` copies 100 bytes a caller prepared over the destination, so a
+  mon built in Python travels the whole path a real one would and the host's decode runs for real.
+
+Both are in `frlgsim/buffer_script.py` beside `_DEFAULT_ROM_HEADER`, the other model of the
+console that lives there. `./.venv/bin/python scratchpad/mg_client_harness.py --buffer-script
+create-mon` runs the whole Mystery Gift session with them.
+
+What the models do NOT model is the ROM's own arithmetic. That is what the hardware run is for.

@@ -25,7 +25,7 @@ if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
 from frlgsim import (buffer_script, config as configmod, easychat, gift_artifact,  # noqa: E402
-                     gift_registry, host_cli, trade_runtime, wonder_news)
+                     gift_registry, host_cli, rom_map, trade_runtime, wonder_news)
 from frlgsim.host_mg_app import (  # noqa: E402
     BufferScriptHostApplication, MysteryGiftHostApplication, WonderNewsHostApplication)
 from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
@@ -148,6 +148,44 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help=("with --buffer-script rng-trace: how many frames to sample, 1..%d"
               % buffer_script.TRACE_SAMPLE_CAPACITY))
     parser.add_argument(
+        "--create-mon-call", type=lambda v: int(v, 0), default=None, metavar="ADDR",
+        help=("with --buffer-script create-mon: the ROM function to call with EIGHT arguments, a "
+              "THUMB pointer. The default is CreateMon at 0x%08X, read off this console in bs42; "
+              "0 calls nothing, which checks the send path with the ROM left out"
+              % rom_map.thumb(rom_map.CREATE_MON)))
+    parser.add_argument(
+        "--create-mon-species", type=lambda v: int(v, 0), default=1, metavar="N",
+        help=("with --buffer-script create-mon: the species number, 1..%d (internal numbering, "
+              "not the National Dex)" % buffer_script.MAX_SPECIES))
+    parser.add_argument(
+        "--create-mon-level", type=lambda v: int(v, 0), default=5, metavar="N",
+        help="with --buffer-script create-mon: the level, 1..%d" % buffer_script.MAX_LEVEL)
+    parser.add_argument(
+        "--create-mon-iv", type=lambda v: int(v, 0), default=buffer_script.USE_RANDOM_IVS,
+        metavar="N",
+        help=("with --buffer-script create-mon: every IV set to this, 0..31. %d or more rolls "
+              "them instead [USE_RANDOM_IVS], which makes the run non-deterministic"
+              % buffer_script.USE_RANDOM_IVS))
+    parser.add_argument(
+        "--create-mon-personality", type=lambda v: int(v, 0), default=None, metavar="VALUE",
+        help=("with --buffer-script create-mon: the 32-bit personality value, which fixes the "
+              "nature, the gender, the ability slot and - with the trainer ids bs01 read - "
+              "whether the mon is SHINY. Omitted, the console rolls one with Random32"))
+    parser.add_argument(
+        "--create-mon-ot-id-type", type=int, default=buffer_script.OT_ID_PLAYER_ID,
+        choices=buffer_script.OT_ID_TYPES,
+        help=("with --buffer-script create-mon: %d = the OT is the player and the id comes off "
+              "the real save, %d = use --create-mon-ot-id, %d = rolled until not shiny"
+              % buffer_script.OT_ID_TYPES))
+    parser.add_argument(
+        "--create-mon-ot-id", type=lambda v: int(v, 0), default=0, metavar="VALUE",
+        help="with --buffer-script create-mon --create-mon-ot-id-type 1: the OT id to use")
+    parser.add_argument(
+        "--create-mon-destination", type=lambda v: int(v, 0), default=0, metavar="ADDR",
+        help=("with --buffer-script create-mon: copy the finished 100 bytes to this address in "
+              "the console's memory. The mon is BUILT in our own image either way, so without "
+              "this nothing on the console is written at all. Needs --write-unsafe"))
+    parser.add_argument(
         "--write-text", default=None, metavar="TEXT",
         help=("with --buffer-script save-write: ASCII to write into the save block at "
               "--dump-offset. The same region is read back in the same run, so the answer is the "
@@ -261,9 +299,17 @@ def build_run_config(parser, args):
                     write_data = bytes.fromhex(args.write_hex.replace(" ", ""))
                 except ValueError:
                     parser.error("--write-hex takes hex digits")
-            if (write_data is not None or args.write_unsafe) \
-                    and args.buffer_script != buffer_script.SAVE_WRITE:
+            if write_data is not None and args.buffer_script != buffer_script.SAVE_WRITE:
                 parser.error(f"--write-* belongs to --buffer-script {buffer_script.SAVE_WRITE}")
+            if args.write_unsafe and args.buffer_script not in (
+                    buffer_script.SAVE_WRITE, buffer_script.CREATE_MON):
+                parser.error(
+                    f"--write-unsafe belongs to --buffer-script {buffer_script.SAVE_WRITE} and "
+                    f"{buffer_script.CREATE_MON}, the two that write the console's memory")
+            if args.buffer_script != buffer_script.CREATE_MON \
+                    and (args.create_mon_call is not None or args.create_mon_destination):
+                parser.error(
+                    f"--create-mon-* belongs to --buffer-script {buffer_script.CREATE_MON}")
             if args.buffer_script != buffer_script.MEMORY_SCAN and args.scan_word is not None:
                 parser.error(f"--scan-* belongs to --buffer-script {buffer_script.MEMORY_SCAN}")
             if args.buffer_script != buffer_script.RNG_TRACE \
@@ -284,7 +330,15 @@ def build_run_config(parser, args):
                 trace_address=args.trace_address, trace_call=args.trace_call,
                 trace_samples=args.trace_samples,
                 gather_address=args.gather_address, gather_count=args.gather_count,
-                gather_stride=args.gather_stride, gather_maxlen=args.gather_maxlen)
+                gather_stride=args.gather_stride, gather_maxlen=args.gather_maxlen,
+                create_mon_call=args.create_mon_call,
+                create_mon_species=args.create_mon_species,
+                create_mon_level=args.create_mon_level,
+                create_mon_fixed_iv=args.create_mon_iv,
+                create_mon_personality=args.create_mon_personality,
+                create_mon_ot_id_type=args.create_mon_ot_id_type,
+                create_mon_ot_id=args.create_mon_ot_id,
+                create_mon_destination=args.create_mon_destination)
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")

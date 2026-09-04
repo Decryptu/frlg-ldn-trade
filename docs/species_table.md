@@ -117,9 +117,11 @@ line, and identified by two constants the decomp fixes independently — `SetMon
 `CreateMon` takes eight arguments; the first four arrive in `r0..r3` and the rest on the stack.
 `fixedPersonality` is the one that matters — it is the value the shiny check runs on.
 
-## What is not done
+## Calling it
 
-Calling it. The mechanism is proven (bs15 called `Random` and checked the arithmetic), but
-`CreateMon` writes a 100-byte `struct Pokemon` somewhere, and the only interesting destination is
-the player's real party. That is a write to a live save, not a read, and it belongs behind the same
-deliberate guard as `--write-unsafe`.
+The payload exists: `asm/create-mon.s`, `--buffer-script create-mon`, written against the prologue
+above rather than against a calling convention taken on trust, and proven offline against two
+models of the callee. It answers the destination problem by not having one — the mon is built
+inside the payload's own 1024 bytes, where nothing but the payload can be hurt, and read back from
+there; `--create-mon-destination` copies it onward afterwards and needs `--write-unsafe`.
+`docs/buffer_script.md` has the whole of it. What is left is the hardware run.

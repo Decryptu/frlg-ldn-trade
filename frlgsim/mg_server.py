@@ -612,6 +612,11 @@ class MysteryGiftServer:
             raise MysteryGiftServerError(
                 f"a string gather answers with exactly {buffer_script.GATHER_ANSWER_SIZE} bytes, "
                 f"got {self.buffer_dump_size}")
+        if self.buffer_decode == buffer_script.CREATE_MON \
+                and self.buffer_dump_size != buffer_script.CREATE_MON_ANSWER_SIZE:
+            raise MysteryGiftServerError(
+                f"create-mon answers with exactly {buffer_script.CREATE_MON_ANSWER_SIZE} bytes, "
+                f"got {self.buffer_dump_size}")
         if self.buffer_decode == buffer_script.RNG_TRACE:
             asked = buffer_script.trace_parameters(self.buffer_code)
             if self.buffer_dump_size != buffer_script.trace_answer_size(asked["samples"]):
@@ -938,6 +943,14 @@ class MysteryGiftServer:
                 self.info(f"  {line}")
             trace = buffer_script.read_rng_trace(self.buffer_dump)
             self.trace.append(("buffer_trace", trace["taken"], trace["address"]))
+            return
+        if self.buffer_decode == buffer_script.CREATE_MON:
+            asked = buffer_script.create_mon_parameters(self.buffer_code)
+            for line in buffer_script.describe_create_mon(self.buffer_dump, asked):
+                self.info(f"  {line}")
+            created = buffer_script.read_create_mon(self.buffer_dump)
+            self.trace.append(("buffer_create_mon", created["built_at"],
+                               created["destination"]))
             return
         if self.buffer_decode == buffer_script.STRING_GATHER:
             gathered = buffer_script.read_gather(self.buffer_dump)

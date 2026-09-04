@@ -5,7 +5,7 @@ from pathlib import Path
 import tomllib
 from typing import Any, Mapping
 
-from . import (beacon, buffer_script, charmap, gift_registry, linkplayer, ni, stamp_rally,
+from . import (beacon, buffer_script, charmap, gift_registry, linkplayer, ni, rom_map, stamp_rally,
                uroom_chat, wonder_card, wonder_news)
 
 
@@ -551,6 +551,18 @@ class BufferScriptPayload:
     gather_count: int = 1
     gather_stride: int = 12
     gather_maxlen: int = buffer_script.GATHER_DEFAULT_MAXLEN
+    # create-mon: the eight arguments CreateMon takes, and where the finished 100 bytes go. The mon
+    # is always BUILT inside the payload's own image; `create_mon_destination` copies it onward,
+    # which is a write to the console's live memory and so needs write_unsafe, exactly as an
+    # out-of-scratch save-write does.
+    create_mon_call: int | None = None
+    create_mon_species: int = 1
+    create_mon_level: int = 5
+    create_mon_fixed_iv: int = buffer_script.USE_RANDOM_IVS
+    create_mon_personality: int | None = None
+    create_mon_ot_id_type: int = buffer_script.OT_ID_PLAYER_ID
+    create_mon_ot_id: int = 0
+    create_mon_destination: int = 0
     # Where to write the bytes that come back. A dump whose contents only ever reached a log line
     # is a run spent for 16 bytes of head.
     dump_file: str | None = None
@@ -611,6 +623,17 @@ class BufferScriptPayload:
         elif self.gather_address is not None:
             raise ValueError(
                 f"an array of pointers is only meaningful with {buffer_script.STRING_GATHER}")
+        if self.script == buffer_script.CREATE_MON:
+            object.__setattr__(self, "dump_size", buffer_script.CREATE_MON_ANSWER_SIZE)
+            if self.create_mon_destination and not self.write_unsafe:
+                raise ValueError(
+                    "copying the finished mon to 0x%08X writes the console's live memory; that "
+                    "needs --write-unsafe, the same deliberate override an out-of-scratch "
+                    "save-write takes" % self.create_mon_destination)
+        elif self.create_mon_call is not None or self.create_mon_destination:
+            raise ValueError(
+                f"a function to call with eight arguments is only meaningful with "
+                f"{buffer_script.CREATE_MON}")
         if self.script == buffer_script.ANCHORS:
             # It reports a fixed set of words; --dump-size means nothing to it.
             object.__setattr__(self, "dump_size", buffer_script.ANCHORS_SIZE)
@@ -623,7 +646,7 @@ class BufferScriptPayload:
         return self.script in (buffer_script.MEMORY_DUMP, buffer_script.SAVE_DUMP,
                                buffer_script.ANCHORS, buffer_script.SAVE_WRITE,
                                buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE,
-                               buffer_script.STRING_GATHER)
+                               buffer_script.STRING_GATHER, buffer_script.CREATE_MON)
 
     @property
     def spec(self):
@@ -646,6 +669,17 @@ class BufferScriptPayload:
             return buffer_script.build_string_gather(
                 self.gather_address, self.gather_count, self.gather_stride,
                 maxlen=self.gather_maxlen)
+        if self.script == buffer_script.CREATE_MON:
+            has_fixed = self.create_mon_personality is not None
+            return buffer_script.build_create_mon(
+                rom_map.thumb(rom_map.CREATE_MON) if self.create_mon_call is None
+                else self.create_mon_call,
+                self.create_mon_species, self.create_mon_level,
+                fixed_iv=self.create_mon_fixed_iv,
+                has_fixed_personality=int(has_fixed),
+                fixed_personality=self.create_mon_personality if has_fixed else 0,
+                ot_id_type=self.create_mon_ot_id_type, fixed_ot_id=self.create_mon_ot_id,
+                destination=self.create_mon_destination)
         if self.script == buffer_script.SAVE_WRITE:
             return buffer_script.build_save_write(
                 self.write_data, self.dump_block, self.dump_offset,
@@ -658,7 +692,8 @@ class BufferScriptPayload:
             buffer_dump_size=self.dump_size if self.is_dump else None,
             buffer_decode=(self.script if self.script in
                            (buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE,
-                            buffer_script.STRING_GATHER) else None))
+                            buffer_script.STRING_GATHER, buffer_script.CREATE_MON)
+                           else None))
 
 
 @dataclass(frozen=True)

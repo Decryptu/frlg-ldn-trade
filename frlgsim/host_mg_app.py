@@ -309,6 +309,24 @@ class BufferScriptHostApplication(MysteryGiftHostApplication):
                 "strings only. A string longer than "
                 f"{asked['maxlen']} bytes means the pointer was not one. The evidence line is "
                 "'gather:'.")
+        if payload.script == buffer_script.CREATE_MON:
+            asked = buffer_script.create_mon_parameters(code)
+            self.info(
+                (f"CALLING 0x{asked['function']:08X} with EIGHT arguments - four in r0..r3 and "
+                 "FOUR ON THE STACK, which no payload here has passed before - to build species "
+                 f"{asked['species']} at level {asked['level']}"
+                 if asked["function"] else
+                 "Calling nothing: this checks the send path and the answer's shape with the ROM "
+                 "left out of it")
+                + (f", IVs all {asked['fixed_iv']}"
+                   if asked["fixed_iv"] < buffer_script.USE_RANDOM_IVS else ", IVs rolled")
+                + (f", personality 0x{asked['fixed_personality']:08X}"
+                   if asked["has_fixed_personality"] else ", personality rolled")
+                + ". The 100 bytes are built INSIDE OUR OWN IMAGE"
+                + (f" and then copied to 0x{asked['destination']:08X}, which WRITES THE CONSOLE'S "
+                   "LIVE MEMORY" if asked["destination"] else
+                   ", so nothing on the console is written")
+                + ". The evidence line is 'create-mon:'.")
         if payload.script == buffer_script.RNG_TRACE:
             asked = buffer_script.trace_parameters(code)
             self.info(

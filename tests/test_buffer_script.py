@@ -1298,3 +1298,308 @@ def test_the_cli_refuses_a_gather_without_an_array_and_an_array_without_a_gather
         _run_config(["--buffer-script", "string-gather"])
     with pytest.raises(SystemExit):
         _run_config(["--buffer-script", "save-dump", "--gather-address", "0x083DE528"])
+
+
+# --- create-mon: a ROM call that takes EIGHT arguments -------------------------------------------
+# bs15 called Random - no arguments, a u16 back. CreateMon is the other end of the range: four
+# arguments in r0..r3 and FOUR ON THE STACK. The console's own prologue [bs42's dump] is what says
+# where they go, and CREATE_MON_ARG_MODEL is a THUMB stub that reads them back out from exactly
+# there, so these tests check the payload against the disassembly rather than against itself.
+
+CREATE_MON_ADDRESS = rom_map.thumb(rom_map.CREATE_MON)
+GURVAN_OT_ID = 0xE5BBDF65               # bs01: TID 57189, SID 58811
+
+
+def _create_mon_args(code, **kwargs):
+    """-> the eight arguments as the callee saw them, by running the payload against the model."""
+    run = buffer_script.emulate(
+        code, memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL}, **kwargs)
+    result = buffer_script.read_create_mon(run.pending_send)
+    words = [int.from_bytes(result["mon"][i:i + 4], "little") for i in range(0, 32, 4)]
+    return run, result, dict(zip(buffer_script.CREATE_MON_ARG_FIELDS, words))
+
+
+def _valid_mon(species=151, level=30, ivs=31, personality=0x3ADE0000, ot_id=GURVAN_OT_ID,
+               nickname="MEW", ot_name="GURVAN"):
+    """100 bytes that decode as a struct Pokemon, built the way the ROM would have left them.
+
+    Not a model of CreateMon - a fixture. What it is for is the DECODE: a mon that travels the
+    whole path proves that what comes off the console can be read as one.
+    """
+    from frlgsim import charmap, mon as monlib, stats
+    canon = bytearray(monlib.PARTY_MON_SIZE)
+    canon[0:4] = personality.to_bytes(4, "little")
+    canon[4:8] = ot_id.to_bytes(4, "little")
+    canon[8:18] = charmap.encode(nickname, width=10)
+    canon[18] = 2                                   # language
+    canon[20:27] = charmap.encode(ot_name, width=7)
+    growth = bytearray(12)
+    growth[0:2] = species.to_bytes(2, "little")
+    exp = next(e for e in range(0, 1_700_000, 1)
+               if stats.level_from_exp(species, e) == level)
+    growth[4:8] = exp.to_bytes(4, "little")
+    growth[9] = 70                                  # friendship
+    attacks = bytearray(12)
+    attacks[0:2] = (1).to_bytes(2, "little")        # POUND, so the moves list is not all zero
+    attacks[8] = 35
+    misc = bytearray(12)
+    iv_word = 0
+    for i in range(6):
+        iv_word |= (ivs & 31) << (5 * i)
+    misc[4:8] = iv_word.to_bytes(4, "little")
+    canon[32:44], canon[44:56] = growth, attacks
+    canon[56:68], canon[68:80] = bytearray(12), misc
+    canon[28:30] = (sum(int.from_bytes(canon[32 + i * 2:34 + i * 2], "little")
+                        for i in range(24)) & 0xFFFF).to_bytes(2, "little")
+    built = monlib.Mon.from_pk3(bytes(canon))
+    assert built.checksum_ok, "the fixture itself does not checksum"
+    return built.party_bytes()
+
+
+def test_the_create_mon_operands_are_where_we_patch_them():
+    code = buffer_script.build_create_mon(
+        CREATE_MON_ADDRESS, species=151, level=30, fixed_iv=31,
+        has_fixed_personality=1, fixed_personality=0x3ADE0000,
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID,
+        destination=0)
+    assert buffer_script.create_mon_parameters(code) == {
+        "function": CREATE_MON_ADDRESS, "destination": 0, "species": 151, "level": 30,
+        "fixed_iv": 31, "has_fixed_personality": 1, "fixed_personality": 0x3ADE0000,
+        "ot_id_type": buffer_script.OT_ID_PRESET, "fixed_ot_id": GURVAN_OT_ID}
+
+
+@needs_unicorn
+def test_all_eight_arguments_arrive_where_the_console_s_prologue_reads_them():
+    """CreateMon pushes five registers, then r8, then subtracts 28, and reads its stack arguments
+    at [sp,#52], [sp,#56], [sp,#60] and [sp,#64] - entry sp + 0, 4, 8 and 12 [bs42]. The model
+    reads them from exactly those four words, so agreement here is agreement with the console."""
+    code = buffer_script.build_create_mon(
+        CREATE_MON_ADDRESS, species=151, level=30, fixed_iv=31,
+        has_fixed_personality=1, fixed_personality=0x3ADE0000,
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID)
+
+    run, result, args = _create_mon_args(code)
+
+    assert args["species"] == 151 and args["level"] == 30 and args["fixedIV"] == 31
+    assert args["hasFixedPersonality"] == 1
+    assert args["fixedPersonality"] == 0x3ADE0000
+    assert args["otIdType"] == buffer_script.OT_ID_PRESET
+    assert args["fixedOtId"] == GURVAN_OT_ID
+    # r0 is the mon, and it is inside our own image at the offset the source fixes.
+    assert args["mon"] == result["built_at"] == (
+        buffer_script.GDECOMPRESSION_BUFFER + buffer_script.CREATE_MON_MON_OFFSET)
+    # Returning at all is the proof that the 16 bytes of stack arguments were taken back: the
+    # callee does not pop them [bs42: add sp,#28; pop {r3}; pop {r4-r7}; pop {r0}; bx r0], so a
+    # payload that forgot would pop a garbage lr and never reach _RETURN_ADDRESS.
+    assert run.returned == buffer_script.BUFFER_SCRIPT_DONE
+    assert run.client.send_size == buffer_script.CREATE_MON_ANSWER_SIZE == 116
+
+
+@needs_unicorn
+def test_the_call_is_made_in_one_frame_and_the_answer_is_a_fixed_size():
+    code = buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=25, level=5)
+    repeated = buffer_script.emulate_repeating(
+        code, memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
+
+    assert repeated.calls == 1
+    assert buffer_script.read_create_mon(repeated.final.pending_send)["calls"] == 1
+    assert len(repeated.final.pending_send) == buffer_script.CREATE_MON_ANSWER_SIZE
+
+
+@needs_unicorn
+def test_with_no_function_nothing_is_called_and_the_send_is_still_repointed():
+    """The whole payload with the ROM left out of it: what it checks is the send path and the
+    shape of the answer, which is worth one run on a console whose ROM we have not read."""
+    code = buffer_script.build_create_mon(0, species=25, level=5)
+
+    run = buffer_script.emulate(code)
+    result = buffer_script.read_create_mon(run.pending_send)
+
+    assert result["function"] == 0
+    assert result["mon"] == b"\x00" * buffer_script.PARTY_MON_SIZE
+    assert run.client.send_repointed and run.client.send_size == 116
+
+
+def test_the_mon_is_built_inside_our_own_image_and_cannot_reach_the_code():
+    """CreateMon writes 100 bytes wherever it is pointed, and it is pointed at our own image. The
+    distance from the mon to the first instruction is read out of the payload's OWN opening branch
+    rather than assumed, so this fails if the guard is ever assembled away."""
+    code = buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=25, level=5)
+
+    branch = int.from_bytes(code[:4], "little")
+    assert branch >> 24 == 0xEA, "the payload does not open with an unconditional ARM branch"
+    code_starts = 8 + (branch & 0xFFFFFF) * 4               # pc reads as the instruction + 8
+    guard_start = buffer_script.CREATE_MON_MON_OFFSET + buffer_script.PARTY_MON_SIZE
+
+    assert code_starts - guard_start == 32
+    assert code[guard_start:code_starts] == b"\x00" * 32
+
+
+@needs_unicorn
+def test_the_destination_copy_writes_exactly_the_hundred_bytes_and_nothing_else():
+    destination = buffer_script.SAV1_ADDRESS + 0x38          # where playerParty[0] lives
+    code = buffer_script.build_create_mon(
+        CREATE_MON_ADDRESS, species=25, level=5, destination=destination)
+
+    run = buffer_script.emulate(
+        code, sav1=b"\x11" * 600,
+        memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
+    result = buffer_script.read_create_mon(run.pending_send)
+
+    assert result["destination"] == destination
+    assert run.sav1[0x38:0x38 + 100] == result["mon"]
+    assert run.sav1[:0x38] == b"\x11" * 0x38
+    assert run.sav1[0x38 + 100:] == b"\x11" * (600 - 0x38 - 100)
+
+
+@needs_unicorn
+def test_the_answer_decodes_as_a_struct_pokemon_and_every_argument_is_checked():
+    """The other half: what comes back has to be readable as a mon, and the check has to be able
+    to say WHICH argument disagreed. The copy model puts a real mon at the destination."""
+    template = 0x08300000
+    mon = _valid_mon(species=151, level=30, ivs=31, personality=0x3ADE0000, ot_id=GURVAN_OT_ID)
+    code = buffer_script.build_create_mon(
+        CREATE_MON_ADDRESS, species=151, level=30, fixed_iv=31,
+        has_fixed_personality=1, fixed_personality=0x3ADE0000,
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID)
+
+    run = buffer_script.emulate(code, memory={
+        rom_map.CREATE_MON: buffer_script.create_mon_copy_model(template), template: mon})
+    result = buffer_script.read_create_mon(run.pending_send)
+
+    assert result["mon"] == mon
+    assert buffer_script.create_mon_ivs(result["mon"]) == [31] * 6
+    lines = buffer_script.check_create_mon(
+        result["mon"], buffer_script.create_mon_parameters(code))
+    assert not any("MISMATCH" in line for line in lines), lines
+    assert any("checksum: VALID" in line for line in lines)
+    described = buffer_script.describe_create_mon(
+        run.pending_send, buffer_script.create_mon_parameters(code))
+    assert any("SHINY" in line for line in described), described
+
+
+@needs_unicorn
+def test_the_check_names_the_argument_that_disagreed():
+    mon = _valid_mon(species=151, level=30, ivs=31)
+    asked = buffer_script.create_mon_parameters(
+        buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=25, level=30, fixed_iv=31,
+                                       has_fixed_personality=1, fixed_personality=0x3ADE0000))
+
+    lines = buffer_script.check_create_mon(mon, asked)
+
+    assert any(line.startswith("species: asked 25, got 151") and "MISMATCH" in line
+               for line in lines), lines
+    assert not any(line.startswith("level") and "MISMATCH" in line for line in lines)
+
+
+def test_a_shiny_personality_is_shiny_for_the_trainer_it_was_aimed_at():
+    """GURVAN's SECRET id is what makes this possible at all: it is printed nowhere in the game
+    and carried by no link message, and bs01 read it out of the save [rom_map.py]."""
+    personality = buffer_script.shiny_personality(57189, 58811)
+
+    assert buffer_script.is_shiny(GURVAN_OT_ID, personality)
+    assert buffer_script.shiny_value(GURVAN_OT_ID, personality) == 0
+    assert not buffer_script.is_shiny(GURVAN_OT_ID, personality ^ 0x1000)
+
+
+def test_create_mon_refuses_arguments_the_console_would_fault_on():
+    for kwargs, match in (
+            ({"species": 0}, "species must be"),
+            ({"species": 412}, "species must be"),
+            ({"level": 0}, "level must be"),
+            ({"level": 101}, "level must be"),
+            ({"fixed_iv": 256}, "fixedIV is a u8"),
+            ({"ot_id_type": 3}, "otIdType is"),
+            ({"destination": 0x08041150}, "read-only"),
+            ({"destination": 0x01000000}, "not somewhere")):
+        args = {"species": 25, "level": 5}
+        args.update(kwargs)
+        with pytest.raises(buffer_script.BufferScriptError, match=match):
+            buffer_script.build_create_mon(CREATE_MON_ADDRESS, **args)
+
+
+def test_create_mon_refuses_an_arm_pointer_and_an_address_outside_the_cartridge():
+    with pytest.raises(buffer_script.BufferScriptError, match="ARM pointer"):
+        buffer_script.build_create_mon(rom_map.CREATE_MON, species=25, level=5)
+    with pytest.raises(buffer_script.BufferScriptError, match="not in the cartridge"):
+        buffer_script.build_create_mon(0x02000001, species=25, level=5)
+
+
+@needs_unicorn
+def test_end_to_end_the_console_calls_create_mon_and_sends_the_mon_back():
+    template = 0x08300000
+    mon = _valid_mon(species=151, level=30, ivs=31, personality=0x3ADE0000, ot_id=GURVAN_OT_ID)
+    console = ConsoleClientModel(flag_id=0, rom_stubs={
+        rom_map.CREATE_MON: buffer_script.create_mon_copy_model(template), template: mon})
+    code = buffer_script.build_create_mon(
+        CREATE_MON_ADDRESS, species=151, level=30, fixed_iv=31,
+        has_fixed_personality=1, fixed_personality=0x3ADE0000,
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID)
+    distribution = stamp_rally.MysteryGiftDistribution(
+        card=None, ram_script=None, buffer_code=code,
+        buffer_dump_size=buffer_script.CREATE_MON_ANSWER_SIZE,
+        buffer_decode=buffer_script.CREATE_MON)
+
+    engine, _frames = _drive(console, distribution=distribution)
+
+    assert engine.server.buffer_matched is True
+    result = buffer_script.read_create_mon(engine.server.buffer_dump)
+    assert result["mon"] == mon
+    assert result["destination"] == 0
+    assert console.result == mg_script.CLI_MSG_BUFFER_SUCCESS
+
+
+def test_the_server_refuses_a_create_mon_whose_answer_is_not_the_size_one_answers():
+    with pytest.raises(mg_server.MysteryGiftServerError, match="create-mon answers with"):
+        mg_server.MysteryGiftServer(
+            None, None,
+            buffer_code=buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=25, level=5),
+            buffer_dump_size=1024, buffer_decode=buffer_script.CREATE_MON)
+
+
+def test_the_cli_builds_a_create_mon_and_defaults_the_call_to_the_address_bs42_read():
+    run = _run_config(["--buffer-script", "create-mon", "--create-mon-species", "151",
+                       "--create-mon-level", "30", "--create-mon-iv", "31",
+                       "--create-mon-personality", "0x3ADE0000"])
+    distribution = run.payload.build_distribution()
+
+    assert distribution.buffer_decode == buffer_script.CREATE_MON
+    assert distribution.buffer_dump_size == buffer_script.CREATE_MON_ANSWER_SIZE == 116
+    asked = buffer_script.create_mon_parameters(distribution.buffer_code)
+    assert asked["function"] == CREATE_MON_ADDRESS
+    assert asked["species"] == 151 and asked["level"] == 30 and asked["fixed_iv"] == 31
+    assert asked["has_fixed_personality"] == 1 and asked["fixed_personality"] == 0x3ADE0000
+
+
+def test_the_cli_leaves_the_personality_to_the_console_when_it_is_not_given():
+    run = _run_config(["--buffer-script", "create-mon", "--create-mon-species", "25"])
+    asked = buffer_script.create_mon_parameters(run.payload.build_distribution().buffer_code)
+
+    assert asked["has_fixed_personality"] == 0 and asked["fixed_personality"] == 0
+
+
+def test_the_cli_refuses_a_live_write_without_the_deliberate_override():
+    with pytest.raises((ValueError, SystemExit)):
+        _run_config(["--buffer-script", "create-mon", "--create-mon-destination", "0x02024598"])
+    run = _run_config(["--buffer-script", "create-mon", "--create-mon-destination", "0x02024598",
+                       "--write-unsafe"])
+    asked = buffer_script.create_mon_parameters(run.payload.build_distribution().buffer_code)
+    assert asked["destination"] == 0x02024598
+
+
+def test_the_cli_refuses_create_mon_flags_on_another_payload():
+    with pytest.raises(SystemExit):
+        _run_config(["--buffer-script", "save-dump", "--create-mon-call", "0x08041151"])
+    with pytest.raises(SystemExit):
+        _run_config(["--buffer-script", "save-dump", "--create-mon-destination", "0x02024598"])
+
+
+def test_a_built_create_mon_and_gather_are_still_named_by_their_own_bytes():
+    """The host logs `describe(code)` before a run. A payload whose operands are not in
+    PATCHED_SPANS reads back as 'unknown buffer script', which is what string-gather did."""
+    assert buffer_script.describe(
+        buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=151, level=30, fixed_iv=31,
+                                       fixed_personality=0x3ADE0000, destination=0x02024598)
+    ).startswith("create-mon")
+    assert buffer_script.describe(
+        buffer_script.build_string_gather(0x083E0D54, 69)).startswith("string-gather")

@@ -550,6 +550,256 @@ def describe_rng_trace(dump):
     return lines
 
 
+# --- create-mon: a ROM call that takes EIGHT arguments -------------------------------------------
+# bs15 called Random: no arguments, a u16 back. CreateMon [0x08041150, bs42] is the other end of the
+# range - four arguments in r0..r3 and four on the stack, in whole words, at the moment of the call:
+#
+#   void CreateMon(struct Pokemon *mon, u16 species, u8 level, u8 fixedIV,
+#                  u8 hasFixedPersonality, u32 fixedPersonality, u8 otIdType, u32 fixedOtId)
+#
+# The console's own prologue is the evidence for where they go: it pushes five registers, then r8,
+# then subtracts 28, and reads its stack arguments at [sp,#52], [sp,#56], [sp,#60] and [sp,#64],
+# which are entry sp + 0, 4, 8 and 12 [bs42's dump, disassembled].
+#
+# THE MON IS ALWAYS BUILT INSIDE OUR OWN 1024 BYTES, where nothing but the payload can be hurt, and
+# read back from there. `destination` copies the finished 100 bytes on afterwards; it is a live-save
+# write when it names the party, so it is guarded the way build_save_write's offsets are.
+CREATE_MON = "create-mon"
+CREATE_MON_FUNCTION_OFFSET = 0x04
+CREATE_MON_DESTINATION_OFFSET = 0x08
+CREATE_MON_SPECIES_OFFSET = 0x0C
+CREATE_MON_LEVEL_OFFSET = 0x10
+CREATE_MON_FIXED_IV_OFFSET = 0x14
+CREATE_MON_HAS_FIXED_PERSONALITY_OFFSET = 0x18
+CREATE_MON_FIXED_PERSONALITY_OFFSET = 0x1C
+CREATE_MON_OT_ID_TYPE_OFFSET = 0x20
+CREATE_MON_FIXED_OT_ID_OFFSET = 0x24
+CREATE_MON_RESULT_OFFSET = 0x28
+CREATE_MON_MON_OFFSET = 0x38
+# struct Pokemon [decomp:include/pokemon.h]: an 80-byte BoxPokemon and 20 bytes of party data.
+PARTY_MON_SIZE = 100
+CREATE_MON_HEADER_SIZE = 16
+CREATE_MON_ANSWER_SIZE = CREATE_MON_HEADER_SIZE + PARTY_MON_SIZE
+
+# NUM_SPECIES [decomp:include/constants/species.h]: 412 slots with SPECIES_EGG at 411, and 0 is
+# SPECIES_NONE. CreateBoxMon indexes gSpeciesInfo AND gLevelUpLearnsets by this, and the second is
+# a table of POINTERS - an out-of-range species is a dereference of whatever follows it.
+MAX_SPECIES = 411
+MAX_LEVEL = 100
+# fixedIV at or above this rolls the IVs instead of setting them [USE_RANDOM_IVS, pokemon.h:232].
+USE_RANDOM_IVS = 32
+OT_ID_PLAYER_ID = 0                 # the OT is the player, and the id comes off the real save
+OT_ID_PRESET = 1                    # fixedOtId is used verbatim
+OT_ID_RANDOM_NO_SHINY = 2           # rolled until GET_SHINY_VALUE fails [pokemon.c:1783]
+OT_ID_TYPES = (OT_ID_PLAYER_ID, OT_ID_PRESET, OT_ID_RANDOM_NO_SHINY)
+SHINY_ODDS = 8                      # [decomp:include/constants/pokemon.h:185]
+
+
+def shiny_value(ot_id, personality):
+    """GET_SHINY_VALUE [decomp:include/pokemon.h:282]; below SHINY_ODDS is a shiny."""
+    ot_id, personality = int(ot_id) & 0xFFFFFFFF, int(personality) & 0xFFFFFFFF
+    return ((ot_id >> 16) ^ (ot_id & 0xFFFF)
+            ^ (personality >> 16) ^ (personality & 0xFFFF))
+
+
+def is_shiny(ot_id, personality):
+    return shiny_value(ot_id, personality) < SHINY_ODDS
+
+
+def shiny_personality(tid, sid, low=0):
+    """A personality that is shiny for this trainer, with `low` as its bottom half.
+
+    The check is symmetric in the two halves, so the top half is simply whatever makes the four
+    XOR to zero - which is why bs01's SECRET id matters: without it there is no way to aim this.
+    """
+    ot_id = (int(sid) << 16 | int(tid)) & 0xFFFFFFFF
+    low = int(low) & 0xFFFF
+    return (((ot_id >> 16) ^ (ot_id & 0xFFFF) ^ low) << 16 | low) & 0xFFFFFFFF
+
+
+def build_create_mon(function, species, level, *, fixed_iv=USE_RANDOM_IVS,
+                     has_fixed_personality=1, fixed_personality=0,
+                     ot_id_type=OT_ID_PLAYER_ID, fixed_ot_id=0, destination=0):
+    """The create-mon payload, patched with the eight arguments and where to put the result.
+
+    `function` is a THUMB pointer (bit 0 set), or 0 to call nothing and answer the zeroed buffer -
+    which is how the send path is checked with the ROM left out of it. `destination` is 0 unless
+    the finished mon is to be copied somewhere, and that is a write to the console's live memory.
+    """
+    function, species, level = int(function), int(species), int(level)
+    fixed_iv, ot_id_type = int(fixed_iv), int(ot_id_type)
+    has_fixed_personality = int(has_fixed_personality)
+    fixed_personality, fixed_ot_id = int(fixed_personality), int(fixed_ot_id)
+    destination = int(destination)
+    if function:
+        if not function & 1:
+            raise BufferScriptError(
+                f"0x{function:X} is an ARM pointer; the ROM is THUMB, so a callable address has "
+                "bit 0 set (the `bx` selects the state from it)")
+        if not ROM_BASE <= function < SCAN_MAX_ADDRESS:
+            raise BufferScriptError(
+                f"0x{function:X} is not in the cartridge; calling it would run whatever is there")
+    if not 0 < species <= MAX_SPECIES:
+        raise BufferScriptError(
+            f"species must be 1..{MAX_SPECIES}; CreateBoxMon indexes gLevelUpLearnsets, a table "
+            f"of pointers, by it [decomp:src/pokemon.c:1861], so {species} is a dereference of "
+            "whatever follows the table")
+    if not 0 < level <= MAX_LEVEL:
+        raise BufferScriptError(f"level must be 1..{MAX_LEVEL}, got {level}")
+    if not 0 <= fixed_iv <= 0xFF:
+        raise BufferScriptError(f"fixedIV is a u8, got {fixed_iv}")
+    if ot_id_type not in OT_ID_TYPES:
+        raise BufferScriptError(
+            f"otIdType is {OT_ID_PLAYER_ID} (the player's own id), {OT_ID_PRESET} (fixedOtId) or "
+            f"{OT_ID_RANDOM_NO_SHINY} (rolled until not shiny), got {ot_id_type}")
+    if destination and not SCAN_MIN_ADDRESS <= destination <= SCAN_MAX_ADDRESS - PARTY_MON_SIZE:
+        raise BufferScriptError(
+            f"0x{destination:X} is not somewhere {PARTY_MON_SIZE} bytes can be written: "
+            f"0x{SCAN_MIN_ADDRESS:X}..0x{SCAN_MAX_ADDRESS:X}")
+    if ROM_BASE <= destination:
+        raise BufferScriptError(
+            f"0x{destination:X} is the cartridge, which is read-only; the copy would do nothing "
+            "and the answer would look exactly as if it had worked")
+    code = bytearray(payload(CREATE_MON))
+    for offset, value in (
+            (CREATE_MON_FUNCTION_OFFSET, function),
+            (CREATE_MON_DESTINATION_OFFSET, destination),
+            (CREATE_MON_SPECIES_OFFSET, species),
+            (CREATE_MON_LEVEL_OFFSET, level),
+            (CREATE_MON_FIXED_IV_OFFSET, fixed_iv),
+            (CREATE_MON_HAS_FIXED_PERSONALITY_OFFSET, has_fixed_personality),
+            (CREATE_MON_FIXED_PERSONALITY_OFFSET, fixed_personality),
+            (CREATE_MON_OT_ID_TYPE_OFFSET, ot_id_type),
+            (CREATE_MON_FIXED_OT_ID_OFFSET, fixed_ot_id)):
+        code[offset:offset + 4] = (value & 0xFFFFFFFF).to_bytes(4, "little")
+    return bytes(code)
+
+
+def create_mon_parameters(code):
+    """-> the eight arguments and the destination, read back out of a built payload."""
+    code = bytes(code)
+    def word(offset):
+        return int.from_bytes(code[offset:offset + 4], "little")
+    return {"function": word(CREATE_MON_FUNCTION_OFFSET),
+            "destination": word(CREATE_MON_DESTINATION_OFFSET),
+            "species": word(CREATE_MON_SPECIES_OFFSET),
+            "level": word(CREATE_MON_LEVEL_OFFSET),
+            "fixed_iv": word(CREATE_MON_FIXED_IV_OFFSET),
+            "has_fixed_personality": word(CREATE_MON_HAS_FIXED_PERSONALITY_OFFSET),
+            "fixed_personality": word(CREATE_MON_FIXED_PERSONALITY_OFFSET),
+            "ot_id_type": word(CREATE_MON_OT_ID_TYPE_OFFSET),
+            "fixed_ot_id": word(CREATE_MON_FIXED_OT_ID_OFFSET)}
+
+
+def read_create_mon(dump):
+    """-> what the call left, from the bytes it sent back."""
+    dump = bytes(dump)
+    if len(dump) < CREATE_MON_ANSWER_SIZE:
+        raise BufferScriptError(
+            f"create-mon answers with {CREATE_MON_ANSWER_SIZE} bytes, got {len(dump)}")
+    words = [int.from_bytes(dump[i:i + 4], "little")
+             for i in range(0, CREATE_MON_HEADER_SIZE, 4)]
+    calls, destination, function, built_at = words
+    return {"calls": calls, "destination": destination, "function": function,
+            "built_at": built_at,
+            "mon": dump[CREATE_MON_HEADER_SIZE:CREATE_MON_HEADER_SIZE + PARTY_MON_SIZE]}
+
+
+def describe_create_mon(dump, expected=None):
+    """The same, as lines to log, with the mon DECODED rather than shown as hex.
+
+    `expected` is create_mon_parameters of the payload that was sent: every field of it that the
+    ROM stores in the mon is checked against what came back, so the log says whether the eight
+    arguments arrived rather than that something arrived.
+    """
+    from . import mon as monlib             # here: it reads the decomp at import
+    result = read_create_mon(dump)
+    raw = result["mon"]
+    lines = [f"create-mon: {result['calls']} call(s), built at 0x{result['built_at']:08X}"
+             + (f", calling 0x{result['function']:08X}" if result["function"]
+                else ", calling nothing")
+             + (f", copied to 0x{result['destination']:08X}" if result["destination"] else "")]
+    if not result["function"]:
+        lines.append("   nothing was called, so the 100 bytes are the buffer as it was sent")
+        return lines
+    info = monlib.decode_mon(raw)
+    if info is None:
+        return lines + ["   the answer is too short to decode as a struct Pokemon"]
+    pid, ot_id = info["pid"], info["otid"]
+    lines.append(f"   personality 0x{pid:08X}  otId 0x{ot_id:08X}  "
+                 f"checksum {'VALID' if info['checksum_ok'] else 'WRONG'}"
+                 + ("  SHINY" if is_shiny(ot_id, pid) else ""))
+    lines.append(f"   species {info['species']} {info['species_name']}  Lv{info['level']}  "
+                 f"nickname {info['nickname']!r}  OT {info['otName']!r}  "
+                 f"moves {info['moves']}")
+    ivs = create_mon_ivs(raw)
+    if ivs is not None:
+        lines.append(f"   IVs (HP ATK DEF SPE SPA SPD) {ivs}")
+    lines.append("   stats (maxHP ATK DEF SPE SPA SPD) "
+                 + str([int.from_bytes(raw[o:o + 2], "little")
+                        for o in (0x58, 0x5A, 0x5C, 0x5E, 0x60, 0x62)]))
+    if expected:
+        lines.extend("   " + line for line in check_create_mon(raw, expected))
+    return lines
+
+
+def create_mon_substructs(raw):
+    """The decrypted, unshuffled 48 bytes as {G,A,E,M} - the same decode a party dump gets."""
+    from . import mon as monlib
+    raw = bytes(raw)
+    if len(raw) < monlib.BOX_SIZE:
+        return None
+    pid = int.from_bytes(raw[0:4], "little")
+    key = pid ^ int.from_bytes(raw[4:8], "little")
+    sec = bytearray(raw[32:80])
+    for i in range(12):
+        value = int.from_bytes(sec[i * 4:i * 4 + 4], "little") ^ key
+        sec[i * 4:i * 4 + 4] = (value & 0xFFFFFFFF).to_bytes(4, "little")
+    order = monlib.SUBSTRUCT_ORDER[pid % 24]
+    return {k: bytes(sec[order.index(k) * 12:][:12]) for k in "GAEM"}
+
+
+def create_mon_ivs(raw):
+    """-> [HP, ATK, DEF, SPE, SPA, SPD], or None if the 100 bytes are not there."""
+    subs = create_mon_substructs(raw)
+    if subs is None:
+        return None
+    word = int.from_bytes(subs["M"][4:8], "little")
+    return [(word >> (5 * i)) & 31 for i in range(6)]
+
+
+def check_create_mon(raw, expected):
+    """-> lines saying, field by field, whether the eight arguments reached the ROM.
+
+    This is what makes one run evidence instead of an observation: species, level and the IVs come
+    back out of the mon's own encrypted substructs, and the personality and OT id out of the two
+    words the key is made of - so a mon that decodes at all already agrees with two of the
+    arguments, and the rest are checked one by one.
+    """
+    from . import mon as monlib
+    raw = bytes(raw)
+    info = monlib.decode_mon(raw)
+    lines = []
+    if info is None:
+        return ["the answer is too short to check"]
+    def verdict(name, want, got):
+        lines.append(f"{name}: asked {want}, got {got}"
+                     + ("  OK" if want == got else "  <<< MISMATCH"))
+    verdict("species", expected["species"], info["species"])
+    verdict("level", expected["level"], info["level"])
+    if expected["has_fixed_personality"]:
+        verdict("personality", f"0x{expected['fixed_personality']:08X}", f"0x{info['pid']:08X}")
+    if expected["ot_id_type"] == OT_ID_PRESET:
+        verdict("otId", f"0x{expected['fixed_ot_id']:08X}", f"0x{info['otid']:08X}")
+    if expected["fixed_iv"] < USE_RANDOM_IVS:
+        ivs = create_mon_ivs(raw)
+        verdict("IVs", [expected["fixed_iv"]] * 6, ivs)
+    lines.append("checksum: " + ("VALID - the ROM encrypted it with its own key"
+                                 if info["checksum_ok"] else
+                                 "WRONG - these 100 bytes are not a mon the ROM built"))
+    return lines
+
+
 SCRIPT_REGISTRY = {
     TRAINER_ID_PROBE: BufferScriptSpec(
         TRAINER_ID_PROBE,
@@ -586,6 +836,13 @@ SCRIPT_REGISTRY = {
         ANCHORS,
         "ask the machine where it is: our own load address, the RETURN ADDRESS INTO ROM, the stack "
         "and the client's five buffers (writes only its own outgoing buffer)",
+        None),
+    CREATE_MON: BufferScriptSpec(
+        CREATE_MON,
+        "CALL A ROM FUNCTION THAT TAKES EIGHT ARGUMENTS - CreateMon - and send back the 100-byte "
+        "struct Pokemon it built. The mon is built inside our own image, so nothing on the console "
+        "is written unless --create-mon-destination names somewhere (--create-mon-call, "
+        "--create-mon-species, --create-mon-level, --create-mon-personality)",
         None),
     STRING_GATHER: BufferScriptSpec(
         STRING_GATHER,
@@ -706,6 +963,12 @@ PATCHED_SPANS = {
                  + 8 * TRACE_SAMPLE_CAPACITY),),
     MEMORY_SCAN: ((SCAN_CURSOR_OFFSET,
                    SCAN_HITS_OFFSET - SCAN_CURSOR_OFFSET + 8 * SCAN_HIT_CAPACITY),),
+    STRING_GATHER: ((GATHER_SRC_OFFSET,
+                     GATHER_STRINGS_OFFSET - GATHER_SRC_OFFSET + GATHER_STRING_AREA),),
+    # Everything from the first operand to the end of the mon: the parameters, the four result
+    # words and the 100 bytes CreateMon writes into the image itself.
+    CREATE_MON: ((CREATE_MON_FUNCTION_OFFSET,
+                  CREATE_MON_MON_OFFSET - CREATE_MON_FUNCTION_OFFSET + PARTY_MON_SIZE),),
 }
 
 
@@ -844,6 +1107,46 @@ _DEFAULT_ROM_HEADER = (b"\x00" * 0xA0
                        + b"BPRF"                    # 0xAC game code: BPR = FireRed, F = French
                        + b"01"                      # 0xB0 maker code
                        + b"\x96")                   # 0xB2 fixed value
+
+
+# --- models of CreateMon, for running a calling payload offline ----------------------------------
+# The emulated cartridge is a header and zeros, so a payload that CALLS a ROM function has nothing
+# to land on: it would execute the zeros. These two THUMB stubs stand in for CreateMon at whatever
+# address the payload was built to call, placed with `memory={address: stub}`. They are MODELS of
+# the callee - what it does with its arguments - in the same spirit as _DEFAULT_ROM_HEADER above,
+# and each answers a different question.
+#
+# CREATE_MON_ARG_MODEL answers "did eight arguments arrive, and in the order the console's own
+# prologue reads them?". It writes r0..r3 and the four stack arguments into the destination as
+# eight words, so the answer names each one. Assembled from:
+#
+#     str r1,[r0,#4]   str r2,[r0,#8]   str r3,[r0,#12]
+#     ldr r1,[sp,#0]   str r1,[r0,#16]  ldr r1,[sp,#4]   str r1,[r0,#20]
+#     ldr r1,[sp,#8]   str r1,[r0,#24]  ldr r1,[sp,#12]  str r1,[r0,#28]
+#     str r0,[r0,#0]   bx lr
+#
+# It pushes nothing, so [sp,#0] IS the caller's first stack argument - which is the whole point.
+CREATE_MON_ARG_MODEL = bytes.fromhex(
+    "41608260c3600099016101994161029981610399c16100607047")
+CREATE_MON_ARG_FIELDS = ("mon", "species", "level", "fixedIV", "hasFixedPersonality",
+                         "fixedPersonality", "otIdType", "fixedOtId")
+
+# create_mon_copy_model answers the other question - "does the answer decode as a struct Pokemon
+# all the way through?" - by copying 100 bytes a caller prepared over the destination, so that a
+# mon built in Python travels the whole path a real one would. Assembled from:
+#
+#     push {r4, lr}    ldr r1,.Lsource   movs r2,#100
+#   1: ldrb r4,[r1]    strb r4,[r0]      adds r1,#1   adds r0,#1   subs r2,#1   bne 1b
+#     pop {r4}         pop {r0}          bx r0
+#     .Lsource: .word 0
+_CREATE_MON_COPY_MODEL = bytes.fromhex(
+    "10b5054964220c78047001310130013af9d110bc01bc0047")
+CREATE_MON_COPY_MODEL_SOURCE = len(_CREATE_MON_COPY_MODEL)      # where the .word goes
+
+
+def create_mon_copy_model(source):
+    """A model of CreateMon that copies the 100 bytes at `source` into its first argument."""
+    return _CREATE_MON_COPY_MODEL + (int(source) & 0xFFFFFFFF).to_bytes(4, "little")
 
 
 class _Machine:

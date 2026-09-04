@@ -100,7 +100,7 @@ class MysteryGiftClientEngine:
     def __init__(self, link_player=None, *, version="firered", language="english",
                  holding_flag_id=0, accept_replacement=True, yes_no_answer=True,
                  game_code=None, software_version=0, trust_pia=False,
-                 questionnaire=(), easy_chat_profile=(),
+                 questionnaire=(), easy_chat_profile=(), rom_stubs=None,
                  inter_block_gap=DEFAULT_INTER_BLOCK_GAP, log=lambda *a: None):
         self.lp = link_player or linkplayer.LinkPlayer(version=linkplayer.VERSION_FIRE_RED)
         self.mpid = 1
@@ -108,6 +108,12 @@ class MysteryGiftClientEngine:
         self.info = getattr(log, "info", log)
         self.trust_pia = trust_pia
         self.inter_block_gap = int(inter_block_gap)
+        # {address: bytes} written into the emulated cartridge before a payload runs. A real
+        # console's ROM is the game; ours is a header and zeros, so a payload that CALLS a ROM
+        # function needs something to land on or it executes the zeros. A stub here is a MODEL of
+        # the callee - what it does with its arguments - and it is the only way the harness can
+        # exercise a calling payload's whole session rather than just its send.
+        self.rom_stubs = dict(rom_stubs or {})
         # sim._ensure_ni reads these for the NI game data
         self.ni_activity = ACTIVITY_WONDER_CARD
         self.ni_started = False
@@ -474,7 +480,8 @@ class MysteryGiftClientEngine:
             # that is arithmetic (asm/memory-scan.s), not something the harness measures.
             repeated = buffer_script.emulate_repeating(
                 code, param=self.param or 0, sav2=self._save_block2_image(),
-                send_size=armed_size, send_ident=armed_ident)
+                send_size=armed_size, send_ident=armed_ident,
+                memory=self.rom_stubs or None)
             run = repeated.final
         except buffer_script.BufferScriptError as exc:
             # On the console this is a crash or a hang inside the Mystery Gift menu, with no way
