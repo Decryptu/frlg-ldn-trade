@@ -73,8 +73,19 @@ them execute something on the console, and we use one:
   the seen and caught dex flags itself [`mystery_event_script.c:234`].
 - `addtrainer` — the same visiting trainer we now send, by another route.
 
-Every script must open with `checkcompat`, whose language and version masks are checked against
-`LANGUAGE_MASK`/`VERSION_MASK` [`mystery_event_script.c:103`], and carry a matching `checksum`/`crc`.
+**`checkcompat` is optional, and omitting it is the way in** (read 2026-09-04, not yet used for a new
+opcode). It looks like a mandatory gate — and it would be an awkward one, because `LANGUAGE_MASK` is
+the English decomp's value and both consoles here are French, which the decomp cannot tell us. But
+`RunScriptCommand` [`script.c:107`] chains commands inside one call until one returns TRUE, and every
+opcode above returns FALSE; only `checkcompat`, `end` and the two dead opcodes yield. So a script
+with no `checkcompat` still runs every command up to `end` in a single pass. `checkcompat` exists
+only to let execution *resume* after itself, via `ctx->data[3]` in `RunMysteryEventScriptCommand`.
+
+Two consequences. Pointer operands are relocated as `operand - ctx->data[1] + ctx->data[0]`, and
+`data[1]` is set only *by* `checkcompat` — omit it and `data[1]` is 0, so every pointer operand is
+simply an offset from the start of our own buffer, with no virtual base to guess. And this is
+already hardware-proven: the stamp rally's activation script is `05 06 00 00 00 02 …` (`runscript`,
+`end`, no `checkcompat`) and has been landing on these French consoles since session 22.
 
 ### 2. `CLI_RUN_BUFFER_SCRIPT`
 
