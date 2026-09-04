@@ -1,10 +1,11 @@
 """Saved state used by compiled gifts: VAR_MYSTERY_GIFT_1 = ordinary/rally-completion stage cursor,
 VAR_MYSTERY_GIFT_2..7 = stamp-slot cursors (0 absent, 1 activated, +1 per stage), FLAG_MYSTERY_GIFT_DONE = one-shot."""
 
+import re
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from . import charmap, ereader_trainer, mystery_event
+from . import charmap, ereader_trainer, mystery_event, rom_map
 from .mystery_gift import (
     CARD_TYPE_GIFT,
     CARD_TYPE_STAMP,
@@ -324,16 +325,28 @@ def _validate_plain_text(text, path, *, max_encoded=None):
         _fail(path, f"text encodes to {len(encoded)} bytes; maximum is {max_encoded}")
 
 
+# The placeholders the field text engine substitutes at print time. 0xFD introduces one and the
+# byte after it selects the source [decomp:charmap.txt:334]; STR_VAR_1..3 are gStringVar1..3, which
+# `buffernumberstring` writes a decimal number into [ScrCmd_buffernumberstring, src/scrcmd.c:1678].
+# {PLAYER} was the only one supported until the seed-reading script needed to print a number.
+MESSAGE_TOKENS = {
+    "{PLAYER}": b"\xFD\x01",
+    "{STR_VAR_1}": b"\xFD\x02",
+    "{STR_VAR_2}": b"\xFD\x03",
+    "{STR_VAR_3}": b"\xFD\x04",
+}
+_TOKEN_RE = re.compile("(" + "|".join(re.escape(token) for token in MESSAGE_TOKENS) + ")")
+
+
 def _validate_message(text, path):
     if not isinstance(text, str) or not text:
         _fail(path, "message must be a nonempty string")
-    without_player = text.replace("{PLAYER}", "")
-    if "{" in without_player or "}" in without_player:
-        _fail(path, "the only supported message token is {PLAYER}")
-    for line in text.split("\n"):
-        fragments = line.split("{PLAYER}")
-        for fragment in fragments:
-            _validate_plain_text(fragment, path)
+    without_tokens = _TOKEN_RE.sub("", text)
+    if "{" in without_tokens or "}" in without_tokens:
+        _fail(path, "the supported message tokens are "
+                    + ", ".join(sorted(MESSAGE_TOKENS)))
+    for line in without_tokens.split("\n"):
+        _validate_plain_text(line, path)
 
 
 def _validate_card(card, path, *, flag_id):
@@ -693,14 +706,12 @@ def _u16(value):
 
 def _encode_message(text):
     out = bytearray()
-    for line_index, line in enumerate(text.split("\n")):
-        fragments = line.split("{PLAYER}")
-        for fragment_index, fragment in enumerate(fragments):
-            out += charmap.encode(fragment)
-            if fragment_index < len(fragments) - 1:
-                out += b"\xFD\x01"
-        if line_index < len(text.split("\n")) - 1:
-            out.append(0xFE)
+    lines = text.split("\n")
+    for line_index, line in enumerate(lines):
+        for piece in _TOKEN_RE.split(line):
+            out += MESSAGE_TOKENS.get(piece) or charmap.encode(piece)
+        if line_index < len(lines) - 1:
+            out.append(0xFE)          # the line break charmap.encode silently drops
     out.append(0xFF)
     return bytes(out)
 
@@ -1208,6 +1219,77 @@ def build_talk_script(messages, *, slug="talk"):
     return script
 
 
+# --- the seed-reading script --------------------------------------------------------------------
+_OP_COPYBYTE = 0x15
+_OP_BUFFERNUMBERSTRING = 0x83
+
+SEED_READ_DEFAULT_LINES = ("RNG HI {STR_VAR_2}\n"
+                           "RNG LO {STR_VAR_1}",)
+
+
+def _copybyte(dest, src):
+    """`copybyte` (0x15): one byte from any absolute address to any absolute address.
+
+        u8 *dest = (u8 *)ScriptReadWord(ctx);
+        *dest = *(const u8 *)ScriptReadWord(ctx);
+    [decomp:src/scrcmd.c:329] - DESTINATION FIRST, then source. It returns FALSE.
+    """
+    return bytes([_OP_COPYBYTE]) + int(dest).to_bytes(4, "little") + int(src).to_bytes(4, "little")
+
+
+def _buffernumberstring(string_var_index, var_id):
+    """`buffernumberstring` (0x83): a var's value as decimal into gStringVar1..3.
+
+        u8 stringVarIndex = ScriptReadByte(ctx);
+        u16 num = VarGet(ScriptReadHalfword(ctx));
+    [decomp:src/scrcmd.c:1678]. It takes a VAR ID, not an address, so this half needs no address
+    hunt - `VarGet` resolves 0x8000 through gSpecialVars itself. The number is a **u16**, which is
+    why the 32-bit seed takes two of these.
+    """
+    return bytes([_OP_BUFFERNUMBERSTRING, int(string_var_index)]) + _u16(var_id)
+
+
+def build_seed_read_script(*, address=None, var_address=None, lines=SEED_READ_DEFAULT_LINES,
+                           slug="rng-seed-reader"):
+    """A field script that PRINTS gRngValue and changes nothing.
+
+    Four `copybyte`s move the four bytes of gRngValue into gSpecialVar_0x8000 and 0x8001 - which
+    are adjacent u16s, so the four destinations are var_address + 0..3 - and two
+    `buffernumberstring`s turn those into the decimal halves the message prints.
+
+    **THE READ IS ATOMIC AND THAT IS NOT AN ACCIDENT.** The RNG never idles, so four byte copies
+    spread over four frames would tear: the halves would come from different states and the
+    reassembled word would be a value the console never held. `copybyte` and `buffernumberstring`
+    both return FALSE, and the field engine runs commands until one returns TRUE
+    [decomp:src/script.c], so all six run back to back inside a single frame. Nothing that yields
+    may be emitted between the first copybyte and the last buffernumberstring, and a test asserts
+    none is - the same rule, for the same reason, as the seed-and-generate script.
+
+    It ends with `end` (0x02), not `endram` (0x0d), so the binding survives and the NPC can be
+    asked again - which is what makes a miss cost nothing.
+
+    Nothing here writes gRngValue, the save, or any Pokemon. The one write is installing the
+    script, which is a Wonder Card session like any other.
+    """
+    address = rom_map.GRNG_VALUE if address is None else int(address)
+    var_address = (rom_map.G_SPECIAL_VAR_0X8000 if var_address is None else int(var_address))
+    builder = _FieldScriptBuilder()
+    builder.emit(bytes([_OP_SETVADDRESS])
+                 + _RAM_SCRIPT_VIRTUAL_BASE.to_bytes(4, "little"))
+    builder.emit(bytes([_OP_LOCK, _OP_FACEPLAYER]))
+    for i in range(4):
+        builder.emit(_copybyte(var_address + i, address + i))
+    builder.emit(_buffernumberstring(0, _VAR_0x8000))       # gStringVar1 = the LOW half
+    builder.emit(_buffernumberstring(1, _VAR_0x8001))       # gStringVar2 = the HIGH half
+    for message in lines:
+        _validate_message(message, f"{slug}.lines")
+        builder.message(message)
+    builder.emit(bytes([_OP_RELEASE, _OP_END]))
+    script = builder.finish(slug)
+    _check_script_size(script, builder, slug)
+    return script
+
+
 def compile_definition(definition, *, flag_id=None):
     """Returns one MysteryGiftDistribution for a GiftSpec, or ``{slot_slug: distribution}`` for a rally."""
     validate_definition(definition, flag_id=flag_id)
@@ -1230,5 +1312,6 @@ __all__ = [
     "VAR_MYSTERY_GIFT_1", "VAR_MYSTERY_GIFT_2", "VAR_MYSTERY_GIFT_3",
     "VAR_MYSTERY_GIFT_4", "VAR_MYSTERY_GIFT_5", "VAR_MYSTERY_GIFT_6",
     "VAR_MYSTERY_GIFT_7", "VAR_MYSTERY_GIFT_SLOT_VARS",
-    "build_talk_script", "compile_definition", "validate_definition",
+    "build_seed_read_script", "build_talk_script", "compile_definition",
+    "validate_definition",
 ]

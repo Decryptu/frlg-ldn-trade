@@ -23,6 +23,7 @@ from .gift_composer import (
     VarEquals,
     WonderCardSpec,
     WonderGift,
+    build_seed_read_script,
     build_talk_script,
 )
 import dataclasses
@@ -741,6 +742,58 @@ RNG_SHINY_DITTO_GIFT = WonderGift(
         "Talk to the man in the south of\n"
         "PALLET TOWN."),
     mevent=build_rng_shiny_ditto_script(),
+)
+
+
+GIFT_RNG_SEED_READER = "rng-seed-reader"
+RNG_SEED_READER_FLAG_ID = 1015
+
+
+def build_rng_seed_reader_script(**kwargs):
+    """The Mystery Event that installs "talk to this man and he tells you the RNG seed".
+
+    The other direction from rng-shiny-ditto, and the one that matters for READ-ONLY work: the
+    field script copies the four bytes of gRngValue into gSpecialVar_0x8000/0x8001 and prints them,
+    in one frame, and writes nothing at all. `gift_composer.build_seed_read_script` is the body and
+    says why the read cannot tear.
+
+    The address it needs, gSpecialVar_0x8000 = 0x020370B4, is bs57's (frlgsim/rom_map.py). This
+    script is also its confirmation: `rng_script.check_two_readings` on two visits to the NPC.
+    """
+    return build_mevent_npc_script(
+        field_script=build_seed_read_script(), **kwargs)
+
+
+RNG_SEED_READER_GIFT = WonderGift(
+    slug=GIFT_RNG_SEED_READER,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="A man who reads numbers",
+        body=(
+            "A man in the south of PALLET",
+            "TOWN can read a number nobody",
+            "is meant to see. Talk to him,",
+            "and talk to him again.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=RNG_SEED_READER_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "A man in PALLET TOWN can read\n"
+                "a hidden number."),
+        ),
+    )),
+    completed_message=(
+        "Talk to the man in the south of\n"
+        "PALLET TOWN."),
+    mevent=build_rng_seed_reader_script(),
 )
 
 

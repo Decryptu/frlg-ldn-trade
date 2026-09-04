@@ -205,7 +205,7 @@ tooling limit; the game.
 candidates from `predecessors`, not certainties, but the lattice model predicts all four would be
 multiples.)
 
-**OPEN AND BUILDABLE: an NPC that reads the seed out.** With a live reading in the overworld a
+**BUILT: an NPC that reads the seed out** (`--gift rng-seed-reader`). With a live reading in the overworld a
 countdown does work, and this is the next thing to build:
 
 ```
@@ -219,6 +219,25 @@ msgbox                                          the NPC prints the value
 
 Installed once as a RAM script by `initramscript`, ending in `end` (0x02) so the binding survives and
 can be re-triggered. It alters nothing: `gRngValue` is only read.
+
+**THE READ IS ATOMIC, AND THAT IS THE PART THAT COULD HAVE GONE WRONG SILENTLY.** The RNG never
+idles, so four byte copies spread over four frames would TEAR - the halves would come from different
+states and the reassembled word would be a value the console never held, which looks exactly like a
+working script returning a plausible number. `copybyte` and `buffernumberstring` both return
+`FALSE`, and the field engine runs commands until one returns `TRUE`, so all six run back to back
+inside one frame. Nothing that yields may be emitted between them, and a test asserts none is.
+
+**And the text pointer had to be relative.** A RAM script lives in `gSaveBlock1Ptr->ramScript`, and
+`SetSaveBlocksPointers` re-rolls that base on every battle and load, so an absolute pointer to the
+script's own message is wrong the moment anything happens. `setvaddress` (0xB8) sets
+`sAddressOffset = addr2 - (ctx->scriptPtr - 1)` [decomp:src/scrcmd.c:171] - the difference between a
+base we choose and the command's own runtime address - and `vmessage` (0xBD) subtracts it, so the
+operand becomes a plain offset into our own body. The Mystery Event VM's relocation, in the field
+engine.
+
+`buffernumberstring` prints a **u16** [decomp:src/scrcmd.c:1678], which is why the 32-bit seed takes
+two vars and the message two lines. It also takes a var ID rather than an address, so only
+`copybyte`'s destination ever needed the address hunt.
 
 **THE BLOCKER IS GONE (bs57, first try): `gSpecialVar_0x8000` = `0x020370B4`.**
 

@@ -120,9 +120,11 @@ def describe_seed_script(script):
 
 
 # --- the RNG owned: seed it and generate the mon in the SAME frame -------------------------------
-# Seeding alone still leaves the player walking, and the overworld turns the RNG ~148 times a second
-# (measured E1->E2, bs52: 18900 turns over 128.0 s), so no human and no network can aim at a
-# particular draw. The fix is not better timing - it is to remove the interval entirely.
+# Seeding alone still leaves the player walking, and the RNG never idles, so no human and no network
+# can aim at a particular draw by timing. (The overworld RATE is NOT established - the numbers this
+# comment used to quote were derived from a hand-timed elapsed, and one of them was circular; see
+# docs/rng.md. Nothing here depends on the rate.) The fix is not better timing - it is to remove the
+# interval entirely.
 #
 #   bool8 ScrCmd_setwildbattle(struct ScriptContext * ctx)      // opcode 0xB6
 #   {
@@ -203,3 +205,67 @@ def predict_wild_mon(seed, tid, sid):
     out["shiny"] = out["low_first"]["shiny"]
     assert out["shiny"] == out["high_first"]["shiny"], "the shiny test is symmetric in the halves"
     return out
+
+
+# --- reading the seed back out, which is the other half ------------------------------------------
+# Writing gRngValue was always the easy direction. READING it in the overworld is what a countdown
+# needs, and it was blocked for two sessions on one unknown: the absolute address of
+# gSpecialVar_0x8000, because `copybyte` needs a destination ADDRESS while `buffernumberstring` only
+# needs a var ID. bs57 found it at 0x020370B4 by searching the cartridge for the SHAPE of
+# gSpecialVars (frlgsim/buffer_script.py, `table-scan`).
+#
+# The script is `gift_composer.build_seed_read_script`; it lives there because that is where the
+# field-script builder and its relocatable-text machinery are. It READS gRngValue and writes
+# nothing.
+
+from .gift_composer import build_seed_read_script     # noqa: E402,F401  (re-exported here)
+
+
+def seed_from_printed(low, high):
+    """-> gRngValue, from the two decimal numbers the NPC prints.
+
+    gRngValue is a u32 at 0x03004220, little-endian, so its bytes 0..1 are the LOW half and 2..3
+    the HIGH half. The script copies them into gSpecialVar_0x8000 and 0x8001 in that order, and
+    prints 0x8000 as STR_VAR_1 and 0x8001 as STR_VAR_2 - so the screen reads "RNG HI <high>" and
+    "RNG LO <low>".
+    """
+    low, high = int(low), int(high)
+    for name, value in (("low", low), ("high", high)):
+        if not 0 <= value <= 0xFFFF:
+            raise RngScriptError(f"the {name} half is a u16 the console printed, got {value}")
+    return (high << 16) | low
+
+
+def check_two_readings(first, second, *, seconds=None):
+    """-> lines: what two readings of the NPC say, and whether they can both be gRngValue.
+
+    THIS IS THE PROOF THAT THE ADDRESS IS RIGHT, and it needs no extra hardware run. Two readings
+    of a real gRngValue are related by the LCG: the second is some number of turns after the first,
+    and `lcg.distance` finds that number exactly. A distance ALWAYS exists - the map is a
+    permutation of all 2**32 states - so the distance alone proves nothing. What proves it is the
+    distance being SMALL and consistent with the time between the readings: the RNG advances on the
+    order of 10**2 turns a second, so seconds apart means a distance of thousands, not billions.
+    A wrong address prints two unrelated numbers, whose distance is ~2**31 on average.
+
+    `seconds` is optional and deliberately not required: it sharpens the statement, it does not
+    make it. The order-of-magnitude test stands without any clock, which is the point - see
+    docs/rng.md on why nothing here may depend on a hand-timed elapsed.
+    """
+    from . import lcg
+    turns = lcg.distance(first, second)
+    lines = [f"reading 1  0x{first:08X}",
+             f"reading 2  0x{second:08X}",
+             f"distance   {turns:,} turns"]
+    # A uniformly random pair sits ~2**31 apart; anything a human waited through is far below it.
+    plausible = turns < 10 ** 7
+    if seconds is not None:
+        lines.append(f"           = {turns / float(seconds):,.0f} turns/second over the "
+                     f"{seconds} s between them")
+    lines.append(
+        "  => CONSISTENT with two readings of a live gRngValue: the second is a short walk "
+        "along the orbit from the first."
+        if plausible else
+        "  => NOT consistent: 0x%08X and 0x%08X are ~2**31 apart, which is what two UNRELATED "
+        "numbers look like. The address is wrong, or the read tore." % (first, second))
+    lines.append(f"  (a distance always exists; this one is 1 in {2 ** 32 // max(turns, 1):,})")
+    return lines

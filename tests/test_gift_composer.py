@@ -639,7 +639,7 @@ def test_validation_uses_actual_frlg_ranges_and_forbids_slot_battles():
         (gc.GiveItem(375), "item must be an integer from 1 through 374"),
         (gc.GivePokemon(412, 5), "species must be an integer from 1 through 411"),
         (gc.GiveEgg(1, failure_message="Bad {TOKEN}"),
-         "only supported message token is {PLAYER}"),
+         "supported message tokens are"),
         (gc.ShowSprite(152, gc.MapPosition(1, 1)),
          "graphics ID must be an integer from 0 through 151"),
         (gc.ShowSprite(1, gc.MapPosition(0x4000, 1)),

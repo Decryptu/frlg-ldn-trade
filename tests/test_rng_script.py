@@ -6,7 +6,7 @@ is checked is that every byte is the opcode the table names and that the decode 
 """
 import pytest
 
-from frlgsim import rng_script, rom_map
+from frlgsim import gift_composer, lcg, rng_script, rom_map
 
 
 def test_the_opcodes_are_the_ones_the_command_table_names():
@@ -141,3 +141,128 @@ def test_mev07_the_console_built_exactly_what_was_predicted():
     assert got["low_first"]["nature"] == 17
     assert got["ivs"] == (31, 23, 27, 18, 30, 30)
     assert got["shiny"] is True
+
+
+# --- reading the seed: the script that prints gRngValue and writes nothing ----------------------
+# The write direction was always the easy one. Reading gRngValue in the OVERWORLD is what a
+# countdown needs, and it was blocked on one unknown until bs57: the absolute address of
+# gSpecialVar_0x8000, because `copybyte` needs a destination ADDRESS where `buffernumberstring`
+# only needs a var id.
+
+_OP_SETVADDRESS = 0xB8
+_OP_COPYBYTE = 0x15
+_OP_BUFFERNUMBERSTRING = 0x83
+_OP_VMESSAGE = 0xBD
+_OP_LOCK, _OP_FACEPLAYER, _OP_RELEASE, _OP_END = 0x6A, 0x5A, 0x6C, 0x02
+_OP_WAITMESSAGE, _OP_WAITBUTTONPRESS, _OP_CLOSEMESSAGE = 0x66, 0x6D, 0x68
+
+
+def _walk(script):
+    """-> [(offset, opcode, operand bytes)] for the fixed-width commands this script uses."""
+    widths = {_OP_SETVADDRESS: 4, _OP_COPYBYTE: 8, _OP_BUFFERNUMBERSTRING: 3, _OP_VMESSAGE: 4,
+              _OP_LOCK: 0, _OP_FACEPLAYER: 0, _OP_RELEASE: 0, _OP_END: 0,
+              _OP_WAITMESSAGE: 0, _OP_WAITBUTTONPRESS: 0, _OP_CLOSEMESSAGE: 0}
+    out, i = [], 0
+    while i < len(script):
+        op = script[i]
+        if op not in widths:
+            break                                   # the text pool starts here
+        width = widths[op]
+        out.append((i, op, bytes(script[i + 1:i + 1 + width])))
+        i += 1 + width
+        if op == _OP_END:
+            break
+    return out
+
+
+def test_the_seed_read_script_copies_the_four_bytes_of_grngvalue_into_the_two_vars():
+    script = gift_composer.build_seed_read_script()
+    copies = [(int.from_bytes(operand[:4], "little"), int.from_bytes(operand[4:], "little"))
+              for _offset, op, operand in _walk(script) if op == _OP_COPYBYTE]
+
+    assert len(copies) == 4
+    for i, (dest, src) in enumerate(copies):
+        assert src == rom_map.GRNG_VALUE + i, f"byte {i} does not come from gRngValue"
+        assert dest == rom_map.G_SPECIAL_VAR_0X8000 + i, f"byte {i} does not land in the vars"
+    # gSpecialVar_0x8000 and 0x8001 are adjacent u16s, so the four destinations are one run of
+    # four bytes and the halves reassemble as a little-endian u32 without any further arithmetic.
+    assert [dest for dest, _ in copies] == list(
+        range(rom_map.G_SPECIAL_VAR_0X8000, rom_map.G_SPECIAL_VAR_0X8000 + 4))
+
+
+def test_nothing_that_yields_sits_inside_the_read():
+    """THE ONE THAT MATTERS. The RNG never idles, so four byte copies spread over four frames
+    would tear: the halves would come from different states and the word would be one the console
+    never held. copybyte and buffernumberstring both return FALSE and the field engine runs
+    commands until one returns TRUE, so the six of them are a single frame - as long as nothing
+    else is emitted between them."""
+    walked = _walk(gift_composer.build_seed_read_script())
+    opcodes = [op for _offset, op, _operand in walked]
+    first = opcodes.index(_OP_COPYBYTE)
+    last = len(opcodes) - 1 - opcodes[::-1].index(_OP_BUFFERNUMBERSTRING)
+
+    assert set(opcodes[first:last + 1]) == {_OP_COPYBYTE, _OP_BUFFERNUMBERSTRING}
+    assert opcodes[first:last + 1] == [_OP_COPYBYTE] * 4 + [_OP_BUFFERNUMBERSTRING] * 2
+
+
+def test_the_script_writes_nothing_but_the_two_scratch_vars():
+    """It is a READ. No setptr, no setvar, no givemon, no battle - and the destinations are the
+    two special vars the game itself uses as scratch."""
+    walked = _walk(gift_composer.build_seed_read_script())
+    for _offset, op, operand in walked:
+        assert op != 0x11, "setptr writes memory; this script must not"
+        assert op not in (0xB6, 0xB7), "no wild battle in a read-only script"
+        if op == _OP_COPYBYTE:
+            dest = int.from_bytes(operand[:4], "little")
+            assert (rom_map.G_SPECIAL_VAR_0X8000
+                    <= dest < rom_map.G_SPECIAL_VAR_0X8000 + 4), f"writes 0x{dest:08X}"
+
+
+def test_the_message_pointer_is_relative_to_the_script_not_absolute():
+    """gSaveBlock1Ptr carries a random 4-aligned offset re-rolled on every battle and load, so a
+    RAM script cannot hold an absolute pointer to its own text. setvaddress makes vmessage's
+    operand an offset from wherever the script actually landed."""
+    script = gift_composer.build_seed_read_script()
+    walked = _walk(script)
+    (_offset, first_op, base_operand) = walked[0]
+    pointers = [int.from_bytes(operand, "little")
+                for _o, op, operand in walked if op == _OP_VMESSAGE]
+
+    assert first_op == _OP_SETVADDRESS, "setvaddress must come first: it uses its own address"
+    virtual_base = int.from_bytes(base_operand, "little")
+    assert len(pointers) == 1
+    text_at = pointers[0] - virtual_base
+    assert 0 < text_at < len(script)
+    assert script[text_at:].endswith(b"\xFF")        # a field string, terminated
+    assert b"\xFD\x02" in script[text_at:] and b"\xFD\x03" in script[text_at:]
+
+
+def test_the_script_ends_with_end_so_the_npc_can_be_asked_again():
+    """`endram` (0x0d) calls ClearRamScript; `end` (0x02) does not. A miss costing nothing depends
+    entirely on being able to ask a second time."""
+    script = gift_composer.build_seed_read_script()
+    opcodes = [op for _o, op, _operand in _walk(script)]
+
+    assert opcodes[-1] == _OP_END
+    assert 0x0D not in opcodes
+
+
+def test_the_printed_halves_reassemble_into_grngvalue():
+    assert rng_script.seed_from_printed(0x5678, 0x1234) == 0x12345678
+    with pytest.raises(rng_script.RngScriptError):
+        rng_script.seed_from_printed(0x10000, 0)
+
+
+def test_two_readings_prove_the_address_without_any_clock():
+    """A distance ALWAYS exists - the LCG is a permutation of 2**32 states - so the distance is
+    only evidence when it is small. Two readings seconds apart are thousands of turns apart; two
+    unrelated numbers are ~2**31."""
+    first = 0x12345678
+    second = lcg.advance(first, 2400)
+
+    good = rng_script.check_two_readings(first, second, seconds=20)
+    bad = rng_script.check_two_readings(0xDEADBEEF, 0x0BADF00D)
+
+    assert any("CONSISTENT" in line for line in good)
+    assert any("2,400 turns" in line for line in good)
+    assert any("NOT consistent" in line for line in bad)
