@@ -273,7 +273,8 @@ console flushing its RfuSendQueue. Measured over a 608-byte dump, bursts of four
 
 ## Left
 
-1. **bs06: 608 bytes on hardware**, then 1024. `echo_gaps.py` on the capture afterwards: every block
+1. **bs06: bs05's own command again** (`save-dump --dump-block sav1 --dump-offset 0x34
+   --dump-size 608`), so the echo policy is the only variable; then 1024. `echo_gaps.py` on the capture afterwards: every block
    must read `never=[]`. That single line is the whole verdict.
 
 2. Writing, rather than reading: the same offsets take a `str` as easily as a `ldr`.
