@@ -199,10 +199,63 @@ CALL_VIA_R3 = 0x081E2230
 # from ld_script.ld, then MEASURED twice: `anchors` read it from pc (bs08), and it is the first word
 # of Client_RunBufferScript's literal pool (bs11).
 GDECOMPRESSION_BUFFER = 0x0201C000
-# The pointer variables in IWRAM, not the blocks they point at. Their VALUES move per save load; on
-# GURVAN's console in bs08 they were 0x02024598 and 0x0202553C.
+# The pointer variables in IWRAM, not the blocks they point at. THEIR VALUES MOVE, and bs45/bs46
+# MEASURED it: six minutes apart, with no reboot, gSaveBlock1Ptr was 0x0202559C and then
+# 0x02025550 - a delta of 0x4C, 76 bytes, 4-aligned. SetSaveBlocksPointers [decomp:src/load_save.c:75]
+# is why:
+#
+#     offset = (Random()) & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3);      // 128, so 0..124 by 4
+#     gSaveBlock2Ptr  = (void *)(&gSaveBlock2) + offset;
+#     gSaveBlock1Ptr  = (void *)(&gSaveBlock1) + offset;
+#
+# a RANDOM 4-aligned offset the game re-rolls in MoveSaveBlocks_ResetHeap, which CB2_InitBattle
+# calls - so every battle moves the save blocks, as does every load. 76 is in range and 4-aligned,
+# which is the measurement agreeing with the mechanism rather than merely not contradicting it.
+# The decomp's own name for it is QL_AddASLROffset [:82].
+#
+# THE RULE: an absolute address into a save block is valid only until the next battle or load.
+# Never carry one between runs. A payload that touches the save must compute from r1/r2, which the
+# console hands it every call - save-dump, save-write and --create-mon-append all do. bs45's dry
+# run reported the slot it WOULD write at 0x02025638; using that as bs46's --create-mon-destination
+# would have written 76 bytes too high, through the end of playerParty[1] and into playerParty[2].
+SAVEBLOCK_MOVE_RANGE = 128          # [decomp:src/load_save.c:15]
+SAVEBLOCK_MOVE_MASK = (SAVEBLOCK_MOVE_RANGE - 1) & ~3        # 0x7C: 0..124 in steps of 4
+# What bs45 and bs46 read, minutes apart, on one boot.
+GSAVEBLOCK1_SEEN = (0x0202553C, 0x0202559C, 0x02025550)      # bs08, bs45, bs46
 GSAVEBLOCK2PTR = 0x0300422C
 GSAVEBLOCK1PTR = 0x03004228
+# THE PARTY THE GAME ACTUALLY USES, measured in bs47 by finding a Pokemon rather than by looking
+# where it was predicted. `gSaveBlock1Ptr->playerParty` is NOT this: it is only where the save path
+# copies to. SavePlayerParty [decomp:src/load_save.c:160] does
+#
+#     gSaveBlock1Ptr->playerPartyCount = gPlayerPartyCount;
+#     for (i = 0; i < PARTY_SIZE; i++) gSaveBlock1Ptr->playerParty[i] = gPlayerParty[i];
+#
+# and SaveSerializedGame [:196] is that call plus SaveObjectEvents - so anything written into the
+# save block's party is overwritten by the console's own save. bs46 learned this the expensive way:
+# it appended into gSaveBlock1Ptr->playerParty, the payload correctly reported APPENDED at slot 2
+# with the count raised, and the mon was gone because the save copied the live array back over it.
+# Write gPlayerParty and the same call CARRIES the write to flash instead of erasing it.
+#
+# bs47 dumped 1024 bytes at 0x02024000 and walked every 4-aligned window looking for a struct
+# Pokemon with a VALID CHECKSUM - the substruct region summed after decrypting with
+# personality ^ otId, which nothing passes by accident. Exactly one did, at +0x280: the player's
+# CHANSEY, Lv26, nicknamed 'Cheemsey', OT 'Tops' (traded to them, so the OT is not their own).
+# Species, level and nickname are things only their console knew.
+#
+# Two independent deductions had predicted it and both were right: bs42's dump holds 0x02024280 in
+# the literal pool of the first of two functions that zero six 100-byte structs (ZeroPlayerPartyMons
+# by source order) and 0x02024028 in the second's; and the decomp declares gEnemyParty[6]
+# immediately before gPlayerParty[6] [src/pokemon.c:61-62], so they are exactly 600 bytes apart -
+# 0x02024028 + 600 = 0x02024280.
+#
+# UNLIKE THE SAVE BLOCKS THESE DO NOT MOVE. They are ordinary EWRAM globals fixed at link time,
+# which is why bs42 could read one as a literal constant; the ASLR offset above applies only to
+# gSaveBlock1/gSaveBlock2/gPokemonStorage.
+GPLAYER_PARTY = 0x02024280          # struct Pokemon[6]
+GPLAYER_PARTY_COUNT = 0x02024025    # u8; bs47 read 1, matching the one mon on the player's screen
+GENEMY_PARTY = 0x02024028           # struct Pokemon[6], 600 bytes below gPlayerParty
+
 # The seed EVERY random outcome in the game comes out of: encounters, shininess, damage rolls,
 # critical hits [Random, decomp:src/random.c:9]. Read out of Random's and SeedRng's literal pools
 # (bs14) and confirmed on hardware by its own recurrence (bs15). At the Mystery Gift link menu the

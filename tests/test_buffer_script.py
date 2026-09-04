@@ -1363,8 +1363,11 @@ def test_the_create_mon_operands_are_where_we_patch_them():
         ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID,
         destination=0)
     assert buffer_script.create_mon_parameters(code) == {
-        "function": CREATE_MON_ADDRESS, "destination": 0, "party_append": 0, "species": 151,
-        "level": 30, "fixed_iv": 31, "has_fixed_personality": 1,
+        "function": CREATE_MON_ADDRESS, "destination": 0, "party_append": 0,
+        # the party addresses ride along even when no append was asked for, defaulted from the
+        # ones bs47 measured rather than left for a caller to supply
+        "party_base": rom_map.GPLAYER_PARTY, "party_count": rom_map.GPLAYER_PARTY_COUNT,
+        "species": 151, "level": 30, "fixed_iv": 31, "has_fixed_personality": 1,
         "fixed_personality": 0x3ADE0000,
         "ot_id_type": buffer_script.OT_ID_PRESET, "fixed_ot_id": GURVAN_OT_ID}
 
@@ -1615,12 +1618,23 @@ def test_a_built_create_mon_and_gather_are_still_named_by_their_own_bytes():
 
 CHANSEY = b"\xAA" * buffer_script.PARTY_MON_SIZE     # a mon that must survive every append
 
+# gPlayerParty is an EWRAM global, not part of a save block - bs46 proved the save block's copy is
+# the wrong target. The emulator only hands back the two save-block buffers, so these tests put the
+# party inside the sav1 buffer purely as A REGION OF EWRAM THAT CAN BE READ BACK, and pass its
+# address to the payload explicitly. Nothing here says a party lives in a save block.
+TEST_PARTY_COUNT = buffer_script.SAV1_ADDRESS + 0x34
+TEST_PARTY = buffer_script.SAV1_ADDRESS + 0x38
+PARTY_ARGS = {"party_base": TEST_PARTY, "party_count": TEST_PARTY_COUNT}
+COUNT_OFF = TEST_PARTY_COUNT - buffer_script.SAV1_ADDRESS
+PARTY_OFF = TEST_PARTY - buffer_script.SAV1_ADDRESS
+
 
 def _party_sav1(count, size=0x300):
+    """A readable EWRAM region: `count` mons at TEST_PARTY, the count at TEST_PARTY_COUNT."""
     sav1 = bytearray(size)
-    sav1[buffer_script.SAV1_PARTY_COUNT] = count
+    sav1[COUNT_OFF] = count
     for slot in range(count):
-        start = buffer_script.SAV1_PARTY + slot * buffer_script.PARTY_MON_SIZE
+        start = PARTY_OFF + slot * buffer_script.PARTY_MON_SIZE
         sav1[start:start + buffer_script.PARTY_MON_SIZE] = CHANSEY
     return bytes(sav1)
 
@@ -1628,23 +1642,22 @@ def _party_sav1(count, size=0x300):
 @needs_unicorn
 def test_the_append_writes_the_first_free_slot_and_raises_the_count():
     code = buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
-                                          party_append=True)
+                                          party_append=True, **PARTY_ARGS)
 
     run = buffer_script.emulate(
         code, sav1=_party_sav1(1),
         memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
     result = buffer_script.read_create_mon(run.pending_send)
 
-    party = buffer_script.SAV1_PARTY
-    size = buffer_script.PARTY_MON_SIZE
+    party, size = PARTY_OFF, buffer_script.PARTY_MON_SIZE
     assert result["party"] == {"count_before": 1, "slot": 1,
                                "status": buffer_script.PARTY_WRITE_APPENDED}
     assert run.sav1[party:party + size] == CHANSEY          # the mon that was there is untouched
     assert run.sav1[party + size:party + 2 * size] == result["mon"]
-    assert run.sav1[buffer_script.SAV1_PARTY_COUNT] == 2
+    assert run.sav1[COUNT_OFF] == 2
     # The address is COMPUTED from gSaveBlock1Ptr, never given: the save blocks move between save
     # loads, so an absolute address for a party slot would be right only until the next boot.
-    assert result["destination"] == buffer_script.SAV1_ADDRESS + party + size
+    assert result["destination"] == TEST_PARTY + size
     assert buffer_script.create_mon_parameters(code)["destination"] == 0
 
 
@@ -1652,17 +1665,17 @@ def test_the_append_writes_the_first_free_slot_and_raises_the_count():
 def test_the_append_never_touches_an_occupied_slot_at_any_party_size():
     for count in range(buffer_script.PARTY_SIZE):
         code = buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
-                                              party_append=True)
+                                              party_append=True, **PARTY_ARGS)
         run = buffer_script.emulate(
             code, sav1=_party_sav1(count),
             memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
         result = buffer_script.read_create_mon(run.pending_send)
 
-        party, size = buffer_script.SAV1_PARTY, buffer_script.PARTY_MON_SIZE
+        party, size = PARTY_OFF, buffer_script.PARTY_MON_SIZE
         assert result["party"]["slot"] == count
         assert run.sav1[party:party + count * size] == CHANSEY * count
         assert run.sav1[party + count * size:party + (count + 1) * size] == result["mon"]
-        assert run.sav1[buffer_script.SAV1_PARTY_COUNT] == count + 1
+        assert run.sav1[COUNT_OFF] == count + 1
 
 
 @needs_unicorn
@@ -1670,19 +1683,19 @@ def test_a_full_party_writes_nothing_and_says_so():
     """The same shape as `givepokemon` answering 3 instead of 2 [mev02]: a refusal that comes back
     as an answer, not a failure."""
     code = buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
-                                          party_append=True)
+                                          party_append=True, **PARTY_ARGS)
 
     run = buffer_script.emulate(
         code, sav1=_party_sav1(buffer_script.PARTY_SIZE),
         memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
     result = buffer_script.read_create_mon(run.pending_send)
 
-    party, size = buffer_script.SAV1_PARTY, buffer_script.PARTY_MON_SIZE
+    party, size = PARTY_OFF, buffer_script.PARTY_MON_SIZE
     assert result["party"] == {"count_before": 6, "slot": 0,
                                "status": buffer_script.PARTY_WRITE_FULL}
     assert result["destination"] == 0
     assert run.sav1[party:party + 6 * size] == CHANSEY * 6
-    assert run.sav1[buffer_script.SAV1_PARTY_COUNT] == buffer_script.PARTY_SIZE
+    assert run.sav1[COUNT_OFF] == buffer_script.PARTY_SIZE
     assert run.returned == buffer_script.BUFFER_SCRIPT_DONE
 
 
@@ -1691,8 +1704,8 @@ def test_the_append_writes_nothing_past_the_party():
     """playerParty[6] ends at 0x38 + 600 = 0x290, which is `money` [global.h:774]. A slot index
     that ran over would land on it."""
     code = buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
-                                          party_append=True)
-    end = buffer_script.SAV1_PARTY + buffer_script.PARTY_SIZE * buffer_script.PARTY_MON_SIZE
+                                          party_append=True, **PARTY_ARGS)
+    end = PARTY_OFF + buffer_script.PARTY_SIZE * buffer_script.PARTY_MON_SIZE
     assert end == 0x290
 
     for count in (0, 5, 6):
@@ -1700,7 +1713,7 @@ def test_the_append_writes_nothing_past_the_party():
             code, sav1=_party_sav1(count),
             memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
         assert run.sav1[end:] == bytes(len(run.sav1) - end), f"money moved with {count} in the party"
-        assert run.sav1[:buffer_script.SAV1_PARTY_COUNT] == bytes(buffer_script.SAV1_PARTY_COUNT)
+        assert run.sav1[:COUNT_OFF] == bytes(COUNT_OFF)
 
 
 def test_the_append_refuses_what_would_write_rubbish_or_ask_twice():
@@ -1708,7 +1721,7 @@ def test_the_append_refuses_what_would_write_rubbish_or_ask_twice():
         buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
                                        party_append=True, destination=0x02024598)
     with pytest.raises(buffer_script.BufferScriptError, match="zero bytes"):
-        buffer_script.build_create_mon(0, species=59, level=30, party_append=True)
+        buffer_script.build_create_mon(0, species=59, level=30, party_append=True, **PARTY_ARGS)
 
 
 @needs_unicorn
@@ -1721,7 +1734,7 @@ def test_end_to_end_the_console_appends_the_mon_to_its_own_party():
     code = buffer_script.build_create_mon(
         CREATE_MON_ADDRESS, species=59, level=30, fixed_iv=31,
         has_fixed_personality=1, fixed_personality=0x3ADF0001,
-        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID, party_append=True)
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID, party_append=True, **PARTY_ARGS)
     distribution = stamp_rally.MysteryGiftDistribution(
         card=None, ram_script=None, buffer_code=code,
         buffer_dump_size=buffer_script.CREATE_MON_ANSWER_SIZE,
@@ -1767,7 +1780,7 @@ def test_the_dry_run_writes_nothing_and_reads_back_the_slot_it_would_have_writte
     before = _party_sav1(1)
     code = buffer_script.build_create_mon(
         CREATE_MON_ADDRESS, species=59, level=30,
-        party_append=buffer_script.PARTY_APPEND_DRY_RUN)
+        party_append=buffer_script.PARTY_APPEND_DRY_RUN, **PARTY_ARGS)
 
     run = buffer_script.emulate(
         code, sav1=before, memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
@@ -1777,8 +1790,7 @@ def test_the_dry_run_writes_nothing_and_reads_back_the_slot_it_would_have_writte
     assert result["party"] == {"count_before": 1, "slot": 1,
                                "status": buffer_script.PARTY_WRITE_DRY_RUN}
     # The address it WOULD have written, computed the same way the real append computes it.
-    assert result["destination"] == (buffer_script.SAV1_ADDRESS + buffer_script.SAV1_PARTY
-                                     + buffer_script.PARTY_MON_SIZE)
+    assert result["destination"] == TEST_PARTY + buffer_script.PARTY_MON_SIZE
     # And the 100 bytes are the SLOT's, not the mon's: an empty slot reads as zeros.
     assert result["mon"] == bytes(buffer_script.PARTY_MON_SIZE)
 
@@ -1793,11 +1805,11 @@ def test_the_dry_run_computes_the_same_address_the_real_append_writes():
         dry = buffer_script.read_create_mon(buffer_script.emulate(
             buffer_script.build_create_mon(
                 CREATE_MON_ADDRESS, species=59, level=30,
-                party_append=buffer_script.PARTY_APPEND_DRY_RUN),
+                party_append=buffer_script.PARTY_APPEND_DRY_RUN, **PARTY_ARGS),
             sav1=sav1, memory=stub).pending_send)
         real = buffer_script.read_create_mon(buffer_script.emulate(
             buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
-                                           party_append=True),
+                                           party_append=True, **PARTY_ARGS),
             sav1=sav1, memory=stub).pending_send)
 
         assert dry["destination"] == real["destination"]
@@ -1810,11 +1822,11 @@ def test_the_dry_run_over_an_occupied_slot_says_do_not_append():
     """If playerPartyCount ever disagreed with what is actually in the party, the dry run is what
     would catch it - before a store, not after."""
     sav1 = bytearray(_party_sav1(1))
-    start = buffer_script.SAV1_PARTY + buffer_script.PARTY_MON_SIZE
+    start = PARTY_OFF + buffer_script.PARTY_MON_SIZE
     sav1[start:start + buffer_script.PARTY_MON_SIZE] = b"\xCC" * buffer_script.PARTY_MON_SIZE
     code = buffer_script.build_create_mon(
         CREATE_MON_ADDRESS, species=59, level=30,
-        party_append=buffer_script.PARTY_APPEND_DRY_RUN)
+        party_append=buffer_script.PARTY_APPEND_DRY_RUN, **PARTY_ARGS)
 
     run = buffer_script.emulate(
         code, sav1=bytes(sav1), memory={rom_map.CREATE_MON: buffer_script.CREATE_MON_ARG_MODEL})
@@ -1829,7 +1841,7 @@ def test_the_dry_run_over_an_occupied_slot_says_do_not_append():
 def test_the_dry_run_of_a_full_party_reports_full_not_a_slot():
     code = buffer_script.build_create_mon(
         CREATE_MON_ADDRESS, species=59, level=30,
-        party_append=buffer_script.PARTY_APPEND_DRY_RUN)
+        party_append=buffer_script.PARTY_APPEND_DRY_RUN, **PARTY_ARGS)
 
     run = buffer_script.emulate(
         code, sav1=_party_sav1(buffer_script.PARTY_SIZE),
@@ -1873,7 +1885,7 @@ def test_the_dry_run_calls_a_zeroed_slot_empty_and_a_used_one_occupied():
     import struct
     asked = buffer_script.create_mon_parameters(buffer_script.build_create_mon(
         CREATE_MON_ADDRESS, species=59, level=30,
-        party_append=buffer_script.PARTY_APPEND_DRY_RUN))
+        party_append=buffer_script.PARTY_APPEND_DRY_RUN, **PARTY_ARGS))
     header = struct.pack("<4I", 1, 0x02025638, CREATE_MON_ADDRESS, 0x0201C03C)
     tail = struct.pack("<I", 1 | 1 << 8 | buffer_script.PARTY_WRITE_DRY_RUN << 16)
 
@@ -1886,3 +1898,56 @@ def test_the_dry_run_calls_a_zeroed_slot_empty_and_a_used_one_occupied():
     used[0:4] = b"\x01\x02\x03\x04"
     occupied = buffer_script.describe_create_mon(header + bytes(used) + tail, asked)
     assert any("DO NOT APPEND" in line for line in occupied), occupied
+
+
+def test_the_save_blocks_move_by_a_four_aligned_offset_the_game_rolls():
+    """bs45 and bs46 read gSaveBlock1Ptr six minutes apart, on one boot, and it had MOVED.
+    SetSaveBlocksPointers [decomp:src/load_save.c:75] rolls
+    `offset = Random() & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3)` and MoveSaveBlocks_ResetHeap re-rolls
+    it - CB2_InitBattle calls that, so every battle moves them. This is why nothing may carry an
+    absolute save address between runs."""
+    seen = rom_map.GSAVEBLOCK1_SEEN
+    deltas = [abs(a - b) for a in seen for b in seen if a != b]
+
+    assert all(d % 4 == 0 for d in deltas), "the offset is 4-aligned by the mask"
+    assert max(deltas) <= rom_map.SAVEBLOCK_MOVE_MASK, "outside the range the game can roll"
+    assert rom_map.SAVEBLOCK_MOVE_MASK == 0x7C
+
+
+def test_no_payload_carries_an_absolute_address_into_a_save_block():
+    """The consequence of the ASLR, as a check rather than a comment: what is safe to hardcode is
+    decided by whether the thing MOVES, not by whether it is convenient.
+
+    save-dump and save-write name a block, an offset and a size, and take the pointer itself from
+    r1/r2 every call. The party append DOES hardcode two addresses - and that is right, because
+    gPlayerParty and gPlayerPartyCount are link-time EWRAM globals; bs42 read one as a literal
+    constant out of the ROM's own pool. What must never be hardcoded is an address inside a save
+    block, and none is."""
+    assert buffer_script.build_save_dump(buffer_script.SAVE_BLOCK_1, 0x38, 200)[
+        buffer_script.SAVE_DUMP_WHICH_OFFSET:buffer_script.SAVE_DUMP_WHICH_OFFSET + 12] == (
+            (1).to_bytes(4, "little") + (0x38).to_bytes(4, "little")
+            + (200).to_bytes(4, "little"))
+
+    # The party the append names is further below every gSaveBlock1Ptr this project has seen than
+    # the ASLR offset could ever move one.
+    party_end = rom_map.GPLAYER_PARTY + buffer_script.PARTY_SIZE * buffer_script.PARTY_MON_SIZE
+    for seen in rom_map.GSAVEBLOCK1_SEEN:
+        assert seen - rom_map.SAVEBLOCK_MOVE_MASK > party_end
+
+
+def test_the_party_append_defaults_to_the_addresses_bs47_measured():
+    asked = buffer_script.create_mon_parameters(
+        buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
+                                       party_append=True))
+
+    assert asked["party_base"] == rom_map.GPLAYER_PARTY == 0x02024280
+    assert asked["party_count"] == rom_map.GPLAYER_PARTY_COUNT == 0x02024025
+
+
+def test_the_party_append_refuses_a_party_that_is_not_in_ewram():
+    """These are the two addresses the payload does hardcode, so they are the two worth guarding."""
+    for kwargs in ({"party_base": 0x08041150}, {"party_count": 0x03004220},
+                   {"party_base": 0x0203FFC0}):        # too near the top for six mons
+        with pytest.raises(buffer_script.BufferScriptError):
+            buffer_script.build_create_mon(CREATE_MON_ADDRESS, species=59, level=30,
+                                           party_append=True, **kwargs)

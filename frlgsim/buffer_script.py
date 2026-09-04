@@ -568,16 +568,18 @@ CREATE_MON = "create-mon"
 CREATE_MON_FUNCTION_OFFSET = 0x04
 CREATE_MON_DESTINATION_OFFSET = 0x08
 CREATE_MON_PARTY_APPEND_OFFSET = 0x0C
-CREATE_MON_SPECIES_OFFSET = 0x10
-CREATE_MON_LEVEL_OFFSET = 0x14
-CREATE_MON_FIXED_IV_OFFSET = 0x18
-CREATE_MON_HAS_FIXED_PERSONALITY_OFFSET = 0x1C
-CREATE_MON_FIXED_PERSONALITY_OFFSET = 0x20
-CREATE_MON_OT_ID_TYPE_OFFSET = 0x24
-CREATE_MON_FIXED_OT_ID_OFFSET = 0x28
-CREATE_MON_RESULT_OFFSET = 0x2C
-CREATE_MON_MON_OFFSET = 0x3C
-CREATE_MON_PARTY_OFFSET = 0xA0
+CREATE_MON_PARTY_BASE_OFFSET = 0x10
+CREATE_MON_PARTY_COUNT_OFFSET = 0x14
+CREATE_MON_SPECIES_OFFSET = 0x18
+CREATE_MON_LEVEL_OFFSET = 0x1C
+CREATE_MON_FIXED_IV_OFFSET = 0x20
+CREATE_MON_HAS_FIXED_PERSONALITY_OFFSET = 0x24
+CREATE_MON_FIXED_PERSONALITY_OFFSET = 0x28
+CREATE_MON_OT_ID_TYPE_OFFSET = 0x2C
+CREATE_MON_FIXED_OT_ID_OFFSET = 0x30
+CREATE_MON_RESULT_OFFSET = 0x34
+CREATE_MON_MON_OFFSET = 0x44
+CREATE_MON_PARTY_OFFSET = 0xA8
 # struct Pokemon [decomp:include/pokemon.h]: an 80-byte BoxPokemon and 20 bytes of party data.
 PARTY_MON_SIZE = 100
 PARTY_SIZE = 6                      # [decomp:include/constants/party_menu.h]
@@ -586,9 +588,9 @@ CREATE_MON_HEADER_SIZE = 16
 # word is an addendum past them, so those dumps still read.
 CREATE_MON_ANSWER_SIZE = CREATE_MON_HEADER_SIZE + PARTY_MON_SIZE + 4
 
-# struct SaveBlock1 [decomp:include/global.h:772]. The payload computes the destination from
-# r2 = gSaveBlock1Ptr rather than taking an absolute address, because the save blocks MOVE between
-# save loads - bs08 saw 0x02024598 and 0x0202553C on that boot and nothing promises those again.
+# struct SaveBlock1 [decomp:include/global.h:772]. THIS IS NOT WHERE A PARTY WRITE GOES: it is
+# only where SavePlayerParty copies TO [decomp:src/load_save.c:160], so bs46's append here was
+# erased by the console's own save seconds later. The offsets stay for reading it.
 SAV1_PARTY_COUNT = 0x34
 SAV1_PARTY = 0x38
 
@@ -661,19 +663,25 @@ def shiny_personality(tid, sid, low=0):
 def build_create_mon(function, species, level, *, fixed_iv=USE_RANDOM_IVS,
                      has_fixed_personality=1, fixed_personality=0,
                      ot_id_type=OT_ID_PLAYER_ID, fixed_ot_id=0, destination=0,
-                     party_append=False):
+                     party_append=False, party_base=None, party_count=None):
     """The create-mon payload, patched with the eight arguments and where to put the result.
 
     `function` is a THUMB pointer (bit 0 set), or 0 to call nothing and answer the zeroed buffer -
     which is how the send path is checked with the ROM left out of it.
 
-    `party_append` APPENDS the finished mon to the player's party, at slot == the current
-    playerPartyCount, and raises the count - which is what the game does when a mon is caught, so
-    an occupied slot is never touched. The address is computed from r2 = gSaveBlock1Ptr, never
-    given, because the save blocks move between save loads. `destination` is the general form: an
-    absolute address, which does not touch the party count. Either one is a write to the console's
-    live memory and the config layer gates both behind the same override as an unsafe save-write.
+    `party_append` APPENDS the finished mon to gPlayerParty - the array the GAME uses - at slot ==
+    the current gPlayerPartyCount, and raises the count, which is what the game does when a mon is
+    caught, so an occupied slot is never touched. NOT the save block's party: SavePlayerParty
+    copies gPlayerParty over that when the console saves [decomp:src/load_save.c:160], which is
+    what erased bs46. `party_base` and `party_count` default to the addresses bs47 measured.
+
+    `destination` is the general form: an absolute address, which touches no count. Either one is
+    a write to the console's live memory and the config layer gates both behind the same override
+    as an unsafe save-write.
     """
+    from . import rom_map
+    party_base = rom_map.GPLAYER_PARTY if party_base is None else int(party_base)
+    party_count = rom_map.GPLAYER_PARTY_COUNT if party_count is None else int(party_count)
     function, species, level = int(function), int(species), int(level)
     fixed_iv, ot_id_type = int(fixed_iv), int(ot_id_type)
     has_fixed_personality = int(has_fixed_personality)
@@ -688,6 +696,17 @@ def build_create_mon(function, species, level, *, fixed_iv=USE_RANDOM_IVS,
         raise BufferScriptError(
             f"party_append is {PARTY_APPEND_NO} (no), {PARTY_APPEND_WRITE} (append) or "
             f"{PARTY_APPEND_DRY_RUN} (dry run), got {party_append}")
+    if party_append:
+        for name, address in (("gPlayerParty", party_base),
+                              ("gPlayerPartyCount", party_count)):
+            if not EWRAM_BASE <= address < EWRAM_BASE + EWRAM_SIZE:
+                raise BufferScriptError(
+                    f"{name} at 0x{address:X} is not in EWRAM; these are link-time globals "
+                    f"[rom_map.py], not something to guess at")
+        if not party_base + PARTY_SIZE * PARTY_MON_SIZE <= EWRAM_BASE + EWRAM_SIZE:
+            raise BufferScriptError(
+                f"gPlayerParty at 0x{party_base:X} does not have "
+                f"{PARTY_SIZE * PARTY_MON_SIZE} bytes of EWRAM after it")
     if party_append and destination:
         raise BufferScriptError(
             "a party append computes its own destination from gSaveBlock1Ptr; an absolute address "
@@ -730,6 +749,8 @@ def build_create_mon(function, species, level, *, fixed_iv=USE_RANDOM_IVS,
             (CREATE_MON_FUNCTION_OFFSET, function),
             (CREATE_MON_DESTINATION_OFFSET, destination),
             (CREATE_MON_PARTY_APPEND_OFFSET, party_append),
+            (CREATE_MON_PARTY_BASE_OFFSET, party_base),
+            (CREATE_MON_PARTY_COUNT_OFFSET, party_count),
             (CREATE_MON_SPECIES_OFFSET, species),
             (CREATE_MON_LEVEL_OFFSET, level),
             (CREATE_MON_FIXED_IV_OFFSET, fixed_iv),
@@ -749,6 +770,8 @@ def create_mon_parameters(code):
     return {"function": word(CREATE_MON_FUNCTION_OFFSET),
             "destination": word(CREATE_MON_DESTINATION_OFFSET),
             "party_append": word(CREATE_MON_PARTY_APPEND_OFFSET),
+            "party_base": word(CREATE_MON_PARTY_BASE_OFFSET),
+            "party_count": word(CREATE_MON_PARTY_COUNT_OFFSET),
             "species": word(CREATE_MON_SPECIES_OFFSET),
             "level": word(CREATE_MON_LEVEL_OFFSET),
             "fixed_iv": word(CREATE_MON_FIXED_IV_OFFSET),
@@ -1070,6 +1093,7 @@ PATCHED_SPANS = {
     # words and the 100 bytes CreateMon writes into the image itself.
     CREATE_MON: ((CREATE_MON_FUNCTION_OFFSET,
                   CREATE_MON_PARTY_OFFSET - CREATE_MON_FUNCTION_OFFSET + 4),),
+
 }
 
 

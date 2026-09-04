@@ -814,12 +814,23 @@ bs43 and bs44 built a mon and read it back; nothing on the console was written. 
 party is a different thing — a write to a live save that the console then commits to flash — and it
 needs two things `--create-mon-destination` does not do.
 
-**The address is computed, never given.** The save blocks *move* between save loads: `anchors`
-(bs08) saw `gSaveBlock2Ptr` at 0x02024598 and `gSaveBlock1Ptr` at 0x0202553C on that boot, and
-nothing promises those again. So the payload uses `r2 = gSaveBlock1Ptr` as the console hands it
-over [mystery_gift_client.c:276] and computes `playerParty[n]` from it —
-`playerPartyCount` is at +0x34 and `playerParty[6]` at +0x38, 100 bytes each [global.h:772]. An
-absolute address for a party slot would be right only until the next boot.
+**It writes `gPlayerParty`, not the save block's party — and bs46 is why that sentence exists.**
+`gSaveBlock1Ptr->playerParty` looks like the party and is not: it is only where the save copies
+*to*.
+
+```c
+void SavePlayerParty(void)
+{
+    gSaveBlock1Ptr->playerPartyCount = gPlayerPartyCount;
+    for (i = 0; i < PARTY_SIZE; i++)
+        gSaveBlock1Ptr->playerParty[i] = gPlayerParty[i];
+}
+```
+
+`SaveSerializedGame` is that call plus `SaveObjectEvents` [load_save.c:196]. So bs46 appended into
+the save block, the payload correctly reported `APPENDED` at slot 2 with the count raised — and the
+mon was gone, because the console saved seconds later and copied the live array straight back over
+it. Writing `gPlayerParty` makes the *same* call carry the write to flash instead of erasing it.
 
 **The slot is always the first free one.** It writes at `slot == playerPartyCount` and then raises
 the count, which is exactly what the game does when a mon is caught. *An occupied slot is never
@@ -828,8 +839,42 @@ structural, not a check that could be got past. A full party writes nothing and 
 shape as `givepokemon` answering 3 instead of 2 (mev02).
 
 The answer grew a fifth word past the mon for it — `countBefore | slot << 8 | status << 16`, where
-status is 0 (not asked), 1 (appended) or 2 (party full) — so the first 116 bytes are still exactly
-what bs43 and bs44 returned and their dumps still read.
+status is 0 (not asked), 1 (appended), 2 (party full) or 3 (dry run) — so the first 116 bytes are
+still exactly what bs43 and bs44 returned and their dumps still read.
+
+### Where it is safe to hardcode an address, and where it is not
+
+The payload *does* hardcode `gPlayerParty` and `gPlayerPartyCount`, having refused to hardcode a
+save-block address — and the two are not in tension. What decides it is whether the thing **moves**:
+
+| | moves? | so |
+| --- | --- | --- |
+| `gSaveBlock1Ptr` | yes — a random 4-aligned offset re-rolled on every battle and load [SetSaveBlocksPointers, load_save.c:75] | take it from `r1`/`r2` every call |
+| `gPlayerParty` | no — a link-time EWRAM global; bs42 read it as a literal constant in `ZeroPlayerPartyMons`' pool | an address is legitimate |
+
+bs45 and bs46 *measured* the first one moving: `gSaveBlock1Ptr` was 0x0202559C and then 0x02025550
+six minutes apart with no reboot — 76 bytes, 4-aligned, inside the 0..124 the mask allows.
+
+### bs47: finding gPlayerParty by finding a Pokemon
+
+    ./scratchpad/run_mg_fast.sh bs47 --buffer-script memory-dump \
+        --dump-address 0x02024000 --dump-size 1024 --version firered
+
+    +0x280 = 0x02024280  CHANSEY (#113) Lv26 nick 'Cheemsey' OT 'Tops'
+      slot 2: EMPTY, exactly as ZeroMonData leaves one
+      0x02024025 = 1        <- gPlayerPartyCount
+
+`scratchpad/find_party.py` does not look where the address was predicted. It walks every 4-aligned
+window of the dump and reports the ones that decode as a `struct Pokemon` **with a valid
+checksum** — the substruct region summed after decrypting with `personality ^ otId`, which nothing
+passes by accident. Exactly one window did, and the species, level and nickname in it are things
+only the player's console knew.
+
+Two independent deductions had predicted 0x02024280 and both were right: bs42's dump holds it in
+the literal pool of the first of two functions that zero six 100-byte structs
+(`ZeroPlayerPartyMons` by source order), and the decomp declares `gEnemyParty[6]` immediately
+before `gPlayerParty[6]` [pokemon.c:61-62], so they are exactly 600 bytes apart —
+`0x02024028 + 600 = 0x02024280`.
 
     ./scratchpad/run_mg_fast.sh bsNN --buffer-script create-mon --create-mon-append \
         --write-unsafe --create-mon-species 59 --create-mon-level 30 --create-mon-iv 31 \

@@ -153,3 +153,17 @@ def test_the_species_table_dump_is_the_table():
     for species in range(1, 34):
         entry = dump[start + species * rom_map.SPECIES_INFO_STRIDE:][:rom_map.SPECIES_INFO_STRIDE]
         assert entry[26:28] == b"\x00\x00", species
+
+
+def test_the_two_parties_are_adjacent_as_the_decomp_declares_them():
+    """gEnemyParty[6] is declared immediately before gPlayerParty[6] [decomp:src/pokemon.c:61-62],
+    so they are exactly 600 bytes apart. bs42 read both out of two literal pools and bs47 confirmed
+    the player's by finding the player's Chansey in it, so this is two routes to one answer."""
+    assert rom_map.GPLAYER_PARTY - rom_map.GENEMY_PARTY == 6 * 100
+    assert rom_map.GPLAYER_PARTY_COUNT < rom_map.GENEMY_PARTY, (
+        "the count bytes are declared before both arrays")
+    for address in (rom_map.GPLAYER_PARTY, rom_map.GPLAYER_PARTY_COUNT, rom_map.GENEMY_PARTY):
+        assert 0x02000000 <= address < 0x02040000, "EWRAM"
+    # And they are NOT the save block's copy: every gSaveBlock1Ptr this project has seen is far
+    # above them, and those move while these do not.
+    assert all(seen > rom_map.GPLAYER_PARTY + 600 for seen in rom_map.GSAVEBLOCK1_SEEN)
