@@ -1,7 +1,7 @@
 """Application runtime for hosting one FRLG Mystery Gift distribution; subclasses HostApplication
 and overrides only the build/startup-log/progress seams."""
 
-from . import (charmap, config as configmod, gift_registry, host_session,
+from . import (buffer_script, charmap, config as configmod, gift_registry, host_session,
                easychat, ldntrace, mystery_event, mystery_gift_attempts, wonder_news)
 from .host_app import HostApplication
 from .host_beacon import build_wonder_card_app_data, build_wonder_news_app_data
@@ -289,6 +289,17 @@ class BufferScriptHostApplication(MysteryGiftHostApplication):
                   "func(&param, gSaveBlock2Ptr, gSaveBlock1Ptr) "
                   "[decomp:src/mystery_gift_client.c:276]. No Wonder Card is sent and none is "
                   "replaced, so a console holding any card takes this path unprompted.")
+        if payload.script == buffer_script.MEMORY_SCAN:
+            asked = buffer_script.scan_parameters(code)
+            frames = buffer_script.scan_call_count(
+                asked["start"], asked["end"], asked["blocks"])
+            self.info(
+                f"Searching 0x{asked['start']:08X}..0x{asked['end']:08X} for "
+                f"0x{asked['needle']:08X}, {asked['blocks']} blocks of "
+                f"{buffer_script.SCAN_BLOCK_BYTES} bytes a frame. The payload returns 0 to be "
+                "called again next frame [mystery_gift_client.c:277], so this takes about "
+                f"{frames} frames, {frames / 60:.1f} s, with the link held open throughout; the "
+                f"watchdog ends it after {asked['max_calls']}. The evidence line is 'scan:'.")
         expect = payload.expect
         self.info("The evidence line is 'Buffer script status:'. Expecting "
                   + ("the trainer id the console's own game data carried"

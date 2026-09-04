@@ -800,3 +800,213 @@ def test_the_cli_refuses_a_write_without_bytes_and_bytes_without_a_write():
         _run_config(["--buffer-script", "save-dump", "--write-text", "no"])
     with pytest.raises((ValueError, SystemExit)):
         _run_config(["--buffer-script", "save-write", "--dump-offset", "0xB20"])
+
+
+# --- memory-scan: searching instead of reading -------------------------------------------------
+# The payload returns 0 to be called again next frame [decomp:src/mystery_gift_client.c:276-280],
+# so these run it the way the console does - many calls, one image - through emulate_repeating.
+
+SCAN_NEEDLE = 0x41C64E6D        # RAND_MULT [decomp:include/random.h:18], the first real needle
+
+
+def test_the_scan_operands_are_where_we_patch_them():
+    """The offsets are fixed by construction (asm/memory-scan.s opens with a branch over its own
+    parameter block), so this reads them back rather than trusting a disassembly."""
+    code = buffer_script.build_memory_scan(
+        SCAN_NEEDLE, 0x08100000, 0x08102000, blocks=64, max_calls=99)
+
+    assert buffer_script.scan_parameters(code) == {
+        "start": 0x08100000, "end": 0x08102000, "needle": SCAN_NEEDLE,
+        "blocks": 64, "max_calls": 99}
+
+
+@needs_unicorn
+def test_the_scan_finds_every_match_in_the_range_and_says_where():
+    planted = (0x08100004, 0x081007FC, 0x08100FE0)
+    memory = {address: SCAN_NEEDLE.to_bytes(4, "little") for address in planted}
+
+    repeated = buffer_script.emulate_repeating(
+        buffer_script.build_memory_scan(SCAN_NEEDLE, 0x08100000, 0x08101000, blocks=8),
+        memory=memory)
+    scan = buffer_script.read_scan(repeated.final.pending_send)
+
+    assert repeated.done
+    assert scan["found"] == len(planted)
+    assert [address for address, _value in scan["hits"]] == list(planted)
+    assert all(value == SCAN_NEEDLE for _address, value in scan["hits"])
+    assert scan["cursor"] == 0x08101000        # the whole range, so the answer is complete
+
+
+@needs_unicorn
+def test_the_scan_takes_one_call_per_budget_and_repoints_the_send_only_at_the_end():
+    """The frame loop itself. Every call but the last returns 0 with the console's outgoing
+    message untouched; the last one repoints it at a FIXED-size answer, so the host's length
+    check stays the proof that the payload ran."""
+    code = buffer_script.build_memory_scan(SCAN_NEEDLE, 0x08100000, 0x08101000, blocks=8)
+
+    first = buffer_script.emulate(code)
+    repeated = buffer_script.emulate_repeating(code)
+
+    assert first.returned == 0 and not first.done
+    assert not first.client.send_changed
+    assert repeated.calls == 0x1000 // (8 * buffer_script.SCAN_BLOCK_BYTES) == 16
+    assert repeated.final.client.send_repointed
+    assert repeated.final.client.send_size == buffer_script.SCAN_ANSWER_SIZE
+    assert buffer_script.read_scan(repeated.final.pending_send)["calls"] == 16
+
+
+@needs_unicorn
+def test_the_scan_watchdog_answers_instead_of_hanging_the_menu():
+    """A payload that never returns 1 hangs the Mystery Gift menu with no way out, so the count is
+    bounded in the payload. A watchdog stop still answers, and says how far it got."""
+    code = buffer_script.build_memory_scan(
+        SCAN_NEEDLE, 0x08100000, 0x08200000, blocks=8, max_calls=4)
+
+    repeated = buffer_script.emulate_repeating(code)
+    scan = buffer_script.read_scan(repeated.final.pending_send)
+
+    assert repeated.done and repeated.calls == 5      # the call that trips the watchdog answers
+    assert scan["cursor"] == 0x08100000 + 4 * 8 * buffer_script.SCAN_BLOCK_BYTES
+    lines = buffer_script.describe_scan(repeated.final.pending_send,
+                                        SCAN_NEEDLE, 0x08100000, 0x08200000)
+    assert any("STOPPED EARLY" in line for line in lines)
+    assert any(f"0x{scan['cursor']:08X}" in line for line in lines)
+
+
+@needs_unicorn
+def test_a_scan_with_more_matches_than_the_table_holds_still_counts_them_all():
+    """The count is what says whether the needle was a good one; the table is only the first 64."""
+    over = buffer_script.SCAN_HIT_CAPACITY + 6
+    memory = {0x08100000 + 4 * i: SCAN_NEEDLE.to_bytes(4, "little") for i in range(over)}
+
+    repeated = buffer_script.emulate_repeating(
+        buffer_script.build_memory_scan(SCAN_NEEDLE, 0x08100000, 0x08101000, blocks=8),
+        memory=memory)
+    scan = buffer_script.read_scan(repeated.final.pending_send)
+
+    assert scan["found"] == over
+    assert len(scan["hits"]) == buffer_script.SCAN_HIT_CAPACITY
+    assert any("only the first" in line
+               for line in buffer_script.describe_scan(repeated.final.pending_send))
+
+
+@needs_unicorn
+def test_a_scan_resumes_from_where_the_last_one_stopped():
+    """Which is what makes 16 MB reachable at all: the cursor that comes back is the start of the
+    next run, and the two halves together see what one pass would have."""
+    memory = {0x08100FE0: SCAN_NEEDLE.to_bytes(4, "little")}
+    stopped = buffer_script.emulate_repeating(
+        buffer_script.build_memory_scan(SCAN_NEEDLE, 0x08100000, 0x08102000,
+                                        blocks=8, max_calls=4),
+        memory=memory)
+    cursor = buffer_script.read_scan(stopped.final.pending_send)["cursor"]
+
+    resumed = buffer_script.emulate_repeating(
+        buffer_script.build_memory_scan(SCAN_NEEDLE, cursor, 0x08102000, blocks=8),
+        memory=memory)
+    scan = buffer_script.read_scan(resumed.final.pending_send)
+
+    assert buffer_script.read_scan(stopped.final.pending_send)["found"] == 0
+    assert scan["found"] == 1 and scan["hits"][0][0] == 0x08100FE0
+
+
+@needs_unicorn
+def test_one_call_of_the_default_budget_fits_in_a_frame():
+    """The budget is the whole design. The console is holding an RFU link open while this runs, so
+    a call must be a few milliseconds: ~7000 ARM instructions out of EWRAM (6 cycles a fetch on a
+    16-bit bus) is around 45000 of a frame's 280896 cycles."""
+    run = buffer_script.emulate(
+        buffer_script.build_memory_scan(SCAN_NEEDLE, 0x08000000, 0x09000000),
+        instruction_limit=buffer_script.SCAN_DEFAULT_BLOCKS * 32)
+
+    assert not run.done                      # it yields, having scanned its budget
+    assert run.instructions < 10000
+    assert buffer_script.scan_call_count(0x08000000, 0x09000000,
+                                         buffer_script.SCAN_DEFAULT_BLOCKS) == 1024
+
+
+def test_a_scan_range_the_payload_cannot_walk_is_refused():
+    buffer_script.build_memory_scan(SCAN_NEEDLE, 0x08000000, 0x09000000)
+    with pytest.raises(buffer_script.BufferScriptError, match="aligned"):
+        buffer_script.build_memory_scan(SCAN_NEEDLE, 0x08000004, 0x09000000)
+    with pytest.raises(buffer_script.BufferScriptError, match="not a range"):
+        buffer_script.build_memory_scan(SCAN_NEEDLE, 0x09000000, 0x08000000)
+    with pytest.raises(buffer_script.BufferScriptError, match="the CPU can read"):
+        buffer_script.build_memory_scan(SCAN_NEEDLE, 0x00000000, 0x00001000)
+    with pytest.raises(buffer_script.BufferScriptError, match="blocks"):
+        buffer_script.build_memory_scan(SCAN_NEEDLE, blocks=0)
+    with pytest.raises(buffer_script.BufferScriptError, match="watchdog"):
+        buffer_script.build_memory_scan(SCAN_NEEDLE, max_calls=0)
+
+
+@needs_unicorn
+def test_a_payload_that_never_returns_one_is_caught_offline_rather_than_on_the_console():
+    """mov r0,#0; bx lr - the shape of every hang this project could ship."""
+    with pytest.raises(buffer_script.BufferScriptError, match="every frame for ever"):
+        buffer_script.emulate_repeating(bytes.fromhex("0000a0e31eff2fe1"), max_calls=8)
+
+
+def _scan_distribution(needle, start, end, blocks=8):
+    return stamp_rally.MysteryGiftDistribution(
+        card=None, ram_script=None,
+        buffer_code=buffer_script.build_memory_scan(needle, start, end, blocks=blocks),
+        buffer_dump_size=buffer_script.SCAN_ANSWER_SIZE, buffer_scan=True)
+
+
+@needs_unicorn
+def test_end_to_end_the_console_searches_its_own_cartridge():
+    """Through the independently written console model: 'POKE' at the head of the cartridge title
+    [GBA header 0xA0], found by address rather than read from one we already knew."""
+    console = ConsoleClientModel(flag_id=0)
+
+    engine, _frames = _drive(console, distribution=_scan_distribution(
+        0x454B4F50, 0x08000000, 0x08000100))
+
+    scan = buffer_script.read_scan(engine.server.buffer_dump)
+    assert engine.server.buffer_matched is True
+    assert scan["found"] == 1 and scan["hits"][0][0] == buffer_script.ROM_HEADER_TITLE
+    assert console.result == mg_script.CLI_MSG_BUFFER_SUCCESS
+
+
+def test_the_server_refuses_a_scan_whose_answer_is_not_the_size_a_scan_answers():
+    with pytest.raises(mg_server.MysteryGiftServerError, match="memory scan answers"):
+        mg_server.MysteryGiftServer(
+            None, None, buffer_code=buffer_script.build_memory_scan(SCAN_NEEDLE),
+            buffer_dump_size=1024, buffer_scan=True)
+
+
+def test_the_cli_builds_a_scan_and_sizes_the_answer_to_the_hit_table():
+    run = _run_config(["--buffer-script", "memory-scan", "--scan-word", "0x41C64E6D",
+                       "--scan-start", "0x08000000", "--scan-end", "0x08400000",
+                       "--scan-blocks", "256"])
+    distribution = run.payload.build_distribution()
+
+    assert distribution.buffer_scan is True
+    assert distribution.buffer_dump_size == buffer_script.SCAN_ANSWER_SIZE
+    assert buffer_script.scan_parameters(distribution.buffer_code) == {
+        "start": 0x08000000, "end": 0x08400000, "needle": SCAN_NEEDLE,
+        "blocks": 256, "max_calls": 0x400000 // (256 * 32) + 2}
+
+
+def test_the_cli_refuses_a_scan_without_a_needle_and_a_needle_without_a_scan():
+    with pytest.raises((ValueError, SystemExit)):
+        _run_config(["--buffer-script", "memory-scan"])
+    with pytest.raises(SystemExit):
+        _run_config(["--buffer-script", "save-dump", "--scan-word", "1"])
+
+
+def test_a_built_payload_is_still_named_by_its_own_bytes():
+    """Every hardware run logs `describe` on what it is about to send. A payload with its operands
+    patched in is the ONLY kind a dump, a write or a scan ever sends, so naming those 'unknown'
+    made the line useless exactly when it mattered."""
+    for name, code in (
+            (buffer_script.MEMORY_SCAN, buffer_script.build_memory_scan(SCAN_NEEDLE)),
+            (buffer_script.MEMORY_DUMP, buffer_script.build_memory_dump(0x08000000, 1024)),
+            (buffer_script.SAVE_DUMP,
+             buffer_script.build_save_dump(buffer_script.SAVE_BLOCK_1, 0x34, 608)),
+            (buffer_script.SAVE_WRITE, buffer_script.build_save_write(b"FRLG-LDN bs09")),
+            (buffer_script.ANCHORS, buffer_script.payload(buffer_script.ANCHORS)),
+            (buffer_script.TRAINER_ID_PROBE,
+             buffer_script.payload(buffer_script.TRAINER_ID_PROBE))):
+        assert buffer_script.describe(code).startswith(name + " ")
+    assert "unknown" in buffer_script.describe(bytes.fromhex("0000a0e3"))

@@ -455,6 +455,81 @@ other end. Three runs, three routes, one answer. The five-entry table right afte
 against the dumps. Nothing in it is inferred from the decomp's ENGLISH rev-10 build; a symbol that
 has not been read off the console does not belong in that file.
 
+## `memory-scan`: searching instead of reading (built, hardware run pending)
+
+Every payload before this one reads a window we had to name in advance, 1024 bytes at a time. The
+cartridge is 16 MB. At 1024 bytes a run that is 16384 runs, so the ROM has only ever been read where
+some other measurement already pointed - which is why `frlgsim/rom_map.py` grew from one anchor
+(bs08) rather than from a search.
+
+**The line that changes it is one we have quoted from the start and never used:**
+
+```c
+    if (func(&client->param, gSaveBlock2Ptr, gSaveBlock1Ptr) == 1)
+    {
+        client->funcId = FUNC_RUN;      // only then does the client move on
+```
+[decomp:src/mystery_gift_client.c:276-280]
+
+A payload that returns anything but 1 IS CALLED AGAIN NEXT FRAME. `MysteryGiftClient_Run` is reached
+from `Task_MysteryGift` [mystery_gift_menu.c:1245], which is an ordinary task, so "again" means the
+next frame, sixty times a second. And the `memcpy` that loads us runs ONCE, at the
+`CLI_RUN_BUFFER_SCRIPT` command [:239] - not per call. So the payload's own image, code and data
+alike, is exactly as it left it: **a payload can keep state across frames and resume**.
+
+That turns the 1024-byte window into a loop. `asm/memory-scan.s` is handed a 32-bit needle and a
+range; each call scans its budget of 32-byte blocks, writes the cursor back into its own image and
+returns 0; the call that reaches the end of the range repoints `link->sendBuffer` at its result
+block and returns 1, the same way every dump does.
+
+The image, all offsets fixed BY CONSTRUCTION - the payload opens with a branch over its own
+parameter block, so nothing here is recovered from a disassembly:
+
+| offset | |
+|---|---|
+| 0x000 | `b .Lcode` |
+| 0x004 | cursor: the start address, advanced by the payload |
+| 0x008 | end |
+| 0x00C | needle |
+| 0x010 | blocks per call |
+| 0x014 | max_calls, the watchdog |
+| 0x018 | RESULT: matches found, final cursor, calls used, matches stored |
+| 0x028 | RESULT: 64 x (address, value) |
+| 0x228 | the code |
+
+**The budget is the design.** The console is holding an RFU link open while this runs, so a call
+that overruns its frame costs frames the link needs. The inner loop is an `ldmia` of eight words and
+eight chained `cmpne`s - about 14 ARM instructions per eight words, and the default 512 blocks is
+7703 instructions a call, measured under unicorn. Out of EWRAM (a 16-bit bus, so ~6 cycles an ARM
+fetch) that is roughly 60000 of a frame's 280896 cycles, about a fifth. The whole 16 MB cartridge is
+1024 calls: **17 seconds of link, one run**. `--scan-blocks` is the dial.
+
+**The watchdog is not optional.** A payload that never returns 1 hangs the Mystery Gift menu with no
+way out, and this is the first payload whose stopping condition is arithmetic rather than a straight
+line. `max_calls` is patched in beside the range and defaults to what the range needs plus two; a
+watchdog stop still answers, with a cursor short of the end saying where to resume.
+
+The answer is a FIXED 528 bytes however many matches there are, so the host's length check
+(`len(dump) == buffer_dump_size`) stays the proof that the payload repointed the send. `found` counts
+every match, `hits` holds the first 64.
+
+Offline, the whole thing runs: `buffer_script.emulate_repeating` calls a payload until it returns 1
+the way the console does, and `ConsoleClientModel` now does the same rather than refusing anything
+that returns 0. What the harness does NOT model is the frames themselves - the frame cost is the
+arithmetic above, not a measurement.
+
+    ./.venv/bin/python scratchpad/mg_client_harness.py --buffer-script memory-scan \
+        --scan-start 0x08000000 --scan-end 0x08010000 --scan-blocks 64 -v
+    # scan: 1 match(es) for 0x454B4F50, 32 call(s) = frames, stopped at 0x08010000
+    #    0x080000A0  0x454B4F50          <- 'POKE', the cartridge title
+
+**The first needle is `0x41C64E6D`**, `RAND_MULT` [decomp:include/random.h:18]. No ARM or THUMB
+instruction can encode it, so it is in `Random`'s literal pool, and the same pool holds `&gRngValue`
+- the seed this project has wanted since the party dump, because it makes encounters and shininess
+predictable and it is reachable by no Mystery Event opcode and no link message. Two hits are
+expected (`Random` and `Random2`, which share the multiplier [random.h:19-20]); a dump of either
+address then reads the pool.
+
 ## Left
 
 1. **Calling into the ROM.** Thirteen function addresses are known and the calling convention is

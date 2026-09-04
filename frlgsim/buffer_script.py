@@ -184,6 +184,135 @@ SAVE_SCRATCH = {
 DUMP_TARGET_OFFSET = 0x18
 DUMP_SIZE_OFFSET = 0x1C
 
+# --- memory-scan: searching instead of reading ---------------------------------------------------
+# Client_RunBufferScript ends the call only when the payload returns 1 and is reached once a frame
+# from Task_MysteryGift [decomp:src/mystery_gift_client.c:276-280], and the memcpy that loads us
+# runs once, at CLI_RUN_BUFFER_SCRIPT [:239], not per call. So a payload that returns 0 is called
+# again next frame with its own image intact, and a search over 16 MB becomes a loop across frames
+# instead of 16384 runs of 1024 bytes. The offsets below are fixed BY CONSTRUCTION - the payload
+# opens with a branch over its own parameter block - so none is recovered from a disassembly.
+SCAN_CURSOR_OFFSET = 0x04       # patched to the start address; the payload advances it
+SCAN_END_OFFSET = 0x08
+SCAN_NEEDLE_OFFSET = 0x0C
+SCAN_BLOCKS_OFFSET = 0x10       # 32-byte blocks per call: the frame budget
+SCAN_MAX_CALLS_OFFSET = 0x14    # watchdog; a payload that never returns 1 hangs the menu
+SCAN_RESULT_OFFSET = 0x18
+SCAN_HITS_OFFSET = 0x28
+SCAN_HIT_CAPACITY = 64
+SCAN_BLOCK_BYTES = 32           # one ldmia of eight words
+# What comes back, always, hits or no hits: four header words then the whole hit table. Fixed so
+# that the host's length check stays the proof that the payload repointed the send.
+SCAN_ANSWER_SIZE = 4 * 4 + 8 * SCAN_HIT_CAPACITY
+
+# The cartridge, which is what this was built for. FireRed fills the first 16 MB of the window.
+SCAN_ROM_START = 0x08000000
+SCAN_ROM_END = 0x09000000
+# One call scans this many blocks by default: 4096 words, ~14 ARM instructions per 8 words out of
+# EWRAM, so single-digit milliseconds. The console is holding an RFU link open while we run.
+SCAN_DEFAULT_BLOCKS = 512
+MAX_SCAN_BLOCKS = 0x10000
+MAX_SCAN_CALLS = 0x8000
+# Everything the CPU can be asked to read without a bus abort it would notice: EWRAM, IWRAM, I/O,
+# palette, VRAM, OAM and the cartridge window. Below EWRAM is the BIOS, which reads as garbage from
+# outside it, and past 0x0A000000 is the second wait-state mirror of the same cartridge.
+SCAN_MIN_ADDRESS = 0x02000000
+SCAN_MAX_ADDRESS = 0x0A000000
+
+MEMORY_SCAN = "memory-scan"
+
+
+def scan_call_count(start, end, blocks):
+    """How many frames a scan of this range takes at this budget."""
+    span_blocks = (int(end) - int(start)) // SCAN_BLOCK_BYTES
+    return -(-span_blocks // int(blocks))
+
+
+def build_memory_scan(needle, start=SCAN_ROM_START, end=SCAN_ROM_END,
+                      blocks=SCAN_DEFAULT_BLOCKS, max_calls=None):
+    """The memory-scan payload, patched with a needle, a range and a frame budget.
+
+    `max_calls` defaults to what the range needs plus a margin: the watchdog exists so that a
+    payload cannot sit in the Mystery Gift menu for ever, not to cut a scan short.
+    """
+    needle = int(needle) & 0xFFFFFFFF
+    start, end, blocks = int(start), int(end), int(blocks)
+    if not 0 < blocks <= MAX_SCAN_BLOCKS:
+        raise BufferScriptError(
+            f"a call scans 1..{MAX_SCAN_BLOCKS} blocks of {SCAN_BLOCK_BYTES} bytes, got {blocks}")
+    if start % SCAN_BLOCK_BYTES or end % SCAN_BLOCK_BYTES:
+        raise BufferScriptError(
+            f"the range is scanned in {SCAN_BLOCK_BYTES}-byte blocks, so 0x{start:X}..0x{end:X} "
+            f"must both be {SCAN_BLOCK_BYTES}-byte aligned")
+    if not start < end:
+        raise BufferScriptError(f"0x{start:X}..0x{end:X} is not a range")
+    if start < SCAN_MIN_ADDRESS or end > SCAN_MAX_ADDRESS:
+        raise BufferScriptError(
+            f"0x{start:X}..0x{end:X} leaves the memory the CPU can read: "
+            f"0x{SCAN_MIN_ADDRESS:X}..0x{SCAN_MAX_ADDRESS:X}")
+    needed = scan_call_count(start, end, blocks)
+    max_calls = needed + 2 if max_calls is None else int(max_calls)
+    if not 0 < max_calls <= MAX_SCAN_CALLS:
+        raise BufferScriptError(
+            f"the watchdog allows 1..{MAX_SCAN_CALLS} calls, got {max_calls}")
+    code = bytearray(payload(MEMORY_SCAN))
+    for offset, value in ((SCAN_CURSOR_OFFSET, start), (SCAN_END_OFFSET, end),
+                          (SCAN_NEEDLE_OFFSET, needle), (SCAN_BLOCKS_OFFSET, blocks),
+                          (SCAN_MAX_CALLS_OFFSET, max_calls)):
+        code[offset:offset + 4] = (value & 0xFFFFFFFF).to_bytes(4, "little")
+    return bytes(code)
+
+
+def scan_parameters(code):
+    """-> {needle, start, end, blocks, max_calls} read back out of a built payload.
+
+    The parameters are in the image at fixed offsets, so whoever holds the code can say what was
+    asked for without being told a second time - which is what lets the log report whether the
+    range was finished.
+    """
+    code = bytes(code)
+    def word(offset):
+        return int.from_bytes(code[offset:offset + 4], "little")
+    return {"start": word(SCAN_CURSOR_OFFSET), "end": word(SCAN_END_OFFSET),
+            "needle": word(SCAN_NEEDLE_OFFSET), "blocks": word(SCAN_BLOCKS_OFFSET),
+            "max_calls": word(SCAN_MAX_CALLS_OFFSET)}
+
+
+def read_scan(dump):
+    """-> what the scan found, from the bytes it sent back."""
+    dump = bytes(dump)
+    if len(dump) < SCAN_ANSWER_SIZE:
+        raise BufferScriptError(
+            f"a scan answers with {SCAN_ANSWER_SIZE} bytes, got {len(dump)}")
+    words = [int.from_bytes(dump[i:i + 4], "little") for i in range(0, SCAN_ANSWER_SIZE, 4)]
+    found, cursor, calls, stored = words[:4]
+    stored = min(stored, SCAN_HIT_CAPACITY)
+    hits = [(words[4 + 2 * i], words[5 + 2 * i]) for i in range(stored)]
+    return {"found": found, "cursor": cursor, "calls": calls, "hits": hits}
+
+
+def describe_scan(dump, needle=None, start=None, end=None):
+    """The same, as lines to log. A scan that answers 0 hits is a result; a scan that stopped
+    early is not, and the difference is the cursor against the end of the range."""
+    scan = read_scan(dump)
+    lines = [f"scan: {scan['found']} match(es) for "
+             + ("the needle" if needle is None else f"0x{int(needle):08X}")
+             + f", {scan['calls']} call(s) = frames, stopped at 0x{scan['cursor']:08X}"]
+    if end is not None:
+        if scan["cursor"] >= int(end):
+            lines.append(f"   the whole range 0x{int(start):08X}..0x{int(end):08X} was scanned")
+        else:
+            done = scan["cursor"] - int(start)
+            lines.append(
+                f"   STOPPED EARLY: {done} of {int(end) - int(start)} bytes. The watchdog "
+                f"(max_calls) ended it; re-run from 0x{scan['cursor']:08X}")
+    if scan["found"] > len(scan["hits"]):
+        lines.append(f"   only the first {len(scan['hits'])} of {scan['found']} are listed "
+                     f"(the table holds {SCAN_HIT_CAPACITY})")
+    for address, value in scan["hits"]:
+        lines.append(f"   0x{address:08X}  0x{value:08X}")
+    return lines
+
+
 SCRIPT_REGISTRY = {
     TRAINER_ID_PROBE: BufferScriptSpec(
         TRAINER_ID_PROBE,
@@ -203,6 +332,12 @@ SCRIPT_REGISTRY = {
         SAVE_WRITE,
         "WRITE bytes into a save block and read the same region back in the same run (the console "
         "saves afterwards, so the write reaches flash; --write-hex, --dump-block, --dump-offset)",
+        None),
+    MEMORY_SCAN: BufferScriptSpec(
+        MEMORY_SCAN,
+        "SEARCH memory for a 32-bit value and send back where it is. Returns 0 to be called again "
+        "next frame, so one run covers a range no dump could (--scan-word, --scan-start, "
+        "--scan-end, --scan-blocks; reads only, writes nothing)",
         None),
     ANCHORS: BufferScriptSpec(
         ANCHORS,
@@ -310,10 +445,31 @@ def format_script_help():
     return "; ".join(f"{spec.name}: {spec.description}"
                      for spec in SCRIPT_REGISTRY.values())
 
+# The spans each builder patches, so that a BUILT payload is still recognisable as the payload it
+# was built from. Without this every dump, write and scan logs as "unknown buffer script" - the
+# operands are the only thing that differs, and they are exactly what the builders change.
+PATCHED_SPANS = {
+    MEMORY_DUMP: ((DUMP_TARGET_OFFSET, 8),),
+    SAVE_DUMP: ((SAVE_DUMP_WHICH_OFFSET, 12),),
+    SAVE_WRITE: ((SAVE_WRITE_WHICH_OFFSET, MAX_BUFFER_SCRIPT_SIZE),),
+    MEMORY_SCAN: ((SCAN_CURSOR_OFFSET,
+                   SCAN_HITS_OFFSET - SCAN_CURSOR_OFFSET + 8 * SCAN_HIT_CAPACITY),),
+}
+
+
 def describe(code):
+    """Name a payload from its bytes, operands and all."""
+    code = bytes(code)
     for name, (committed, _) in PAYLOADS.items():
-        if bytes(code[:len(committed)]) == committed:
-            return f"{name} ({len(committed)} bytes of ARM)"
+        # save-write is the one payload whose length varies: the bytes it writes are its tail.
+        longer_is_fine = name == SAVE_WRITE
+        if len(code) != len(committed) and not (longer_is_fine and len(code) > len(committed)):
+            continue
+        image, reference = bytearray(code[:len(committed)]), bytearray(committed)
+        for offset, length in PATCHED_SPANS.get(name, ()):
+            image[offset:offset + length] = reference[offset:offset + length]
+        if bytes(image) == bytes(reference):
+            return f"{name} ({len(code)} bytes of ARM)"
     return f"unknown buffer script ({len(code)} bytes of ARM, head {bytes(code[:8]).hex()})"
 
 
@@ -438,110 +594,184 @@ _DEFAULT_ROM_HEADER = (b"\x00" * 0xA0
                        + b"\x96")                   # 0xB2 fixed value
 
 
+class _Machine:
+    """The console's memory across a whole CLI_RUN_BUFFER_SCRIPT, not just one call.
+
+    The copy into gDecompressionBuffer happens ONCE, at the CLI_RUN_BUFFER_SCRIPT command
+    [decomp:src/mystery_gift_client.c:239]; after that Client_RunBufferScript calls the payload
+    every frame until it returns 1 [:276]. So a payload that returns anything else is called again
+    with its own image - code and data - exactly as it left it. One instance of this class is one
+    such session, and `call` is one frame.
+    """
+
+    def __init__(self, code, *, param=0, sav2=b"", sav1=b"", memory=None, send_size=4,
+                 send_ident=0, rom=None):
+        try:
+            import unicorn
+            from unicorn import arm_const
+        except ImportError:  # pragma: no cover - exercised only on a machine without unicorn
+            raise BufferScriptError(
+                "offline execution needs unicorn (pip install unicorn)") from None
+        self._unicorn = unicorn
+        self._arm = arm_const
+
+        validate(code)
+        uc = unicorn.Uc(unicorn.UC_ARCH_ARM, unicorn.UC_MODE_ARM | unicorn.UC_MODE_LITTLE_ENDIAN)
+        uc.mem_map(EWRAM_BASE, EWRAM_SIZE)
+        uc.mem_map(IWRAM_BASE, IWRAM_SIZE)
+        uc.mem_map(ROM_BASE, ROM_SIZE)
+        uc.mem_write(ROM_BASE, bytes(rom if rom is not None else _DEFAULT_ROM_HEADER))
+        uc.mem_map(_RETURN_ADDRESS, 0x1000)
+
+        def word(offset, value):
+            uc.mem_write(_CLIENT_ADDRESS + offset, (value & 0xFFFFFFFF).to_bytes(4, "little"))
+
+        def half(offset, value):
+            uc.mem_write(_CLIENT_ADDRESS + offset, (value & 0xFFFF).to_bytes(2, "little"))
+
+        uc.mem_write(GDECOMPRESSION_BUFFER, bytes(code))
+        word(CLIENT_PARAM, int(param))
+        word(CLIENT_SEND_BUFFER, _SEND_BUFFER_ADDRESS)
+        word(CLIENT_RECV_BUFFER, _RECV_BUFFER_ADDRESS)
+        uc.mem_write(_RECV_BUFFER_ADDRESS, bytes(code))     # the console's copy is made FROM here
+        # As CLI_LOAD_TOSS_RESPONSE leaves it: the send is armed and points at client->sendBuffer.
+        word(CLIENT_LINK + LINK_SEND_BUFFER, _SEND_BUFFER_ADDRESS)
+        half(CLIENT_LINK + LINK_SEND_SIZE, send_size)
+        half(CLIENT_LINK + LINK_SEND_IDENT, send_ident)
+        word(CLIENT_LINK + LINK_RECV_BUFFER, _RECV_BUFFER_ADDRESS)
+        uc.mem_write(_SEND_BUFFER_ADDRESS, int(param).to_bytes(4, "little"))
+
+        sav2, sav1 = bytes(sav2), bytes(sav1)
+        if sav2:
+            uc.mem_write(_SAV2_ADDRESS, sav2)
+        if sav1:
+            uc.mem_write(_SAV1_ADDRESS, sav1)
+        for address, blob in (memory or {}).items():
+            uc.mem_write(address, bytes(blob))
+
+        self.uc = uc
+        self.armed_size = send_size
+        self._sav2_len, self._sav1_len = len(sav2), len(sav1)
+        self.calls = 0
+
+    def call(self, instruction_limit=_INSTRUCTION_LIMIT):
+        """One frame: what Client_RunBufferScript does with our payload, once."""
+        uc, unicorn, arm_const = self.uc, self._unicorn, self._arm
+        uc.reg_write(arm_const.UC_ARM_REG_R0, _CLIENT_ADDRESS + CLIENT_PARAM)
+        uc.reg_write(arm_const.UC_ARM_REG_R1, _SAV2_ADDRESS)
+        uc.reg_write(arm_const.UC_ARM_REG_R2, _SAV1_ADDRESS)
+        uc.reg_write(arm_const.UC_ARM_REG_SP, STACK_POINTER)
+        uc.reg_write(arm_const.UC_ARM_REG_LR, _RETURN_ADDRESS | 1)
+
+        executed = [0]
+
+        def count(uc_, address, size, user_data):
+            executed[0] += 1
+
+        handle = uc.hook_add(unicorn.UC_HOOK_CODE, count)
+        try:
+            uc.emu_start(GDECOMPRESSION_BUFFER, _RETURN_ADDRESS, count=instruction_limit)
+        except unicorn.UcError as exc:
+            pc = uc.reg_read(arm_const.UC_ARM_REG_PC)
+            raise BufferScriptError(
+                f"the payload faulted at pc=0x{pc:08X} (offset "
+                f"{pc - GDECOMPRESSION_BUFFER}): {exc}") from None
+        finally:
+            uc.hook_del(handle)
+        pc = uc.reg_read(arm_const.UC_ARM_REG_PC)
+        if pc != _RETURN_ADDRESS:
+            raise BufferScriptError(
+                f"the payload never returned: stopped at pc=0x{pc:08X} after {executed[0]} "
+                "instructions. On the console that is a hang inside the Mystery Gift menu.")
+        self.calls += 1
+
+        def read_word(offset):
+            return int.from_bytes(uc.mem_read(_CLIENT_ADDRESS + offset, 4), "little")
+
+        def read_half(offset):
+            return int.from_bytes(uc.mem_read(_CLIENT_ADDRESS + offset, 2), "little")
+
+        client = ClientState(
+            param=read_word(CLIENT_PARAM),
+            send_buffer=read_word(CLIENT_LINK + LINK_SEND_BUFFER),
+            send_size=read_half(CLIENT_LINK + LINK_SEND_SIZE),
+            send_ident=read_half(CLIENT_LINK + LINK_SEND_IDENT),
+            armed_buffer=_SEND_BUFFER_ADDRESS, armed_size=self.armed_size)
+        try:
+            pending = bytes(uc.mem_read(client.send_buffer, client.send_size))
+        except unicorn.UcError:
+            raise BufferScriptError(
+                f"the payload left link->sendBuffer at 0x{client.send_buffer:08X} for "
+                f"{client.send_size} bytes, which is not readable memory. The console would fault "
+                "computing the CRC over it [mystery_gift_link.c:166].") from None
+        return BufferScriptRun(
+            returned=uc.reg_read(arm_const.UC_ARM_REG_R0),
+            param=client.param,
+            sav2=bytes(uc.mem_read(_SAV2_ADDRESS, self._sav2_len)) if self._sav2_len else b"",
+            sav1=bytes(uc.mem_read(_SAV1_ADDRESS, self._sav1_len)) if self._sav1_len else b"",
+            instructions=executed[0],
+            client=client,
+            pending_send=pending,
+        )
+
+
+def emulation_available():
+    try:
+        import unicorn  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
 def emulate(code, *, param=0, sav2=b"", sav1=b"", memory=None, send_size=4,
             send_ident=0, rom=None, instruction_limit=_INSTRUCTION_LIMIT):
     """Run a payload the way Client_RunBufferScript does, on a model of the console's memory.
 
     `send_size`/`send_ident` are the send a preceding client-script command already set up (4 bytes
     of MG_LINKID_RESPONSE after CLI_LOAD_TOSS_RESPONSE); `memory` places extra regions the payload
-    may read, as {address: bytes}; `rom` seeds the cartridge at 0x08000000. The result's `pending_send` is what a following CLI_SEND_LOADED
-    would actually transmit - the bytes at link->sendBuffer, wherever the payload left it pointing.
+    may read, as {address: bytes}; `rom` seeds the cartridge at 0x08000000. The result's
+    `pending_send` is what a following CLI_SEND_LOADED would actually transmit - the bytes at
+    link->sendBuffer, wherever the payload left it pointing.
+
+    ONE call. A payload that returns anything but 1 is called again on the console, so use
+    `emulate_repeating` for those; this reports what a single frame did.
 
     The caller is a THUMB function, so lr carries bit 0 set; a payload that returns with anything
     but `bx lr` (a `mov pc, lr`, say) would leave the console in ARM state and crash, and this
     reproduces that faithfully.
     """
-    try:
-        import unicorn
-        from unicorn import arm_const
-    except ImportError:  # pragma: no cover - exercised only on a machine without unicorn
-        raise BufferScriptError(
-            "offline execution needs unicorn (pip install unicorn)") from None
+    return _Machine(code, param=param, sav2=sav2, sav1=sav1, memory=memory,
+                    send_size=send_size, send_ident=send_ident,
+                    rom=rom).call(instruction_limit=instruction_limit)
 
-    validate(code)
-    uc = unicorn.Uc(unicorn.UC_ARCH_ARM, unicorn.UC_MODE_ARM | unicorn.UC_MODE_LITTLE_ENDIAN)
-    uc.mem_map(EWRAM_BASE, EWRAM_SIZE)
-    uc.mem_map(IWRAM_BASE, IWRAM_SIZE)
-    uc.mem_map(ROM_BASE, ROM_SIZE)
-    uc.mem_write(ROM_BASE, bytes(rom if rom is not None else _DEFAULT_ROM_HEADER))
-    uc.mem_map(_RETURN_ADDRESS, 0x1000)
 
-    def word(offset, value):
-        uc.mem_write(_CLIENT_ADDRESS + offset, (value & 0xFFFFFFFF).to_bytes(4, "little"))
+@dataclass
+class RepeatedRun:
+    """A whole multi-frame payload: every call it took, and what the last one left."""
+    calls: int
+    final: BufferScriptRun
+    instructions: int       # summed over the calls, which is what a frame budget is spent on
 
-    def half(offset, value):
-        uc.mem_write(_CLIENT_ADDRESS + offset, (value & 0xFFFF).to_bytes(2, "little"))
+    @property
+    def done(self):
+        return self.final.done
 
-    uc.mem_write(GDECOMPRESSION_BUFFER, bytes(code))
-    word(CLIENT_PARAM, int(param))
-    word(CLIENT_SEND_BUFFER, _SEND_BUFFER_ADDRESS)
-    word(CLIENT_RECV_BUFFER, _RECV_BUFFER_ADDRESS)
-    uc.mem_write(_RECV_BUFFER_ADDRESS, bytes(code))     # the console's copy is made FROM here
-    # As CLI_LOAD_TOSS_RESPONSE leaves it: the send is armed and points at client->sendBuffer.
-    word(CLIENT_LINK + LINK_SEND_BUFFER, _SEND_BUFFER_ADDRESS)
-    half(CLIENT_LINK + LINK_SEND_SIZE, send_size)
-    half(CLIENT_LINK + LINK_SEND_IDENT, send_ident)
-    word(CLIENT_LINK + LINK_RECV_BUFFER, _RECV_BUFFER_ADDRESS)
-    uc.mem_write(_SEND_BUFFER_ADDRESS, int(param).to_bytes(4, "little"))
 
-    sav2, sav1 = bytes(sav2), bytes(sav1)
-    if sav2:
-        uc.mem_write(_SAV2_ADDRESS, sav2)
-    if sav1:
-        uc.mem_write(_SAV1_ADDRESS, sav1)
-    for address, blob in (memory or {}).items():
-        uc.mem_write(address, bytes(blob))
+def emulate_repeating(code, *, max_calls=MAX_SCAN_CALLS + 2,
+                      instruction_limit=_INSTRUCTION_LIMIT, **kwargs):
+    """Call a payload until it returns 1, as the console does, once a frame.
 
-    uc.reg_write(arm_const.UC_ARM_REG_R0, _CLIENT_ADDRESS + CLIENT_PARAM)
-    uc.reg_write(arm_const.UC_ARM_REG_R1, _SAV2_ADDRESS)
-    uc.reg_write(arm_const.UC_ARM_REG_R2, _SAV1_ADDRESS)
-    uc.reg_write(arm_const.UC_ARM_REG_SP, STACK_POINTER)
-    uc.reg_write(arm_const.UC_ARM_REG_LR, _RETURN_ADDRESS | 1)
-
-    executed = [0]
-
-    def count(uc_, address, size, user_data):
-        executed[0] += 1
-
-    uc.hook_add(unicorn.UC_HOOK_CODE, count)
-    try:
-        uc.emu_start(GDECOMPRESSION_BUFFER, _RETURN_ADDRESS, count=instruction_limit)
-    except unicorn.UcError as exc:
-        pc = uc.reg_read(arm_const.UC_ARM_REG_PC)
-        raise BufferScriptError(
-            f"the payload faulted at pc=0x{pc:08X} (offset "
-            f"{pc - GDECOMPRESSION_BUFFER}): {exc}") from None
-    pc = uc.reg_read(arm_const.UC_ARM_REG_PC)
-    if pc != _RETURN_ADDRESS:
-        raise BufferScriptError(
-            f"the payload never returned: stopped at pc=0x{pc:08X} after {executed[0]} "
-            "instructions. On the console that is a hang inside the Mystery Gift menu.")
-
-    def read_word(offset):
-        return int.from_bytes(uc.mem_read(_CLIENT_ADDRESS + offset, 4), "little")
-
-    def read_half(offset):
-        return int.from_bytes(uc.mem_read(_CLIENT_ADDRESS + offset, 2), "little")
-
-    client = ClientState(
-        param=read_word(CLIENT_PARAM),
-        send_buffer=read_word(CLIENT_LINK + LINK_SEND_BUFFER),
-        send_size=read_half(CLIENT_LINK + LINK_SEND_SIZE),
-        send_ident=read_half(CLIENT_LINK + LINK_SEND_IDENT),
-        armed_buffer=_SEND_BUFFER_ADDRESS, armed_size=send_size)
-    try:
-        pending = bytes(uc.mem_read(client.send_buffer, client.send_size))
-    except unicorn.UcError:
-        raise BufferScriptError(
-            f"the payload left link->sendBuffer at 0x{client.send_buffer:08X} for "
-            f"{client.send_size} bytes, which is not readable memory. The console would fault "
-            "computing the CRC over it [mystery_gift_link.c:166].") from None
-    return BufferScriptRun(
-        returned=uc.reg_read(arm_const.UC_ARM_REG_R0),
-        param=client.param,
-        sav2=bytes(uc.mem_read(_SAV2_ADDRESS, len(sav2))) if sav2 else b"",
-        sav1=bytes(uc.mem_read(_SAV1_ADDRESS, len(sav1))) if sav1 else b"",
-        instructions=executed[0],
-        client=client,
-        pending_send=pending,
-    )
+    `max_calls` is this side's own bound, not the payload's watchdog: a payload that would hang the
+    Mystery Gift menu with no way out is a BufferScriptError here instead, which is the whole
+    reason to run it offline first.
+    """
+    machine = _Machine(code, **kwargs)
+    instructions = 0
+    for _ in range(int(max_calls)):
+        run = machine.call(instruction_limit=instruction_limit)
+        instructions += run.instructions
+        if run.done:
+            return RepeatedRun(calls=machine.calls, final=run, instructions=instructions)
+    raise BufferScriptError(
+        f"the payload had not returned {BUFFER_SCRIPT_DONE} after {max_calls} calls. On the "
+        "console that is the Mystery Gift menu calling it every frame for ever, with no way out.")

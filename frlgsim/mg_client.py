@@ -467,9 +467,15 @@ class MysteryGiftClientEngine:
             self._pending_send if self._pending_send is not None
             else (MG_LINKID_RESPONSE, b"", 4))
         try:
-            run = buffer_script.emulate(code, param=self.param or 0,
-                                        sav2=self._save_block2_image(),
-                                        send_size=armed_size, send_ident=armed_ident)
+            # Called EVERY FRAME until it returns 1 [decomp:src/mystery_gift_client.c:276-280],
+            # with its own image as it left it - which is what memory-scan is built on. Modelling
+            # one call would refuse a payload the console runs quite happily. What this does not
+            # model is the frames themselves: the cost of a long payload is a frame budget, and
+            # that is arithmetic (asm/memory-scan.s), not something the harness measures.
+            repeated = buffer_script.emulate_repeating(
+                code, param=self.param or 0, sav2=self._save_block2_image(),
+                send_size=armed_size, send_ident=armed_ident)
+            run = repeated.final
         except buffer_script.BufferScriptError as exc:
             # On the console this is a crash or a hang inside the Mystery Gift menu, with no way
             # back: exactly what the offline harness exists to catch.
@@ -477,12 +483,10 @@ class MysteryGiftClientEngine:
             self.info("[mg] BUFFER SCRIPT FAILED: " + str(exc))
             return
         self.param = run.param
-        if not run.done:
-            self.error = (f"buffer script returned {run.returned}, not "
-                          f"{buffer_script.BUFFER_SCRIPT_DONE}: the console would call it again "
-                          "next frame, forever")
-            self.info("[mg] BUFFER SCRIPT NEVER FINISHES: " + self.error)
-            return
+        if repeated.calls > 1:
+            self.info(f"[mg] buffer script ran over {repeated.calls} calls "
+                      f"({repeated.instructions} instructions): on the console that is "
+                      f"{repeated.calls} frames, about {repeated.calls / 60:.1f} s")
         if run.client.send_changed:
             # The payload changed the console's own outgoing message - its address, its length, or
             # both. What goes out is read from those two fields at send time, CRC included

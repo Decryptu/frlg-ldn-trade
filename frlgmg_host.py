@@ -90,6 +90,31 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         "--dump-file", default=None, metavar="PATH",
         help="with a dumping --buffer-script: write the bytes that come back to this file")
     parser.add_argument(
+        "--scan-word", type=lambda v: int(v, 0), default=None, metavar="VALUE",
+        help=("with --buffer-script memory-scan: the 32-bit value to search for. The payload "
+              "returns 0 to be called again next frame, so one run scans a whole range instead "
+              "of the 1024 bytes a dump reads. Accepts 0x hex"))
+    parser.add_argument(
+        "--scan-start", type=lambda v: int(v, 0), default=buffer_script.SCAN_ROM_START,
+        metavar="ADDR",
+        help=("with --buffer-script memory-scan: where to start, 32-byte aligned "
+              "(default 0x%08X, the cartridge)" % buffer_script.SCAN_ROM_START))
+    parser.add_argument(
+        "--scan-end", type=lambda v: int(v, 0), default=buffer_script.SCAN_ROM_END,
+        metavar="ADDR",
+        help=("with --buffer-script memory-scan: one past the last address to read "
+              "(default 0x%08X, the end of a 16 MB cartridge)" % buffer_script.SCAN_ROM_END))
+    parser.add_argument(
+        "--scan-blocks", type=int, default=buffer_script.SCAN_DEFAULT_BLOCKS, metavar="N",
+        help=("with --buffer-script memory-scan: 32-byte blocks scanned per frame, the budget "
+              "the console's link has to live with (default %d, about 3 ms of a 16 ms frame)"
+              % buffer_script.SCAN_DEFAULT_BLOCKS))
+    parser.add_argument(
+        "--scan-max-calls", type=int, default=None, metavar="N",
+        help=("with --buffer-script memory-scan: the watchdog. A payload that never returns 1 "
+              "hangs the Mystery Gift menu, so the scan gives up and answers after this many "
+              "frames (default: what the range needs, plus two)"))
+    parser.add_argument(
         "--write-text", default=None, metavar="TEXT",
         help=("with --buffer-script save-write: ASCII to write into the save block at "
               "--dump-offset. The same region is read back in the same run, so the answer is the "
@@ -206,11 +231,16 @@ def build_run_config(parser, args):
             if (write_data is not None or args.write_unsafe) \
                     and args.buffer_script != buffer_script.SAVE_WRITE:
                 parser.error(f"--write-* belongs to --buffer-script {buffer_script.SAVE_WRITE}")
+            if args.buffer_script != buffer_script.MEMORY_SCAN and args.scan_word is not None:
+                parser.error(f"--scan-* belongs to --buffer-script {buffer_script.MEMORY_SCAN}")
             payload = configmod.BufferScriptPayload(
                 script=args.buffer_script, dump_address=args.dump_address,
                 dump_block=args.dump_block, dump_offset=args.dump_offset,
                 dump_size=args.dump_size, dump_file=args.dump_file,
-                write_data=write_data, write_unsafe=args.write_unsafe)
+                write_data=write_data, write_unsafe=args.write_unsafe,
+                scan_word=args.scan_word, scan_start=args.scan_start,
+                scan_end=args.scan_end, scan_blocks=args.scan_blocks,
+                scan_max_calls=args.scan_max_calls)
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")

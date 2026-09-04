@@ -72,6 +72,7 @@ class HostMysteryGiftEngine:
                 "buffer_code": distribution.buffer_code,
                 "buffer_expect": distribution.buffer_expect,
                 "buffer_dump_size": distribution.buffer_dump_size,
+                "buffer_scan": distribution.buffer_scan,
             }
         else:
             if card is None or ram_script is None:

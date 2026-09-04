@@ -503,6 +503,7 @@ class MysteryGiftServer:
     def __init__(self, card=None, ram_script=None, *, news=None, stamp=None,
                  activation_script=None, install_activation_script=None, trainer=None,
                  mevent=None, buffer_code=None, buffer_expect=None, buffer_dump_size=None,
+                 buffer_scan=False,
                  buffer_success_message=None, buffer_failure_message=None,
                  questionnaire=None, denied_message=None,
                  script=None, log=lambda *a: None):
@@ -598,6 +599,13 @@ class MysteryGiftServer:
                 raise MysteryGiftServerError(
                     f"a dump is 1..{buffer_script.MAX_BUFFER_SCRIPT_SIZE} bytes "
                     f"(MG_LINK_BUFFER_SIZE), got {self.buffer_dump_size}")
+        # memory-scan answers with a hit table rather than a region, and a run whose whole point
+        # is where a value lives must not leave it as a hex head.
+        self.buffer_scan = bool(buffer_scan)
+        if self.buffer_scan and self.buffer_dump_size != buffer_script.SCAN_ANSWER_SIZE:
+            raise MysteryGiftServerError(
+                f"a memory scan answers with exactly {buffer_script.SCAN_ANSWER_SIZE} bytes, "
+                f"got {self.buffer_dump_size}")
         self.buffer_expect = buffer_expect
         if not (buffer_expect is None or buffer_expect == BUFFER_EXPECT_TRAINER_ID
                 or isinstance(buffer_expect, int)):
@@ -912,6 +920,14 @@ class MysteryGiftServer:
         head = self.buffer_dump[:16].hex()
         self.info(f"Buffer script dump: {len(self.buffer_dump)} bytes of console memory, "
                   f"head {head}")
+        if self.buffer_scan:
+            scan = buffer_script.read_scan(self.buffer_dump)
+            asked = buffer_script.scan_parameters(self.buffer_code)
+            for line in buffer_script.describe_scan(
+                    self.buffer_dump, asked["needle"], asked["start"], asked["end"]):
+                self.info(f"  {line}")
+            self.trace.append(("buffer_scan", scan["found"], scan["cursor"], scan["calls"]))
+            return
         if self.buffer_dump_size == buffer_script.ANCHORS_SIZE:
             # A run whose whole answer is eleven words must not leave them as a hex head.
             for line in buffer_script.describe_anchors(self.buffer_dump):

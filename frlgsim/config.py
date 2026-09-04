@@ -533,6 +533,13 @@ class BufferScriptPayload:
     # keeps a write inside the region the game never reads.
     write_data: bytes | None = None
     write_unsafe: bool = False
+    # memory-scan: the needle, the range and the frame budget. The scan is not a dump of somewhere
+    # we already knew about - it is how an address is found in the first place.
+    scan_word: int | None = None
+    scan_start: int = buffer_script.SCAN_ROM_START
+    scan_end: int = buffer_script.SCAN_ROM_END
+    scan_blocks: int = buffer_script.SCAN_DEFAULT_BLOCKS
+    scan_max_calls: int | None = None
     # Where to write the bytes that come back. A dump whose contents only ever reached a log line
     # is a run spent for 16 bytes of head.
     dump_file: str | None = None
@@ -564,6 +571,16 @@ class BufferScriptPayload:
         elif self.write_data is not None:
             raise ValueError(
                 f"bytes to write are only meaningful with {buffer_script.SAVE_WRITE}")
+        if self.script == buffer_script.MEMORY_SCAN:
+            if self.scan_word is None:
+                raise ValueError(
+                    f"{buffer_script.MEMORY_SCAN} needs the 32-bit value to look for")
+            # The answer is a fixed-size table however many matches there are, so the host's
+            # length check stays the proof that the payload repointed the send.
+            object.__setattr__(self, "dump_size", buffer_script.SCAN_ANSWER_SIZE)
+        elif self.scan_word is not None:
+            raise ValueError(
+                f"a value to search for is only meaningful with {buffer_script.MEMORY_SCAN}")
         if self.script == buffer_script.ANCHORS:
             # It reports a fixed set of words; --dump-size means nothing to it.
             object.__setattr__(self, "dump_size", buffer_script.ANCHORS_SIZE)
@@ -574,7 +591,8 @@ class BufferScriptPayload:
     def is_dump(self):
         """Anything whose answer comes back as bytes on ident 19 rather than the 4-byte channel."""
         return self.script in (buffer_script.MEMORY_DUMP, buffer_script.SAVE_DUMP,
-                               buffer_script.ANCHORS, buffer_script.SAVE_WRITE)
+                               buffer_script.ANCHORS, buffer_script.SAVE_WRITE,
+                               buffer_script.MEMORY_SCAN)
 
     @property
     def spec(self):
@@ -586,6 +604,10 @@ class BufferScriptPayload:
         if self.script == buffer_script.SAVE_DUMP:
             return buffer_script.build_save_dump(
                 self.dump_block, self.dump_offset, self.dump_size)
+        if self.script == buffer_script.MEMORY_SCAN:
+            return buffer_script.build_memory_scan(
+                self.scan_word, self.scan_start, self.scan_end,
+                self.scan_blocks, self.scan_max_calls)
         if self.script == buffer_script.SAVE_WRITE:
             return buffer_script.build_save_write(
                 self.write_data, self.dump_block, self.dump_offset,
@@ -595,7 +617,8 @@ class BufferScriptPayload:
     def build_distribution(self):
         return MysteryGiftDistribution(
             None, None, buffer_code=self.build_code(), buffer_expect=self.expect,
-            buffer_dump_size=self.dump_size if self.is_dump else None)
+            buffer_dump_size=self.dump_size if self.is_dump else None,
+            buffer_scan=self.script == buffer_script.MEMORY_SCAN)
 
 
 @dataclass(frozen=True)
