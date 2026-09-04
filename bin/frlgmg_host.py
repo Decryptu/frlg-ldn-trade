@@ -116,6 +116,24 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               "hangs the Mystery Gift menu, so the scan gives up and answers after this many "
               "frames (default: what the range needs, plus two)"))
     parser.add_argument(
+        "--gather-address", type=lambda v: int(v, 0), default=None, metavar="ADDR",
+        help=("with --buffer-script string-gather: the address of the FIRST POINTER in an array "
+              "to follow. The answer is the strings themselves, back to back, so one run carries "
+              "a whole table instead of a window of mostly-pointers. Accepts 0x hex"))
+    parser.add_argument(
+        "--gather-count", type=int, default=1, metavar="N",
+        help="with --buffer-script string-gather: how many pointers to follow at most")
+    parser.add_argument(
+        "--gather-stride", type=int, default=12, metavar="N",
+        help=("with --buffer-script string-gather: bytes from one pointer to the next (default "
+              "12, struct EasyChatWordInfo, whose `text` is at offset 0; a plain array of "
+              "`const u8 *` is 4)"))
+    parser.add_argument(
+        "--gather-maxlen", type=int, default=buffer_script.GATHER_DEFAULT_MAXLEN, metavar="N",
+        help=("with --buffer-script string-gather: longest string accepted, terminator included. "
+              "A pointer that is not a string would otherwise be copied until it met an 0xFF "
+              "(default %d)" % buffer_script.GATHER_DEFAULT_MAXLEN))
+    parser.add_argument(
         "--trace-address", type=lambda v: int(v, 0), default=None, metavar="ADDR",
         help=("with --buffer-script rng-trace: the word to sample once a frame. "
               "0x03004220 is gRngValue on this build [rom_map.py]. Accepts 0x hex"))
@@ -251,6 +269,10 @@ def build_run_config(parser, args):
             if args.buffer_script != buffer_script.RNG_TRACE \
                     and (args.trace_address is not None or args.trace_call):
                 parser.error(f"--trace-* belongs to --buffer-script {buffer_script.RNG_TRACE}")
+            if args.buffer_script != buffer_script.STRING_GATHER \
+                    and args.gather_address is not None:
+                parser.error(
+                    f"--gather-* belongs to --buffer-script {buffer_script.STRING_GATHER}")
             payload = configmod.BufferScriptPayload(
                 script=args.buffer_script, dump_address=args.dump_address,
                 dump_block=args.dump_block, dump_offset=args.dump_offset,
@@ -260,7 +282,9 @@ def build_run_config(parser, args):
                 scan_end=args.scan_end, scan_blocks=args.scan_blocks,
                 scan_max_calls=args.scan_max_calls,
                 trace_address=args.trace_address, trace_call=args.trace_call,
-                trace_samples=args.trace_samples)
+                trace_samples=args.trace_samples,
+                gather_address=args.gather_address, gather_count=args.gather_count,
+                gather_stride=args.gather_stride, gather_maxlen=args.gather_maxlen)
         else:
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")

@@ -607,6 +607,11 @@ class MysteryGiftServer:
             raise MysteryGiftServerError(
                 f"a memory scan answers with exactly {buffer_script.SCAN_ANSWER_SIZE} bytes, "
                 f"got {self.buffer_dump_size}")
+        if self.buffer_decode == buffer_script.STRING_GATHER \
+                and self.buffer_dump_size != buffer_script.GATHER_ANSWER_SIZE:
+            raise MysteryGiftServerError(
+                f"a string gather answers with exactly {buffer_script.GATHER_ANSWER_SIZE} bytes, "
+                f"got {self.buffer_dump_size}")
         if self.buffer_decode == buffer_script.RNG_TRACE:
             asked = buffer_script.trace_parameters(self.buffer_code)
             if self.buffer_dump_size != buffer_script.trace_answer_size(asked["samples"]):
@@ -933,6 +938,15 @@ class MysteryGiftServer:
                 self.info(f"  {line}")
             trace = buffer_script.read_rng_trace(self.buffer_dump)
             self.trace.append(("buffer_trace", trace["taken"], trace["address"]))
+            return
+        if self.buffer_decode == buffer_script.STRING_GATHER:
+            gathered = buffer_script.read_gather(self.buffer_dump)
+            asked = buffer_script.gather_parameters(self.buffer_code)
+            for line in buffer_script.describe_gather(
+                    self.buffer_dump, asked["src"], asked["stride"], asked["count"]):
+                self.info(f"  {line}")
+            self.trace.append(("buffer_gather", gathered["copied"], gathered["next"],
+                               gathered["reason"]))
             return
         if self.buffer_decode == buffer_script.MEMORY_SCAN:
             scan = buffer_script.read_scan(self.buffer_dump)

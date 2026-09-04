@@ -313,6 +313,112 @@ def describe_scan(dump, needle=None, start=None, end=None):
     return lines
 
 
+# --- string-gather: following a pointer array instead of reading a window ------------------------
+# A dump reads a window, so a table of pointers costs one run for the pointers and another for
+# every kilobyte they point at, most of it padding around the bytes actually wanted. bs17 read
+# sEasyChatGroups and its 22 word arrays span 21560 bytes of cartridge, of which only about a
+# third is the words: struct EasyChatWordInfo carries `alphabeticalOrder` and `enabled` beside
+# every `text` [decomp:include/easy_chat.h:11], and neither says anything about what the console
+# PRINTS. This payload dereferences instead: it walks the array and sends back the STRINGS, back
+# to back, so a run carries a whole group rather than a kilobyte of mostly-pointers.
+#
+# It never truncates. A string that does not fit in what is left of the budget ends the run before
+# it and `next` names where to resume - a half-copied word would be indistinguishable from a
+# French word that really is that short. `maxlen` bounds the walk so that a pointer which is not a
+# string stops the run and says so instead of copying memory until it meets an 0xFF.
+STRING_GATHER = "string-gather"
+GATHER_SRC_OFFSET = 0x04        # the address of the first pointer; the payload advances it
+GATHER_STRIDE_OFFSET = 0x08     # 12 for struct EasyChatWordInfo, whose `text` is at offset 0
+GATHER_COUNT_OFFSET = 0x0C
+GATHER_BUDGET_OFFSET = 0x10
+GATHER_MAXLEN_OFFSET = 0x14
+GATHER_RESULT_OFFSET = 0x18
+GATHER_STRINGS_OFFSET = 0x28
+# Fixed in asm/string-gather.s so that the whole image is exactly MAX_BUFFER_SCRIPT_SIZE.
+GATHER_STRING_AREA = 760
+GATHER_ANSWER_SIZE = 4 * 4 + GATHER_STRING_AREA
+# Longest string accepted, terminator included. The longest word in the English tables is 15
+# characters, and a French one will not be four times that; anything longer means the pointer was
+# not a string.
+GATHER_DEFAULT_MAXLEN = 64
+GATHER_STOP = {0: "followed every pointer asked for",
+               1: "the budget ran out - re-run from `next`",
+               2: "a pointer with no terminator within maxlen: NOT a string table"}
+EOS = 0xFF                      # [decomp:include/characters.h]
+
+
+def build_string_gather(src, count, stride=12, budget=None, maxlen=GATHER_DEFAULT_MAXLEN):
+    """The string-gather payload, patched with an array of pointers to follow.
+
+    `src` is the address of the FIRST POINTER, not of the string; `stride` is how far apart the
+    pointers are, so an array of plain `const u8 *` is stride 4 and struct EasyChatWordInfo is 12.
+    """
+    src, count, stride = int(src), int(count), int(stride)
+    budget = GATHER_STRING_AREA if budget is None else int(budget)
+    maxlen = int(maxlen)
+    if not 0 <= src <= 0xFFFFFFFF or src % 4:
+        raise BufferScriptError(
+            f"0x{src:X} is not a word-aligned address, so it is not an array of pointers")
+    if not 0 < stride <= 0x1000 or stride % 4:
+        raise BufferScriptError(f"the stride between pointers is a positive multiple of 4, got {stride}")
+    if not 0 < count <= 0x10000:
+        raise BufferScriptError(f"a run follows 1..65536 pointers, got {count}")
+    if not 0 < budget <= GATHER_STRING_AREA:
+        raise BufferScriptError(
+            f"the answer holds 1..{GATHER_STRING_AREA} bytes of string, got {budget}")
+    if not 0 < maxlen <= GATHER_STRING_AREA:
+        raise BufferScriptError(f"maxlen is 1..{GATHER_STRING_AREA}, got {maxlen}")
+    code = bytearray(payload(STRING_GATHER))
+    for offset, value in ((GATHER_SRC_OFFSET, src), (GATHER_STRIDE_OFFSET, stride),
+                          (GATHER_COUNT_OFFSET, count), (GATHER_BUDGET_OFFSET, budget),
+                          (GATHER_MAXLEN_OFFSET, maxlen)):
+        code[offset:offset + 4] = (value & 0xFFFFFFFF).to_bytes(4, "little")
+    return bytes(code)
+
+
+def gather_parameters(code):
+    """-> {src, stride, count, budget, maxlen} read back out of a built payload."""
+    code = bytes(code)
+    def word(offset):
+        return int.from_bytes(code[offset:offset + 4], "little")
+    return {"src": word(GATHER_SRC_OFFSET), "stride": word(GATHER_STRIDE_OFFSET),
+            "count": word(GATHER_COUNT_OFFSET), "budget": word(GATHER_BUDGET_OFFSET),
+            "maxlen": word(GATHER_MAXLEN_OFFSET)}
+
+
+def read_gather(dump):
+    """-> what the walk collected, from the bytes it sent back.
+
+    `strings` are still in the game's own encoding, terminators stripped; charmap decodes them.
+    """
+    dump = bytes(dump)
+    if len(dump) < GATHER_ANSWER_SIZE:
+        raise BufferScriptError(
+            f"a string-gather answers with {GATHER_ANSWER_SIZE} bytes, got {len(dump)}")
+    copied, written, resume, reason = (
+        int.from_bytes(dump[i:i + 4], "little") for i in range(0, 16, 4))
+    written = min(written, GATHER_STRING_AREA)
+    blob = dump[16:16 + written]
+    strings = [piece for piece in blob.split(bytes([EOS]))][:copied]
+    return {"copied": copied, "written": written, "next": resume, "reason": reason,
+            "strings": strings}
+
+
+def describe_gather(dump, src=None, stride=None, count=None):
+    """The same, as lines to log. A short run is not a failure - it is the budget, and `next` is
+    where the following run starts."""
+    from . import charmap
+    gathered = read_gather(dump)
+    lines = [f"gather: {gathered['copied']} string(s), {gathered['written']} bytes"
+             + ("" if src is None else f", from 0x{int(src):08X}")
+             + (f" of {int(count)} asked for" if count is not None else "")
+             + f"; resume at 0x{gathered['next']:08X}"]
+    lines.append("   " + GATHER_STOP.get(gathered["reason"], f"reason {gathered['reason']}"))
+    for index, raw in enumerate(gathered["strings"]):
+        lines.append(f"   {index:>3}  {charmap.decode(raw)!r}")
+    return lines
+
+
 # --- rng-trace: a word sampled once a frame, and the first call into the ROM ---------------------
 # bs13 found RAND_MULT in the cartridge and bs14's dump named gRngValue at 0x03004220 from Random's
 # own literal pool [rom_map.py]. A word that changes proves nothing, though, and at the Mystery Gift
@@ -480,6 +586,12 @@ SCRIPT_REGISTRY = {
         ANCHORS,
         "ask the machine where it is: our own load address, the RETURN ADDRESS INTO ROM, the stack "
         "and the client's five buffers (writes only its own outgoing buffer)",
+        None),
+    STRING_GATHER: BufferScriptSpec(
+        STRING_GATHER,
+        "FOLLOW AN ARRAY OF POINTERS and send back the strings themselves, back to back, instead "
+        "of a window of mostly-pointers - a whole Easy Chat group in one run (--gather-address, "
+        "--gather-count, --gather-stride; reads only, writes nothing)",
         None),
 }
 

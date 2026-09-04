@@ -545,6 +545,12 @@ class BufferScriptPayload:
     trace_call: int = 0
     trace_samples: int = buffer_script.TRACE_SAMPLE_CAPACITY
     trace_max_calls: int | None = None
+    # string-gather: an array of pointers to follow, and how far apart they are. This is the one
+    # payload that dereferences, so the answer is the strings rather than a window around them.
+    gather_address: int | None = None
+    gather_count: int = 1
+    gather_stride: int = 12
+    gather_maxlen: int = buffer_script.GATHER_DEFAULT_MAXLEN
     # Where to write the bytes that come back. A dump whose contents only ever reached a log line
     # is a run spent for 16 bytes of head.
     dump_file: str | None = None
@@ -594,6 +600,17 @@ class BufferScriptPayload:
         elif self.trace_address is not None or self.trace_call:
             raise ValueError(
                 f"a word to sample is only meaningful with {buffer_script.RNG_TRACE}")
+        if self.script == buffer_script.STRING_GATHER:
+            if self.gather_address is None:
+                raise ValueError(
+                    f"{buffer_script.STRING_GATHER} needs the array of pointers to follow "
+                    "(--gather-address)")
+            # A fixed-size answer however many strings fit, so the host's length check stays the
+            # proof that the payload repointed the send.
+            object.__setattr__(self, "dump_size", buffer_script.GATHER_ANSWER_SIZE)
+        elif self.gather_address is not None:
+            raise ValueError(
+                f"an array of pointers is only meaningful with {buffer_script.STRING_GATHER}")
         if self.script == buffer_script.ANCHORS:
             # It reports a fixed set of words; --dump-size means nothing to it.
             object.__setattr__(self, "dump_size", buffer_script.ANCHORS_SIZE)
@@ -605,7 +622,8 @@ class BufferScriptPayload:
         """Anything whose answer comes back as bytes on ident 19 rather than the 4-byte channel."""
         return self.script in (buffer_script.MEMORY_DUMP, buffer_script.SAVE_DUMP,
                                buffer_script.ANCHORS, buffer_script.SAVE_WRITE,
-                               buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE)
+                               buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE,
+                               buffer_script.STRING_GATHER)
 
     @property
     def spec(self):
@@ -624,6 +642,10 @@ class BufferScriptPayload:
             return buffer_script.build_memory_scan(
                 self.scan_word, self.scan_start, self.scan_end,
                 self.scan_blocks, self.scan_max_calls)
+        if self.script == buffer_script.STRING_GATHER:
+            return buffer_script.build_string_gather(
+                self.gather_address, self.gather_count, self.gather_stride,
+                maxlen=self.gather_maxlen)
         if self.script == buffer_script.SAVE_WRITE:
             return buffer_script.build_save_write(
                 self.write_data, self.dump_block, self.dump_offset,
@@ -635,7 +657,8 @@ class BufferScriptPayload:
             None, None, buffer_code=self.build_code(), buffer_expect=self.expect,
             buffer_dump_size=self.dump_size if self.is_dump else None,
             buffer_decode=(self.script if self.script in
-                           (buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE) else None))
+                           (buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE,
+                            buffer_script.STRING_GATHER) else None))
 
 
 @dataclass(frozen=True)

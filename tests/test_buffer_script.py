@@ -1171,3 +1171,130 @@ def test_the_cli_refuses_a_trace_without_an_address_and_an_address_without_a_tra
         _run_config(["--buffer-script", "rng-trace"])
     with pytest.raises(SystemExit):
         _run_config(["--buffer-script", "save-dump", "--trace-address", "0x03004220"])
+
+
+# --- string-gather: following a pointer array instead of reading a window ------------------------
+# The Easy Chat vocabulary is why this payload exists. sEasyChatGroups' 22 word arrays and their
+# text span 21560 bytes of cartridge [bs17], which is 22 dumps, and two thirds of those bytes are
+# struct EasyChatWordInfo's alphabeticalOrder and enabled - neither of which says anything about
+# what the console PRINTS. This one dereferences, so a run carries a whole group.
+
+GATHER_WORDS = ["SALUT", "JE SUIS LA", "MERCI", "AMIS", "POURQUOI", "STRESSE", "FURAX",
+                "CONNEXION", "AVEC", "LES", "DRESSEURS"]
+GATHER_TEXT = 0x083E0D54        # sEasyChatGroup_Feelings on the console, near enough
+GATHER_ARRAY = 0x083E1000
+WORD_INFO_STRIDE = 12           # struct EasyChatWordInfo [decomp:include/easy_chat.h:11]
+
+
+def _word_info_fixture(words=GATHER_WORDS, text=GATHER_TEXT, array=GATHER_ARRAY):
+    """A real struct EasyChatWordInfo array - text, alphabeticalOrder, enabled - and its strings."""
+    from frlgsim import charmap
+    blob, array_bytes = bytearray(), bytearray()
+    for index, word in enumerate(words):
+        array_bytes += (text + len(blob)).to_bytes(4, "little")
+        array_bytes += index.to_bytes(4, "little") + (1).to_bytes(4, "little")
+        blob += charmap.encode(word) + b"\xFF"
+    return {text: bytes(blob), array: bytes(array_bytes)}
+
+
+def _gathered(code, memory):
+    run = buffer_script.emulate(code, memory=memory)
+    return run, buffer_script.read_gather(run.pending_send)
+
+
+def test_the_gather_operands_are_where_we_patch_them():
+    """Fixed by construction - asm/string-gather.s opens with a branch over its own parameter
+    block - so this reads them back rather than trusting a disassembly."""
+    code = buffer_script.build_string_gather(0x083E1000, 26, stride=12, budget=400, maxlen=32)
+
+    assert buffer_script.gather_parameters(code) == {
+        "src": 0x083E1000, "stride": 12, "count": 26, "budget": 400, "maxlen": 32}
+    assert len(code) == buffer_script.MAX_BUFFER_SCRIPT_SIZE
+
+
+@needs_unicorn
+def test_the_gather_follows_the_pointers_and_sends_back_the_strings():
+    from frlgsim import charmap
+    memory = _word_info_fixture()
+
+    run, gathered = _gathered(
+        buffer_script.build_string_gather(GATHER_ARRAY, len(GATHER_WORDS),
+                                          stride=WORD_INFO_STRIDE), memory)
+
+    assert run.done and run.client.send_repointed
+    assert run.client.send_size == buffer_script.GATHER_ANSWER_SIZE == 776
+    assert [charmap.decode(s) for s in gathered["strings"]] == GATHER_WORDS
+    assert gathered["copied"] == len(GATHER_WORDS)
+    assert gathered["reason"] == 0          # the count ran out, not the budget
+    assert gathered["next"] == GATHER_ARRAY + len(GATHER_WORDS) * WORD_INFO_STRIDE
+
+
+@needs_unicorn
+def test_the_gather_stops_before_a_word_it_cannot_fit_whole_and_resumes_exactly():
+    """A half-copied word would be indistinguishable from a French word that really is that
+    short, which is the kind of silent wrong this project keeps paying for. So a string that does
+    not fit ends the run BEFORE it, and `next` is where the following run starts."""
+    from frlgsim import charmap
+    memory = _word_info_fixture()
+    fits = len(charmap.encode(GATHER_WORDS[0])) + 1 + len(charmap.encode(GATHER_WORDS[1])) + 1
+
+    _run, first = _gathered(
+        buffer_script.build_string_gather(GATHER_ARRAY, len(GATHER_WORDS),
+                                          stride=WORD_INFO_STRIDE, budget=fits + 3), memory)
+    _run, second = _gathered(
+        buffer_script.build_string_gather(first["next"], len(GATHER_WORDS) - first["copied"],
+                                          stride=WORD_INFO_STRIDE), memory)
+
+    assert [charmap.decode(s) for s in first["strings"]] == GATHER_WORDS[:2]
+    assert first["reason"] == 1 and first["written"] == fits
+    assert first["next"] == GATHER_ARRAY + 2 * WORD_INFO_STRIDE
+    # nothing lost, nothing repeated across the seam
+    assert ([charmap.decode(s) for s in first["strings"]]
+            + [charmap.decode(s) for s in second["strings"]]) == GATHER_WORDS
+
+
+@needs_unicorn
+def test_the_gather_refuses_a_pointer_that_is_not_a_string():
+    """Without maxlen a bad pointer is copied until it happens to meet an 0xFF, and the answer is
+    garbage that looks like data."""
+    memory = _word_info_fixture()
+    array = bytearray(memory[GATHER_ARRAY])
+    array[0:4] = (0x08000000).to_bytes(4, "little")
+    memory[GATHER_ARRAY] = bytes(array)
+    memory[0x08000000] = b"\x00" * 128
+
+    run, gathered = _gathered(
+        buffer_script.build_string_gather(GATHER_ARRAY, 3, stride=WORD_INFO_STRIDE, maxlen=8),
+        memory)
+
+    assert run.done                          # it still answers rather than hanging the menu
+    assert gathered["copied"] == 0 and gathered["reason"] == 2
+
+
+def test_the_gather_refuses_operands_that_are_not_an_array_of_pointers():
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_string_gather(0x083E1001, 4)          # not word aligned
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_string_gather(0x083E1000, 4, stride=6)
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_string_gather(0x083E1000, 0)
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_string_gather(
+            0x083E1000, 4, budget=buffer_script.GATHER_STRING_AREA + 1)
+
+
+def test_the_cli_builds_a_gather_and_sizes_the_answer_to_the_fixed_table():
+    run = _run_config(["--buffer-script", "string-gather", "--gather-address", "0x083DE528",
+                       "--gather-count", "26", "--gather-stride", "12"])
+    distribution = run.payload.build_distribution()
+
+    assert distribution.buffer_decode == buffer_script.STRING_GATHER
+    assert distribution.buffer_dump_size == buffer_script.GATHER_ANSWER_SIZE
+    assert buffer_script.gather_parameters(distribution.buffer_code)["src"] == 0x083DE528
+
+
+def test_the_cli_refuses_a_gather_without_an_array_and_an_array_without_a_gather():
+    with pytest.raises((ValueError, SystemExit)):
+        _run_config(["--buffer-script", "string-gather"])
+    with pytest.raises(SystemExit):
+        _run_config(["--buffer-script", "save-dump", "--gather-address", "0x083DE528"])

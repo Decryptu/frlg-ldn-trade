@@ -300,6 +300,15 @@ class BufferScriptHostApplication(MysteryGiftHostApplication):
                 "called again next frame [mystery_gift_client.c:277], so this takes about "
                 f"{frames} frames, {frames / 60:.1f} s, with the link held open throughout; the "
                 f"watchdog ends it after {asked['max_calls']}. The evidence line is 'scan:'.")
+        if payload.script == buffer_script.STRING_GATHER:
+            asked = buffer_script.gather_parameters(code)
+            self.info(
+                f"Following {asked['count']} pointer(s) from 0x{asked['src']:08X}, "
+                f"{asked['stride']} bytes apart, and sending back the STRINGS themselves rather "
+                f"than a window around them - up to {asked['budget']} bytes of them, whole "
+                "strings only. A string longer than "
+                f"{asked['maxlen']} bytes means the pointer was not one. The evidence line is "
+                "'gather:'.")
         if payload.script == buffer_script.RNG_TRACE:
             asked = buffer_script.trace_parameters(code)
             self.info(

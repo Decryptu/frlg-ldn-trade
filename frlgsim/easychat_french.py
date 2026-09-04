@@ -37,6 +37,14 @@ Two ways to add to it, both cheap:
 """
 
 from .easychat import UNDEFINED, WORDS, describe_word, is_language_safe
+from .easychat_french_words import WORDS as ROM_WORDS
+
+# What the console's OWN ROM says, read out of sEasyChatGroup_* with `--buffer-script
+# string-gather` (bs16 found the table, bs17 read it, bs18 onwards read the words). This is
+# stronger evidence than a render: a render proves one slot at a time and needs a player to read
+# the screen, while this is the table the game itself indexes. `CONFIRMED` below is kept because
+# it was gathered independently, and tests/test_easychat_french.py requires the two to agree
+# wherever they overlap - which is what makes either of them trustworthy.
 
 # slot id -> the word a French console prints there. Only entries actually seen on hardware.
 CONFIRMED = {
@@ -85,8 +93,14 @@ class UnverifiedFrenchWord(Exception):
 
 
 def french(value):
-    """-> what the French console prints for this id, or None if it has never been observed."""
-    return CONFIRMED.get(int(value) & 0xFFFF)
+    """-> what the French console prints for this id, or None if it is not known yet.
+
+    The ROM table is asked first: it covers a whole group at a time and comes from the console's
+    own data rather than from someone reading a screen.
+    """
+    value = int(value) & 0xFFFF
+    word = ROM_WORDS.get(value)
+    return CONFIRMED.get(value) if word is None else word
 
 
 def render(values):
@@ -96,7 +110,8 @@ def render(values):
         value = int(value) & 0xFFFF
         if value == UNDEFINED:
             continue
-        out.append(CONFIRMED.get(value, f"?{describe_word(value)}?"))
+        word = french(value)
+        out.append(f"?{describe_word(value)}?" if word is None else word)
     return " ".join(out)
 
 
@@ -110,7 +125,7 @@ def check(values, *, strict=False):
     unknown = tuple(int(value) & 0xFFFF for value in values
                     if int(value) & 0xFFFF != UNDEFINED
                     and not is_language_safe(value)
-                    and (int(value) & 0xFFFF) not in CONFIRMED)
+                    and french(value) is None)
     if unknown and strict:
         raise UnverifiedFrenchWord(
             "these slots have never been seen rendered on the French console: "
@@ -129,5 +144,5 @@ def observe(value, word, *, divergent=None):
 
 
 __all__ = [
-    "CONFIRMED", "DIVERGENT", "GURVAN_QUESTIONNAIRE", "GURVAN_QUESTIONNAIRE_CUSTOM", "UnverifiedFrenchWord", "check", "french", "observe", "render",
+    "CONFIRMED", "DIVERGENT", "ROM_WORDS", "GURVAN_QUESTIONNAIRE", "GURVAN_QUESTIONNAIRE_CUSTOM", "UnverifiedFrenchWord", "check", "french", "observe", "render",
 ]
