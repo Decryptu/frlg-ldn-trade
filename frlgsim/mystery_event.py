@@ -199,7 +199,18 @@ class MysteryEventScript:
 
     def initramscript(self, map_group, map_num, object_id, script):
         """InitRamScript bound to any map and object, not just the Mystery Gift delivery man
-        [decomp:src/mystery_event_script.c:200]."""
+        [decomp:src/mystery_event_script.c:200].
+
+        TRAP, confirmed on hardware (mev03): this makes the console's Wonder Card read as ABSENT.
+        `ValidateSavedWonderCard` requires `ValidateRamScript` [decomp:src/mystery_gift.c:186],
+        which insists the single RAM script slot is bound to MAP_UNDEFINED / object 0xFF
+        [`src/script.c:539`] - the coordinates `CLI_SAVE_RAM_SCRIPT` writes. Bind real coordinates
+        and the card is still in the save, byte for byte with a good CRC, but the Mystery Gift menu
+        says the player has none and `MysteryGift_LoadLinkGameData` reports flagId 0 [`:349`].
+
+        So a Wonder Card and an NPC-bound script are MUTUALLY EXCLUSIVE: one slot, one occupant.
+        It is fully reversible - any later Wonder Card rebinds the slot and the card comes back.
+        """
         handle = script if isinstance(script, Blob) else self.blob(script)
         payload = (_u8(map_group, "map group") + _u8(map_num, "map number")
                    + _u8(object_id, "object id") + _u32(0) + _u32(0))

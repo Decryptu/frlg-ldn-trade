@@ -222,6 +222,39 @@ who fills the questionnaire in French hands us four exact ids on the next run of
 now logs them, along with the Easy Chat battle profile and the Wonder Card stats — three things the
 console volunteers that nothing in the game ever reads back.
 
+### mev03: `initramscript`, and what it costs
+
+`initramscript 3, 0, 2` bound a two-line field script to the fat man in the south of Pallet Town.
+Status 55 came back, and after a reboot he said our lines — `{PLAYER}` expanded and all.
+
+It works because it puts the script on the *other* dispatch path. `CLI_SAVE_RAM_SCRIPT`, which every
+gift before this used, calls `InitRamScript_NoObjectEvent`: MAP_UNDEFINED, object 0xFF
+[`src/script.c:578`]. Those never satisfy `GetRamScript`'s map and object checks [`:514`]; they
+exist for `GetSavedRamScriptIfValid` [`:554`], the delivery man's own script command, which also
+requires a valid Wonder Card. Real coordinates land on
+`GetRamScript(gSpecialVar_LastTalked, script)` in the field [`src/field_control_avatar.c:458`],
+which runs our script **instead of** the object's own and never consults the card.
+`gSpecialVar_LastTalked` is the object's *local* id, assigned in `map.json` order from 1.
+
+**And it costs the Wonder Card.** The player noticed the Mystery Gift menu reporting no card
+straight afterwards. That is by design:
+
+```c
+bool32 ValidateSavedWonderCard(void)
+{
+    if (cardCrc != CALC_CRC(card)) return FALSE;
+    if (!ValidateWonderCard(&card)) return FALSE;
+    if (!ValidateRamScript()) return FALSE;      // MAP_UNDEFINED / object 0xFF only
+    return TRUE;
+}
+```
+
+There is one RAM script slot, and the card's validity depends on what is in it. Bind real
+coordinates and the card is still in the save, byte for byte, with a good CRC — but the menu will
+not show it and `MysteryGift_LoadLinkGameData` reports `flagId` 0 [`src/mystery_gift.c:349`], so the
+next session sees `HAS_NO_CARD`. **A Wonder Card and an NPC-bound script are mutually exclusive.**
+It is fully reversible: the next Wonder Card takes the slot back and the card returns.
+
 ## The questionnaire, as a password
 
 `SVR_CHECK_QUESTIONNAIRE` compares all four words, in order, exactly
@@ -241,7 +274,24 @@ and the session returns `SVR_MSG_NOTHING_SENT`; nothing is sent and nothing is t
 
 The one thing that cannot come from the decompilation is the phrase itself. Four French word ids are
 four slots in a table the English decomp does not have — so the phrase is read off a real console
-first, and only then required.
+first, and only then required. mev03 did exactly that, at no cost: the console volunteered
+
+    questionnaire: POKEMON/55  done [FEELINGS/60]  MOVE_1/177  why [MISC/37]
+
+for a player who had typed **AKWAKWAK FURAX AEROBLAST POURQUOI**. That is
+`easychat_french.GURVAN_QUESTIONNAIRE`, and it settled three separate questions:
+
+- **`EC_GROUP_POKEMON` indexes by species number.** AKWAKWAK is Golduck, species 55; the slot is
+  POKEMON/55.
+- **`EC_GROUP_MOVE_1` indexes by move id.** AEROBLAST is move 177; the slot is MOVE_1/177.
+- **The English table was right about MISC/37 (`why` = POURQUOI) and wrong about FEELINGS/60**
+  (`done`, but the console prints FURAX). Second known divergence, and both are in FEELINGS.
+
+The first two matter beyond this phrase. `CopyEasyChatWord` prints EC_GROUP_POKEMON, POKEMON_2,
+MOVE_1 and MOVE_2 out of `gSpeciesNames` / `gMoveNames` [`src/easy_chat.c:155`] rather than from a
+per-language word table — so those 807 words are the same word in every language *by construction*
+and need no verification at all. `easychat.species_word(55)` and `easychat.move_word(177)` build
+them, and they reproduce `0x2a37` and `0x24b1` exactly. Compose from those wherever you can.
 
 ## Running it
 

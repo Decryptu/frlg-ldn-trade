@@ -13,7 +13,15 @@ Four of the five slots we filled held the word the English table promised. The f
 `EC_WORD_ENJOY` (FEELINGS/42), printed **STRESSE** — an unrelated word. So the English table is
 mostly right and occasionally wrong, which is the worst kind of wrong: nothing warns you.
 
-This module is the ground truth as it accumulates, one observation at a time. `CONFIRMED` holds
+**There is one part of the vocabulary that needs no verification at all.** `CopyEasyChatWord`
+prints EC_GROUP_POKEMON, POKEMON_2, MOVE_1 and MOVE_2 out of `gSpeciesNames` / `gMoveNames`
+[decomp:src/easy_chat.c:155], indexed by the species number or the move id — so the console prints
+its own localized name and the word means the same thing in every language. `easychat.species_word`
+and `easychat.move_word` build those, and `easychat.is_language_safe` recognises them. mev03 proved
+it: the player typed AKWAKWAK and the console stored POKEMON/55 (SPECIES_GOLDUCK), and AEROBLAST
+came back as MOVE_1/177 (MOVE_AEROBLAST). Prefer these for anything a player will read.
+
+This module is the ground truth for the rest, as it accumulates, one observation at a time. `CONFIRMED` holds
 slots seen rendered on a real French console; `DIVERGENT` holds slots where the French word is not
 the English one. Compose messages out of `CONFIRMED` and the console says what you meant.
 
@@ -28,20 +36,32 @@ Two ways to add to it, both cheap:
   extra cost. The host logs them; `SVR_CHECK_QUESTIONNAIRE` is what makes them a password gate.
 """
 
-from .easychat import UNDEFINED, WORDS, describe_word
+from .easychat import UNDEFINED, WORDS, describe_word, is_language_safe
 
 # slot id -> the word a French console prints there. Only entries actually seen on hardware.
 CONFIRMED = {
-    WORDS["hello"]: "SALUT",                # GREETINGS/15, mev02
-    WORDS["friend"]: "AMIS",                # PEOPLE/51,    mev02
-    WORDS["i_ve_arrived"]: "JE SUIS LA",    # GREETINGS/18, mev02
-    WORDS["thank_you"]: "MERCI",            # GREETINGS/17, mev02
+    WORDS["hello"]: "SALUT",                # GREETINGS/15, mev02, matches
+    WORDS["i_ve_arrived"]: "JE SUIS LA",    # GREETINGS/18, mev02, matches
+    WORDS["thank_you"]: "MERCI",            # GREETINGS/17, mev02, matches
+    WORDS["friend"]: "AMIS",                # PEOPLE/51,    mev02, matches
+    WORDS["why"]: "POURQUOI",               # MISC/37,      mev03, matches
     WORDS["enjoy"]: "STRESSE",              # FEELINGS/42,  mev02 - NOT "enjoy"
+    WORDS["done"]: "FURAX",                 # FEELINGS/60,  mev03 - NOT "done"
 }
 
 # Slots whose French word is not a translation of the English name in `WORDS`. Never compose with
 # these unless the French word is the one you want.
-DIVERGENT = frozenset({WORDS["enjoy"]})
+#
+# HYPOTHESIS (two data points, not a fact): both divergences so far are in EC_GROUP_FEELINGS, while
+# GREETINGS, PEOPLE and MISC have matched five times out of five. The word tables may differ per
+# group rather than uniformly. Do not rely on it; verify.
+DIVERGENT = frozenset({WORDS["enjoy"], WORDS["done"]})
+
+
+# The phrase this project's French FireRed currently holds in its Poke Mart questionnaire, read off
+# the console in mev03. `SVR_CHECK_QUESTIONNAIRE` compares all four ids in order, so this is the key
+# to `MysteryGiftServer(..., questionnaire=...)`.
+GURVAN_QUESTIONNAIRE = (0x2A37, 0x123C, 0x24B1, 0x1E25)     # AKWAKWAK FURAX AEROBLAST POURQUOI
 
 
 class UnverifiedFrenchWord(Exception):
@@ -73,6 +93,7 @@ def check(values, *, strict=False):
     """
     unknown = tuple(int(value) & 0xFFFF for value in values
                     if int(value) & 0xFFFF != UNDEFINED
+                    and not is_language_safe(value)
                     and (int(value) & 0xFFFF) not in CONFIRMED)
     if unknown and strict:
         raise UnverifiedFrenchWord(
@@ -92,5 +113,5 @@ def observe(value, word, *, divergent=None):
 
 
 __all__ = [
-    "CONFIRMED", "DIVERGENT", "UnverifiedFrenchWord", "check", "french", "observe", "render",
+    "CONFIRMED", "DIVERGENT", "GURVAN_QUESTIONNAIRE", "UnverifiedFrenchWord", "check", "french", "observe", "render",
 ]

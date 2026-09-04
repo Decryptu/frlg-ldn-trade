@@ -621,6 +621,11 @@ def build_mevent_npc_script(*, map_group=MAP_GROUP_PALLET_TOWN, map_num=MAP_NUM_
 
     There is one RAM script slot, so this replaces the delivery man's script; any later Wonder Card
     takes the slot back.
+
+    TRAP, confirmed on hardware (mev03): while this is installed the console reports that it holds
+    NO Wonder Card. `ValidateSavedWonderCard` requires `ValidateRamScript`
+    [decomp:src/mystery_gift.c:186], which only passes for MAP_UNDEFINED / object 0xFF. The card is
+    intact in the save; the menu just will not show it, and the next session sees HAS_NO_CARD.
     """
     lines = lines or (
         "The MYSTERY EVENT reached me before\n"
@@ -650,6 +655,8 @@ MEVENT_NPC_GIFT = WonderGift(
             "Talk to the man in the south of",
             "town to hear what he was told.",
         ),
+        # The console will not display this card while the event's script is installed; it is here
+        # because a Wonder Card session must carry one, and to name the event in the log.
         footer1="frlg-ldn-trade",
         default_flag_id=MEVENT_NPC_FLAG_ID,
     ),

@@ -407,3 +407,70 @@ def test_a_marker_status_follows_initramscript_because_it_sets_none():
     assert result.status == wonder_card_events.MEVENT_NPC_STATUS
     assert result.effect("initramscript") is not None
     assert result.stopped_at == "end"
+
+
+def test_an_npc_bound_script_makes_the_console_report_no_wonder_card():
+    """ValidateSavedWonderCard calls ValidateRamScript [decomp:src/mystery_gift.c:186], which only
+    passes for MAP_UNDEFINED / object 0xFF - so a card and an NPC-bound script cannot coexist, and
+    MysteryGift_LoadLinkGameData then reports flagId 0. Confirmed on hardware, mev03."""
+    distribution = gift_registry.GIFT_REGISTRY.build_distribution("mystery-event-npc")
+    _, name, (map_group, map_num, object_id, _, _) = mystery_event.decode(distribution.mevent)[0]
+
+    assert name == "initramscript"
+    # MAP_UNDEFINED is the sentinel CLI_SAVE_RAM_SCRIPT uses; a real map is what breaks the card.
+    assert (map_group, map_num, object_id) != (0x7F, 0x7F, 0xFF)
+    # The next session therefore sees a console with no card at all.
+    assert mg_script.compare_card_flags(
+        wonder_card_events.MEVENT_NPC_FLAG_ID,
+        mg_script.parse_link_game_data(_game_data(flag_id=0))) == mg_script.HAS_NO_CARD
+
+
+# --- the language-safe part of the Easy Chat vocabulary ---------------------------------------
+
+def test_species_and_move_words_are_built_from_ids_not_from_the_english_table():
+    """mev03: the player typed AKWAKWAK and the console stored POKEMON/55 (SPECIES_GOLDUCK); they
+    typed AEROBLAST and it stored MOVE_1/177 (MOVE_AEROBLAST). Our constructors must produce
+    exactly those ids."""
+    from frlgsim import easychat
+    assert easychat.species_word(55) == 0x2A37
+    assert easychat.move_word(177) == 0x24B1
+    assert easychat.is_language_safe(0x2A37)
+    assert easychat.is_language_safe(0x24B1)
+    assert not easychat.is_language_safe(easychat.WORDS["hello"])
+
+
+def test_an_illegal_species_or_move_is_refused():
+    """IsECWordInvalid checks the group's value list, not a count [decomp:src/easy_chat.c:129]."""
+    from frlgsim import easychat, easychat_values
+    missing = next(i for i in range(1, 412) if i not in easychat_values.POKEMON_VALUES)
+    with pytest.raises(ValueError, match="value list"):
+        easychat.species_word(missing)
+    with pytest.raises(ValueError, match="value list"):
+        easychat.move_word(0)
+
+
+def test_the_french_check_passes_language_safe_words_and_flags_guesses():
+    from frlgsim import easychat, easychat_french
+    assert easychat_french.check([easychat.species_word(55)]) == ()
+    assert easychat_french.check([easychat.WORDS["hello"]]) == ()          # observed on hardware
+    assert easychat_french.check([easychat.WORDS["trade"]]) != ()          # never observed
+    with pytest.raises(easychat_french.UnverifiedFrenchWord):
+        easychat_french.check([easychat.WORDS["trade"]], strict=True)
+
+
+def test_the_phrase_read_off_the_console_gates_a_gift():
+    """mev03 logged GURVAN's four questionnaire ids; they are the key the gate compares against."""
+    from frlgsim import easychat_french
+    card, ram_script = _probe_card()
+    server = mg_server.MysteryGiftServer(
+        card, ram_script, questionnaire=easychat_french.GURVAN_QUESTIONNAIRE)
+
+    raw = bytearray(_game_data(flag_id=0))
+    for index, value in enumerate(easychat_french.GURVAN_QUESTIONNAIRE):
+        raw[0x16 + 2 * index:0x18 + 2 * index] = value.to_bytes(2, "little")
+    assert _run_server(server, bytes(raw)) == mg_server.SVR_MSG_CARD_SENT
+    assert server.questionnaire_matched is True
+
+    server = mg_server.MysteryGiftServer(
+        card, ram_script, questionnaire=easychat_french.GURVAN_QUESTIONNAIRE)
+    assert _run_server(server, _game_data(flag_id=0)) == mg_server.SVR_MSG_NOTHING_SENT

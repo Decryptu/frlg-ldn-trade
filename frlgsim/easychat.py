@@ -8,6 +8,8 @@ u08-u11. The trainer card holds four words [TrainerCardRSE.easyChatProfile, trai
 as two lines of two; a BattleTowerEReaderTrainer holds three six-word lines [global.h:293].
 """
 
+from .easychat_values import (
+    MOVE_1_VALUES, MOVE_2_VALUES, POKEMON_2_VALUES, POKEMON_VALUES)
 from .easychat_words import WORDS
 
 PROFILE_LENGTH = 4
@@ -66,6 +68,57 @@ GROUP_NAMES = {
 WORD_NAMES = {value: name for name, value in WORDS.items()}
 
 
+EC_GROUP_POKEMON_2 = 0x0
+EC_GROUP_MOVE_1 = 0x12
+EC_GROUP_MOVE_2 = 0x13
+EC_GROUP_POKEMON = 0x15
+
+# The four groups CopyEasyChatWord prints from gSpeciesNames / gMoveNames rather than from a
+# per-language word table [decomp:src/easy_chat.c:155]. Their index is the species number or the
+# move id, so the console prints its own localized name and the word means the same thing in every
+# language. Everything else in WORDS is an English guess until a console has been seen to render it.
+_VALUE_GROUPS = {
+    EC_GROUP_POKEMON: POKEMON_VALUES, EC_GROUP_POKEMON_2: POKEMON_2_VALUES,
+    EC_GROUP_MOVE_1: MOVE_1_VALUES, EC_GROUP_MOVE_2: MOVE_2_VALUES,
+}
+
+
+def species_word(species):
+    """-> the Easy Chat word for a species, printed as that console's own name for it.
+
+    Language-safe by construction. Proven on a French console (mev03): the player typed AKWAKWAK
+    and the console stored POKEMON/55, and SPECIES_GOLDUCK is 55.
+    """
+    species = int(species)
+    if species not in POKEMON_VALUES:
+        raise ValueError(
+            f"species {species} is not in EC_GROUP_POKEMON's value list, so IsECWordInvalid "
+            "rejects it and the console prints \"???\"")
+    return word(EC_GROUP_POKEMON, species)
+
+
+def move_word(move):
+    """-> the Easy Chat word for a move, printed as that console's own name for it.
+
+    Language-safe by construction. Proven on a French console (mev03): AEROBLAST came back as
+    MOVE_1/177, and MOVE_AEROBLAST is 177.
+    """
+    move = int(move)
+    if move in MOVE_1_VALUES:
+        return word(EC_GROUP_MOVE_1, move)
+    if move in MOVE_2_VALUES:
+        return word(EC_GROUP_MOVE_2, move)
+    raise ValueError(
+        f"move {move} is in neither MOVE group's value list, so IsECWordInvalid rejects it")
+
+
+def is_language_safe(value):
+    """True when the id names a species or a move, which every language prints correctly."""
+    value = int(value) & 0xFFFF
+    values = _VALUE_GROUPS.get(value >> 9)
+    return values is not None and (value & 0x1FF) in values
+
+
 def describe_word(value):
     """A word id as the console holds it, named as far as the ENGLISH table can name it.
 
@@ -77,6 +130,8 @@ def describe_word(value):
         return "-"
     group, index = value >> 9, value & 0x1FF
     slot = f"{GROUP_NAMES.get(group, f'group {group}')}/{index}"
+    if is_language_safe(value):
+        return f"{slot} (language-safe)"
     name = WORD_NAMES.get(value)
     return f"{name} [{slot}]" if name else f"0x{value:04x} [{slot}]"
 
