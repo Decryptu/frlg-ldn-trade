@@ -850,25 +850,45 @@ the same arithmetic on the same `gSaveBlock1Ptr`. It reports the party count and
 *would* have written, and reads that slot's current 100 bytes back in place of the mon it built,
 so the answer says what a real run would overwrite. Nothing is written, so it needs no override.
 
-It earns a hardware run because of something easy to miss: **no payload had ever used `r2`.**
-`trainer-id-probe` and `save-dump` use `r1 = gSaveBlock2Ptr`; everything since has used absolute
-addresses or `r0`. The append is the first thing to depend on `r2` being `gSaveBlock1Ptr`, and on
-`playerPartyCount` being where `global.h:772` says. A dry run settles both before a byte moves,
-and it is the only thing that would catch a `playerPartyCount` that disagreed with what is
-actually in the party — before a store rather than after.
+What it settles is the *state* the append depends on — the party count, and whether the slot it
+would write is really free. `r2 = gSaveBlock1Ptr` itself was already proven: `save-dump
+--dump-block sav1` selects r2, and bs06 read the whole party through it. The dry run is the only
+thing that would catch a `playerPartyCount` disagreeing with what is actually in the party, and it
+catches it *before* a store rather than after.
 
     ./scratchpad/run_mg_fast.sh bsNN --buffer-script create-mon --create-mon-append-dry-run \
         --create-mon-species 59 --create-mon-level 30 --create-mon-iv 31 \
         --create-mon-personality 0x3ADF0001 --create-mon-ot-id-type 0 --version firered
 
-Three things make the answer checkable. The address must be `gSaveBlock1Ptr + 0x38 + 100 * count`
-— and `anchors` reports `gSaveBlock1Ptr` directly, so the two can be compared. The count must
-match what the player can see on their own screen. And the slot's 100 bytes must be **zero**; the
-log says `DO NOT APPEND` if they are not.
+### bs45: the dry run, on hardware, first try (2026-09-04)
+
+    create-mon: 1 call(s), built at 0x0201C03C, calling 0x08041151,
+                WOULD have written 0x02025638
+       party: DRY RUN - nothing was written - the console held 1 mon(s), so a real run
+              would write slot 2 of 6
+       the slot a real run would write is EMPTY exactly as ZeroMonData leaves one
+
+The count is **1**, matching the one Pokemon the player could see on their own screen, and the
+slot is free. The implied `gSaveBlock1Ptr` is 0x0202559C — bs08's `anchors` had read 0x0202553C on
+a different boot, and the two differing is the expected thing, not a discrepancy: the save blocks
+move between save loads, which is exactly why the payload computes the address instead of taking
+one.
+
+**AN EMPTY PARTY SLOT IS NOT A HUNDRED ZERO BYTES, and the first version of this check said so
+wrongly.** bs45 came back with one non-zero byte — `0xFF` at offset 85 — and the log printed `DO
+NOT APPEND`. The console is right and the check was wrong: `ZeroMonData` zeroes everything and then
+ends `arg = MAIL_NONE; SetMonData(mon, MON_DATA_MAIL, &arg)` [pokemon.c:1737], and `mail` is at
+offset 0x55 of `struct Pokemon`. A slot the game itself zeroed looks exactly like that.
+
+It is *better* evidence than a hundred zeros would have been. Unclaimed memory does not happen to
+carry MAIL_NONE in the one byte that means it; a party slot the game emptied does. So the same
+answer that looked like a refusal is a third confirmation that the computed address really is
+`playerParty[1]`. `buffer_script.EMPTY_PARTY_SLOT` is that shape, and `is_empty_party_slot` is the
+check.
 
 ### What is left
 
-The two hardware runs, dry then real. `--create-mon-destination`, `--create-mon-append` and the
+The real run. `--create-mon-destination`, `--create-mon-append` and the
 dry run are all proven offline, including that the dry run and the real append compute the *same*
 address at every party size — if they could disagree the dry run would prove nothing — and that
 the append writes nothing past `playerParty[6]`, which ends at 0x38 + 600 = 0x290, exactly where

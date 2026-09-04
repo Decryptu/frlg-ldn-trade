@@ -1849,3 +1849,40 @@ def test_the_cli_takes_the_dry_run_without_an_override_and_refuses_both_at_once(
     with pytest.raises((ValueError, SystemExit)):
         _run_config(["--buffer-script", "create-mon", "--create-mon-append",
                      "--create-mon-append-dry-run", "--write-unsafe"])
+
+
+def test_an_empty_party_slot_is_not_a_hundred_zero_bytes():
+    """bs45 read the slot a real append would write and found ONE non-zero byte in it. That is not
+    a problem with the console: ZeroMonData zeroes everything and then ends `arg = MAIL_NONE;
+    SetMonData(mon, MON_DATA_MAIL, &arg)` [decomp:src/pokemon.c:1737], and mail is at offset 0x55.
+    An empty slot the game itself zeroed looks EXACTLY like this, so requiring a hundred zeros was
+    the check being wrong, not the save."""
+    assert len(buffer_script.EMPTY_PARTY_SLOT) == buffer_script.PARTY_MON_SIZE
+    assert buffer_script.EMPTY_PARTY_SLOT[85] == 0xFF
+    assert sum(buffer_script.EMPTY_PARTY_SLOT) == 0xFF        # and nothing else is set
+
+    assert buffer_script.is_empty_party_slot(buffer_script.EMPTY_PARTY_SLOT)
+    assert buffer_script.is_empty_party_slot(bytes(buffer_script.PARTY_MON_SIZE))
+    occupied = bytearray(buffer_script.EMPTY_PARTY_SLOT)
+    occupied[0] = 1                                            # a personality makes it a mon
+    assert not buffer_script.is_empty_party_slot(bytes(occupied))
+
+
+@needs_unicorn
+def test_the_dry_run_calls_a_zeroed_slot_empty_and_a_used_one_occupied():
+    import struct
+    asked = buffer_script.create_mon_parameters(buffer_script.build_create_mon(
+        CREATE_MON_ADDRESS, species=59, level=30,
+        party_append=buffer_script.PARTY_APPEND_DRY_RUN))
+    header = struct.pack("<4I", 1, 0x02025638, CREATE_MON_ADDRESS, 0x0201C03C)
+    tail = struct.pack("<I", 1 | 1 << 8 | buffer_script.PARTY_WRITE_DRY_RUN << 16)
+
+    empty = buffer_script.describe_create_mon(
+        header + buffer_script.EMPTY_PARTY_SLOT + tail, asked)
+    assert any("is EMPTY exactly as ZeroMonData leaves one" in line for line in empty), empty
+    assert not any("DO NOT APPEND" in line for line in empty)
+
+    used = bytearray(buffer_script.EMPTY_PARTY_SLOT)
+    used[0:4] = b"\x01\x02\x03\x04"
+    occupied = buffer_script.describe_create_mon(header + bytes(used) + tail, asked)
+    assert any("DO NOT APPEND" in line for line in occupied), occupied

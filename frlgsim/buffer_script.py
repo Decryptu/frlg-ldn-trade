@@ -597,6 +597,19 @@ PARTY_WRITE_NONE = 0                # no party write was asked for
 PARTY_WRITE_APPENDED = 1            # written at slot == the count that was there, count raised
 PARTY_WRITE_FULL = 2                # six mons already: nothing written, nothing changed
 PARTY_WRITE_DRY_RUN = 3             # nothing written, and the 100 bytes are the SLOT'S contents
+
+# What an EMPTY party slot actually looks like, which is NOT a hundred zero bytes. ZeroMonData
+# zeroes everything and then ends `arg = MAIL_NONE; SetMonData(mon, MON_DATA_MAIL, &arg)`
+# [decomp:src/pokemon.c:1737], and mail is at offset 0x55 of struct Pokemon. So byte 85 is 0xFF and
+# every other byte is 0. bs45 read exactly that off the console, and it is BETTER evidence than a
+# hundred zeros would have been: unclaimed memory does not look like this, a slot the game itself
+# zeroed does.
+EMPTY_PARTY_SLOT = bytes(85) + b"\xFF" + bytes(PARTY_MON_SIZE - 86)
+
+
+def is_empty_party_slot(raw):
+    """-> whether these 100 bytes are a slot the game zeroed, and so hold no Pokemon."""
+    return bytes(raw) == EMPTY_PARTY_SLOT or bytes(raw) == bytes(PARTY_MON_SIZE)
 PARTY_WRITE_STATUS = {
     PARTY_WRITE_NONE: "no party write was asked for",
     PARTY_WRITE_APPENDED: "APPENDED to the player's party, and the count was raised",
@@ -796,11 +809,16 @@ def describe_create_mon(dump, expected=None):
                if party["status"] == PARTY_WRITE_DRY_RUN else ""))
     if party and party["status"] == PARTY_WRITE_DRY_RUN:
         slot = result["mon"]
-        lines.append(
-            "   the slot a real run would write holds "
-            + ("100 ZERO BYTES - it is empty, and nothing would be overwritten"
-               if slot == bytes(PARTY_MON_SIZE) else
-               f"something: head {slot[:16].hex()} - DO NOT APPEND until this is understood"))
+        if is_empty_party_slot(slot):
+            lines.append(
+                "   the slot a real run would write is EMPTY exactly as ZeroMonData leaves one "
+                "(every byte 0, mail 0xFF at offset 85) - nothing would be overwritten")
+        else:
+            live = [i for i, b in enumerate(slot) if b]
+            lines.append(
+                f"   the slot a real run would write HOLDS SOMETHING - {len(live)} non-zero "
+                f"byte(s) at {live[:12]}{'...' if len(live) > 12 else ''} - DO NOT APPEND until "
+                "this is understood")
         return lines
     if not result["function"]:
         lines.append("   nothing was called, so the 100 bytes are the buffer as it was sent")
