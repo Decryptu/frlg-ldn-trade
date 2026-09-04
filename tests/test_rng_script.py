@@ -124,3 +124,20 @@ def test_a_field_script_and_lines_are_not_both_accepted():
     from frlgsim import wonder_card_events
     with pytest.raises(ValueError):
         wonder_card_events.build_mevent_npc_script(lines=("hi",), field_script=b"\x02")
+
+
+def test_mev07_the_console_built_exactly_what_was_predicted():
+    """mev07/bs53, on hardware, first try. The prediction was committed before the console had
+    ever seen the seed; this is what came back out of gPlayerParty afterwards. Every bit of the
+    personality, all six IVs, the nature and the shininess.
+
+    It also settles the one thing that could not be settled offline: nature 17 is QUIET - DISCRET
+    on the console's French screen - so `Random32()` evaluates its LOW half first at CreateBoxMon's
+    call site, the same way CreateMonWithNature's does.
+    """
+    from frlgsim import wonder_card_events
+    got = rng_script.predict_wild_mon(wonder_card_events.RNG_DITTO_SEED, 57189, 58811)
+    assert got["low_first"]["personality"] == 0x026F38B2
+    assert got["low_first"]["nature"] == 17
+    assert got["ivs"] == (31, 23, 27, 18, 30, 30)
+    assert got["shiny"] is True
