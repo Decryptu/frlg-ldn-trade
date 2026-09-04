@@ -160,6 +160,7 @@ _OP_WAITMESSAGE, _OP_WAITBUTTONPRESS, _OP_CLOSEMESSAGE = 0x66, 0x6D, 0x68
 def _walk(script):
     """-> [(offset, opcode, operand bytes)] for the fixed-width commands this script uses."""
     widths = {_OP_SETVADDRESS: 4, _OP_COPYBYTE: 8, _OP_BUFFERNUMBERSTRING: 3, _OP_VMESSAGE: 4,
+              0x28: 2,                                  # delay, a u16 of frames
               _OP_LOCK: 0, _OP_FACEPLAYER: 0, _OP_RELEASE: 0, _OP_END: 0,
               _OP_WAITMESSAGE: 0, _OP_WAITBUTTONPRESS: 0, _OP_CLOSEMESSAGE: 0}
     out, i = [], 0
@@ -266,3 +267,64 @@ def test_two_readings_prove_the_address_without_any_clock():
     assert any("CONSISTENT" in line for line in good)
     assert any("2,400 turns" in line for line in good)
     assert any("NOT consistent" in line for line in bad)
+
+
+# --- the rate probe: the clock removed rather than improved -------------------------------------
+# Every earlier attempt at the overworld rate divided an exact turn count by a hand-timed elapsed,
+# and one of them divided by a number that had itself been computed from the answer. `delay` waits
+# an exact number of frames [decomp:src/scrcmd.c:651], so both sides of the division are exact.
+
+_OP_DELAY = 0x28
+
+
+def test_the_rate_probe_reads_twice_into_different_vars_with_the_delay_between():
+    script = gift_composer.build_seed_rate_script(frames=600)
+    walked = _walk(script)
+    opcodes = [op for _o, op, _operand in walked]
+    copies = [(int.from_bytes(operand[:4], "little"), int.from_bytes(operand[4:], "little"))
+              for _o, op, operand in walked if op == _OP_COPYBYTE]
+
+    assert len(copies) == 8, "two readings of four bytes each"
+    assert all(src == rom_map.GRNG_VALUE + (i % 4) for i, (_dest, src) in enumerate(copies))
+    base = rom_map.G_SPECIAL_VAR_0X8000
+    assert [dest for dest, _src in copies] == list(range(base, base + 8)), \
+        "the two readings must not land on top of each other"
+    # The delay is between them, and it is the only yielding command in the measured interval.
+    assert opcodes.count(_OP_DELAY) == 1
+    delay_at = opcodes.index(_OP_DELAY)
+    assert opcodes[delay_at - 4:delay_at] == [_OP_COPYBYTE] * 4
+    assert opcodes[delay_at + 1:delay_at + 5] == [_OP_COPYBYTE] * 4
+
+
+def test_the_delay_operand_is_the_frame_count_asked_for():
+    for frames in (1, 600, 0xFFFF):
+        walked = _walk(gift_composer.build_seed_rate_script(frames=frames))
+        operand = next(o for _off, op, o in walked if op == _OP_DELAY)
+        assert int.from_bytes(operand, "little") == frames
+    with pytest.raises(gift_composer.GiftValidationError):
+        gift_composer.build_seed_rate_script(frames=0x10000)
+
+
+def test_the_rate_is_two_exact_numbers_divided():
+    """No clock anywhere: distance is exact arithmetic and frames is what delay was told."""
+    before = 0x124D683F
+    after = lcg.advance(before, 1200)
+
+    lines = rng_script.measure_rate(before, after, 600)
+
+    assert any("1,200" in line for line in lines)
+    assert any("EXACTLY 2 per frame" in line for line in lines)
+    assert any("2.000000 turns/frame" in line for line in lines)
+
+
+def test_a_rate_that_is_not_two_is_reported_as_such_rather_than_rounded():
+    before = 0x124D683F
+    after = lcg.advance(before, 1307)
+
+    lines = rng_script.measure_rate(before, after, 600)
+
+    assert any("2.178333" in line for line in lines)
+    assert any("+107" in line for line in lines)
+    assert not any("EXACTLY" in line for line in lines)
+    with pytest.raises(rng_script.RngScriptError):
+        rng_script.measure_rate(before, after, 0)

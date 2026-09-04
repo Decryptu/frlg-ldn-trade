@@ -269,6 +269,49 @@ the script itself is the better test. Talk to the NPC twice and check that the t
 satisfy the LCG recurrence at a plausible distance apart: a wrong address prints something that
 does not, which is the same proof bs15 used to settle `gRngValue` itself.
 
+**mev08: IT WORKS, AND IT CONFIRMS THE ADDRESS.** The script was installed (status 55, the console
+saved by itself), and the man in the south of Pallet Town was asked twice, about twenty seconds
+apart:
+
+```
+reading 1   RNG HI 4685   RNG LO 26687   -> 0x124D683F
+reading 2   RNG HI 54871  RNG LO 55616   -> 0xD657D940
+distance    2,595 turns
+```
+
+Two unrelated 32-bit numbers sit ~2**31 apart; these are **2,595** apart, odds 1 in 1,655,093. So
+0x020370B4 is `gSpecialVar_0x8000`, the read does not tear, and there is now a live seed readout in
+the overworld. (~130 turns/second against the user's own estimate of twenty seconds - which is an
+estimate, and is NOT recorded here as the overworld rate. That is what the rate probe below is for.)
+
+## Measuring the rate with the clock removed instead of improved
+
+Every earlier attempt at the overworld rate divided an exact turn count by a hand-timed elapsed, and
+one divided by a number computed from the answer it was checking. The fix is not a better stopwatch.
+
+```
+bool8 ScrCmd_delay(struct ScriptContext * ctx)
+{
+    sPauseCounter = ScriptReadHalfword(ctx);
+    SetupNativeScript(ctx, RunPauseTimer);
+    return TRUE;
+}
+```
+[decomp:src/scrcmd.c:651]
+
+`delay` yields and resumes after **exactly** that many frames. So `--gift rng-rate-probe` reads
+gRngValue, delays N frames, reads it again and prints both: `lcg.distance` gives the numerator
+exactly and N is the denominator exactly, and `rng_script.measure_rate` divides them. No clock, no
+rounding to argue about. 600 frames at ~2 turns each is ~1200 turns, twenty million times below the
+2**32 point where a distance stops being unique.
+
+**What it measures, stated precisely, because this distinction is what made the old numbers wrong:**
+the rate while a field script is DELAYING, with the player locked. That is not self-evidently the
+rate while the player is walking, and it will not be reported as if it were. It *is* exactly the
+rate a script that waits for a target state would run at - the design where the game does the aiming
+instead of a human with a stopwatch - so it is the number that design needs. `lock=False` measures
+the unlocked case, one variable at a time.
+
 Why the countdown then works, with numbers: the state at any future frame is `advance(S, 2n)`, ~1 in
 8192 is shiny, so a target arrives roughly every 8192 frames (~137 s). A miss costs **nothing** -
 unlike Emerald, where every attempt costs a reset and a new unknown seed - because the same NPC can

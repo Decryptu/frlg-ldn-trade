@@ -23,6 +23,7 @@ from .gift_composer import (
     VarEquals,
     WonderCardSpec,
     WonderGift,
+    build_seed_rate_script,
     build_seed_read_script,
     build_talk_script,
 )
@@ -794,6 +795,54 @@ RNG_SEED_READER_GIFT = WonderGift(
         "Talk to the man in the south of\n"
         "PALLET TOWN."),
     mevent=build_rng_seed_reader_script(),
+)
+
+
+GIFT_RNG_RATE_PROBE = "rng-rate-probe"
+RNG_RATE_PROBE_FLAG_ID = 1016
+
+
+def build_rng_rate_probe_script(frames=None, **kwargs):
+    """The Mystery Event that installs "talk to this man and he times the RNG for you".
+
+    The field script reads gRngValue, waits an EXACT number of frames with `delay`, and reads it
+    again. Both numbers that go into turns-per-frame are then exact - there is no stopwatch and no
+    hand-timed elapsed anywhere, which is what every previous attempt at this rate had in it.
+    """
+    build = ({} if frames is None else {"frames": frames})
+    return build_mevent_npc_script(field_script=build_seed_rate_script(**build), **kwargs)
+
+
+RNG_RATE_PROBE_GIFT = WonderGift(
+    slug=GIFT_RNG_RATE_PROBE,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="A man who counts",
+        body=(
+            "A man in the south of PALLET",
+            "TOWN will read a number, wait,",
+            "and read it again. Tell him to",
+            "start, and write both down.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=RNG_RATE_PROBE_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "A man in PALLET TOWN counts\n"
+                "something nobody can see."),
+        ),
+    )),
+    completed_message=(
+        "Talk to the man in the south of\n"
+        "PALLET TOWN."),
+    mevent=build_rng_rate_probe_script(),
 )
 
 

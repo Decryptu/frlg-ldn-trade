@@ -695,6 +695,8 @@ _VAR_PLAYER_X = 0x8004
 _VAR_PLAYER_Y = 0x8005
 _VAR_0x8000 = 0x8000
 _VAR_0x8001 = 0x8001
+_VAR_0x8002 = 0x8002
+_VAR_0x8003 = 0x8003
 _VAR_RESULT = 0x800D
 _STD_OBTAIN_ITEM = 0
 _RAM_SCRIPT_VIRTUAL_BASE = 0x08000000
@@ -1290,6 +1292,78 @@ def build_seed_read_script(*, address=None, var_address=None, lines=SEED_READ_DE
     return script
 
 
+# --- the self-timing rate probe -------------------------------------------------------------------
+# The overworld consumption rate has been open since bs15, and every attempt to pin it down used a
+# hand-timed elapsed - one of which turned out to be circular (docs/rng.md). The fix is not a better
+# stopwatch. It is to take the clock out: `delay` waits an EXACT number of frames.
+#
+#   bool8 ScrCmd_delay(struct ScriptContext * ctx)
+#   {
+#       sPauseCounter = ScriptReadHalfword(ctx);
+#       SetupNativeScript(ctx, RunPauseTimer);
+#       return TRUE;
+#   }
+# [decomp:src/scrcmd.c:651] - it yields, which is the whole point, and resumes after exactly that
+# many frames. So a script that reads gRngValue, delays N frames and reads it again measures
+# turns-per-frame with no human anywhere in the loop: `lcg.distance` gives the numerator exactly
+# and N is the denominator exactly.
+_OP_DELAY = 0x28
+RATE_PROBE_DEFAULT_FRAMES = 600         # ~10 s at 59.7275 Hz; the seconds are commentary, not data
+
+RATE_PROBE_DEFAULT_LINES = ("FIRST HI {STR_VAR_2}\n"
+                            "FIRST LO {STR_VAR_1}",
+                            "AFTER HI {STR_VAR_2}\n"
+                            "AFTER LO {STR_VAR_1}")
+
+
+def build_seed_rate_script(*, address=None, var_address=None, frames=RATE_PROBE_DEFAULT_FRAMES,
+                           lines=RATE_PROBE_DEFAULT_LINES, lock=True, slug="rng-rate-probe"):
+    """A field script that reads gRngValue, waits an EXACT number of frames, and reads it again.
+
+    The answer is two 32-bit states and a frame count that is not an estimate, so
+    `rng_script.measure_rate` divides one exact number by another. This is the first measurement of
+    the overworld rate with no clock in it since bs15 measured the Mystery Gift menu's.
+
+    WHAT IT ACTUALLY MEASURES, stated precisely because the distinction is the whole reason the old
+    numbers were wrong: the rate while a FIELD SCRIPT IS DELAYING, with the player locked. That is
+    not self-evidently the rate while the player is walking around, and it must not be reported as
+    if it were. It IS exactly the rate that a script which waits for a target state would run at -
+    the design where the game does the aiming instead of a human with a stopwatch - so it is the
+    number that design needs. Pass `lock=False` to measure with the player unlocked and compare;
+    changing one variable at a time is the point.
+
+    Both reads are atomic for the same reason the single read is: four `copybyte`s and nothing
+    between them. `delay` sits BETWEEN the two reads deliberately - it is the only command here
+    that yields, and a test asserts that it is.
+    """
+    address = rom_map.GRNG_VALUE if address is None else int(address)
+    var_address = (rom_map.G_SPECIAL_VAR_0X8000 if var_address is None else int(var_address))
+    frames = int(frames)
+    if not 1 <= frames <= 0xFFFF:
+        raise GiftValidationError(slug, f"delay takes a u16 of frames, got {frames}")
+    if len(lines) != 2:
+        raise GiftValidationError(slug, "the rate probe prints two readings, so two messages")
+    builder = _FieldScriptBuilder()
+    builder.emit(bytes([_OP_SETVADDRESS])
+                 + _RAM_SCRIPT_VIRTUAL_BASE.to_bytes(4, "little"))
+    if lock:
+        builder.emit(bytes([_OP_LOCK, _OP_FACEPLAYER]))
+    for i in range(4):                              # reading one -> vars 0x8000, 0x8001
+        builder.emit(_copybyte(var_address + i, address + i))
+    builder.emit(bytes([_OP_DELAY]) + _u16(frames))
+    for i in range(4):                              # reading two -> vars 0x8002, 0x8003
+        builder.emit(_copybyte(var_address + 4 + i, address + i))
+    for pair, message in zip(((_VAR_0x8000, _VAR_0x8001), (_VAR_0x8002, _VAR_0x8003)), lines):
+        builder.emit(_buffernumberstring(0, pair[0]))
+        builder.emit(_buffernumberstring(1, pair[1]))
+        _validate_message(message, f"{slug}.lines")
+        builder.message(message)
+    builder.emit(bytes([_OP_RELEASE] if lock else b"") + bytes([_OP_END]))
+    script = builder.finish(slug)
+    _check_script_size(script, builder, slug)
+    return script
+
+
 def compile_definition(definition, *, flag_id=None):
     """Returns one MysteryGiftDistribution for a GiftSpec, or ``{slot_slug: distribution}`` for a rally."""
     validate_definition(definition, flag_id=flag_id)
@@ -1312,6 +1386,7 @@ __all__ = [
     "VAR_MYSTERY_GIFT_1", "VAR_MYSTERY_GIFT_2", "VAR_MYSTERY_GIFT_3",
     "VAR_MYSTERY_GIFT_4", "VAR_MYSTERY_GIFT_5", "VAR_MYSTERY_GIFT_6",
     "VAR_MYSTERY_GIFT_7", "VAR_MYSTERY_GIFT_SLOT_VARS",
-    "build_seed_read_script", "build_talk_script", "compile_definition",
+    "build_seed_rate_script", "build_seed_read_script", "build_talk_script",
+    "compile_definition",
     "validate_definition",
 ]

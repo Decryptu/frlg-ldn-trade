@@ -269,3 +269,40 @@ def check_two_readings(first, second, *, seconds=None):
         "numbers look like. The address is wrong, or the read tore." % (first, second))
     lines.append(f"  (a distance always exists; this one is 1 in {2 ** 32 // max(turns, 1):,})")
     return lines
+
+
+from .gift_composer import build_seed_rate_script      # noqa: E402,F401  (re-exported here)
+
+
+def measure_rate(first, second, frames):
+    """-> lines: turns per frame, from two readings and an EXACT frame count.
+
+    This is the measurement docs/rng.md says had never been made outside the Mystery Gift menu.
+    Both inputs are exact - `lcg.distance` is exact arithmetic and `frames` is what `delay` was
+    told to wait - so unlike every earlier attempt there is no clock in it and no rounding to argue
+    about. 600 frames at ~2 turns each is ~1200 turns, twenty million times below the 2**32 point
+    where the distance would stop being unique, so the answer is not an alias.
+
+    It says nothing about the rate while the player is WALKING. It is the rate while a field script
+    is delaying, which is a different situation and the one that matters for a script that waits
+    for a target state.
+    """
+    from . import lcg
+    frames = int(frames)
+    if frames <= 0:
+        raise RngScriptError(f"frames must be positive, got {frames}")
+    turns = lcg.distance(first, second)
+    per_frame = turns / frames
+    lines = [f"before  0x{first:08X}",
+             f"after   0x{second:08X}  ({frames} frames later, exactly)",
+             f"turns   {turns:,}",
+             f"rate    {per_frame:.6f} turns/frame"]
+    exact = turns % frames == 0
+    if exact:
+        lines.append(f"        = EXACTLY {turns // frames} per frame, on every frame of the wait")
+    remainder = turns - 2 * frames
+    lines.append(f"        vs 2/frame: {remainder:+,} turns over {frames} frames"
+                 + (" - the link menu's rate holds here too" if remainder == 0 else ""))
+    lines.append(f"        (~{per_frame * 59.7275:,.1f} turns/second at 59.7275 Hz - commentary,"
+                 " not data: no clock was used)")
+    return lines
