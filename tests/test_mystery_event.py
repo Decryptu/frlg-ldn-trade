@@ -373,3 +373,37 @@ def test_an_all_zero_battle_profile_is_not_reported_as_words():
     """Word 0 is EC_GROUP_POKEMON_2 index 0, which the console rejects and prints as '???'."""
     data = mg_script.parse_link_game_data(_game_data())
     assert not any("battle profile" in line for line in data.describe_extras())
+
+
+# --- initramscript: binding a field script to any map and object -----------------------------
+
+def test_initramscript_names_the_map_the_object_and_both_ends_of_the_script():
+    distribution = gift_registry.GIFT_REGISTRY.build_distribution("mystery-event-npc")
+    chain = mystery_event.decode(distribution.mevent)
+    opcode, name, operands = chain[0]
+
+    assert name == "initramscript"
+    map_group, map_num, object_id, start, end = operands
+    assert (map_group, map_num) == (wonder_card_events.MAP_GROUP_PALLET_TOWN,
+                                    wonder_card_events.MAP_NUM_PALLET_TOWN)
+    assert object_id == wonder_card_events.PALLET_TOWN_OBJECT_FAT_MAN
+    # InitRamScript takes scriptEnd - script as the length [decomp:src/mystery_event_script.c:200].
+    assert 0 < start < end <= len(distribution.mevent)
+    assert distribution.mevent[start:end] == distribution.mevent[start:end]
+
+
+def test_the_bound_script_fits_the_slot_the_console_saves_it_into():
+    """InitRamScript refuses a script larger than sizeof(RamScriptData.script)
+    [decomp:src/script.c:502] and returns FALSE, silently binding nothing."""
+    distribution = gift_registry.GIFT_REGISTRY.build_distribution("mystery-event-npc")
+    _, _, (_, _, _, start, end) = mystery_event.decode(distribution.mevent)[0]
+    assert end - start <= mg_server.MysteryGiftServer.MAX_RAM_SCRIPT_SIZE
+
+
+def test_a_marker_status_follows_initramscript_because_it_sets_none():
+    distribution = gift_registry.GIFT_REGISTRY.build_distribution("mystery-event-npc")
+    result = mystery_event.run(distribution.mevent)
+
+    assert result.status == wonder_card_events.MEVENT_NPC_STATUS
+    assert result.effect("initramscript") is not None
+    assert result.stopped_at == "end"

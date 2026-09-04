@@ -1188,6 +1188,26 @@ def _compile_rally(definition, flag_id):
     return distributions
 
 
+def build_talk_script(messages, *, slug="talk"):
+    """A minimal field script: lock, face the player, say each line, release.
+
+    The Mystery Event `initramscript` opcode binds a field script to any map and object, and what it
+    binds is exactly the bytecode a delivery script is made of -- same interpreter, same
+    `setvaddress` base, because both end up in `gSaveBlock1Ptr->ramScript.data.script`.
+    """
+    builder = _FieldScriptBuilder()
+    builder.emit(bytes([_OP_SETVADDRESS])
+                 + _RAM_SCRIPT_VIRTUAL_BASE.to_bytes(4, "little"))
+    builder.emit(bytes([_OP_LOCK, _OP_FACEPLAYER]))
+    for message in messages:
+        _validate_message(message, f"{slug}.messages")
+        builder.message(message)
+    builder.emit(bytes([_OP_RELEASE, _OP_END]))
+    script = builder.finish(slug)
+    _check_script_size(script, builder, slug)
+    return script
+
+
 def compile_definition(definition, *, flag_id=None):
     """Returns one MysteryGiftDistribution for a GiftSpec, or ``{slot_slug: distribution}`` for a rally."""
     validate_definition(definition, flag_id=flag_id)
@@ -1210,5 +1230,5 @@ __all__ = [
     "VAR_MYSTERY_GIFT_1", "VAR_MYSTERY_GIFT_2", "VAR_MYSTERY_GIFT_3",
     "VAR_MYSTERY_GIFT_4", "VAR_MYSTERY_GIFT_5", "VAR_MYSTERY_GIFT_6",
     "VAR_MYSTERY_GIFT_7", "VAR_MYSTERY_GIFT_SLOT_VARS",
-    "compile_definition", "validate_definition",
+    "build_talk_script", "compile_definition", "validate_definition",
 ]

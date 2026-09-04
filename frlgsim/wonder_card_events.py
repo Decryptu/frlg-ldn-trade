@@ -23,6 +23,7 @@ from .gift_composer import (
     VarEquals,
     WonderCardSpec,
     WonderGift,
+    build_talk_script,
 )
 import dataclasses
 
@@ -513,6 +514,7 @@ GIFT_MEVENT_CELEBI = "mystery-event-celebi"
 MEVENT_CELEBI_FLAG_ID = 1010
 
 SPECIES_CELEBI_MEVENT = 251
+SPECIES_CLEFAIRY_MEVENT = 35
 MOVE_CONFUSION = 93
 MOVE_RECOVER = 105
 MOVE_HEAL_BELL = 215
@@ -586,10 +588,97 @@ MEVENT_CELEBI_GIFT = WonderGift(
 )
 
 
+GIFT_MEVENT_NPC = "mystery-event-npc"
+MEVENT_NPC_FLAG_ID = 1011
+
+# PALLET TOWN, group 3 map 0 [data/maps/map_groups.json]. Local ids are assigned in map.json order
+# and start at 1, so the FAT MAN standing at (13,17) is object 2 and the SIGN LADY is object 1
+# [data/maps/PalletTown/map.json]. Neither is plot-critical and both are outdoors in a Fly town.
+MAP_GROUP_PALLET_TOWN = 3
+MAP_NUM_PALLET_TOWN = 0
+PALLET_TOWN_OBJECT_SIGN_LADY = 1
+PALLET_TOWN_OBJECT_FAT_MAN = 2
+
+MEVENT_NPC_STATUS = 55          # our marker; initramscript leaves the status untouched
+
+
+def build_mevent_npc_script(*, map_group=MAP_GROUP_PALLET_TOWN, map_num=MAP_NUM_PALLET_TOWN,
+                            object_id=PALLET_TOWN_OBJECT_FAT_MAN, lines=None):
+    """`initramscript`: bind a field script to ANY map and ANY object event, not just the Mystery
+    Gift delivery man.
+
+    `CLI_SAVE_RAM_SCRIPT`, which every gift we have ever sent uses, calls
+    `InitRamScript_NoObjectEvent` -- MAP_UNDEFINED and object 0xFF [decomp:src/script.c:578]. Those
+    never satisfy `GetRamScript`'s map and object checks [`:514`]; they exist to satisfy
+    `GetSavedRamScriptIfValid` [`:554`], which is the delivery man's own script command and which
+    also requires a valid Wonder Card.
+
+    `initramscript` writes real coordinates instead, which puts the script on the OTHER dispatch
+    path: `GetRamScript(gSpecialVar_LastTalked, script)` in the field
+    [decomp:src/field_control_avatar.c:458] runs our script INSTEAD of the object's own whenever the
+    player talks to that object on that map. It does not consult the Wonder Card at all, so a script
+    installed this way outlives the card.
+
+    There is one RAM script slot, so this replaces the delivery man's script; any later Wonder Card
+    takes the slot back.
+    """
+    lines = lines or (
+        "The MYSTERY EVENT reached me before\n"
+        "it reached you, {PLAYER}.",
+        "Nobody told me what to say, so I am\n"
+        "saying this instead.",
+    )
+    field_script = build_talk_script(lines, slug=GIFT_MEVENT_NPC)
+
+    script = mystery_event.MysteryEventScript()
+    # initramscript sets no status of its own, so it would answer 0 whether it ran or not. A marker
+    # after it turns the readback into "the chain reached past initramscript".
+    script.initramscript(map_group, map_num, object_id, script.blob(field_script))
+    script.setstatus(MEVENT_NPC_STATUS).end()
+    return script.assemble()
+
+
+MEVENT_NPC_GIFT = WonderGift(
+    slug=GIFT_MEVENT_NPC,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="Someone in PALLET TOWN knows",
+        body=(
+            "Word of the MYSTERY EVENT has",
+            "reached PALLET TOWN already.",
+            "Talk to the man in the south of",
+            "town to hear what he was told.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=MEVENT_NPC_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    # The delivery man's own script is the one this event REPLACES, so it never runs. It is here
+    # because a Wonder Card session must carry a RAM script, and because a later card restores it.
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "Someone in PALLET TOWN has heard\n"
+                "about the MYSTERY EVENT."),
+        ),
+    )),
+    completed_message=(
+        "Talk to the man in the south of\n"
+        "PALLET TOWN."),
+    mevent=build_mevent_npc_script(),
+)
+
+
 __all__ = [
     "CELEBI_GIFT", "DIR_WEST", "GIFT_MEVENT_PROBE", "GIFT_PORYGON_TMS",
     "GIFT_VISITING_TRAINER",
     "GIFT_MEVENT_CELEBI", "MEVENT_CELEBI_GIFT", "MEVENT_CELEBI_FLAG_ID",
+    "GIFT_MEVENT_NPC", "MEVENT_NPC_GIFT", "MEVENT_NPC_FLAG_ID",
+    "build_mevent_npc_script",
     "MEVENT_PROBE_GIFT", "MEVENT_PROBE_FLAG_ID", "MEVENT_PROBE_STATUS",
     "build_mevent_celebi_script",
     "build_mevent_probe_script",
