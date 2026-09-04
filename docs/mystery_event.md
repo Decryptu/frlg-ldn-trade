@@ -1,6 +1,7 @@
 ---
 title: The Mystery Event VM
-nav_order: 14
+parent: Inside the console
+nav_order: 1
 ---
 
 # The Mystery Event VM

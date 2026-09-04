@@ -1,6 +1,7 @@
 ---
 title: Trade-host design
-nav_order: 3
+parent: The link protocol
+nav_order: 2
 ---
 
 # FRLG trade-host design

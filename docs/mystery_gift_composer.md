@@ -1,6 +1,7 @@
 ---
 title: Composing gifts
-nav_order: 8
+parent: Mystery Gift
+nav_order: 2
 ---
 
 # Composable Mystery Gift Authoring

@@ -1,6 +1,7 @@
 ---
 title: Stamp rally
-nav_order: 10
+parent: Mystery Gift
+nav_order: 4
 ---
 
 # Solrock and Lunatone Stamp Rally

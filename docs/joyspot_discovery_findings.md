@@ -1,6 +1,7 @@
 ---
 title: JoySpot discovery
-nav_order: 4
+parent: The link protocol
+nav_order: 3
 ---
 
 # JoySpot discovery: tested surface and blocker record

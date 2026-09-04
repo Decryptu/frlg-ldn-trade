@@ -1,3 +1,9 @@
+---
+title: Distributing a gift
+parent: Mystery Gift
+nav_order: 1
+---
+
 # FireRed Mystery Gift Distributor
 
 Hand a real Switch FireRed/LeafGreen save a Wonder Card + delivery RAM script over LDN. The

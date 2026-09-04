@@ -1,3 +1,9 @@
+---
+title: The French Easy Chat vocabulary
+parent: Inside the console
+nav_order: 3
+---
+
 # The French Easy Chat vocabulary, read off the console
 
 **Status: CLOSED.** All 1006 language-dependent Easy Chat words are read out of the console's own

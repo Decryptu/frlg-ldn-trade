@@ -1,6 +1,7 @@
 ---
 title: Console protocol notes
-nav_order: 2
+parent: The link protocol
+nav_order: 1
 ---
 
 # Joining as the child: what the console actually does

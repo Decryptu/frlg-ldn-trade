@@ -1,6 +1,7 @@
 ---
 title: Wonder News
-nav_order: 13
+parent: Mystery Gift
+nav_order: 6
 ---
 
 # Wonder News

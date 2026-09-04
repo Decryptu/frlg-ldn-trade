@@ -1,6 +1,7 @@
 ---
 title: Legendary-beast gift
-nav_order: 9
+parent: Mystery Gift
+nav_order: 3
 ---
 
 # Legendary-Beast Mystery Gift

@@ -1,6 +1,7 @@
 ---
 title: Raspberry Pi host
-nav_order: 6
+parent: Hardware and setup
+nav_order: 2
 ---
 
 # Raspberry Pi 4 Mystery Gift host

@@ -1,6 +1,7 @@
 ---
 title: Porygon TM gift
-nav_order: 11
+parent: Mystery Gift
+nav_order: 5
 ---
 
 # Porygon TM Gift

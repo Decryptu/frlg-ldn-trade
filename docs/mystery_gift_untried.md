@@ -1,6 +1,7 @@
 ---
 title: What the gift link can still carry
-nav_order: 12
+parent: Mystery Gift
+nav_order: 7
 ---
 
 # What the Mystery Gift link can still carry

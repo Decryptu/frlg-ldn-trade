@@ -1,3 +1,9 @@
+---
+title: Native code on the console
+parent: Inside the console
+nav_order: 2
+---
+
 # CLI_RUN_BUFFER_SCRIPT: native code on the console
 
 The last unopened door in the Mystery Gift client. `CLI_RUN_MEVENT_SCRIPT` (opcode 15) hands our

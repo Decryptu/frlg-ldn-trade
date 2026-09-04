@@ -1,6 +1,7 @@
 ---
 title: TP-Link Archer T3U
-nav_order: 5
+parent: Hardware and setup
+nav_order: 1
 ---
 
 # TP-Link Archer T3U host adapter
