@@ -613,3 +613,38 @@ read off the cartridge, put back at 0x080486B0 under unicorn (tests/test_buffer_
 2. **Writing a live field rather than scratch.** `--write-unsafe` exists; what it needs is a reason
    and a field whose effect the player can check on the console's own screen.
 
+## `string-gather` — following a pointer array instead of reading a window
+
+A dump reads a window, so a table of pointers costs one run for the pointers and another for every
+kilobyte they point at, most of it whatever padding the struct carries. `sEasyChatGroups`' 22 word
+arrays and their text span 21560 bytes of cartridge [bs17], and two thirds of that is
+`struct EasyChatWordInfo`'s `alphabeticalOrder` and `enabled` [decomp:include/easy_chat.h:11],
+neither of which says anything about what the console PRINTS. Twenty-two runs for eight kilobytes
+of words.
+
+This payload dereferences. Given the address of the first pointer, a stride and a count, it copies
+each string it points at — bytes up to and including the 0xFF terminator — into one contiguous
+answer, and reports where a following run should resume. A whole Easy Chat group a run.
+
+    ./scratchpad/run_mg_fast.sh bsNN --buffer-script string-gather \
+        --gather-address 0x083E0D54 --gather-count 69 --gather-stride 12 --version firered
+
+`--gather-stride` is 12 for `struct EasyChatWordInfo`, whose `text` is at offset 0; a plain array
+of `const u8 *` is 4. The answer is a fixed 776 bytes — four header words then up to 760 bytes of
+strings — so the host's length check stays the proof that the payload repointed the send. The
+evidence line is `gather:`, and the words are logged decoded.
+
+**It never truncates.** A string that does not fit in what is left of the budget ends the run
+BEFORE it, and `next` names the entry to resume from. A half-copied word would be
+indistinguishable from a French word that really is that short, which is exactly the kind of
+silent wrong this project keeps paying for. bs35 hit that path on hardware — 83 of STATUS' 109
+words, 760 bytes exactly — and bs36 resumed from the address it reported with nothing lost or
+repeated.
+
+**`--gather-maxlen` bounds the walk** (64 by default). A pointer that is not a string would
+otherwise be copied until it happened to meet an 0xFF, and the answer would be garbage that looked
+like data. Hitting it ends the run and says so, rather than hanging the menu.
+
+Reads only; writes nothing outside its own image and the two link fields. Proven on hardware
+bs18-bs36, eighteen runs, all first try. `docs/easy_chat_french.md` is what they read.
+

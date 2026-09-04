@@ -457,12 +457,24 @@ def test_an_illegal_species_or_move_is_refused():
 
 
 def test_the_french_check_passes_language_safe_words_and_flags_guesses():
+    """bs18-bs36 changed what this can assert. `check` used to flag most of the vocabulary
+    because the French word for a slot had to be seen on a screen one at a time; EC_WORD_TRADE
+    was the example of an unverified guess here. All 1006 language-dependent slots have since
+    been read out of the console's own sEasyChatGroup_* tables, so a real word no longer needs
+    flagging - bs20 read this one as ECHANGER. What `check` still catches is an id that is not a
+    word at all."""
     from frlgsim import easychat, easychat_french
     assert easychat_french.check([easychat.species_word(55)]) == ()
     assert easychat_french.check([easychat.WORDS["hello"]]) == ()          # observed on hardware
-    assert easychat_french.check([easychat.WORDS["trade"]]) != ()          # never observed
+    assert easychat_french.check([easychat.WORDS["trade"]]) == ()          # bs20: ECHANGER
+    assert easychat_french.french(easychat.WORDS["trade"]) == "ECHANGER"
+
+    # EC_GROUP_TRAINER holds 26 words [bs17], so index 30 is past the end of the group and no
+    # console prints anything for it.
+    past_the_end = (1 << 9) | 30
+    assert easychat_french.check([past_the_end]) == (past_the_end,)
     with pytest.raises(easychat_french.UnverifiedFrenchWord):
-        easychat_french.check([easychat.WORDS["trade"]], strict=True)
+        easychat_french.check([past_the_end], strict=True)
 
 
 def test_the_phrase_read_off_the_console_gates_a_gift():

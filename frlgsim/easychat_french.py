@@ -62,7 +62,12 @@ CONFIRMED = {
     WORDS["link"]: "CONNEXION",             # TRAINER/9,    bs07, matches
     WORDS["with"]: "AVEC",                  # ENDINGS/48,   bs07, matches
     WORDS["case"]: "LES",                   # SPEECH/12,    bs07 - NOT "case"
-    WORDS["trainer"]: "DRESSEURS",          # TRAINER/11,   bs07, matches
+    # bs20 CORRECTED THIS ONE: the ROM holds DRESSEUR, singular, and no DRESSEURS exists anywhere
+    # in the vocabulary. bs07 recorded the plural because it was written down from the phrase on
+    # the console's screen, and a phrase read by eye is weaker evidence than the table the game
+    # indexes. The four questionnaire IDS are untouched and the gate is unaffected - only the
+    # gloss was wrong. The phrase really renders CONNEXION AVEC LES DRESSEUR.
+    WORDS["trainer"]: "DRESSEUR",           # TRAINER/11,   bs07 render, CORRECTED by bs20
 }
 
 # Slots whose French word is not a translation of the English name in `WORDS`. Never compose with
@@ -82,7 +87,7 @@ DIVERGENT = frozenset({WORDS["enjoy"], WORDS["done"], WORDS["case"]})
 # phrase, CONNEXION AVEC LES DRESSEURS. The player reverted it from the custom one, so this is what
 # any `--questionnaire` gate must be set to now. Every Mystery Gift session logs the current four
 # ("Console questionnaire words: ..."), so re-read them rather than trusting this line.
-GURVAN_QUESTIONNAIRE = (0x0209, 0x1030, 0x0E0C, 0x020B)     # CONNEXION AVEC LES DRESSEURS
+GURVAN_QUESTIONNAIRE = (0x0209, 0x1030, 0x0E0C, 0x020B)     # CONNEXION AVEC LES DRESSEUR
 # The custom phrase the console held for mev04-mev06, kept because those runs are the proof that the
 # gate refuses a wrong phrase and accepts a right one.
 GURVAN_QUESTIONNAIRE_CUSTOM = (0x2A37, 0x123C, 0x24B1, 0x1E25)   # AKWAKWAK FURAX AEROBLAST POURQUOI
