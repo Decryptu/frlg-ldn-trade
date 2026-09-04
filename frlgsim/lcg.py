@@ -200,36 +200,54 @@ def nature_of(personality):
     return (personality & MASK) % NUM_NATURES
 
 
-def recover_wild_state(personality, ivs):
+def recover_wild_state(personality, ivs, max_gap=32):
     """[{...}]: the RNG states that would build this Pokemon, from its personality and IVs.
 
-    `ivs` is (hp, atk, def, speed, spatk, spdef) as the mon stores them. Returns one entry per
-    surviving candidate - in practice exactly one, because the two IV draws are 30 bits of check
-    on top of the 2**16 states the personality alone allows. `before` is gRngValue as it stood
-    immediately BEFORE the four draws; that is the state a distance is measured to.
+    `ivs` is (hp, atk, def, speed, spatk, spdef) as the mon stores them.
+
+    THE GAP IS SEARCHED, NOT ASSUMED, AND THAT IS NOT A CONVENIENCE. bs51 caught a Weedle whose
+    personality and IVs are certain - the six stats it produces match what the console printed on
+    its own summary screen, 6/6, and the nature reads DOUX = MILD = 16 - and NO state builds it
+    with the IV draws immediately after the personality. Exactly one does with ONE draw in
+    between. That extra advance is in no line of CreateBoxMon [decomp:src/pokemon.c]; it comes
+    from outside the generation, and it is the Gen 3 "Method 2" spread, MEASURED here rather than
+    taken from lore. Since the game produces more than one such layout, assuming any single one
+    turns a wrong model into a silent wrong answer - so the ANSWER decides the gap, the way bs38's
+    needle was built to let the answer decide the stride.
+
+    `before` is gRngValue as it stood immediately BEFORE the first personality draw; that is the
+    state a distance is measured to. `gap` is how many draws sat between the personality and the
+    IVs. In practice one candidate survives: the personality alone allows 2**16 states, and the
+    two IV draws are 30 more bits of check, so over the whole search of
+    2 orders x 2**16 states x (max_gap + 1) gaps x 2 IV orders a false positive is expected
+    about once in 2**30 / (that count) - report the count when more than one comes back.
     """
     personality &= MASK
     if len(ivs) != 6:
         raise ValueError(f"six IVs, got {len(ivs)}")
-    third = iv_word(ivs[0], ivs[1], ivs[2])
-    fourth = iv_word(ivs[3], ivs[4], ivs[5])
+    first_word = iv_word(ivs[0], ivs[1], ivs[2])
+    second_word = iv_word(ivs[3], ivs[4], ivs[5])
     orders = (("low-half first", personality & 0xFFFF, personality >> 16),
               ("high-half first", personality >> 16, personality & 0xFFFF))
+    iv_orders = (("HP/ATK/DEF first", first_word, second_word),
+                 ("SPEED/SPATK/SPDEF first", second_word, first_word))
     found = []
     for order, first, second in orders:
         for low in range(1 << 16):
             state = (first << 16) | low
-            after = step(state)
-            if after >> 16 != second:
+            after_personality = step(state)
+            if after_personality >> 16 != second:
                 continue
-            after = step(after)
-            if (after >> 16) & 0x7FFF != third:
-                continue
-            after = step(after)
-            if (after >> 16) & 0x7FFF != fourth:
-                continue
-            found.append({"before": unstep(state), "after": after, "order": order,
-                          "nature": nature_of(personality)})
+            walked = after_personality
+            for gap in range(int(max_gap) + 1):
+                one = step(walked)
+                two = step(one)
+                for iv_order, early, late in iv_orders:
+                    if (one >> 16) & 0x7FFF == early and (two >> 16) & 0x7FFF == late:
+                        found.append({"before": unstep(state), "after": two, "order": order,
+                                      "iv_order": iv_order, "gap": gap,
+                                      "nature": nature_of(personality)})
+                walked = step(walked)
     return found
 
 

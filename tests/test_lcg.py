@@ -128,3 +128,53 @@ def test_bs15_samples_hold_the_recurrence_and_two_turns_a_frame():
     gaps = {lcg.distance(trace["samples"][i - 1][1], trace["samples"][i][0])
             for i in range(1, trace["taken"])}
     assert gaps == {2}, "the game turned the RNG exactly twice a frame at that menu"
+
+
+# --- bs51: a Pokemon the console caught by itself, in the grass ----------------------------------
+# The ASPICOT (Weedle, species 13, Lv7) the player caught on Route 24 between bs50 and bs51, read
+# out of gPlayerParty at 0x02024280. This is the fixture that says the model here describes the
+# console rather than the decomp's English build, and it is the run that CORRECTED the model.
+
+BS51_WEEDLE_PID = 0xF7EBC01B
+BS51_WEEDLE_IVS = (23, 3, 16, 17, 24, 7)        # hp, atk, def, speed, spatk, spdef
+BS51_WEEDLE_STATE = 0x4125F87F                  # gRngValue before the four draws
+
+
+def test_the_caught_weedle_is_certain_before_any_rng_claim_is_made():
+    """The PID and IVs are not taken on trust: they predict the six stats the console printed on
+    its own summary screen, which the player read back. Two different mechanisms, one answer."""
+    # Weedle base stats [decomp gSpeciesInfo]: HP 40, ATK 35, DEF 30, SPEED 50, SPATK 20, SPDEF 20.
+    level, base = 7, (40, 35, 30, 50, 20, 20)
+    hp, atk, dfn, spe, spa, spd = BS51_WEEDLE_IVS[0], *BS51_WEEDLE_IVS[1:]
+    assert (2 * base[0] + hp) * level // 100 + level + 10 == 24
+    def stat(b, iv, mult):
+        return int(((2 * b + iv) * level // 100 + 5) * mult)
+    # nature 16 is MILD - DOUX on the console's French screen - which raises Sp.Atk and lowers Def.
+    assert lcg.nature_of(BS51_WEEDLE_PID) == 16
+    assert stat(base[1], atk, 1.0) == 10
+    assert stat(base[2], dfn, 0.9) == 9
+    assert stat(base[3], spe, 1.0) == 13
+    assert stat(base[4], spa, 1.1) == 9
+    assert stat(base[5], spd, 1.0) == 8
+
+
+def test_the_caught_weedle_names_one_state_and_the_gap_is_one_not_zero():
+    """The run that corrected the model. Assuming the IV draws follow the personality immediately
+    finds NOTHING for this mon; searching the gap finds exactly one state, one draw later."""
+    found = lcg.recover_wild_state(BS51_WEEDLE_PID, BS51_WEEDLE_IVS)
+    assert len(found) == 1
+    got = found[0]
+    assert got["before"] == BS51_WEEDLE_STATE
+    assert got["gap"] == 1, "one extra draw sits between the personality and the IVs"
+    assert got["order"] == "low-half first"
+    assert got["iv_order"] == "HP/ATK/DEF first"
+    # And the model that was wrong stays wrong, so a regression cannot pass unnoticed.
+    assert lcg.recover_wild_state(BS51_WEEDLE_PID, BS51_WEEDLE_IVS, max_gap=0) == []
+
+
+def test_the_seed_we_set_in_bs50_is_not_where_the_weedle_came_from():
+    """The title screen re-seeds on the way out of Mystery Gift [mystery_gift_menu.c:463 ->
+    CB2_InitTitleScreen -> SeedRng(REG_TM1CNT_L), title_screen.c:735], so 0xC0DE cannot reach the
+    grass. The distance says so rather than leaving it to argument."""
+    assert lcg.distance(0xC0DE, BS51_WEEDLE_STATE) > 1 << 30
+    assert lcg.distance(0xDF65, BS51_WEEDLE_STATE) > 1 << 30      # nor did RfuMain1 reseed
