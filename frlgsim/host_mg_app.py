@@ -11,7 +11,8 @@ from .host_mystery_gift import (
 )
 from .host_pia import HostPeerProtocol
 from .linkplayer import HOST_NAME_PAD
-from .mg_server import SERVER_RESULT_NAMES, SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT
+from .mg_server import (
+    SERVER_RESULT_NAMES, SVR_MSG_CARD_SENT, SVR_MSG_GIFT_SENT_1, SVR_MSG_STAMP_SENT)
 
 MysteryGiftPayload = configmod.MysteryGiftPayload
 MysteryGiftDistribution = configmod.MysteryGiftDistribution
@@ -156,11 +157,17 @@ class MysteryGiftHostApplication(HostApplication):
         engine = self.session.activity if self.session is not None else None
         self.delivery_succeeded = bool(
             engine is not None
-            and engine.result in (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT))
+            and engine.result in (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT,
+                                  SVR_MSG_GIFT_SENT_1))
         if self.delivery_succeeded:
-            noun = "Stamp" if engine.result == SVR_MSG_STAMP_SENT else "Wonder Card"
-            print(f"{noun} delivered. On the Switch, talk to the delivery man "
-                  "on the second floor of any Pokemon Center to receive the gift.")
+            if engine.result == SVR_MSG_GIFT_SENT_1:
+                print("Visiting trainer delivered. On the Switch, go to SEVEN ISLAND and talk to "
+                      "the old woman in the house in town to battle it; the Wonder Card's own "
+                      "message is with the delivery man in any Pokemon Center.")
+            else:
+                noun = "Stamp" if engine.result == SVR_MSG_STAMP_SENT else "Wonder Card"
+                print(f"{noun} delivered. On the Switch, talk to the delivery man "
+                      "on the second floor of any Pokemon Center to receive the gift.")
         elif engine is not None and engine.result is not None:
             print("Session finished without delivering a card: "
                   + SERVER_RESULT_NAMES.get(engine.result, f"code {engine.result}"))

@@ -1199,7 +1199,9 @@ look for a latency bug here, and do not "optimise" the tick.
 ## The visiting trainer: an e-Reader trainer delivered over Mystery Gift (decomp, 2026-09-04)
 
 A second payload the Mystery Gift session can carry, never sent before this one. Written from the
-decomp and proven offline against `ConsoleClientModel`; not yet on hardware.
+decomp, proven offline against `ConsoleClientModel`, and **confirmed on retail hardware first try**
+(vt01, FireRed, 2026-09-04): ident 26 went out in two blocks 24.3 s into the session, the console
+returned READY_END and saved, and the old woman on Seven Island offered the battle against RED.
 
 FACT: `CLI_RECV_EREADER_TRAINER` (client instruction 18, link ident `MG_LINKID_EREADER_TRAINER` = 26)
 memcpys the received buffer into `gSaveBlock2Ptr->battleTower.ereaderTrainer` and calls
