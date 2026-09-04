@@ -964,3 +964,138 @@ dry run are all proven offline, including that the dry run and the real append c
 address at every party size — if they could disagree the dry run would prove nothing — and that
 the append writes nothing past `playerParty[6]`, which ends at 0x38 + 600 = 0x290, exactly where
 `money` begins [global.h:774].
+
+## `call` — any ROM function, with arguments we choose (built, hardware run pending)
+
+`rng-trace` calls a function with whatever happens to be in the registers. `create-mon` calls the
+one function whose signature it was written around. `call` is the general form both are special
+cases of: an address, up to eight argument words, the `r0` that comes back, and **one address read
+either side of the call**.
+
+    --buffer-script call --call-address 0x080486D1 --call-arg 0xC0DE --call-watch 0x03004220
+
+The calling convention is not new and is not guessed. bs42 disassembled `CreateMon`'s own prologue
+and read its four stack arguments at entry `sp + 0, 4, 8, 12`; bs43 and bs44 then called it on
+hardware with eight arguments and got 13/13 predicted fields back, bs44 existing only to prove the
+fourth stack word that bs43's `otIdType 0` left unread. So `r0..r3` then `[sp+0..12]` is a
+**measured** convention here. `asm/call.s` pushes the sixteen bytes for every call, whatever
+`argc` says, because the callee never pops them and a function taking fewer simply does not read
+them — which is exactly what `create-mon.s` does.
+
+The image, all offsets from `_start`:
+
+    0x000  b .Lcode
+    0x004  function    THUMB pointer (bit 0 set), or 0 to call nothing
+    0x008  argc        how many of the eight words below are meant
+    0x00C  args[0..7]  r0, r1, r2, r3, then [sp+0], [sp+4], [sp+8], [sp+12]
+    0x02C  watch       a word to read before and after the call, or 0
+    0x030  RESULT  calls used, function, argc, r0, *watch before, *watch after
+
+### `watch` is what makes the answer evidence
+
+`SeedRng` returns nothing at all — `void SeedRng(u16 seed) { gRngValue = seed; }`
+[decomp:src/random.c:15]. A return value would therefore prove only that *something* ran. Reading
+`gRngValue` immediately before and immediately after the call is the only thing that says the call
+did what it was called for, and it is the same idea as `rng-trace`'s two reads, which is what
+turned 0x03004220 from a hypothesis into the address.
+
+The console's own `SeedRng`, twelve bytes and its literal pool as bs14 read them off the cartridge
+at 0x080486D0:
+
+    0004  lsls r0, r0, #16        the u16 truncation the decomp's signature promises,
+    000c  lsrs r0, r0, #16        made explicit by the compiler
+    0149  ldr  r1, [pc, #4]       -> 0x03004220
+    0860  str  r0, [r1]           gRngValue = seed
+    7047  bx   lr
+    .word 0x03004220
+
+Those exact bytes are the offline fixture: `tests/test_buffer_script.py` executes them under
+unicorn through the payload, so the round trip — our ARM code `bx`ing into THUMB ROM, the callee's
+own `bx lr` bringing it back, the 24-byte answer on ident 19 — is proven before a run is spent.
+The eight-argument path is checked with powers of two as the arguments, so the returned sum names
+**exactly which slots arrived**; a missing or duplicated argument cannot cancel out.
+
+### Why it is worth a run: seeding the RNG where our code cannot reach
+
+The blocker on `gRngValue` has always been that `CLI_RUN_BUFFER_SCRIPT` only runs while the
+Mystery Gift link is up, so native code cannot watch the RNG at an encounter the way bs15 watched
+it at the menu. `SeedRng` inverts the problem: instead of watching the RNG in the grass, **fix it
+during the link and read the result out of the grass afterwards**.
+
+That rests on a fact settled offline, from the decomp's own call sites. `SeedRng` is called in
+exactly four places, and three of them cannot happen here:
+
+| site | when |
+|---|---|
+| `SeedRngAndSetTrainerId` [title_screen.c:735] | the title screen, **before** the main menu |
+| `LinkTestScreen` [link.c:318] | unused debug screen |
+| `Debug_RfuIdle` [link_rfu_2.c:2670] | unused debug screen |
+| `RfuMain1` [link_rfu_2.c:2116] | Switch-only, and gated on a Sloop syscall |
+
+Mystery Gift is reached *from* the main menu, so it runs downstream of the title screen's seeding,
+and the player returns to the overworld the same way. **Nothing reseeds between our call and the
+encounter** — the chain is unbroken until the player resets.
+
+### The Switch-only reseed, and why it is not firing
+
+`RfuMain1` has a `REVISION >= 0xA` block that exists in no GBA build:
+
+```c
+if ((svc_4b() & SVC4B_RESEED_RNG) != 0)
+    SeedRng(ReadU16(&GetHostRfuGameData()->compatibility.playerTrainerId));
+```
+[decomp:src/link_rfu_2.c:2114]
+
+`svc_4b` is `swi 0x4b`, one of the syscalls the Sloop emulator adds [src/sloopsvc.c:135], so the
+*emulator* decides when this fires. `GetHostRfuGameData()` returns `&gHostRfuGameData`, the
+console's **own** advertised game data, and `InitHostRfuGameData` fills its `playerTrainerId` from
+`gSaveBlock2Ptr->playerTrainerId` [decomp:src/link_rfu_3.c:854] — so the value would be 0xDF65 on
+this console, the visible TID 57189.
+
+It is not firing during a Mystery Gift link, and that took no hardware run to establish. `RfuMain1`
+runs every frame while RFU is up, so a set bit would pin `gRngValue` near 0xDF65 continuously —
+and bs15's 96 samples free-ran with gaps of exactly 2 on all 95. The arithmetic agrees: bs15's
+first sample is **1,374,895,295** turns from 0xDF65, which is not a near miss but an unrelated
+state. `frlgsim/lcg.py` is what can say that exactly.
+
+That check is worth keeping as a control on every seeded run, because bs15's samples rule the hook
+out *during* the link and say nothing about the moment the link closes. If the encounter turns out
+to descend from 0xDF65 rather than from the seed we set, the answer names the hook instead of
+leaving a failed run unexplained.
+
+## Reading a caught Pokemon back into the RNG
+
+`GenerateWildMon` calls `CreateMonWithNature(&gEnemyParty[0], species, level, USE_RANDOM_IVS,
+Random() % NUM_NATURES)` [decomp:src/wild_encounter.c:233], and `CreateMonWithNature` rolls the
+personality until it matches that nature:
+
+```c
+do { personality = Random32(); } while (nature != GetNatureFromPersonality(personality));
+CreateMon(mon, species, level, fixedIV, TRUE, personality, OT_ID_PLAYER_ID, 0);
+```
+
+Because `hasFixedPersonality` is TRUE and the OT is the player, `CreateBoxMon` draws nothing more
+until the IVs — which are the very next two draws. So a wild Pokemon is **four consecutive draws**:
+
+    d1, d2  the accepted personality      d3  HP/ATK/DEF      d4  SPEED/SPATK/SPDEF
+
+and that is why a caught Pokemon is a reading of `gRngValue`. The personality alone leaves 2¹⁶
+candidate states, because only the *top* half of each state is ever returned and the low half of
+the first is unconstrained. The two IV draws are 30 more bits of check on the draws that **follow**,
+and exactly one state survives — `lcg.recover_wild_state`, and `scratchpad/rng_encounter.py` is the
+command-line form of it.
+
+Which half of the personality is drawn first is **not** assumed. `Random32()` is
+`(Random() | (Random() << 16))` [decomp:include/random.h:15] and C does not order the operands of
+`|`, so it is the French build's compiler that decides. Both orders are tried and the IVs settle
+it, so the answer is a reading rather than a convention taken on trust.
+
+### What a distance means, and what it does not
+
+`lcg.distance` is exact and always answers, because the map is a **permutation** of all 2³² states.
+There is no such thing as "not on the orbit", and that is precisely why a distance is only evidence
+when it is *small*: a random pair of states sits ~2³¹ apart, so a distance under N arises by chance
+with probability N / 2³². `buffer_script.lcg_distance` walks one step at a time and gives up at a
+limit — all a frame-to-frame gap needs, and useless at encounter range, where the answer is
+thousands to millions. `frlgsim/lcg.py` uses baby-step/giant-step on the affine map instead: 2¹⁷
+operations rather than up to 2³².
