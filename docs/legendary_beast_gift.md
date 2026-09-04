@@ -1,3 +1,8 @@
+---
+title: Legendary-beast gift
+nav_order: 9
+---
+
 # Legendary-Beast Mystery Gift
 
 One focused payload of the hardware-proven Mystery Gift host: a

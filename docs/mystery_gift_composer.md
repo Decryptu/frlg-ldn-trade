@@ -1,3 +1,8 @@
+---
+title: Composing gifts
+nav_order: 8
+---
+
 # Composable Mystery Gift Authoring
 
 `frlgsim.gift_composer` builds Wonder Cards and deliveryman scripts from immutable Python

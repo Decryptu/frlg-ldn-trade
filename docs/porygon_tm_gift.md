@@ -1,3 +1,8 @@
+---
+title: Porygon TM gift
+nav_order: 11
+---
+
 # Porygon TM Gift
 
 `porygon-tm-gift` is an ordinary composed Wonder Gift containing:

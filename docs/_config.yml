@@ -1,0 +1,37 @@
+title: frlg-ldn-trade
+description: >-
+  Reverse-engineering notes for speaking Nintendo Switch local wireless (LDN) to
+  Pokemon FireRed/LeafGreen: the link protocol, the host design, and the
+  Mystery Gift distributor.
+
+url: https://decryptu.github.io
+baseurl: /frlg-ldn-trade
+
+remote_theme: just-the-docs/just-the-docs
+plugins:
+  - jekyll-remote-theme
+  - jekyll-relative-links
+
+# Sidebar search over every page.
+search_enabled: true
+search:
+  heading_level: 3
+  previews: 2
+
+heading_anchors: true
+
+aux_links:
+  "View on GitHub":
+    - "https://github.com/Decryptu/frlg-ldn-trade"
+aux_links_new_tab: true
+
+back_to_top: true
+back_to_top_text: "Back to top"
+
+footer_content: >-
+  AGPLv3. Forked from
+  <a href="https://github.com/MercuryEnigma/frlg-ldn-trade">MercuryEnigma/frlg-ldn-trade</a>,
+  itself forked from <a href="https://github.com/tornadus/frlg-ldn-trade">tornadus/frlg-ldn-trade</a>.
+
+exclude:
+  - _config.yml

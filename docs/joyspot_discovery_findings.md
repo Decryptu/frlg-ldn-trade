@@ -1,3 +1,8 @@
+---
+title: JoySpot discovery
+nav_order: 4
+---
+
 # JoySpot discovery: tested surface and blocker record
 
 This document preserves the completed research into whether FireRed can discover this project through

@@ -1,3 +1,8 @@
+---
+title: TP-Link Archer T3U
+nav_order: 5
+---
+
 # TP-Link Archer T3U host adapter
 
 The TP-Link Archer T3U / AC1300 (`2357:012d`, `rtw88_8822bu`) is the reference

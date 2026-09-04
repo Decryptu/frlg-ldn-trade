@@ -1,3 +1,8 @@
+---
+title: Raspberry Pi host
+nav_order: 6
+---
+
 # Raspberry Pi 4 Mystery Gift host
 
 This project can host Mystery Gift on a 64-bit Raspberry Pi 4 using the

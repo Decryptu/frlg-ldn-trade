@@ -1,3 +1,8 @@
+---
+title: Trade-host design
+nav_order: 3
+---
+
 # FRLG trade-host design
 
 `frlgtrade_host.py` makes Linux the FireRed/LeafGreen Direct Corner leader. A single Switch joins

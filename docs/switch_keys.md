@@ -1,3 +1,8 @@
+---
+title: Switch keys on the Pi
+nav_order: 7
+---
+
 # Installing Switch keys on the Raspberry Pi
 
 `prod.keys` is a credential for your own Switch. It is required by the live

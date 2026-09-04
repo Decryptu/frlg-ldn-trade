@@ -1,3 +1,8 @@
+---
+title: Console protocol notes
+nav_order: 2
+---
+
 # Joining as the child: what the console actually does
 
 Findings for the JOINER direction (`frlgtrade.py --live`), where the Switch hosts and this program
@@ -1142,7 +1147,7 @@ and `_create_beacon_head` set no elements at all, so element 1 (Supported Rates)
 and element 3 (DS Params) were absent. The probe and association responses had all three; only the
 beacon did not.
 
-FACT: the omission propagates into the console. The same console (48:f1:eb:20:9b:22) associating to a
+FACT: the omission propagates into the console. The same console (48:f1:eb:xx:xx:xx) associating to a
 real Switch sends `Rates: 1 2 5.5 11 6 9 12 18 | Ext: 24 36 48 54`; associating to us in u30 it sent
 `Rates: 1 2 5.5 11 18 24 36 54` and NO extended-rates element - 6, 9 and 12 missing, the same three
 rates whose absence caused the wall.

@@ -1,3 +1,8 @@
+---
+title: Stamp rally
+nav_order: 10
+---
+
 # Solrock and Lunatone Stamp Rally
 
 The live Mystery Gift host has two Stamp Rally events:
