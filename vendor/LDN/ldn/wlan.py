@@ -1455,6 +1455,16 @@ class AccessPoint(Interface):
         frame.source = self.address()
         frame.beacon_interval = 100
         frame.capability_information = 0x511
+        # A real Switch LDN beacon carries SSID + Supported Rates + DS Params ahead of the TIM
+        # (air captures cc1/cc5: elements 0 1 3 5 42 50 48 ...). Without element 1 the console
+        # associates advertising a rate set with no 6/9/12 and no extended-rates element at all
+        # (u30: "1 2 5.5 11 18 24 36 54" vs "1 2 5.5 11 6 9 12 18 | 24 36 48 54" to a real Switch),
+        # which is the same omission that caused the 3-second wall in the probe/assoc responses.
+        frame.elements = {
+            WLAN_EID_SSID: SSIDElement(self._ssid).encode(),
+            WLAN_EID_SUPP_RATES: SWITCH_SUPP_RATES,
+            WLAN_EID_DS_PARAMS: DSParamsElement(self._channel).encode(),
+        }
         return frame.encode()
     
     def _create_beacon_tail(self) -> bytes:

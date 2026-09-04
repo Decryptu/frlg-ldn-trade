@@ -1136,3 +1136,36 @@ FACT (u28): the losing side too. Two level-5 mons of ours, both knocked out by t
 `CHOOSEPOKEMON` for our battler answered with the other party slot, `SWITCHINANIM`, the second faint,
 `ENDLINKBATTLE` outcome 1 and the normal close. Every controller command a two-mon link battle can
 emit has now run on hardware in both directions.
+
+## Our beacon was missing the Supported Rates element, and the console mirrored the gap (u30/u31, 2026-09-04)
+
+The 3-second wall was closed by always advertising the OFDM rates 6/9/12 in the probe and association
+responses, but WHY the console needs them was never explained. It is explained by the beacon.
+
+FACT (air captures cc1 and cc5, two different real consoles): a real Switch hosting LDN beacons with
+fourteen elements, 208 bytes: `0(32) 1(8) 3(1) 5(4) 42(1) 50(4) 48(20) 45(26) 61(22) 127(1) 255(24)
+255(7) 221(6) 221(24)`. Its Supported Rates element reads `1* 2* 5.5* 11* 6 9 12 18` with the
+extended element `24 36 48 54` (a `*` marks the basic-rate bit).
+
+FACT (u30): our beacon carried three elements, 34 bytes: `5(4) 50(4) 48(20)` - the kernel's TIM, our
+extended rates and RSN. `ldn/wlan.py:_create_beacon_tail` returned only `_rate_tail(_rsn_body())`,
+and `_create_beacon_head` set no elements at all, so element 1 (Supported Rates), element 0 (SSID)
+and element 3 (DS Params) were absent. The probe and association responses had all three; only the
+beacon did not.
+
+FACT: the omission propagates into the console. The same console (48:f1:eb:20:9b:22) associating to a
+real Switch sends `Rates: 1 2 5.5 11 6 9 12 18 | Ext: 24 36 48 54`; associating to us in u30 it sent
+`Rates: 1 2 5.5 11 18 24 36 54` and NO extended-rates element - 6, 9 and 12 missing, the same three
+rates whose absence caused the wall.
+
+FACT (u31, one variable changed - element 0, 1 and 3 added to the beacon head): the console's
+association request became `Rates: 1 2 5.5 11 6 9 12 18 | Ext: 24 36 48 54`, byte-identical to what
+it sends a real Switch. The join was immediate and the run had no ack-lag stall.
+
+DEDUCTION: the console builds the rate set it advertises from the BEACON, not from our probe
+response - in u30 the probe response already carried the correct set and the association request was
+still wrong; u31 changed only the beacon and fixed it. That is why the advertised rate set matters:
+it decides what the console claims to support, and so what the link may use.
+
+The remaining beacon difference from a real Switch is elements 42 (ERP), 45/61 (HT), 127, 255 and 221
+(HT/HE/WMM) - all previously measured as null for the completion rate; they are not re-opened here.
