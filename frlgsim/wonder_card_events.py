@@ -744,11 +744,45 @@ RNG_SHINY_DITTO_GIFT = WonderGift(
 )
 
 
+GIFT_MASTER_BALL = "master-ball"
+MASTER_BALL_FLAG_ID = 1014
+
+# The one the player spent catching the Ditto mev07 put in front of them. A plain item delivery -
+# no cutscene, no sprite, no battle - so the delivery man hands it over and nothing else happens.
+# It also takes the RAM script slot back from the Ditto script, which ends that binding.
+MASTER_BALL_GIFT = WonderGift(
+    slug=GIFT_MASTER_BALL,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY GIFT",
+        subtitle="A replacement MASTER BALL",
+        body=(
+            "A MASTER BALL is on its way to",
+            "replace the one you used.",
+            "Talk to the delivery man on the",
+            "2nd floor of a POKEMON CENTER.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=MASTER_BALL_FLAG_ID,
+    ),
+    intro_message="A MASTER BALL delivery has arrived!",
+    event=GiftSpec(),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message("You received a MASTER BALL!"),
+            GiveItem(wonder_card.ITEM_MASTER_BALL),
+        ),
+    )),
+    completed_message="You already collected the MASTER BALL.",
+)
+
+
 __all__ = [
     "CELEBI_GIFT", "DIR_WEST", "GIFT_MEVENT_PROBE", "GIFT_PORYGON_TMS",
     "GIFT_VISITING_TRAINER",
     "GIFT_MEVENT_CELEBI", "MEVENT_CELEBI_GIFT", "MEVENT_CELEBI_FLAG_ID",
     "GIFT_MEVENT_NPC", "MEVENT_NPC_GIFT", "MEVENT_NPC_FLAG_ID",
+    "GIFT_MASTER_BALL", "MASTER_BALL_GIFT", "MASTER_BALL_FLAG_ID",
     "GIFT_RNG_SHINY_DITTO", "RNG_SHINY_DITTO_GIFT", "RNG_SHINY_DITTO_FLAG_ID",
     "RNG_DITTO_SEED", "SPECIES_DITTO", "build_rng_shiny_ditto_script",
     "build_mevent_npc_script",

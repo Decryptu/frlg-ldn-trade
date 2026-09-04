@@ -178,3 +178,45 @@ def test_the_seed_we_set_in_bs50_is_not_where_the_weedle_came_from():
     grass. The distance says so rather than leaving it to argument."""
     assert lcg.distance(0xC0DE, BS51_WEEDLE_STATE) > 1 << 30
     assert lcg.distance(0xDF65, BS51_WEEDLE_STATE) > 1 << 30      # nor did RfuMain1 reseed
+
+
+# --- every mon this console has generated, and the three layouts it used ------------------------
+# Methods 1, 2 and 4, all observed on the same cartridge in one evening. Searching one gap finds
+# only some of them, and finds them SILENTLY - the other two came back empty, which is why the
+# recovery searches both gaps and reports which it used.
+CONSOLE_MONS = {
+    # name:            (personality, ivs, state before, gap, iv_gap)
+    "bs51 Weedle":     (0xF7EBC01B, (23, 3, 16, 17, 24, 7), 0x4125F87F, 1, 0),   # Method 2
+    "bs52 Caterpie":   (0x99FDAFC5, (12, 10, 25, 6, 27, 9), 0x7492D8B4, 0, 1),   # Method 4
+    "bs52 Weedle #2":  (0xC41B8241, (13, 31, 9, 30, 25, 22), 0xCD376EA8, 0, 1),  # Method 4
+    "bs54 Mankey":     (0x321FCD56, (6, 8, 20, 19, 11, 24), 0xB2F6D04C, 0, 1),   # Method 4
+    "bs53 Ditto":      (0x026F38B2, (31, 23, 27, 18, 30, 30), 0x81F6816D, 0, 0), # Method 1
+}
+
+
+@pytest.mark.parametrize("name", sorted(CONSOLE_MONS))
+def test_every_mon_the_console_made_recovers_to_one_state(name):
+    personality, ivs, state, gap, iv_gap = CONSOLE_MONS[name]
+    found = lcg.recover_wild_state(personality, ivs)
+    assert len(found) == 1, f"{name} should name exactly one state"
+    assert found[0]["before"] == state
+    assert (found[0]["gap"], found[0]["iv_gap"]) == (gap, iv_gap)
+    assert found[0]["order"] == "low-half first"
+
+
+def test_the_scripted_battle_recovers_to_the_seed_we_actually_wrote():
+    """mev07's Ditto is the only one whose state was not inferred but CHOSEN: the field script wrote
+    it four commands earlier. It recovers to exactly that, with both gaps zero - so the scripted
+    generation is plain Method 1, with none of the stray draws the walked encounters showed."""
+    from frlgsim import wonder_card_events
+    personality, ivs, state, gap, iv_gap = CONSOLE_MONS["bs53 Ditto"]
+    assert state == wonder_card_events.RNG_DITTO_SEED
+    assert (gap, iv_gap) == (0, 0)
+
+
+def test_the_union_room_does_not_reseed_either():
+    """ur01/bs54: a full Union Room session - LinkPlayer exchange, trainer cards, a greeting, 199
+    seconds of RFU - then a Mankey caught on Route 22. If SVC4B_RESEED_RNG fired for the Union
+    Room the state would descend from the console's own trainer id. It is 2.1 BILLION turns away.
+    Mystery Gift (bs15) and the Union Room are both ruled out now."""
+    assert lcg.distance(0xDF65, CONSOLE_MONS["bs54 Mankey"][2]) > 1 << 30

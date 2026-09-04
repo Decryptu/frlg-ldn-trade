@@ -215,6 +215,12 @@ def recover_wild_state(personality, ivs, max_gap=32):
     turns a wrong model into a silent wrong answer - so the ANSWER decides the gap, the way bs38's
     needle was built to let the answer decide the stride.
 
+    THERE ARE TWO GAPS, NOT ONE, AND BOTH ARE SEARCHED. bs51's Weedle put its blank draw BEFORE
+    the IVs (`gap` 1, `iv_gap` 0) - the Gen 3 "Method 2" spread. bs52's Caterpie and second Weedle
+    put it BETWEEN the two IV draws instead (`gap` 0, `iv_gap` 1) - "Method 4". Searching only the
+    first gap finds the one and misses the other two, which is exactly what happened: those two mons
+    came back empty until the second gap was searched as well.
+
     `before` is gRngValue as it stood immediately BEFORE the first personality draw; that is the
     state a distance is measured to. `gap` is how many draws sat between the personality and the
     IVs. In practice one candidate survives: the personality alone allows 2**16 states, and the
@@ -238,15 +244,20 @@ def recover_wild_state(personality, ivs, max_gap=32):
             after_personality = step(state)
             if after_personality >> 16 != second:
                 continue
+            # The PID pair alone leaves ~1 candidate in 2**16, so the two gaps below are searched
+            # over a handful of states, not over the whole space.
             walked = after_personality
             for gap in range(int(max_gap) + 1):
                 one = step(walked)
-                two = step(one)
-                for iv_order, early, late in iv_orders:
-                    if (one >> 16) & 0x7FFF == early and (two >> 16) & 0x7FFF == late:
-                        found.append({"before": unstep(state), "after": two, "order": order,
-                                      "iv_order": iv_order, "gap": gap,
-                                      "nature": nature_of(personality)})
+                between = one
+                for iv_gap in range(int(max_gap) + 1):
+                    two = step(between)
+                    for iv_order, early, late in iv_orders:
+                        if (one >> 16) & 0x7FFF == early and (two >> 16) & 0x7FFF == late:
+                            found.append({"before": unstep(state), "after": two, "order": order,
+                                          "iv_order": iv_order, "gap": gap, "iv_gap": iv_gap,
+                                          "nature": nature_of(personality)})
+                    between = step(between)
                 walked = step(walked)
     return found
 
