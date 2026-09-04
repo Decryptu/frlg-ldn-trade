@@ -235,6 +235,13 @@ FROM_PARAM_LINK_SEND_BUFFER = CLIENT_LINK + LINK_SEND_BUFFER - CLIENT_PARAM  # 0
 # payload which ever does use an absolute address is tested against the layout it will meet.
 EWRAM_BASE, EWRAM_SIZE = 0x02000000, 0x00040000
 IWRAM_BASE, IWRAM_SIZE = 0x03000000, 0x00008000
+# The cartridge, readable by the CPU like any other region, so a dump aimed at it is legal and the
+# CRC walk over it cannot fault. 32 MB is the GBA's window; FireRed fills the first 16.
+ROM_BASE, ROM_SIZE = 0x08000000, 0x02000000
+# [GBA cartridge header] 0xA0 game title, 0xAC game code, 0xB0 maker, 0xBC software version. This is
+# how a dump names the build the console is running, which is the prerequisite for calling into it.
+ROM_HEADER_TITLE = ROM_BASE + 0xA0
+ROM_HEADER_GAME_CODE = ROM_BASE + 0xAC
 STACK_POINTER = 0x03007F00          # SP_usr as the BIOS leaves it
 _RETURN_ADDRESS = 0x0F000000        # our own sentinel: where bx lr lands and emulation stops
 # The client and its buffers are AllocZeroed [mystery_gift_client.c:72], so they live in gHeap,
@@ -286,13 +293,22 @@ def emulation_available():
     return True
 
 
+# Enough of a cartridge header for a dump aimed at ROM to come back with something to identify. The
+# real console's is whatever the Switch release ships; that is exactly what a hardware dump answers.
+_DEFAULT_ROM_HEADER = (b"\x00" * 0xA0
+                       + b"POKEMON FIRE"            # 0xA0 game title, 12 bytes
+                       + b"BPRF"                    # 0xAC game code: BPR = FireRed, F = French
+                       + b"01"                      # 0xB0 maker code
+                       + b"\x96")                   # 0xB2 fixed value
+
+
 def emulate(code, *, param=0, sav2=b"", sav1=b"", memory=None, send_size=4,
-            send_ident=0, instruction_limit=_INSTRUCTION_LIMIT):
+            send_ident=0, rom=None, instruction_limit=_INSTRUCTION_LIMIT):
     """Run a payload the way Client_RunBufferScript does, on a model of the console's memory.
 
     `send_size`/`send_ident` are the send a preceding client-script command already set up (4 bytes
     of MG_LINKID_RESPONSE after CLI_LOAD_TOSS_RESPONSE); `memory` places extra regions the payload
-    may read, as {address: bytes}. The result's `pending_send` is what a following CLI_SEND_LOADED
+    may read, as {address: bytes}; `rom` seeds the cartridge at 0x08000000. The result's `pending_send` is what a following CLI_SEND_LOADED
     would actually transmit - the bytes at link->sendBuffer, wherever the payload left it pointing.
 
     The caller is a THUMB function, so lr carries bit 0 set; a payload that returns with anything
@@ -310,6 +326,8 @@ def emulate(code, *, param=0, sav2=b"", sav1=b"", memory=None, send_size=4,
     uc = unicorn.Uc(unicorn.UC_ARCH_ARM, unicorn.UC_MODE_ARM | unicorn.UC_MODE_LITTLE_ENDIAN)
     uc.mem_map(EWRAM_BASE, EWRAM_SIZE)
     uc.mem_map(IWRAM_BASE, IWRAM_SIZE)
+    uc.mem_map(ROM_BASE, ROM_SIZE)
+    uc.mem_write(ROM_BASE, bytes(rom if rom is not None else _DEFAULT_ROM_HEADER))
     uc.mem_map(_RETURN_ADDRESS, 0x1000)
 
     def word(offset, value):

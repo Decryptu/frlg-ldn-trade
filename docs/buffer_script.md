@@ -271,10 +271,45 @@ console flushing its RfuSendQueue. Measured over a 608-byte dump, bursts of four
     max_backlog=2, no coalesce              628               156     1255
     ChildEcho (current)                       0                 0     1011
 
+## bs06: 608 bytes, first try, and the party came out
+
+FACT, 2026-09-04, French FireRed, bs05's own command with the echo policy as the only variable:
+
+    [mg] received ident 19 (608 bytes)
+    Buffer script dump: 608 bytes of console memory, head 05000000ca3a353065dfbbe5bbccbdbb
+
+    scratchpad/echo_gaps.py scratchpad/bs06.pcap
+    13 console block(s); bursts: 1x247, 2x16, 3x1
+    ... every block never=[] repaired_by_console=[]
+    0 block(s) had a fragment we never mirrored back.
+
+Thirteen console blocks, four of them full 21-fragment chunks, bursts of two and three among them,
+and not one fragment lost. The host's own status line said `row-one echo backlog 1 (peak 3), 85
+repeat(s) folded, none dropped` throughout - the repeats it folded are lg122's failure mode, folded
+away instead of mirrored. `scratchpad/dump_read.py` on the bytes:
+
+    playerPartyCount 5
+    slot 1: ARCANINE   Lv72  nick='ARCANIN'    OT='GURVAN' PID=0x30353ACA IVs=[18,17,20,31,2,10]
+    slot 2: LUGIA      Lv77  nick='LUGIA'      OT='GURVAN' PID=0x91F854FF IVs=[21,9,11,31,28,21]
+    slot 3: DRAGONITE  Lv77  nick='DRACOLOSSE' OT='GURVAN' PID=0x322EA657 IVs=[26,22,3,24,11,5]
+    slot 4: ZAPDOS     Lv72  nick='ELECTHOR'   OT='GURVAN' PID=0x11CDE7D0 IVs=[5,14,1,22,4,6]
+    slot 5: SNORLAX    Lv74  nick='RONFLEX'    OT='GURVAN' PID=0xB0898E84 IVs=[25,24,27,25,2,0]
+
+Every checksum valid, every OT GURVAN, the nicknames French. The whole party in one run, PIDs and
+IVs included - none of it reachable by any Mystery Event opcode or link message.
+
+One more thing was in the evidence all along and is worth writing down so nobody re-derives it: the
+console's READY_END (ident 20) is a 1024-byte message, which MGL_Send splits into a header plus FIVE
+chunks, and `echo_gaps.py` finds it in bs01 as blocks 5-10 (count 1, then 21, 21, 21, 21, 2 =
+4x252 + 16). The console had been completing five-chunk sends since the first buffer-script run. The
+"the handshake supply runs out at four chunks" hypothesis was dead on evidence already in hand.
+
 ## Left
 
-1. **bs06: bs05's own command again** (`save-dump --dump-block sav1 --dump-offset 0x34
-   --dump-size 608`), so the echo policy is the only variable; then 1024. `echo_gaps.py` on the capture afterwards: every block
+1. ~~bs06: bs05's own command again~~ DONE, above. Next: **bs07, 1024 bytes of the cartridge at 0x08000000**: the
+   GBA header names the build the Switch release ships (0xA0 title, 0xAC game code, 0xBC version),
+   which is what calling into the ROM needs, and it proves 1024 bytes on hardware at the same time.
+   `buffer_script.emulate` now maps ROM, so such a payload is checked offline like any other. `echo_gaps.py` on the capture afterwards: every block
    must read `never=[]`. That single line is the whole verdict.
 
 2. Writing, rather than reading: the same offsets take a `str` as easily as a `ldr`.

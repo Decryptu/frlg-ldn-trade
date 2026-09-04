@@ -648,3 +648,20 @@ def test_the_old_echo_bound_makes_the_console_repair_its_own_block():
 
     assert fixed.dropped == 0 and console.own_resends == 0
     assert len(engine.server.buffer_dump) == 608
+
+
+@needs_unicorn
+def test_a_dump_can_be_aimed_at_the_cartridge():
+    """The CPU reads ROM like any other region, so a dump aimed there is legal and the CRC walk over
+    it cannot fault. It is also the only way to learn WHICH build the console is running, which is
+    what calling into the ROM would need [GBA cartridge header: 0xA0 title, 0xAC game code]."""
+    run = buffer_script.emulate(buffer_script.build_memory_dump(buffer_script.ROM_BASE, 1024))
+
+    assert run.done and run.client.send_buffer == buffer_script.ROM_BASE
+    assert run.client.send_size == 1024
+    assert run.pending_send[0xA0:0xAC] == b"POKEMON FIRE"
+
+    seeded = buffer_script.emulate(
+        buffer_script.build_memory_dump(buffer_script.ROM_HEADER_TITLE, 16),
+        rom=b"\x00" * 0xA0 + b"POKEMON LEAF")
+    assert seeded.pending_send[:12] == b"POKEMON LEAF"
