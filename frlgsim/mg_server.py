@@ -842,6 +842,14 @@ class MysteryGiftServer:
             verdict = "MATCHES" if self.buffer_matched else "DOES NOT MATCH"
             self.info(f"Buffer script status: 0x{self.buffer_status:08X} {verdict} "
                       f"0x{expected:08X} ({why})")
+            if self.buffer_expect == BUFFER_EXPECT_TRAINER_ID and self.buffer_matched:
+                # playerTrainerId is one u32: the public id the trainer card shows is the low
+                # half, the SECRET ID the high half. The secret id is not printed anywhere in the
+                # game and does not travel in any link message, so reading it out of the save is
+                # the only way to have it - and it is half of the gen 3 shiny check,
+                # (TID ^ SID ^ PID_high ^ PID_low) < 8.
+                self.info(f"  -> TID (public) {self.buffer_status & 0xFFFF}, "
+                          f"SID (SECRET) {self.buffer_status >> 16}")
         self.param = self.buffer_matched
         self.trace.append(("buffer_status", self.buffer_status, self.buffer_matched))
 

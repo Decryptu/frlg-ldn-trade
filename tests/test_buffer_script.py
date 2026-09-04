@@ -306,3 +306,35 @@ def test_every_default_message_fits_the_window():
         assert len(lines) <= mg_server.MAX_MESSAGE_LINES
         for line in lines:
             assert len(charmap.decode(line)) <= mg_server.MAX_MESSAGE_LINE_CHARS
+
+
+def test_the_trainer_id_probe_reports_the_secret_id():
+    """The secret id is the high half of playerTrainerId. The game never prints it and no link
+    message carries it, so native code reading the save is the only route to it. bs01 and bs03
+    both returned 0xE5BBDF65: TID 57189, which the console's own game data and the trainer card
+    both confirm, and SID 58811, which nothing else could have told us."""
+    lines = []
+    server = mg_server.MysteryGiftServer(
+        buffer_code=buffer_script.payload(buffer_script.TRAINER_ID_PROBE),
+        buffer_expect=mg_server.BUFFER_EXPECT_TRAINER_ID,
+        log=lines.append)
+    server.game_data = mg_script.parse_link_game_data(_game_data_with_trainer_id(0xE5BBDF65))
+    server._received = (0xE5BBDF65).to_bytes(4, "little")
+
+    server._do_svr_read_buffer_status()
+
+    assert server.buffer_matched is True
+    assert "TID (public) 57189" in "\n".join(lines)
+    assert "SID (SECRET) 58811" in "\n".join(lines)
+
+
+def _game_data_with_trainer_id(trainer_id):
+    from frlgsim import charmap, mystery_gift as mg
+    data = bytearray(mg_script.GAME_DATA_SIZE)
+    data[0x00:0x04] = mg.GAME_DATA_VALID_VAR.to_bytes(4, "little")
+    data[0x10:0x14] = mg.VERSION_CODE_FIRERED.to_bytes(4, "little")
+    name = charmap.encode("GURVAN") + b"\xff"
+    data[mg_script.GD_OFF_PLAYER_NAME:mg_script.GD_OFF_PLAYER_NAME + len(name)] = name
+    data[mg_script.GD_OFF_TRAINER_ID:mg_script.GD_OFF_TRAINER_ID + 4] = \
+        trainer_id.to_bytes(4, "little")
+    return bytes(data)
