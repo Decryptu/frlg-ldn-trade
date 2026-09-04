@@ -18,6 +18,7 @@ from frlgsim import (  # noqa: E402
     buffer_script, host_mystery_gift, mg_script, mg_server, rfu, rfu_leader, rom_map,
     stamp_rally,
 )
+from frlgsim import config as configmod  # noqa: E402
 from frlgsim.buffer_payloads import PAYLOADS  # noqa: E402
 from test_mystery_gift_flow import CONSOLE_TRAINER_ID, ConsoleClientModel, _drive  # noqa: E402
 
@@ -2210,3 +2211,43 @@ def test_a_call_that_passes_fewer_arguments_leaves_the_stack_slots_it_did_not_se
         memory={EIGHT_ARG_CODE_BASE: EIGHT_ARG_CODE},
         send_size=buffer_script.CALL_ANSWER_SIZE)
     assert buffer_script.read_call(run.pending_send)["returned"] == 15
+
+
+_MINIMAL_ARGS = {
+    "memory-dump": {"dump_address": 0x0201C000},
+    "create-mon": {"create_mon_species": 59, "create_mon_level": 30},
+    "memory-scan": {"scan_word": 0x41C64E6D},
+    "table-scan": {"table_delta": 2},
+    "rng-trace": {"trace_address": 0x03004220},
+    "string-gather": {"gather_address": 0x08000000},
+    "call": {"call_address": 0x080486D1},
+    "save-write": {"write_data": b"X", "dump_offset": 0xB20},
+}
+
+
+# --- the lists a new payload has to be added to ------------------------------------------------
+# bs56 was lost to this and to nothing else: table-scan ran on the console, searched 2.75 MB and
+# found its table, and the host asked for 4 bytes because the new payload had been added to neither
+# of the two hand-maintained tuples in config.py. The tuples are now one set beside the payloads.
+
+def test_every_payload_that_answers_with_bytes_asks_the_host_for_them():
+    """The failure this guards is silent: the payload succeeds, the console sends what it was
+    asked for, and the answer is simply never collected."""
+    for name in buffer_script.DUMP_SCRIPTS:
+        assert configmod.BufferScriptPayload(script=name, **_MINIMAL_ARGS.get(name, {})).is_dump, \
+            f"{name} answers on ident 19 but config would ask for the 4-byte channel"
+
+
+def test_a_decoded_answer_is_always_a_byte_answer_and_both_name_real_payloads():
+    assert buffer_script.DECODED_SCRIPTS <= buffer_script.DUMP_SCRIPTS
+    assert buffer_script.DUMP_SCRIPTS <= set(buffer_script.SCRIPT_REGISTRY)
+
+
+def test_table_scan_asks_for_its_whole_answer_and_gets_it_decoded():
+    payload = configmod.BufferScriptPayload(
+        script=buffer_script.TABLE_SCAN, table_delta=2,
+        table_start=0x08140000, table_end=0x08400000)
+    distribution = payload.build_distribution()
+
+    assert distribution.buffer_dump_size == buffer_script.TABLE_ANSWER_SIZE
+    assert distribution.buffer_decode == buffer_script.TABLE_SCAN

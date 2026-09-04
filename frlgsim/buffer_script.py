@@ -1334,6 +1334,24 @@ def script_choices():
     return tuple(sorted(SCRIPT_REGISTRY))
 
 
+# Which payloads answer with BYTES on ident 19 rather than the 4-byte channel, and which of those
+# have a structure the log can decode rather than a region to hex-dump. These live here, beside the
+# payloads, because they were duplicated as two hand-maintained tuples in config.py and bs56 was
+# lost to exactly that: table-scan ran on the console and found its table, and the host asked for
+# 4 bytes because a new payload had been added to neither list. A new payload goes in here.
+DUMP_SCRIPTS = frozenset({
+    MEMORY_DUMP, SAVE_DUMP, ANCHORS, SAVE_WRITE, MEMORY_SCAN, TABLE_SCAN, RNG_TRACE,
+    STRING_GATHER, CREATE_MON, CALL,
+})
+DECODED_SCRIPTS = frozenset({
+    MEMORY_SCAN, TABLE_SCAN, RNG_TRACE, STRING_GATHER, CREATE_MON, CALL,
+})
+# A payload whose answer the log decodes must first be one whose answer comes back as bytes.
+assert DECODED_SCRIPTS <= DUMP_SCRIPTS
+# And neither may name a payload that does not exist.
+assert DUMP_SCRIPTS <= set(SCRIPT_REGISTRY)
+
+
 def format_script_help():
     return "; ".join(f"{spec.name}: {spec.description}"
                      for spec in SCRIPT_REGISTRY.values())

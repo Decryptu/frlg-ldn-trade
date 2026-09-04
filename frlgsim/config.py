@@ -689,11 +689,7 @@ class BufferScriptPayload:
     @property
     def is_dump(self):
         """Anything whose answer comes back as bytes on ident 19 rather than the 4-byte channel."""
-        return self.script in (buffer_script.MEMORY_DUMP, buffer_script.SAVE_DUMP,
-                               buffer_script.ANCHORS, buffer_script.SAVE_WRITE,
-                               buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE,
-                               buffer_script.STRING_GATHER, buffer_script.CREATE_MON,
-                               buffer_script.CALL)
+        return self.script in buffer_script.DUMP_SCRIPTS
 
     @property
     def spec(self):
@@ -748,10 +744,7 @@ class BufferScriptPayload:
         return MysteryGiftDistribution(
             None, None, buffer_code=self.build_code(), buffer_expect=self.expect,
             buffer_dump_size=self.dump_size if self.is_dump else None,
-            buffer_decode=(self.script if self.script in
-                           (buffer_script.MEMORY_SCAN, buffer_script.RNG_TRACE,
-                            buffer_script.STRING_GATHER, buffer_script.CREATE_MON,
-                            buffer_script.CALL)
+            buffer_decode=(self.script if self.script in buffer_script.DECODED_SCRIPTS
                            else None))
 
 
