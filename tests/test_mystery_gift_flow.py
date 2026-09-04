@@ -22,8 +22,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from frlgsim import (  # noqa: E402
-    block, charmap, host_mystery_gift, linkplayer, mg_link, mg_script, mg_server, rfu,
-    trade, wonder_card,
+    block, charmap, ereader_trainer, host_mystery_gift, linkplayer, mg_link, mg_script,
+    mg_server, rfu, trade, wonder_card,
 )
 from frlgsim import mystery_gift as mg  # noqa: E402
 
@@ -315,6 +315,7 @@ class ConsoleClientModel:
         self.link_recv = mg_link.MysteryGiftLinkReceiver()
         self.saved_card = None
         self.saved_ram_script = None
+        self.saved_trainer = None
         self.dynamic_msg = None
         self.result = None
         self.messages_received = []
@@ -476,6 +477,11 @@ class ConsoleClientModel:
         elif instr == mg_script.CLI_SAVE_RAM_SCRIPT:
             # InitRamScript_NoObjectEvent clamps to script[995] [src/script.c:577].
             self.saved_ram_script = bytes(self.recv_buffer[:995])
+        elif instr == mg_script.CLI_RECV_EREADER_TRAINER:
+            # memcpy into battleTower.ereaderTrainer, then ValidateEReaderTrainer clears a struct
+            # whose checksum does not match [mystery_gift_client.c:233, battle_tower.c:1354].
+            trainer = bytes(self.recv_buffer[:ereader_trainer.TRAINER_SIZE])
+            self.saved_trainer = trainer if ereader_trainer.validate(trainer) else None
         elif instr == mg_script.CLI_SAVE_STAMP:
             stamp = (int.from_bytes(self.recv_buffer[0:2], "little"),
                      int.from_bytes(self.recv_buffer[2:4], "little"))
@@ -852,6 +858,70 @@ def test_stale_link_player_block_stops_without_restarting_the_child_transfer():
                                                      rfu.SEND_BLOCK)
         engine.feed_child_slot(rfu.idle_slot())
     assert engine._link_player_requests == 1
+
+
+# --- the visiting trainer ---------------------------------------------------------------------
+def _visiting_trainer():
+    from frlgsim import gift_registry
+    return gift_registry.GIFT_REGISTRY.build_distribution("visiting-trainer")
+
+
+def test_end_to_end_the_visiting_trainer_lands_in_the_save():
+    distribution = _visiting_trainer()
+    console = ConsoleClientModel(flag_id=0)
+    engine, _frames = _drive(console, distribution=distribution)
+
+    assert console.result == mg_script.CLI_MSG_TRAINER_RECEIVED
+    assert engine.result == mg_server.SVR_MSG_GIFT_SENT_1 and engine.gift_sent
+    assert engine.state == host_mystery_gift.MG_DONE and engine.done
+    # Byte-for-byte what we authored, and it survives ValidateEReaderTrainer.
+    assert console.saved_trainer == distribution.trainer
+    assert ereader_trainer.validate(console.saved_trainer)
+    assert console.saved_card == distribution.card
+
+
+def test_end_to_end_the_trainer_message_sequence_adds_ident_26_to_the_card_flow():
+    console = ConsoleClientModel(flag_id=0)
+    _drive(console, distribution=_visiting_trainer())
+    assert [ident for ident, _payload in console.messages_received] == [
+        mg.MG_LINKID_CLIENT_SCRIPT,     # sClientScript_SendGameData
+        mg.MG_LINKID_CLIENT_SCRIPT,     # CLIENT_SCRIPT_SAVE_CARD_AND_TRAINER
+        mg.MG_LINKID_CARD,
+        mg.MG_LINKID_RAM_SCRIPT,
+        mg.MG_LINKID_EREADER_TRAINER,
+    ]
+
+
+def test_end_to_end_a_console_already_holding_the_card_takes_the_trainer_alone():
+    """The rematch path: no toss prompt, no card, just the 188 bytes again."""
+    distribution = _visiting_trainer()
+    flag_id = int.from_bytes(distribution.card[0:2], "little")
+    console = ConsoleClientModel(flag_id=flag_id)
+    engine, _frames = _drive(console, distribution=distribution)
+
+    assert engine.result == mg_server.SVR_MSG_GIFT_SENT_1
+    assert console.result == mg_script.CLI_MSG_TRAINER_RECEIVED
+    assert console.saved_card is None
+    assert console.saved_trainer == distribution.trainer
+    assert [ident for ident, _payload in console.messages_received] == [
+        mg.MG_LINKID_CLIENT_SCRIPT,
+        mg.MG_LINKID_CLIENT_SCRIPT,
+        mg.MG_LINKID_EREADER_TRAINER,
+    ]
+
+
+def test_end_to_end_a_console_holding_another_card_is_asked_to_toss_first():
+    distribution = _visiting_trainer()
+    console = ConsoleClientModel(flag_id=1003, toss_answer=0)      # FALSE = tossed
+    engine, _frames = _drive(console, distribution=distribution)
+    assert engine.result == mg_server.SVR_MSG_GIFT_SENT_1
+    assert console.saved_trainer == distribution.trainer
+
+    console = ConsoleClientModel(flag_id=1003, toss_answer=1)      # TRUE = kept
+    engine, _frames = _drive(console, distribution=distribution)
+    assert engine.result == mg_server.SVR_MSG_CLIENT_CANCELED
+    assert console.saved_trainer is None
+    assert console.saved_card is None
 
 
 # --- standalone runner --------------------------------------------------------------------------

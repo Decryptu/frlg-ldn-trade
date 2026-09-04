@@ -1195,3 +1195,56 @@ DEDUCTION: a controller command's block spans roughly twenty RFU frames, and twe
 VBlank is ~340 ms; a full step is that plus the return leg, giving the observed ~800 ms. Going faster
 means emitting more than one RFU slot per VBlank, which is not what the hardware link does. Do not
 look for a latency bug here, and do not "optimise" the tick.
+
+## The visiting trainer: an e-Reader trainer delivered over Mystery Gift (decomp, 2026-09-04)
+
+A second payload the Mystery Gift session can carry, never sent before this one. Written from the
+decomp and proven offline against `ConsoleClientModel`; not yet on hardware.
+
+FACT: `CLI_RECV_EREADER_TRAINER` (client instruction 18, link ident `MG_LINKID_EREADER_TRAINER` = 26)
+memcpys the received buffer into `gSaveBlock2Ptr->battleTower.ereaderTrainer` and calls
+`ValidateEReaderTrainer` [mystery_gift_client.c:233]. The struct is 188 bytes
+[struct BattleTowerEReaderTrainer, global.h:286]:
+
+    0x00 u8  unk0                  0x10 u16 greeting[6]            0x34 BattleTowerPokemon party[3]
+    0x01 u8  trainerClass          0x1C u16 farewellPlayerLost[6]  0xB8 u32 checksum
+    0x02 u16 winStreak             0x28 u16 farewellPlayerWon[6]
+    0x04 u8  name[8]
+    0x0C u8  trainerId[4]
+
+FACT: validation is only that the first 46 words are not all zero and that the trailing u32 is their
+sum [ValidateEReaderTrainer, battle_tower.c:1354; SetEReaderTrainerChecksum, :1384]. A struct that
+fails is silently cleared. Nothing about the trainer, the party or the levels is checked.
+
+FACT: `SevenIsland_House_Room1` gates only on that validation. `ValidateEReaderTrainer` returning 0
+sets `TRAINER_VISITING`, opens the door in the map layout and moves the old woman; she then offers a
+3v3 (`ChooseHalfPartyForBattle`, `ReducePlayerPartyToThree`), warps to Room2, and
+`StartSpecialBattle` case 2 builds the enemy party with `CreateBattleTowerMon` straight from the
+struct [battle_tower.c:928]. The party is healed afterwards and the scene var resets, so the battle
+is repeatable. The Battle Tower's level rule and banlist live on `ShouldBattleEReaderTrainer`
+[:232], which this path never calls - the levels we send are the levels that appear.
+
+FACT: `CreateBattleTowerMon` applies species, held item, four moves (PP filled from the move table by
+`SetMonMoveSlot`), level, ppBonuses, all six EVs, all six IVs, abilityNum, otId, personality,
+nickname and friendship. Personality and otId therefore fix nature, gender and shininess.
+
+FACT: the three phrases are Easy Chat words rendered by `BufferBattleTowerTrainerMessage`
+[battle_tower.c], six per line. `farewellPlayerWon` is what the trainer says when the PLAYER won
+[PrintEReaderTrainerFarewellMessage].
+
+FACT: the name field is eight bytes but FRLG displays five - `CopyEReaderTrainerName5`
+[battle_tower.c:1343] is what the battle text and the old woman's line use.
+
+FACT: `CLI_MSG_TRAINER_RECEIVED` (12) is "A new TRAINER has arrived." [strings.c:1296] and
+`GetClientResultMessage` marks it a success, so the console saves on its own afterwards
+[mystery_gift_menu.c:939 -> MG_STATE_SAVE_LOAD_GIFT]. No Wonder Card is required for that to happen.
+
+What we send (`--gift visiting-trainer`, flagId 1008): the card and its RAM script exactly as any
+other gift, then the trainer as ident 26 in the same session. Three server branches, all covered by
+tests: no card -> card + script + trainer; the same card already held -> the trainer alone, with no
+toss prompt (a free rematch); a different card -> the usual toss prompt, then card + script + trainer.
+
+Also fixed here: `easychat.py` had three wrong group ids (CONDITIONS, ACTIONS and ADJECTIVES were
+0x11/0x13/0x16 instead of 0xa/0xb/0x10), so "good", "together", "please" printed other words and
+"awesome" printed "???". The vocabulary is now generated from the decomp into `easychat_words.py`
+(1006 words) by `scripts/gen_easychat_words.py`.

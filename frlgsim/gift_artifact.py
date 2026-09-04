@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from pathlib import Path
 
-from . import charmap
+from . import charmap, ereader_trainer
 from .gift_composer import (
     BattleLegendary, BattlePokemon, GiftSpec, GiveEgg, GiveItem, GivePokemon,
     Message, RequireSpecialResult, SetVar, ShowSprite, StampRallySpec,
@@ -214,6 +214,32 @@ def _instructions(script, code_end):
         offset += len(raw)
 
 
+def _trainer_summary(distribution):
+    """The visiting trainer travels beside the card, so the artifact has to account for it too."""
+    trainer = getattr(distribution, "trainer", None)
+    if trainer is None:
+        return ()
+    party = []
+    for index in range(ereader_trainer.PARTY_SIZE):
+        start = 0x34 + index * ereader_trainer.MON_SIZE
+        mon = trainer[start:start + ereader_trainer.MON_SIZE]
+        moves = ", ".join(str(int.from_bytes(mon[4 + i * 2:6 + i * 2], "little"))
+                          for i in range(4))
+        party.append(
+            f";   {charmap.decode(mon[0x20:0x2B])}: species "
+            f"{int.from_bytes(mon[0:2], 'little')} Lv{mon[0x0C]} "
+            f"item {int.from_bytes(mon[2:4], 'little')} moves [{moves}]")
+    return (
+        f"; Visiting trainer: {len(trainer)} bytes, "
+        f"checksum 0x{int.from_bytes(trainer[0xB8:0xBC], 'little'):08X} "
+        f"(valid={ereader_trainer.validate(trainer)})",
+        f";   name {charmap.decode(trainer[4:12])!r} "
+        f"(the console displays {charmap.decode(trainer[4:12])[:5]!r}), "
+        f"facility class {trainer[1]}",
+        *party,
+    )
+
+
 def render_artifact(*, gift, flag_id, distribution, definition=None):
     script = distribution.ram_script
     message_targets = []
@@ -245,6 +271,7 @@ def render_artifact(*, gift, flag_id, distribution, definition=None):
         f"; RamScriptData CRC-16: 0x{ram_crc:04X} ({len(ram_data)} bytes)",
         "; Offsets are from the beginning of the raw 995-byte-capacity RAM script.",
         "; Branch/message operands are virtual addresses based at 0x08000000.",
+        *_trainer_summary(distribution),
         "",
         *_stage_summary(definition),
         "",

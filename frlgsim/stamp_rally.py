@@ -3,7 +3,7 @@ a Mystery Event wrapper runs right after an accepted stamp to make its reward el
 
 from dataclasses import dataclass
 
-from . import charmap
+from . import charmap, ereader_trainer
 from .mystery_gift import CARD_TYPE_STAMP
 from .wonder_card import (
     SPECIES_CELEBI, SPECIES_CLAYDOL, WONDER_CARD_SIZE, build_wonder_card,
@@ -43,6 +43,7 @@ class MysteryGiftDistribution:
     stamp: bytes | None = None
     activation_script: bytes | None = None
     install_activation_script: bytes | None = None
+    trainer: bytes | None = None
 
     def __post_init__(self):
         object.__setattr__(self, "card", bytes(self.card))
@@ -60,10 +61,19 @@ class MysteryGiftDistribution:
                                bytes(self.install_activation_script))
             if len(self.stamp) != 4:
                 raise ValueError("a stamp must be exactly four bytes")
+        if self.trainer is not None:
+            object.__setattr__(self, "trainer", bytes(self.trainer))
+            if len(self.trainer) != ereader_trainer.TRAINER_SIZE:
+                raise ValueError(
+                    f"a visiting trainer must be {ereader_trainer.TRAINER_SIZE} bytes")
 
     @property
     def is_stamp(self):
         return self.stamp is not None
+
+    @property
+    def has_trainer(self):
+        return self.trainer is not None
 
 
 def build_stamp_rally_card(*, flag_id=STAMP_RALLY_FLAG_ID):

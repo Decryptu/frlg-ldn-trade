@@ -7,8 +7,8 @@ from dataclasses import dataclass
 from . import charmap
 from .mystery_gift import (
     GAME_DATA_VALID_VAR, MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT,
-    MG_LINKID_DYNAMIC_MSG, MG_LINKID_RAM_SCRIPT, MG_LINKID_STAMP, VERSION_CODE_FIRERED,
-    VERSION_CODE_LEAFGREEN,
+    MG_LINKID_DYNAMIC_MSG, MG_LINKID_EREADER_TRAINER, MG_LINKID_RAM_SCRIPT, MG_LINKID_STAMP,
+    VERSION_CODE_FIRERED, VERSION_CODE_LEAFGREEN,
 )
 
 # [decomp:include/mystery_gift_client.h:18]
@@ -93,6 +93,30 @@ CLIENT_SCRIPT_SAVE_CARD = client_script(
     CLI_SAVE_RAM_SCRIPT,
     CLI_SEND_READY_END,
     (CLI_RETURN, CLI_MSG_CARD_RECEIVED),
+)
+
+# The visiting trainer rides the same card session: CLI_RECV_EREADER_TRAINER memcpys the 188 bytes
+# into gSaveBlock2Ptr->battleTower.ereaderTrainer and validates them [decomp:src/mystery_gift_client.c:233].
+# CLI_MSG_TRAINER_RECEIVED is a success message, so the console saves on its own afterwards
+# [GetClientResultMessage, mystery_gift_menu.c:939; MG_STATE_SAVE_LOAD_GIFT, :1379].
+CLIENT_SCRIPT_SAVE_CARD_AND_TRAINER = client_script(
+    (CLI_RECV, MG_LINKID_CARD),
+    CLI_SAVE_CARD,
+    (CLI_RECV, MG_LINKID_RAM_SCRIPT),
+    CLI_SAVE_RAM_SCRIPT,
+    (CLI_RECV, MG_LINKID_EREADER_TRAINER),
+    CLI_RECV_EREADER_TRAINER,
+    CLI_SEND_READY_END,
+    (CLI_RETURN, CLI_MSG_TRAINER_RECEIVED),
+)
+
+# Re-sending to a console that already holds the card: the trainer alone, so the event can be
+# repeated without the player tossing anything.
+CLIENT_SCRIPT_SAVE_TRAINER = client_script(
+    (CLI_RECV, MG_LINKID_EREADER_TRAINER),
+    CLI_RECV_EREADER_TRAINER,
+    CLI_SEND_READY_END,
+    (CLI_RETURN, CLI_MSG_TRAINER_RECEIVED),
 )
 
 # The activation Mystery Event runs only after CLI_SAVE_STAMP; the server has already rejected the

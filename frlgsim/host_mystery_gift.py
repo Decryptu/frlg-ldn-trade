@@ -6,7 +6,8 @@ from collections import Counter, deque
 from dataclasses import dataclass
 
 from . import block, linkplayer, mg_link, mystery_gift, rfu, trade
-from .mg_server import SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT, MysteryGiftServer
+from .mg_server import (
+    SVR_MSG_CARD_SENT, SVR_MSG_GIFT_SENT_1, SVR_MSG_STAMP_SENT, MysteryGiftServer)
 
 MG_LINK_PLAYER = "MG_LINK_PLAYER"
 MG_START = "MG_START"
@@ -62,6 +63,7 @@ class HostMysteryGiftEngine:
                 "stamp": distribution.stamp,
                 "activation_script": distribution.activation_script,
                 "install_activation_script": distribution.install_activation_script,
+                "trainer": distribution.trainer,
             }
         else:
             if card is None or ram_script is None:
@@ -224,7 +226,8 @@ class HostMysteryGiftEngine:
         return False
 
     def _finish_gift(self, message_id):
-        self.gift_sent = self.server.result in (SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT)
+        self.gift_sent = self.server.result in (
+            SVR_MSG_CARD_SENT, SVR_MSG_STAMP_SENT, SVR_MSG_GIFT_SENT_1)
         self.trace.append(("gift_complete", message_id))
         self._begin_close()
 

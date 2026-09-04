@@ -4,7 +4,7 @@ VAR_MYSTERY_GIFT_2..7 = stamp-slot cursors (0 absent, 1 activated, +1 per stage)
 from dataclasses import dataclass
 from typing import TypeAlias
 
-from . import charmap
+from . import charmap, ereader_trainer
 from .mystery_gift import (
     CARD_TYPE_GIFT,
     CARD_TYPE_STAMP,
@@ -288,6 +288,9 @@ class WonderGift:
     event: EventSpec
     delivery: DeliveryPlan
     completed_message: str = DEFAULT_COMPLETED_MESSAGE
+    # A packed BattleTowerEReaderTrainer to push in the same session [ereader_trainer.py]; the
+    # card and its script are delivered exactly as for any other gift.
+    trainer: bytes | None = None
 
 
 def _fail(path, message):
@@ -526,6 +529,18 @@ def validate_definition(definition, *, flag_id=None):
     _validate_card(definition.card, f"{path}.card", flag_id=actual_flag_id)
     _validate_message(definition.intro_message, f"{path}.intro_message")
     _validate_message(definition.completed_message, f"{path}.completed_message")
+    if definition.trainer is not None:
+        if not isinstance(definition.trainer, (bytes, bytearray)):
+            _fail(f"{path}.trainer", "trainer must be packed bytes")
+        if len(definition.trainer) != ereader_trainer.TRAINER_SIZE:
+            _fail(f"{path}.trainer",
+                  f"a visiting trainer is {ereader_trainer.TRAINER_SIZE} bytes, "
+                  f"got {len(definition.trainer)}")
+        if not ereader_trainer.validate(definition.trainer):
+            _fail(f"{path}.trainer",
+                  "fails ValidateEReaderTrainer; the console would silently clear it")
+        if not isinstance(definition.event, GiftSpec):
+            _fail(f"{path}.trainer", "a stamp rally cannot also send a visiting trainer")
     shared = _validate_plan_shape(definition.delivery, f"{path}.delivery")
     if definition.delivery.pre_stages:
         _fail(f"{path}.delivery.pre_stages",
@@ -1031,7 +1046,7 @@ def _compile_gift(definition, flag_id):
         definition.card, flag_id=flag_id,
         card_type=CARD_TYPE_GIFT, max_stamps=0,
         send_type=_SHAREABLE_SEND_TYPES[definition.event.shareable])
-    return MysteryGiftDistribution(card, script)
+    return MysteryGiftDistribution(card, script, trainer=definition.trainer)
 
 
 # Mystery Event bytecode used by CLI_RUN_MEVENT_SCRIPT.

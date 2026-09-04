@@ -4,7 +4,8 @@ into frlgsim.sim.Sim unchanged; every message in both directions is kept in ``me
 
 from collections import deque
 
-from . import barrier as barriermod, block, charmap, linkplayer, mg_link, mg_script, rfu
+from . import (barrier as barriermod, block, charmap, ereader_trainer, linkplayer, mg_link,
+               mg_script, rfu)
 from . import mystery_gift as mg
 from .mystery_gift import (MG_LINKID_CLIENT_SCRIPT, MG_LINKID_GAME_DATA, MG_LINKID_GAME_STAT,
                            MG_LINKID_READY_END, MG_LINKID_RESPONSE)
@@ -142,6 +143,7 @@ class MysteryGiftClientEngine:
         self.saved_ram_script = None
         self.saved_stamp = None
         self.saved_news = None
+        self.saved_trainer = None
         self.activation_scripts = []
         self.buffer_scripts = []
         self.dynamic_msg = None
@@ -376,7 +378,17 @@ class MysteryGiftClientEngine:
             self.info(f"[mg] RAM (delivery) SCRIPT SAVED ({len(self.saved_ram_script)} bytes, "
                       f"head {self.saved_ram_script[:8].hex()})")
         elif instr == mg_script.CLI_RECV_EREADER_TRAINER:
-            self.info("[mg] e-Reader trainer received (recorded)")
+            # InitRamScript-style: the console copies the struct and validates it, clearing it on a
+            # bad checksum [decomp:src/mystery_gift_client.c:233].
+            trainer = bytes(self.recv_buffer[:ereader_trainer.TRAINER_SIZE])
+            if ereader_trainer.validate(trainer):
+                self.saved_trainer = trainer
+                self.info("[mg] VISITING TRAINER SAVED "
+                          f"({len(trainer)} bytes, class {trainer[1]}, "
+                          f"name {charmap.decode(trainer[4:12])!r})")
+            else:
+                self.saved_trainer = None
+                self.info("[mg] visiting trainer FAILED ValidateEReaderTrainer - console clears it")
         elif instr == mg_script.CLI_RUN_BUFFER_SCRIPT:
             self.buffer_scripts.append(bytes(self.recv_buffer))
             self.param = 1

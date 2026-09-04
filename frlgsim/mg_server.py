@@ -2,11 +2,11 @@
 run() advances until it blocks and publishes ``action`` as ("send", ident, payload, size), ("recv", ident)
 or ("done", server_msg_id); the caller acknowledges with on_sent()/on_received()."""
 
-from . import mg_script
+from . import ereader_trainer, mg_script
 from .mystery_gift import (
     MG_LINKID_CARD, MG_LINKID_CLIENT_SCRIPT, MG_LINKID_DYNAMIC_MSG,
-    MG_LINKID_GAME_DATA, MG_LINKID_RAM_SCRIPT, MG_LINKID_READY_END,
-    MG_LINKID_RESPONSE, MG_LINKID_STAMP,
+    MG_LINKID_EREADER_TRAINER, MG_LINKID_GAME_DATA, MG_LINKID_RAM_SCRIPT,
+    MG_LINKID_READY_END, MG_LINKID_RESPONSE, MG_LINKID_STAMP,
 )
 from .wonder_card import WONDER_CARD_SIZE
 
@@ -28,6 +28,7 @@ SVR_CHECK_RALLY_CARD = "SVR_CHECK_RALLY_CARD"
 SVR_CHECK_EXISTING_STAMPS = "SVR_CHECK_EXISTING_STAMPS"
 SVR_LOAD_STAMP = "SVR_LOAD_STAMP"
 SVR_LOAD_ACTIVATION = "SVR_LOAD_ACTIVATION"
+SVR_LOAD_EREADER_TRAINER = "SVR_LOAD_EREADER_TRAINER"
 
 # [decomp:include/mystery_gift_server.h:56]
 SVR_MSG_NOTHING_SENT = 0
@@ -42,6 +43,7 @@ SVR_MSG_NO_ROOM_STAMPS = 8
 SVR_MSG_CLIENT_CANCELED = 9
 SVR_MSG_CANT_SEND_GIFT_1 = 10
 SVR_MSG_COMM_ERROR = 11
+SVR_MSG_GIFT_SENT_1 = 13
 
 SERVER_RESULT_NAMES = {
     SVR_MSG_NOTHING_SENT: "nothing sent",
@@ -53,6 +55,7 @@ SERVER_RESULT_NAMES = {
     SVR_MSG_CLIENT_CANCELED: "the player kept their existing card",
     SVR_MSG_CANT_SEND_GIFT_1: "the console's game data was rejected",
     SVR_MSG_COMM_ERROR: "communication error",
+    SVR_MSG_GIFT_SENT_1: "visiting trainer sent",
 }
 
 # Native never sets ramScriptSize [decomp:src/mystery_gift_server.c:275], so the RAM script travels as
@@ -174,6 +177,55 @@ SCRIPT_SEND_STAMP_EVENT = (
     (SVR_GOTO, _SCRIPT_SEND_STAMP_ONLY),
 )
 
+# The visiting trainer. No native script sends one over the wireless link -- the Wonder Card that
+# advertised it did [MysteryEventScript_VisitingTrainer, data/mystery_event_msg.s:113] and the
+# trainer itself arrived in a later session -- so these are ours, built from the same opcodes.
+_SCRIPT_SEND_CARD_AND_TRAINER = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SAVE_CARD_AND_TRAINER),
+    (SVR_SEND,),
+    (SVR_LOAD_CARD,),
+    (SVR_SEND,),
+    (SVR_LOAD_RAM_SCRIPT,),
+    (SVR_SEND,),
+    (SVR_LOAD_EREADER_TRAINER,),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_GIFT_SENT_1),
+)
+
+# HAS_SAME_CARD: the console keeps the card it already holds and just takes the trainer again, so a
+# rematch costs nothing and no card is tossed.
+_SCRIPT_SEND_TRAINER_ONLY = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SAVE_TRAINER),
+    (SVR_SEND,),
+    (SVR_LOAD_EREADER_TRAINER,),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_READY_END),
+    (SVR_RETURN, SVR_MSG_GIFT_SENT_1),
+)
+
+_SCRIPT_TOSS_PROMPT_TRAINER = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_ASK_TOSS),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_RESPONSE),
+    (SVR_READ_RESPONSE,),
+    (SVR_GOTO_IF_EQ, False, _SCRIPT_SEND_CARD_AND_TRAINER),
+    (SVR_GOTO, _SCRIPT_CLIENT_CANCELED),
+)
+
+SCRIPT_SEND_VISITING_TRAINER = (
+    (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_SEND_GAME_DATA),
+    (SVR_SEND,),
+    (SVR_RECV, MG_LINKID_GAME_DATA),
+    (SVR_COPY_GAME_DATA,),
+    (SVR_CHECK_GAME_DATA,),
+    (SVR_GOTO_IF_EQ, False, _SCRIPT_CANT_SEND),
+    (SVR_CHECK_EXISTING_CARD,),
+    (SVR_GOTO_IF_EQ, mg_script.HAS_DIFF_CARD, _SCRIPT_TOSS_PROMPT_TRAINER),
+    (SVR_GOTO_IF_EQ, mg_script.HAS_NO_CARD, _SCRIPT_SEND_CARD_AND_TRAINER),
+    (SVR_GOTO, _SCRIPT_SEND_TRAINER_ONLY),
+)
+
 # sServerScript_TossPrompt [decomp:src/mystery_gift_scripts.c:151]
 _SCRIPT_TOSS_PROMPT = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_ASK_TOSS),
@@ -206,7 +258,8 @@ class MysteryGiftServer:
     MAX_RAM_SCRIPT_SIZE = 995
 
     def __init__(self, card, ram_script, *, stamp=None, activation_script=None,
-                 install_activation_script=None, script=None, log=lambda *a: None):
+                 install_activation_script=None, trainer=None, script=None,
+                 log=lambda *a: None):
         self.card = bytes(card)
         self.ram_script = bytes(ram_script)
         if len(self.ram_script) > self.MAX_RAM_SCRIPT_SIZE:
@@ -229,11 +282,31 @@ class MysteryGiftServer:
                     "stamp flow requires a stamp and both activation scripts")
             if len(self.stamp) != 4:
                 raise MysteryGiftServerError("stamp must be exactly four bytes")
+        self.trainer = None if trainer is None else bytes(trainer)
+        if self.trainer is not None:
+            if len(self.trainer) != ereader_trainer.TRAINER_SIZE:
+                raise MysteryGiftServerError(
+                    f"a visiting trainer is {ereader_trainer.TRAINER_SIZE} bytes, "
+                    f"got {len(self.trainer)}")
+            if not ereader_trainer.validate(self.trainer):
+                raise MysteryGiftServerError(
+                    "the visiting trainer fails ValidateEReaderTrainer; the console would "
+                    "silently clear it")
+            if self.stamp is not None:
+                raise MysteryGiftServerError(
+                    "a stamp rally and a visiting trainer cannot share one session")
         self.is_stamp_distribution = self.stamp is not None
+        self.is_trainer_distribution = self.trainer is not None
         self.log = log
         self.info = getattr(log, "info", log)
-        self.script = (SCRIPT_SEND_STAMP_EVENT if script is None and self.is_stamp_distribution
-                       else SCRIPT_SEND_WONDER_CARD if script is None else script)
+        if script is not None:
+            self.script = script
+        elif self.is_stamp_distribution:
+            self.script = SCRIPT_SEND_STAMP_EVENT
+        elif self.is_trainer_distribution:
+            self.script = SCRIPT_SEND_VISITING_TRAINER
+        else:
+            self.script = SCRIPT_SEND_WONDER_CARD
         self.cmdidx = 0
         self.param = None
         self.action = None
@@ -387,6 +460,9 @@ class MysteryGiftServer:
         payload = (self.install_activation_script if install
                    else self.activation_script)
         self._loaded = (MG_LINKID_RAM_SCRIPT, payload, len(payload))
+
+    def _do_svr_load_ereader_trainer(self):
+        self._loaded = (MG_LINKID_EREADER_TRAINER, self.trainer, len(self.trainer))
 
     def _do_svr_load_msg(self, text):
         self._loaded = (MG_LINKID_DYNAMIC_MSG, text, len(text))

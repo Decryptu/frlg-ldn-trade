@@ -26,7 +26,7 @@ from .gift_composer import (
 )
 import dataclasses
 
-from . import stamp_rally, wonder_card
+from . import ereader_trainer, stamp_rally, wonder_card
 
 
 # pokefirered/include/constants/{items,species,event_objects}.h
@@ -400,13 +400,61 @@ WORLDS_XP_GIFT = WonderGift(
 )
 
 
+# The visiting trainer. The official event was a Wonder Card that pointed the player at a Poke Mart
+# questionnaire and delivered the trainer in a later session [MysteryEventScript_VisitingTrainer,
+# data/mystery_event_msg.s:113]; we send the card and the trainer together, because our host chooses
+# both halves of the session. The card is the explanation -- the trainer is the payload, and it lands
+# in gSaveBlock2Ptr->battleTower.ereaderTrainer whatever the player then does with the card.
+VISITING_TRAINER_FLAG_ID = 1008
+GIFT_VISITING_TRAINER = "visiting-trainer"
+
+VISITING_TRAINER_GIFT = WonderGift(
+    slug=GIFT_VISITING_TRAINER,
+    card=WonderCardSpec(
+        icon_species=ereader_trainer.SPECIES_PIKACHU,
+        title="VISITING TRAINER",
+        subtitle="A challenger has come to KANTO",
+        body=(
+            "A TRAINER has arrived in the SEVII",
+            "ISLANDS looking for you.",
+            "Go to the house on SEVEN ISLAND and",
+            "talk to the old woman to battle.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=VISITING_TRAINER_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    # One stage: the delivery man says both lines in a single conversation, and `repeatable` lets
+    # the player hear them again. The trainer itself already arrived at the Mystery Gift menu.
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "A TRAINER has arrived in the SEVII\n"
+                "ISLANDS looking for you."),
+            Message(
+                "{PLAYER}, go to the house on SEVEN\n"
+                "ISLAND to take up the challenge."),
+        ),
+    )),
+    completed_message=(
+        "The visiting TRAINER is waiting on\n"
+        "SEVEN ISLAND."),
+    trainer=ereader_trainer.build("red"),
+)
+
+
 __all__ = [
-    "CELEBI_GIFT", "DIR_WEST", "GIFT_PORYGON_TMS", "GIFT_WORLDS_XP",
+    "CELEBI_GIFT", "DIR_WEST", "GIFT_PORYGON_TMS", "GIFT_VISITING_TRAINER",
+    "GIFT_WORLDS_XP",
     "ITEM_TM29_PSYCHIC",
     "ITEM_TM46_THIEF", "LEGENDARY_BEAST_GIFT", "LEGENDARY_BEAST_GIFT_SHARE", "OBJ_EVENT_GFX_CLEFAIRY",
     "PORYGON_TM_GIFT", "PORYGON_TM_GIFT_FLAG_ID", "SPECIES_BALTOY",
     "SPECIES_PORYGON", "SUN_MOON_RALLY", "VAR_STARTER_MON",
     "WORLDS_XP_STATE_BATTLED", "WORLDS_XP_STATE_NEW", "WORLDS_XP_STATE_RECEIVED",
     "WORLDS_XP_STATE_VAR",
+    "VISITING_TRAINER_GIFT", "VISITING_TRAINER_FLAG_ID",
     "WORLDS_XP_GIFT", "WORLDS_XP_GIFT_FLAG_ID",
 ]

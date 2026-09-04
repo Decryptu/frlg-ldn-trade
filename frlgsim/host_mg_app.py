@@ -95,6 +95,14 @@ class MysteryGiftHostApplication(HostApplication):
                   f"Wonder Card flagId {payload.flag_id} "
                   f"(receipt flag 0x{payload.receipt_flag:03x}), "
                   f"card {len(self.card)}B + RAM script {len(self.ram_script)}B")
+        distribution = getattr(self, "distribution", None)
+        if distribution is not None and distribution.has_trainer:
+            trainer = distribution.trainer
+            self.info(
+                "Visiting trainer rides with this card: "
+                f"{charmap.decode(trainer[4:12])[:5]!r} (facility class {trainer[1]}), "
+                f"{len(trainer)}B -> battleTower.ereaderTrainer; the console battles it in the "
+                "house on SEVEN ISLAND")
         if self.config.client_ready_idle_frames is not None:
             self.info("Mystery Gift timing override: "
                       f"client_ready_idle_frames={self.config.client_ready_idle_frames}")

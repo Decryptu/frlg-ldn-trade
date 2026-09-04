@@ -163,6 +163,7 @@ def build_default_registry():
     registry.register_definition(wonder_card_events.SUN_MOON_RALLY)
     registry.register_definition(wonder_card_events.PORYGON_TM_GIFT)
     registry.register_definition(wonder_card_events.WORLDS_XP_GIFT)
+    registry.register_definition(wonder_card_events.VISITING_TRAINER_GIFT)
     return registry
 
 
