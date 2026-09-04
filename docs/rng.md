@@ -32,18 +32,50 @@ on the affine map — 2<sup>17</sup> operations instead of up to 2<sup>32</sup>.
 permutation of all 2<sup>32</sup> states, so a distance ALWAYS exists**; it is only evidence when it
 is small (odds N / 2<sup>32</sup>).
 
-## The rate: exactly two turns per frame
+## The rate: proven at the link menu, NOT established in the overworld
 
-Measured three times, in three contexts, never assumed:
+**This section was wrong until the user challenged it, and the correction matters more than the
+number.** Separate what is exact from what is a wall clock:
 
-| context | measurement | run |
-|---|---|---|
-| Mystery Gift link menu | exactly 2, on 95 of 95 frame gaps | bs15 |
-| overworld, standing still | 43,702 turns over 365.8 s = **2.000/frame** | bs55 |
-| overworld, walking + 2 battles | 18,900 turns over 128.0 s = 2.472/frame | bs52 |
+- **The turn COUNTS are exact.** 43,702 and 18,900 are `lcg.distance()` between two states each
+  established independently - baby-step/giant-step, exact arithmetic, no timing anywhere.
+- **Every "per frame" rate is `turns / (seconds x 59.7275)`, and the seconds were hand-supplied.**
+  `rng_chain.py --elapsed` is an argument typed in by the operator.
 
-Standing still costs the same as anything else: **~119 turns a second, unconditionally**. Battles
-add draws on top of that baseline. There is no idle state in which the RNG stops.
+| context | measurement | clock? | run |
+|---|---|---|---|
+| Mystery Gift link menu | gaps of exactly 2, on 95 of 95 consecutive frames | **none** | bs15 |
+| overworld, standing still | 43,702 turns, elapsed not independently measured | circular | bs55 |
+| overworld, walking + 2 battles | 18,900 turns over a hand-timed 128 s | hand-timed | bs52 |
+
+**bs15 is the only real rate measurement, and it is the one with no clock in it.** `rng-trace`
+sampled `gRngValue` once a frame and took the difference between adjacent samples: the gaps were
+exactly 2, 95 times out of 95. No stopwatch, no frame-rate constant, no assumption. It is also the
+narrowest: it was taken at the Mystery Gift link menu, where the game is running the RFU link loop
+and nothing else.
+
+**bs55's row was circular and is retracted as evidence.** 43,702 / 2 / 59.7275 = 365.84 s, and
+365.8 s is what this document used to quote as the *measured* elapsed time. That number was
+`lcg.seconds(43702)` - the tool's own output, computed by assuming 2 turns per frame - printed back
+into the table and then used to confirm the assumption it came from. The session notes describe the
+same run as "five minutes of standing still"; at 300 s the same 43,702 turns give 2.44/frame.
+
+bs52's 128.0 s *is* independent (2 turns/frame would predict 158.2 s), but it is a hand-timed 128
+seconds, and a 30-second error in it is entirely ordinary. So **"walking adds draws" does not
+follow from these numbers either** - 2.47 and "2.44 if the five minutes was really five minutes"
+are the same figure within the error of the clock that produced them.
+
+What is left standing, and it is enough: **the RNG never idles.** Tens of thousands of turns pass
+with the player doing nothing, in every overworld run. What is NOT known is the exact rate at which
+they pass outside the link menu.
+
+**This is why nothing downstream may depend on a measured rate or a wall clock.** One turn is ~8 ms.
+A stopwatch countdown, and human reaction on top of it, is tens of turns of error against a target
+one state wide. The two clocks that need no seconds at all are the ones to build on:
+
+- **two seed readings** give the exact turns between them, by `distance()`; that also measures the
+  overworld rate properly, for the first time, whenever we want the number for its own sake;
+- **the mon that appears** is an exact position fix, via `recover_wild_state`.
 
 ## Where the seed comes from, and why it cannot be carried
 

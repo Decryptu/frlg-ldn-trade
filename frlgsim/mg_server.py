@@ -980,6 +980,17 @@ class MysteryGiftServer:
             self.trace.append(("buffer_gather", gathered["copied"], gathered["next"],
                                gathered["reason"]))
             return
+        if self.buffer_decode == buffer_script.TABLE_SCAN:
+            asked = buffer_script.table_scan_parameters(self.buffer_code)
+            table = buffer_script.read_table_scan(
+                self.buffer_dump, asked["start"], asked["end"])
+            for line in buffer_script.describe_table_scan(
+                    self.buffer_dump, asked["delta"], asked["runlen"],
+                    asked["start"], asked["end"]):
+                self.info(f"  {line}")
+            self.trace.append(("buffer_table_scan", table["found"], table["cursor"],
+                               table["calls"]))
+            return
         if self.buffer_decode == buffer_script.MEMORY_SCAN:
             scan = buffer_script.read_scan(self.buffer_dump)
             asked = buffer_script.scan_parameters(self.buffer_code)

@@ -1014,6 +1014,127 @@ def test_a_built_payload_is_still_named_by_its_own_bytes():
     assert "unknown" in buffer_script.describe(bytes.fromhex("0000a0e3"))
 
 
+# --- table-scan: finding a table by its SHAPE ---------------------------------------------------
+# Every address this project has found by searching rested on a constant only one function could
+# hold. A table of POINTERS has no such constant, so gSpecialVars is found by the RELATION between
+# its entries instead: entries 0..11 are the addresses of gSpecialVar_0x8000..0x800B, twelve u16s
+# declared consecutively [decomp:src/event_data.c:16], so each word is exactly 2 above the last.
+
+SPECIAL_VAR_BASE = 0x02024C40           # a plausible &gSpecialVar_0x8000 to plant
+TABLE_AT = 0x08160000
+
+
+def _special_vars_table(base=SPECIAL_VAR_BASE):
+    """gSpecialVars exactly as data/event_scripts.s:51 orders it.
+
+    The order is BY VAR ID, which is not the order event_data.c declares the variables in: entry
+    12 is gSpecialVar_Facing, declared after Result and LastTalked, so it sits +6 from entry 11
+    and the ascending run stops dead at twelve. That is why the fingerprint is 12 and not 21.
+    """
+    entries = [base + 2 * i for i in range(12)]              # 0x8000 .. 0x800B
+    entries += [base + 28, base + 24, 0x0203ABCD, base + 26,  # Facing, Result, ItemId, LastTalked
+                base + 30, base + 32, base + 34, base + 36, base + 38]
+    return b"".join(e.to_bytes(4, "little") for e in entries)
+
+
+def test_the_table_scan_operands_are_where_we_patch_them():
+    code = buffer_script.build_table_scan(
+        delta=2, runlen=12, start=0x08100000, end=0x08102000, blocks=64, max_calls=99)
+
+    assert buffer_script.table_scan_parameters(code) == {
+        "start": 0x08100000, "end": 0x08102000, "delta": 2,
+        "blocks": 64, "max_calls": 99, "runlen": 12}
+
+
+def test_a_shape_search_refuses_the_shapes_that_are_not_shapes():
+    """A delta of 0 matches every stretch of repeated words - padding, zeroed tables, all of it -
+    and one word in a row is not a relation at all."""
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_table_scan(delta=0)
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_table_scan(delta=2, runlen=1)
+
+
+@needs_unicorn
+def test_the_table_scan_finds_gspecialvars_by_shape_and_reads_the_pointer_out_of_it():
+    """The answer is not just WHERE the table is: the run's first value IS gSpecialVar_0x8000,
+    which is the address the RNG-reading NPC needs. Locating and reading are one run."""
+    memory = {TABLE_AT: _special_vars_table()}
+
+    repeated = buffer_script.emulate_repeating(
+        buffer_script.build_table_scan(
+            delta=2, runlen=12, start=0x08150000, end=0x08170000, blocks=64),
+        memory=memory)
+    table = buffer_script.read_table_scan(repeated.final.pending_send, 0x08150000, 0x08170000)
+
+    assert repeated.done
+    assert table["hits"] == [(TABLE_AT, SPECIAL_VAR_BASE)]
+    assert table["cursor"] == 0x08170000        # the whole range, so the answer is complete
+    assert repeated.final.client.send_size == buffer_script.TABLE_ANSWER_SIZE
+
+
+@needs_unicorn
+def test_the_run_really_is_exactly_twelve_long():
+    """Asking for thirteen finds NOTHING against the same table. That is the check that the
+    fingerprint is being matched against the shape and not merely against 'some pointers'."""
+    memory = {TABLE_AT: _special_vars_table()}
+
+    repeated = buffer_script.emulate_repeating(
+        buffer_script.build_table_scan(
+            delta=2, runlen=13, start=0x08150000, end=0x08170000, blocks=64),
+        memory=memory)
+
+    assert buffer_script.read_table_scan(
+        repeated.final.pending_send, 0x08150000, 0x08170000)["hits"] == []
+
+
+@needs_unicorn
+def test_a_run_survives_the_ldmia_boundary_and_the_frame_boundary():
+    """A run has to be carried across both, which is what memory-scan never had to do: one block
+    per call puts the frame boundary inside the table itself."""
+    memory = {TABLE_AT: _special_vars_table()}
+    start, end = TABLE_AT - 0x40, TABLE_AT + 0x100
+
+    repeated = buffer_script.emulate_repeating(
+        buffer_script.build_table_scan(delta=2, runlen=12, start=start, end=end, blocks=1),
+        memory=memory)
+    table = buffer_script.read_table_scan(repeated.final.pending_send, start, end)
+
+    assert repeated.calls == (end - start) // buffer_script.TABLE_BLOCK_BYTES
+    assert table["hits"] == [(TABLE_AT, SPECIAL_VAR_BASE)]
+
+
+@needs_unicorn
+def test_the_table_scan_watchdog_answers_instead_of_hanging_the_menu():
+    code = buffer_script.build_table_scan(
+        delta=2, runlen=12, start=0x08100000, end=0x08200000, blocks=8, max_calls=4)
+
+    repeated = buffer_script.emulate_repeating(code)
+    table = buffer_script.read_table_scan(repeated.final.pending_send)
+
+    assert repeated.done and repeated.calls == 5     # the call that trips the watchdog answers
+    assert table["cursor"] == 0x08100000 + 4 * 8 * buffer_script.TABLE_BLOCK_BYTES
+    lines = buffer_script.describe_table_scan(
+        repeated.final.pending_send, 2, 12, 0x08100000, 0x08200000)
+    assert any("STOPPED EARLY" in line for line in lines)
+
+
+@needs_unicorn
+def test_the_log_says_where_the_table_is_and_what_it_starts_with():
+    memory = {TABLE_AT: _special_vars_table()}
+    repeated = buffer_script.emulate_repeating(
+        buffer_script.build_table_scan(
+            delta=2, runlen=12, start=0x08150000, end=0x08170000, blocks=64),
+        memory=memory)
+
+    lines = buffer_script.describe_table_scan(
+        repeated.final.pending_send, 2, 12, 0x08150000, 0x08170000)
+
+    assert any(f"0x{TABLE_AT:08X}" in line and f"0x{SPECIAL_VAR_BASE:08X}" in line
+               for line in lines)
+    assert any("the whole range" in line for line in lines)
+
+
 # --- rng-trace: a word once a frame, and the first call into the ROM ---------------------------
 # The fixture is the console's OWN code: the twenty bytes of Random and its literal pool, read off
 # the cartridge in bs14. Executing those under unicorn is what proved the payload before bs15 ran.

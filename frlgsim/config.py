@@ -540,6 +540,15 @@ class BufferScriptPayload:
     scan_end: int = buffer_script.SCAN_ROM_END
     scan_blocks: int = buffer_script.SCAN_DEFAULT_BLOCKS
     scan_max_calls: int | None = None
+    # table-scan: a SHAPE instead of a value - a run of `table_runlen` words each exactly
+    # `table_delta` above the one before it. It is how a table of pointers is found when no
+    # constant in it is known, which is the case for gSpecialVars.
+    table_delta: int | None = None
+    table_runlen: int = buffer_script.SPECIAL_VARS_RUN_LENGTH
+    table_start: int = buffer_script.SCAN_ROM_START
+    table_end: int = buffer_script.SCAN_ROM_END
+    table_blocks: int = buffer_script.TABLE_SCAN_DEFAULT_BLOCKS
+    table_max_calls: int | None = None
     # rng-trace: the word to sample once a frame, and what to call between the two reads of it.
     trace_address: int | None = None
     trace_call: int = 0
@@ -612,6 +621,14 @@ class BufferScriptPayload:
         elif self.scan_word is not None:
             raise ValueError(
                 f"a value to search for is only meaningful with {buffer_script.MEMORY_SCAN}")
+        if self.script == buffer_script.TABLE_SCAN:
+            if self.table_delta is None:
+                raise ValueError(
+                    f"{buffer_script.TABLE_SCAN} needs the step between entries (--table-delta)")
+            object.__setattr__(self, "dump_size", buffer_script.TABLE_ANSWER_SIZE)
+        elif self.table_delta is not None:
+            raise ValueError(
+                f"a table shape is only meaningful with {buffer_script.TABLE_SCAN}")
         if self.script == buffer_script.RNG_TRACE:
             if self.trace_address is None:
                 raise ValueError(f"{buffer_script.RNG_TRACE} needs an address to sample")
@@ -695,6 +712,10 @@ class BufferScriptPayload:
             return buffer_script.build_memory_scan(
                 self.scan_word, self.scan_start, self.scan_end,
                 self.scan_blocks, self.scan_max_calls)
+        if self.script == buffer_script.TABLE_SCAN:
+            return buffer_script.build_table_scan(
+                self.table_delta, self.table_runlen, self.table_start, self.table_end,
+                self.table_blocks, self.table_max_calls)
         if self.script == buffer_script.CALL:
             return buffer_script.build_call(
                 self.call_address, self.call_args, self.call_watch)

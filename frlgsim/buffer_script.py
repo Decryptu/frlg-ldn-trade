@@ -313,6 +313,154 @@ def describe_scan(dump, needle=None, start=None, end=None):
     return lines
 
 
+# --- table-scan: finding a table by its SHAPE ----------------------------------------------------
+# memory-scan answers "where is this word", which needs the word first, and every address found
+# that way rested on a constant only one function could hold: RAND_MULT in Random's literal pool
+# [bs13], 0x00450045 in sEasyChatGroups [bs16], 0x64646464 in gSpeciesInfo [bs38]. A table of
+# POINTERS carries no such constant. gSpecialVars is 21 words holding the addresses of the special
+# script variables [decomp:data/event_scripts.s:51], and what makes it recognisable is not any
+# value in it but the RELATION between its entries: gSpecialVar_0x8000 .. gSpecialVar_0x800B are
+# consecutive u16s declared in that order [decomp:src/event_data.c:16], so the first twelve words
+# each sit exactly 2 above the one before. That is a shape, and a shape can be searched for
+# without knowing a single one of the values.
+#
+# The answer carries the run's FIRST VALUE beside its address, which for a pointer table is the
+# pointer itself - so this does not merely locate gSpecialVars, it reads gSpecialVar_0x8000 out.
+TABLE_CURSOR_OFFSET = 0x04       # patched to the start address; the payload advances it
+TABLE_END_OFFSET = 0x08
+TABLE_DELTA_OFFSET = 0x0C        # what each word must exceed its predecessor by
+TABLE_BLOCKS_OFFSET = 0x10       # 16-byte blocks per call: the frame budget
+TABLE_MAX_CALLS_OFFSET = 0x14    # watchdog; a payload that never returns 1 hangs the menu
+TABLE_RESULT_OFFSET = 0x18
+TABLE_HITS_OFFSET = 0x28
+TABLE_HIT_CAPACITY = 64
+TABLE_RUNLEN_OFFSET = 0x228      # how many words in a row make a run worth reporting
+TABLE_RUN_OFFSET = 0x22C         # state, carried across the ldmia AND the frame boundary
+TABLE_RUNSTART_OFFSET = 0x230
+TABLE_EXPECT_OFFSET = 0x234
+TABLE_BLOCK_BYTES = 16           # one ldmia of four words
+TABLE_ANSWER_SIZE = 4 * 4 + 8 * TABLE_HIT_CAPACITY
+MAX_TABLE_RUN_LENGTH = 0x1000
+# A shape test is ~7 ARM instructions a word where memory-scan's is ~1.75, so the block count that
+# keeps the SAME load on the frame is smaller, not the same. 192 blocks is 768 words, ~6.7k
+# instructions a call, which is what memory-scan's 512 blocks cost - and the console is holding an
+# RFU link open while we run, so matching the proven budget matters more than covering ground.
+TABLE_SCAN_DEFAULT_BLOCKS = 192
+
+# The fingerprint this was built for. Twelve is gSpecialVar_0x8000 .. gSpecialVar_0x800B; the
+# entries past those are the named vars, which event_data.c declares in a DIFFERENT order from the
+# one gSpecialVars lists them in, so the ascending run stops at twelve and asking for more finds
+# nothing. Two is sizeof(u16).
+SPECIAL_VARS_DELTA = 2
+SPECIAL_VARS_RUN_LENGTH = 12
+
+TABLE_SCAN = "table-scan"
+
+
+def table_scan_call_count(start, end, blocks):
+    """How many frames a shape search over this range takes at this budget."""
+    span_blocks = (int(end) - int(start)) // TABLE_BLOCK_BYTES
+    return -(-span_blocks // int(blocks))
+
+
+def build_table_scan(delta=SPECIAL_VARS_DELTA, runlen=SPECIAL_VARS_RUN_LENGTH,
+                     start=SCAN_ROM_START, end=SCAN_ROM_END,
+                     blocks=TABLE_SCAN_DEFAULT_BLOCKS, max_calls=None):
+    """The table-scan payload, patched with a shape, a range and a frame budget."""
+    delta = int(delta) & 0xFFFFFFFF
+    runlen, start, end, blocks = int(runlen), int(start), int(end), int(blocks)
+    if not 0 < blocks <= MAX_SCAN_BLOCKS:
+        raise BufferScriptError(
+            f"a call scans 1..{MAX_SCAN_BLOCKS} blocks of {TABLE_BLOCK_BYTES} bytes, got {blocks}")
+    if not 1 < runlen <= MAX_TABLE_RUN_LENGTH:
+        raise BufferScriptError(
+            f"a run is 2..{MAX_TABLE_RUN_LENGTH} words; one word is not a shape, got {runlen}")
+    if delta == 0:
+        raise BufferScriptError(
+            "a delta of 0 matches every stretch of repeated words - use memory-scan for a value")
+    if start % TABLE_BLOCK_BYTES or end % TABLE_BLOCK_BYTES:
+        raise BufferScriptError(
+            f"the range is scanned in {TABLE_BLOCK_BYTES}-byte blocks, so 0x{start:X}..0x{end:X} "
+            f"must both be {TABLE_BLOCK_BYTES}-byte aligned")
+    if not start < end:
+        raise BufferScriptError(f"0x{start:X}..0x{end:X} is not a range")
+    if start < SCAN_MIN_ADDRESS or end > SCAN_MAX_ADDRESS:
+        raise BufferScriptError(
+            f"0x{start:X}..0x{end:X} leaves the memory the CPU can read: "
+            f"0x{SCAN_MIN_ADDRESS:X}..0x{SCAN_MAX_ADDRESS:X}")
+    needed = table_scan_call_count(start, end, blocks)
+    max_calls = needed + 2 if max_calls is None else int(max_calls)
+    if not 0 < max_calls <= MAX_SCAN_CALLS:
+        raise BufferScriptError(
+            f"the watchdog allows 1..{MAX_SCAN_CALLS} calls, got {max_calls}")
+    code = bytearray(payload(TABLE_SCAN))
+    for offset, value in ((TABLE_CURSOR_OFFSET, start), (TABLE_END_OFFSET, end),
+                          (TABLE_DELTA_OFFSET, delta), (TABLE_BLOCKS_OFFSET, blocks),
+                          (TABLE_MAX_CALLS_OFFSET, max_calls),
+                          (TABLE_RUNLEN_OFFSET, runlen)):
+        code[offset:offset + 4] = (value & 0xFFFFFFFF).to_bytes(4, "little")
+    return bytes(code)
+
+
+def table_scan_parameters(code):
+    """-> {delta, runlen, start, end, blocks, max_calls} read back out of a built payload."""
+    code = bytes(code)
+    def word(offset):
+        return int.from_bytes(code[offset:offset + 4], "little")
+    return {"start": word(TABLE_CURSOR_OFFSET), "end": word(TABLE_END_OFFSET),
+            "delta": word(TABLE_DELTA_OFFSET), "blocks": word(TABLE_BLOCKS_OFFSET),
+            "max_calls": word(TABLE_MAX_CALLS_OFFSET), "runlen": word(TABLE_RUNLEN_OFFSET)}
+
+
+def read_table_scan(dump, start=None, end=None):
+    """-> what the shape search found, from the bytes it sent back.
+
+    A hit whose address falls outside the range asked for is dropped: that is the payload's one
+    documented edge, a run credited to the very first word of the range when that word happens to
+    equal the expectation the state starts at, whose `runstart` was never written.
+    """
+    dump = bytes(dump)
+    if len(dump) < TABLE_ANSWER_SIZE:
+        raise BufferScriptError(
+            f"a table scan answers with {TABLE_ANSWER_SIZE} bytes, got {len(dump)}")
+    words = [int.from_bytes(dump[i:i + 4], "little") for i in range(0, TABLE_ANSWER_SIZE, 4)]
+    found, cursor, calls, stored = words[:4]
+    stored = min(stored, TABLE_HIT_CAPACITY)
+    hits = [(words[4 + 2 * i], words[5 + 2 * i]) for i in range(stored)]
+    dropped = []
+    if start is not None and end is not None:
+        keep = [(a, v) for a, v in hits if int(start) <= a < int(end)]
+        dropped = [(a, v) for a, v in hits if not (int(start) <= a < int(end))]
+        hits = keep
+    return {"found": found, "cursor": cursor, "calls": calls, "hits": hits, "dropped": dropped}
+
+
+def describe_table_scan(dump, delta=None, runlen=None, start=None, end=None):
+    """The same, as lines to log. A run reported here is self-verifying: its address and its
+    first value are two independent readings of the same table, and for gSpecialVars the value
+    IS the answer - &gSpecialVar_0x8000."""
+    scan = read_table_scan(dump, start, end)
+    shape = ("a run" if runlen is None or delta is None
+             else f"a run of {runlen} words rising by {delta}")
+    lines = [f"table: {scan['found']} match(es) for {shape}, "
+             f"{scan['calls']} call(s) = frames, stopped at 0x{scan['cursor']:08X}"]
+    if end is not None:
+        if scan["cursor"] >= int(end):
+            lines.append(f"   the whole range 0x{int(start):08X}..0x{int(end):08X} was scanned")
+        else:
+            done = scan["cursor"] - int(start)
+            lines.append(
+                f"   STOPPED EARLY: {done} of {int(end) - int(start)} bytes. The watchdog "
+                f"(max_calls) ended it; re-run from 0x{scan['cursor']:08X}")
+    if scan["found"] > len(scan["hits"]) + len(scan["dropped"]):
+        lines.append(f"   only the first {TABLE_HIT_CAPACITY} of {scan['found']} are listed")
+    for address, value in scan["hits"]:
+        lines.append(f"   table at 0x{address:08X}  first entry 0x{value:08X}")
+    for address, value in scan["dropped"]:
+        lines.append(f"   (dropped, outside the range asked for: 0x{address:08X} 0x{value:08X})")
+    return lines
+
+
 # --- string-gather: following a pointer array instead of reading a window ------------------------
 # A dump reads a window, so a table of pointers costs one run for the pointers and another for
 # every kilobyte they point at, most of it padding around the bytes actually wanted. bs17 read
@@ -1057,6 +1205,13 @@ SCRIPT_REGISTRY = {
         "next frame, so one run covers a range no dump could (--scan-word, --scan-start, "
         "--scan-end, --scan-blocks; reads only, writes nothing)",
         None),
+    TABLE_SCAN: BufferScriptSpec(
+        TABLE_SCAN,
+        "SEARCH memory for a TABLE BY ITS SHAPE - a run of N words each exactly D above the one "
+        "before it - and send back where each run starts and what value it starts with. It is how "
+        "a table of pointers is found when no constant in it is known (--table-delta, "
+        "--table-runlen, --table-start, --table-end, --table-blocks; reads only, writes nothing)",
+        None),
     ANCHORS: BufferScriptSpec(
         ANCHORS,
         "ask the machine where it is: our own load address, the RETURN ADDRESS INTO ROM, the stack "
@@ -1195,6 +1350,8 @@ PATCHED_SPANS = {
                  + 8 * TRACE_SAMPLE_CAPACITY),),
     MEMORY_SCAN: ((SCAN_CURSOR_OFFSET,
                    SCAN_HITS_OFFSET - SCAN_CURSOR_OFFSET + 8 * SCAN_HIT_CAPACITY),),
+    # The parameters and the results and the run state: everything ahead of the code.
+    TABLE_SCAN: ((TABLE_CURSOR_OFFSET, TABLE_EXPECT_OFFSET + 4 - TABLE_CURSOR_OFFSET),),
     STRING_GATHER: ((GATHER_SRC_OFFSET,
                      GATHER_STRINGS_OFFSET - GATHER_SRC_OFFSET + GATHER_STRING_AREA),),
     # Everything from the first operand to the end of the mon: the parameters, the four result

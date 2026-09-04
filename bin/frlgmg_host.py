@@ -91,6 +91,34 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         "--dump-file", default=None, metavar="PATH",
         help="with a dumping --buffer-script: write the bytes that come back to this file")
     parser.add_argument(
+        "--table-delta", type=lambda v: int(v, 0), default=None, metavar="D",
+        help=("with --buffer-script table-scan: what each word of the run must exceed the one "
+              "before it by. 2 finds a table of pointers to consecutive u16s, which is what "
+              "gSpecialVars is. Accepts 0x hex"))
+    parser.add_argument(
+        "--table-runlen", type=int, default=buffer_script.SPECIAL_VARS_RUN_LENGTH, metavar="N",
+        help=("with --buffer-script table-scan: how many words in a row make a run worth "
+              "reporting (default %d, the twelve gSpecialVar_0x8000..0x800B entries)"
+              % buffer_script.SPECIAL_VARS_RUN_LENGTH))
+    parser.add_argument(
+        "--table-start", type=lambda v: int(v, 0), default=buffer_script.SCAN_ROM_START,
+        metavar="ADDR",
+        help=("with --buffer-script table-scan: where to start, 16-byte aligned "
+              "(default 0x%08X, the cartridge)" % buffer_script.SCAN_ROM_START))
+    parser.add_argument(
+        "--table-end", type=lambda v: int(v, 0), default=buffer_script.SCAN_ROM_END,
+        metavar="ADDR",
+        help=("with --buffer-script table-scan: one past the last address to read "
+              "(default 0x%08X)" % buffer_script.SCAN_ROM_END))
+    parser.add_argument(
+        "--table-blocks", type=int, default=buffer_script.TABLE_SCAN_DEFAULT_BLOCKS, metavar="N",
+        help=("with --buffer-script table-scan: 16-byte blocks scanned per frame (default %d, "
+              "the same instruction load on the frame that memory-scan's 512 costs)"
+              % buffer_script.TABLE_SCAN_DEFAULT_BLOCKS))
+    parser.add_argument(
+        "--table-max-calls", type=int, default=None, metavar="N",
+        help="with --buffer-script table-scan: the watchdog, in calls (= frames)")
+    parser.add_argument(
         "--scan-word", type=lambda v: int(v, 0), default=None, metavar="VALUE",
         help=("with --buffer-script memory-scan: the 32-bit value to search for. The payload "
               "returns 0 to be called again next frame, so one run scans a whole range instead "
@@ -344,6 +372,8 @@ def build_run_config(parser, args):
                     f"--create-mon-* belongs to --buffer-script {buffer_script.CREATE_MON}")
             if args.buffer_script != buffer_script.MEMORY_SCAN and args.scan_word is not None:
                 parser.error(f"--scan-* belongs to --buffer-script {buffer_script.MEMORY_SCAN}")
+            if args.buffer_script != buffer_script.TABLE_SCAN and args.table_delta is not None:
+                parser.error(f"--table-* belongs to --buffer-script {buffer_script.TABLE_SCAN}")
             if args.buffer_script != buffer_script.RNG_TRACE \
                     and (args.trace_address is not None or args.trace_call):
                 parser.error(f"--trace-* belongs to --buffer-script {buffer_script.RNG_TRACE}")
@@ -362,6 +392,9 @@ def build_run_config(parser, args):
                 scan_word=args.scan_word, scan_start=args.scan_start,
                 scan_end=args.scan_end, scan_blocks=args.scan_blocks,
                 scan_max_calls=args.scan_max_calls,
+                table_delta=args.table_delta, table_runlen=args.table_runlen,
+                table_start=args.table_start, table_end=args.table_end,
+                table_blocks=args.table_blocks, table_max_calls=args.table_max_calls,
                 trace_address=args.trace_address, trace_call=args.trace_call,
                 trace_samples=args.trace_samples,
                 call_address=args.call_address, call_args=tuple(args.call_arg or ()),

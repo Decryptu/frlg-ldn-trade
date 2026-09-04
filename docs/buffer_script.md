@@ -1099,3 +1099,69 @@ with probability N / 2³². `buffer_script.lcg_distance` walks one step at a tim
 limit — all a frame-to-frame gap needs, and useless at encounter range, where the answer is
 thousands to millions. `frlgsim/lcg.py` uses baby-step/giant-step on the affine map instead: 2¹⁷
 operations rather than up to 2³².
+
+## `table-scan` — finding a table by its SHAPE (built, hardware run pending)
+
+Every address this project has found by searching rested on a **constant that only one place could
+hold**: RAND_MULT in `Random`'s literal pool [bs13], `0x00450045` in `sEasyChatGroups` [bs16],
+`0x64646464` in `gSpeciesInfo` [bs38]. `memory-scan` answers "where is this word", which requires
+knowing the word first.
+
+**A table of pointers carries no such constant.** `gSpecialVars` is 21 words holding the addresses
+of the special script variables [decomp:data/event_scripts.s:51], and every one of those addresses
+is exactly what we are trying to find out. There is nothing in it to search for.
+
+What it does have is a **relation between its entries**. `gSpecialVar_0x8000` through
+`gSpecialVar_0x800B` are twelve `u16`s declared consecutively [decomp:src/event_data.c:16], and
+`gSpecialVars` lists them in var-id order, so its first twelve words each sit exactly **2** above
+the one before. That is a shape, and a shape can be searched for while knowing none of the values.
+
+`table-scan` finds every maximal run of `runlen` words where each is exactly `delta` above its
+predecessor, and answers with **where the run starts and what value it starts with**. For
+`gSpecialVars` that first value *is* `&gSpecialVar_0x8000`, so the run does not merely locate the
+table — it reads the answer out of it. Locating and reading are one run.
+
+    ./scratchpad/run_mg_fast.sh bsNN --buffer-script table-scan --table-delta 2 \
+        --table-runlen 12 --table-start 0x08140000 --table-end 0x08400000 --version firered
+
+**Why the run is exactly twelve.** `gSpecialVars` continues past entry 11, but entry 12 is
+`gSpecialVar_Facing`, which `event_data.c` declares *after* `Result` and `LastTalked` — so it is +6
+from entry 11 and the ascending run stops dead. Asking for 13 finds nothing against the real table,
+and a test asserts exactly that: it is the check that the fingerprint is matching the shape rather
+than merely "some pointers".
+
+**Why the range.** `script_data` follows every `.text` object in the link order
+[ld_script_rev10.ld:318], and `gScriptCmdTable` (214 entries, 856 bytes) opens the section with
+`gSpecialVars` immediately after it. Text reaches at least 0x08148C74 (the return address bs08
+measured), and `.rodata` starts below `gSpeciesInfo` at 0x0824CDFC — so `gSpecialVars` lies between
+them. 0x08140000..0x08400000 is that bracket with margin: 939 frames, about 16 seconds.
+
+**The frame budget is NOT memory-scan's.** A shape test is ~7 ARM instructions a word where a value
+test is ~1.75, so the same *block count* would be 2.5x the load on a frame the console needs for its
+RFU link. `TABLE_SCAN_DEFAULT_BLOCKS` is 192 blocks of 16 bytes — 768 words, ~6.7k instructions a
+call, which is what `memory-scan`'s 512 blocks of 32 actually cost. Matching the proven budget
+matters more than covering ground.
+
+**What is new in the payload, and it is the only genuinely new mechanic since `memory-scan`: run
+state.** A value search is memoryless — a word matches or it does not. A run has to be carried
+across the `ldmia` boundary *and* across the frame boundary, because the table may straddle either.
+So `run`, `runstart` and `expect` live in the image at 0x22C..0x234 beside the cursor, and are
+saved on the way out of every yield. A test runs the search at **one block per call** so the frame
+boundary falls inside the table itself, and gets the same answer.
+
+**One documented edge.** `expect` starts at 0, so if the very first word of the range happens to be
+0 it is credited to a run whose `runstart` was never written, and it reads back as 0.
+`read_table_scan` discards any hit outside the range that was asked for, which is exactly that case;
+starting the range a block before anything of interest removes it entirely.
+
+Proven offline before any hardware time, as every payload here is: assembled to 940 bytes, run under
+unicorn against a synthetic cartridge carrying a real `gSpecialVars` (7 tests in
+`tests/test_buffer_script.py`), and then through the whole Mystery Gift link in
+`scratchpad/mg_client_harness.py --buffer-script table-scan`, which plants the table in the emulated
+cartridge and reads `table at 0x08160000  first entry 0x02024C40` back off the link in 43 frames.
+
+**Why this address is wanted.** It is the one blocker on the RNG-reading NPC (docs/rng.md): a RAM
+script of `copybyte` x4 from 0x03004220..23 into `gSpecialVar_0x8000`/`0x8001`, then
+`buffernumberstring` and `msgbox`. `gSpecialVar_0x8000` is `EWRAM_DATA`, a link-time global that
+does not move — unlike a save block, which `SetSaveBlocksPointers` re-rolls on every battle — so
+naming it as a constant is sound in a way naming a save address never is.
