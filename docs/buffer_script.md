@@ -408,11 +408,27 @@ four bytes past filler_B20 lands in `encryptionKey`, which money is XORed with, 
 of getting this wrong is a scrambled game rather than a failed run. `--write-unsafe` is the
 deliberate override and exists for the day we mean to edit a live field.
 
+## bs09: the console's save, written (2026-09-04, first try)
+
+FACT. `--buffer-script save-write --dump-block sav2 --dump-offset 0xB20 --write-text "FRLG-LDN bs09"`:
+
+    Buffer script dump: 13 bytes of console memory, head 46524c472d4c444e2062733039
+
+`46524c472d4c444e2062733039` is "FRLG-LDN bs09", and it came back from `link->sendBuffer` pointed at
+the DESTINATION inside SaveBlock2 - the console reading out its own save after our ARM code wrote
+there, not an echo of what we sent. `echo_gaps.py`: `never=[]` on every block. The console then
+saved. Reading and writing the live save on retail hardware are both proven.
+
+Still open: whether it reached FLASH. The console saved at the end of the session, so it should have;
+the test is a plain `save-dump` of the same offset AFTER the game has been restarted from the title
+screen, which forces the save to be re-read rather than kept in RAM.
+
 ## Left
 
-1. **bs09: `save-write` into filler_B20**, then a `save-dump` of the same offset in a later session
-   to prove the write survived the console's save to flash. `echo_gaps.py` on every capture: each
-   block must read `never=[]`, and that one line is the whole transport verdict.
+1. **bs10: `save-dump --dump-block sav2 --dump-offset 0xB20 --dump-size 16` after a game restart.**
+   Reads only. "FRLG-LDN bs09" coming back proves the write survived the flash round-trip.
+   `echo_gaps.py` on every capture: each block must read `never=[]`, and that one line is the whole
+   transport verdict.
 
 2. **Calling into the ROM.** The build is identified (bs07: BPRF, software version 0x0A) and now
    located (bs08: 0x08148C74 is the instruction after the call in Client_RunBufferScript). The
