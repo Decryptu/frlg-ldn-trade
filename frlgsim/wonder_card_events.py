@@ -1,6 +1,7 @@
 from .gift_composer import (
     AddVar,
     AllOf,
+    CARD_TYPE_LINK_STAT,
     GET_CARD_BATTLES_WON,
     ReadSpecial,
     SPECIAL_GET_MYSTERY_GIFT_CARD_STAT,
@@ -1420,6 +1421,9 @@ BATTLE_COUNT_GIFT = WonderGift(
     slug=GIFT_BATTLE_COUNT,
     card=WonderCardSpec(
         icon_species=SPECIES_CLEFAIRY_MEVENT,
+        # THE TYPE IS THE MECHANISM. IncrementCardStat is a no-op for any other card type
+        # [decomp:src/mystery_gift.c:461], which is why bs76/bs78 read zero.
+        card_type=CARD_TYPE_LINK_STAT,
         title="BATTLE COUNT CARD",
         subtitle="Your record against holders",
         body=(

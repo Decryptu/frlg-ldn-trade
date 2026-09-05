@@ -24,6 +24,7 @@ from frlgsim import (  # noqa: E402
     host_cli,
     linkplayer,
     mon,
+    mystery_gift,
     wonder_card,
     wonder_card_events as event,
 )
@@ -47,6 +48,24 @@ def _talk(wins, *, prize_taken=0):
         special_results={SPECIAL_GET_MYSTERY_GIFT_CARD_STAT: wins})
     vm.run()
     return vm
+
+
+def test_the_card_declares_the_type_that_makes_the_counters_move():
+    """`IncrementCardStat` returns without writing unless the held card is CARD_TYPE_LINK_STAT
+    [decomp:src/mystery_gift.c:461]. bs76 and bs78 are what a CARD_TYPE_GIFT card reads: zero,
+    after a trade that had every other condition right."""
+    card = compile_definition(event.BATTLE_COUNT_GIFT).card
+    assert card[8] & 0x3 == mystery_gift.CARD_TYPE_LINK_STAT == 2
+
+    from frlgsim.gift_composer import GiftValidationError
+    import dataclasses
+    stamped = dataclasses.replace(event.BATTLE_COUNT_GIFT.card, card_type=mystery_gift.CARD_TYPE_STAMP)
+    try:
+        compile_definition(dataclasses.replace(event.BATTLE_COUNT_GIFT, card=stamped))
+    except GiftValidationError:
+        pass
+    else:
+        raise AssertionError("a stamp card must come from the rally compiler")
 
 
 def test_the_card_is_registered_and_reads_the_wins_selector():

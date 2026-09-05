@@ -8,6 +8,7 @@ from typing import TypeAlias
 from . import charmap, ereader_trainer, mystery_event, rom_map
 from .mystery_gift import (
     CARD_TYPE_GIFT,
+    CARD_TYPE_LINK_STAT,
     CARD_TYPE_STAMP,
     SEND_TYPE_ALLOWED,
     SEND_TYPE_ALLOWED_ALWAYS,
@@ -126,6 +127,11 @@ class WonderCardSpec:
     # 0 keeps the default ``flag_id % 100`` display number.
     id_number: int = 0
     bg_type: int = 0
+    # CARD_TYPE_LINK_STAT is not cosmetic: IncrementCardStat writes nothing at all unless the card
+    # the console holds is that type [decomp:src/mystery_gift.c:461], so a card that wants the
+    # battle and trade counters has to declare it. CARD_TYPE_STAMP belongs to a rally and is
+    # chosen by the rally compiler, not here.
+    card_type: int = CARD_TYPE_GIFT
     send_type: int = SEND_TYPE_DISALLOWED
     default_flag_id: int = 1003
 
@@ -411,6 +417,10 @@ def _validate_card(card, path, *, flag_id):
                   f"{path}.icon_species", "icon species")
     _validate_int(card.id_number, 0, 0xFFFFFFFF, f"{path}.id_number", "card ID")
     _validate_int(card.bg_type, 0, 7, f"{path}.bg_type", "background type")
+    if card.card_type not in (CARD_TYPE_GIFT, CARD_TYPE_LINK_STAT):
+        _fail(f"{path}.card_type",
+              "card_type must be CARD_TYPE_GIFT or CARD_TYPE_LINK_STAT; a stamp card is built by "
+              "the rally compiler")
     if card.send_type not in (0, 1, 2):
         _fail(f"{path}.send_type", "send type must be 0, 1, or 2")
     try:
@@ -1139,7 +1149,7 @@ def _compile_gift(definition, flag_id):
     _check_script_size(script, builder, definition.slug)
     card = _build_card(
         definition.card, flag_id=flag_id,
-        card_type=CARD_TYPE_GIFT, max_stamps=0,
+        card_type=definition.card.card_type, max_stamps=0,
         send_type=_SHAREABLE_SEND_TYPES[definition.event.shareable])
     return MysteryGiftDistribution(card, script, trainer=definition.trainer,
                                    mevent=definition.mevent)
@@ -1515,6 +1525,7 @@ __all__ = [
     "SetVar", "AddVar",
     "ShowSprite",
     "Not", "RequireSpecialResult", "SHARE_ALWAYS", "SHARE_NEVER", "SHARE_ONCE",
+    "CARD_TYPE_GIFT", "CARD_TYPE_LINK_STAT",
     "SPECIAL_HAS_ALL_KANTO_MONS", "SPECIAL_START_LEGENDARY_BATTLE",
     "SPECIAL_GET_MYSTERY_GIFT_CARD_STAT", "GET_NUM_STAMPS", "GET_MAX_STAMPS",
     "GET_CARD_BATTLES_WON", "GET_CARD_BATTLES_LOST", "GET_CARD_NUM_TRADES",
