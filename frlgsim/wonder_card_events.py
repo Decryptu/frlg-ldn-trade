@@ -1295,6 +1295,76 @@ RNG_MON_HUNT_BOTH_GIFT = WonderGift(
 )
 
 
+GIFT_RNG_MON_HUNT_LOG = "rng-mon-hunt-log"
+RNG_MON_HUNT_LOG_FLAG_ID = 1002
+
+# THE SAME SEARCH, REPORTING. Everything mev19-mev21 established about a hunt was reconstructed
+# afterwards from the mon the player caught, and bs64 came back with TWO candidate states that only
+# the IVs told apart. The stub knows all of it while it runs, so it writes it down:
+# {marker, start, found, iterations, cap} at SaveBlock1 + 0x348C, `unused_348C[400]`, which bs65
+# read off THIS console as 400 zero bytes before anything was ever written there.
+#
+# It is in the save, so it survives the battle and reaches flash when the player saves; it is not in
+# ramScript, so the binding survives and the player can talk to their MOM again.
+#
+# Read it back with the dump we already do:
+#     --buffer-script save-dump --dump-block sav1 --dump-offset 0x348C --dump-size 32
+# and `native_script.decode_hunt_log`. ONE VARIABLE against rng-mon-hunt-both: the stub logs.
+
+
+def build_rng_mon_hunt_log_script(criteria=None, *, cap=None,
+                                  max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
+                                  payload_bytes=None, **kwargs):
+    return build_mevent_npc_script(
+        field_script=native_script.build_mon_hunt_log_script(
+            RNG_MON_HUNT_SPECIES, RNG_MON_HUNT_LEVEL,
+            criteria=RNG_MON_HUNT_CRITERIA if criteria is None else criteria,
+            cap=cap, max_freeze_frames=max_freeze_frames,
+            payload_bytes=payload_bytes), **_at_mom(kwargs))
+
+
+def build_rng_mon_hunt_log_gift(criteria=None, *, cap=None,
+                                max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
+                                payload_bytes=None):
+    """-> the card carrying the self-measuring search."""
+    return dataclasses.replace(
+        RNG_MON_HUNT_LOG_GIFT,
+        mevent=build_rng_mon_hunt_log_script(criteria, cap=cap,
+                                             max_freeze_frames=max_freeze_frames,
+                                             payload_bytes=payload_bytes))
+
+
+RNG_MON_HUNT_LOG_GIFT = WonderGift(
+    slug=GIFT_RNG_MON_HUNT_LOG,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="A POKEMON to order",
+        body=(
+            "Your MOM knows of a POKEMON",
+            "that shines and is quick with",
+            "it. Talk to her, then CATCH",
+            "what turns up.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=RNG_MON_HUNT_LOG_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "Someone in PALLET TOWN has\n"
+                "found something choosy."),
+        ),
+    )),
+    completed_message="Talk to your MOM at home.",
+    mevent=build_rng_mon_hunt_log_script(),
+)
+
+
 GIFT_RNG_DRAW_COUNT = "rng-draw-count"
 RNG_DRAW_COUNT_FLAG_ID = 1018
 

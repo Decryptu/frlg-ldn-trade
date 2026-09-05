@@ -176,6 +176,7 @@ def build_default_registry():
     registry.register_definition(wonder_card_events.RNG_MON_HUNT_GIFT)
     registry.register_definition(wonder_card_events.RNG_MON_HUNT_FAR_GIFT)
     registry.register_definition(wonder_card_events.RNG_MON_HUNT_BOTH_GIFT)
+    registry.register_definition(wonder_card_events.RNG_MON_HUNT_LOG_GIFT)
     registry.register_definition(wonder_card_events.MEVENT_SWEEP_GIFT)
     registry.register_definition(wonder_card_events.MASTER_BALL_GIFT)
     return registry

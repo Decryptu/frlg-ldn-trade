@@ -734,3 +734,57 @@ def test_the_second_placement_squares_the_iv_term_and_nothing_else():
     cost = native_script.search_cost(criteria, cap, 2)
     assert cost["worst_frames"] <= native_script.MAX_FREEZE_FRAMES
     assert cost["expected_seconds"] < 6
+
+
+# --- the hunt that reports what it did -----------------------------------------------------------
+
+def test_the_log_region_is_the_decomps_unused_block():
+    """bs65 read all 400 bytes of it off the console as zero before anything was written there, so
+    the decomp's `unused_348C` is true of the build this Switch runs and not only of the source."""
+    assert native_script.HUNT_LOG_OFFSET == 0x348C
+    assert (native_script.HUNT_LOG_OFFSET + 400
+            == native_script.RAMSCRIPT_IN_SAVEBLOCK1), "unused_348C ends where ramScript starts"
+    assert native_script.HUNT_LOG_SIZE <= 400, "the record must fit inside the unused block"
+
+
+def test_an_untouched_region_is_not_read_as_a_report():
+    """The marker is the whole reason a miss is legible. An exhausted search writes `found` 0 ON
+    PURPOSE, so without the marker it would decode the same as a stub that never ran at all."""
+    assert native_script.decode_hunt_log(bytes(native_script.HUNT_LOG_SIZE)) is None
+    record = native_script.HUNT_LOG_MAGIC.to_bytes(4, "little") + bytes(16)
+    assert native_script.decode_hunt_log(record)["exhausted"] is True
+
+
+@needs_unicorn
+def test_the_hunt_writes_down_the_state_it_found_and_what_it_cost():
+    """No brute-force recovery, no ambiguity between candidate states: the answer is written where
+    a save-dump can read it."""
+    criteria = native_script.MonCriteria(natures=(13,), iv_minimums=(0, 0, 0, 20, 0, 0))
+    body = native_script.build_mon_hunt_log_script(129, 5, criteria=criteria)
+    result = native_script.emulate_body_script(
+        body, rng_state=0x12345678, trainer_id=CONSOLE_TID, secret_id=CONSOLE_SID)
+    log = result["log"]
+    assert log is not None and log["magic"] == native_script.HUNT_LOG_MAGIC
+    assert log["start"] == 0x12345678
+    assert log["found"] == result["rng"], "the log and gRngValue must not be able to disagree"
+    assert log["found_one"] and 0 < log["iterations"] <= log["cap"]
+    mon = rng_countdown._mon_from(log["found"], CONSOLE_TID, CONSOLE_SID)
+    assert mon["shiny"] and mon["nature"] == 13
+    # The stub counts the search itself, so the frames it implies must match what the host model
+    # predicts for that many iterations - the two are computed from opposite ends.
+    assert log["frames"] == pytest.approx(
+        native_script.frames_for_iterations(log["iterations"]))
+
+
+@needs_unicorn
+def test_an_exhausted_search_still_says_what_it_spent():
+    """Until now an ordinary encounter and a stub that never ran looked identical from the player's
+    side. A cap of 1 cannot find anything, and the log says so."""
+    criteria = native_script.MonCriteria(natures=(13,), iv_minimums=(0, 0, 0, 20, 0, 0))
+    body = native_script.build_mon_hunt_log_script(129, 5, criteria=criteria, cap=1)
+    result = native_script.emulate_body_script(
+        body, rng_state=0x12345678, trainer_id=CONSOLE_TID, secret_id=CONSOLE_SID)
+    log = result["log"]
+    assert log["exhausted"] and log["found"] == 0
+    assert log["cap"] == 1
+    assert result["rng"] == 0x12345678, "a miss must leave gRngValue exactly as it was"

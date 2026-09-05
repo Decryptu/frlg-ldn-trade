@@ -577,6 +577,16 @@ RAMSCRIPT_MAGIC_OFFSET = RAMSCRIPT_IN_SAVEBLOCK1 + 4        # past the u32 check
 RAMSCRIPT_BODY_OFFSET = RAMSCRIPT_MAGIC_OFFSET + 4          # past magic, mapGroup, mapNum, objectId
 RAM_SCRIPT_MAGIC = 51                   # [decomp:src/script.c:12], written by InitRamScript [:505]
 
+# WHERE A HUNT REPORTS WHAT IT DID: SaveBlock1.unused_348C[400] [decomp:include/global.h]. bs65 read
+# all 400 bytes off the console as zero before anything was ever written there, so the decomp's name
+# for it is true of the build this Switch runs and not only of the source. It is IN THE SAVE, so it
+# survives the battle (MoveSaveBlocks_ResetHeap copies the blocks) and reaches flash when the player
+# saves; it is NOT in ramScript, so the RAM script checksum is untouched and the binding survives.
+HUNT_LOG_OFFSET = 0x348C
+HUNT_LOG_MAGIC = 0x474F4C31             # so an untouched region is not read as a report
+HUNT_LOG_SIZE = 20
+HUNT_LOG_FIELDS = ("magic", "start", "found", "iterations", "cap")
+
 TRAMPOLINE_STUB = "ram-jump"
 
 # THE TRAP, AND IT WOULD HAVE BEEN A HARDWARE RUN. The payload must start at a MULTIPLE OF FOUR,
@@ -814,6 +824,7 @@ def emulate_body_script(script, *, sb1_base=0x02025734, rng_state=0, trainer_id=
         rom_map.GSAVEBLOCK2PTR: int(sav2_base).to_bytes(4, "little"),
         int(sav2_base): bytes(save2),
         int(sb1_base) + RAMSCRIPT_MAGIC_OFFSET: ram_script,
+        int(sb1_base) + HUNT_LOG_OFFSET: bytes(HUNT_LOG_SIZE),
     }
     result = emulate(blob, base=low, memory=regions, instruction_limit=instruction_limit)
     executed.append(entry)
@@ -821,6 +832,7 @@ def emulate_body_script(script, *, sb1_base=0x02025734, rng_state=0, trainer_id=
             "instructions": result["instructions"],
             "staged_bytes": len(blob), "staged_at": low, "entry": entry,
             "payload_at": int(sb1_base) + RAMSCRIPT_BODY_OFFSET,
+            "log": decode_hunt_log(result["memory"][int(sb1_base) + HUNT_LOG_OFFSET]),
             "body": ram_script}
 
 
@@ -833,6 +845,41 @@ def build_mon_hunt_both_script(species, level, **kwargs):
     d4, and word B puts them on d4 and d5.
     """
     kwargs.setdefault("stub_name", "mon-seek-both")
+    kwargs.setdefault("placements", 2)
+    kwargs.setdefault("confidence", BOTH_CONFIDENCE)
+    return build_mon_hunt_far_script(species, level, **kwargs)
+
+
+def decode_hunt_log(blob):
+    """-> what a hunt wrote into SaveBlock1.unused_348C, or None if nothing did.
+
+    `magic` is checked rather than assumed: the region is zero on an untouched save (bs65), and a
+    run whose search was exhausted writes a `found` of 0 on purpose - so without the marker a miss
+    and a stub that never ran would decode identically, which is exactly the pair this is for.
+    """
+    blob = bytes(blob)
+    if len(blob) < HUNT_LOG_SIZE:
+        raise NativeScriptError(f"a hunt log is {HUNT_LOG_SIZE} bytes, got {len(blob)}")
+    words = [int.from_bytes(blob[i * 4:i * 4 + 4], "little") for i in range(len(HUNT_LOG_FIELDS))]
+    record = dict(zip(HUNT_LOG_FIELDS, words))
+    if record["magic"] != HUNT_LOG_MAGIC:
+        return None
+    record["found_one"] = record["found"] != 0
+    record["exhausted"] = not record["found_one"]
+    record["instructions"] = record["iterations"] * INSTRUCTIONS_PER_ITERATION
+    record["frames"] = frames_for(record["instructions"])
+    record["seconds"] = record["frames"] / 59.7275
+    return record
+
+
+def build_mon_hunt_log_script(species, level, **kwargs):
+    """build_mon_hunt_both_script with asm/field/mon-seek-log.s: the same search, reporting.
+
+    The stub writes {marker, start, found, iterations, cap} to SaveBlock1 + HUNT_LOG_OFFSET, which
+    a `save-dump` of sav1 at that offset reads back. That is what turns a hunt from something
+    reconstructed out of the caught mon into something measured while it happens.
+    """
+    kwargs.setdefault("stub_name", "mon-seek-log")
     kwargs.setdefault("placements", 2)
     kwargs.setdefault("confidence", BOTH_CONFIDENCE)
     return build_mon_hunt_far_script(species, level, **kwargs)

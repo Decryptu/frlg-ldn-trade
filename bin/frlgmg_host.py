@@ -367,7 +367,7 @@ def _hunt_definition(parser, args):
     if not _hunt_asked(args):
         return None
     hunts = (wonder_card_events.GIFT_RNG_MON_HUNT, wonder_card_events.GIFT_RNG_MON_HUNT_FAR,
-             wonder_card_events.GIFT_RNG_MON_HUNT_BOTH)
+             wonder_card_events.GIFT_RNG_MON_HUNT_BOTH, wonder_card_events.GIFT_RNG_MON_HUNT_LOG)
     if args.gift not in hunts:
         parser.error(f"--hunt-* belong to --gift {' or --gift '.join(hunts)}; "
                      f"--gift {args.gift} has no search to steer")
@@ -382,6 +382,7 @@ def _hunt_definition(parser, args):
         compose = {
             wonder_card_events.GIFT_RNG_MON_HUNT_FAR: wonder_card_events.build_rng_mon_hunt_far_gift,
             wonder_card_events.GIFT_RNG_MON_HUNT_BOTH: wonder_card_events.build_rng_mon_hunt_both_gift,
+            wonder_card_events.GIFT_RNG_MON_HUNT_LOG: wonder_card_events.build_rng_mon_hunt_log_gift,
         }.get(args.gift, wonder_card_events.build_rng_mon_hunt_gift)
         definition = compose(criteria, cap=args.hunt_cap,
                              max_freeze_frames=args.hunt_freeze_frames)
