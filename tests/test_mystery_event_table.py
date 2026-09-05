@@ -177,3 +177,34 @@ def test_memcpy_lands_inside_lib_text_and_checks_the_boundary():
     assert rom_map.MEMCPY > rom_map.LIB_TEXT_START
     assert rom_map.STRING_EXPAND_PLACEHOLDERS < rom_map.G_SCRIPT_CMD_TABLE   # ordinary .text
     assert rom_map.INIT_RAM_SCRIPT < rom_map.G_SCRIPT_CMD_TABLE
+
+
+def test_the_last_handler_is_bounded_by_its_own_epilogue():
+    """MEScrCmd_crc is the LAST entry, so nothing after it stops a reader walking to the end of the
+    dump - it first came back with 25 bl targets where the decomp gives it four. The trap is that
+    this ROM is agbcc-built and does not end a THUMB function with `pop {..., pc}`: crc ends
+    `pop {r4,r5,r6}; pop {r1}; bx r1` (BC70 BC02 4708). CalcCRC16 is the only worker it has."""
+    assert rom_map.CALC_CRC16 == 0x080489A0
+    assert rom_map.CALC_CRC16 < rom_map.G_SCRIPT_CMD_TABLE
+
+
+def test_varset_was_reachable_only_through_the_vm():
+    """No ScrCmd body calls VarSet - `setvar`'s worker is GetVarPointer and a store through what it
+    returns, which is why call-chain grew its `prev` mechanism in session 39. The Mystery Event VM
+    does call it: setenigmaberry ends `VarSet(VAR_ENIGMA_BERRY_AVAILABLE, 1)`.
+
+    The check is the layout. event_data.c declares GetVarPointer, VarGet, VarSet in that order, and
+    the gap between VarGet and VarSet is 0x1C - the whole of VarGet's body, which is one call, one
+    null test and one load [decomp:src/event_data.c:235]."""
+    assert rom_map.GET_VAR_POINTER < rom_map.VAR_GET < rom_map.VAR_SET
+    assert rom_map.VAR_SET - rom_map.VAR_GET == 0x1C
+    assert rom_map.callable_function("VarSet") == rom_map.VAR_SET | 1, "a call needs the THUMB bit"
+
+
+def test_every_worker_read_off_the_vm_is_a_rom_address():
+    for name in ("STRING_COPY_N", "STRING_COMPARE", "SET_ENIGMA_BERRY", "ITEM_IS_MAIL",
+                 "GIVE_MAIL_TO_MON2", "COMPACT_PARTY_SLOTS", "GET_SET_POKEDEX_FLAG",
+                 "SPECIES_TO_NATIONAL_POKEDEX_NUM", "CALC_CRC16", "VAR_SET"):
+        address = getattr(rom_map, name)
+        assert 0x08000000 < address < rom_map.G_SCRIPT_CMD_TABLE, f"{name} is not in .text"
+        assert address % 2 == 0, f"{name} is stored even; the THUMB bit goes on at the call"

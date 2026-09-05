@@ -156,10 +156,44 @@ And `memcpy` at 0x081E44F4 **checks the section boundary from a direction that k
 it**: memcpy comes from libgcc, which is in `lib_text`, and 0x081E44F4 is above the 0x081DE188 that
 bs110 arrived at by reading a THUMB prologue.
 
-What is left open: `MEScrCmd_crc` at 0x080DE831 fell past the end of the window, and `givepokemon`
-and `setenigmaberry` make calls this project has not named yet (0x0809BB18, 0x0809B964, 0x080971FC,
-0x08046994, 0x0808C860, 0x080A01B0, 0x0800C8CC, 0x0800C938, 0x08071DF8). One more dump at
-0x080DE7F4 closes both.
+**bs112 closed the rest**, and the two longest handlers turned out to be the valuable ones, because
+the decomp writes them out call for call so every `bl` lands on a name by position:
+
+| worker | address | from |
+|---|---|---|
+| `CalcCRC16` | 0x080489A0 | `crc`, its only worker |
+| `StringCopyN` | 0x0800C8CC | `setenigmaberry` twice, `givepokemon` twice |
+| `StringCompare` | 0x0800C938 | `setenigmaberry` |
+| `SetEnigmaBerry` | 0x080A01B0 | `setenigmaberry` |
+| `SpeciesToNationalPokedexNum` | 0x08046994 | `givepokemon` |
+| `GetSetPokedexFlag` | 0x0808C860 | `givepokemon`, twice: SEEN then CAUGHT |
+| `ItemIsMail` | 0x0809BB18 | `givepokemon` |
+| `GiveMailToMon2` | 0x0809B964 | `givepokemon` |
+| `CompactPartySlots` | 0x080971FC | `givepokemon` |
+| **`VarSet`** | **0x08071DF8** | `setenigmaberry`, its last call |
+
+### `VarSet`, which nothing else had reached
+
+**No ScrCmd body calls it.** `setvar`'s worker is `GetVarPointer` and a store through what it
+returns, which is exactly why `call-chain` grew its `prev` mechanism in session 39 - there was no
+`VarSet` to call. The Mystery Event VM does call it: `setenigmaberry` ends
+`VarSet(VAR_ENIGMA_BERRY_AVAILABLE, 1)`.
+
+The check is the layout, and it needs no run. `event_data.c` declares `GetVarPointer`, `VarGet`,
+`VarSet` in that order, and the console has them at 0x08071CC8 < 0x08071DDC < 0x08071DF8 - with
+**0x1C** between `VarGet` and `VarSet`, which is the whole of `VarGet`'s body: one call, one null
+test, one load. It is in `rom_map.CALLABLE` now, so `--chain-step call:VarSet,0x4024,7` sets a var
+the game's own way in one step instead of two.
+
+### The trap that cost one wrong answer
+
+`MEScrCmd_crc` is the LAST entry in the table, so nothing after it stops a reader walking on to the
+end of the dump, and it first came back with **25** `bl` targets where the decomp gives it four.
+Bounding a handler by its epilogue is what fixes that - but **this ROM is agbcc-built and does not
+end a THUMB function with `pop {..., pc}`**. It ends it `pop {r4,r5,r6}; pop {r1}; bx r1`
+(BC70 BC02 4708, at 0x080DE878). A reader looking only for 0xBDxx walks straight past that into the
+next function and reports its calls as this one's. `scratchpad/handler_workers.py` looks for `bx Rn`
+as well now, and only treats a return as a boundary when the next function's prologue follows it.
 
 ## Why `checkcompat` is optional
 

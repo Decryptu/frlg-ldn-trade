@@ -156,6 +156,30 @@ ENABLE_RARE_WORD = 0x080C1658           # addrareword
 # 0x081E44F4 - so that is memcpy, which comes from libgcc and therefore lives in `lib_text`. It is
 # ABOVE 0x081DE188, which bs110 put the section boundary at by reading a THUMB prologue there.
 MEMCPY = 0x081E44F4
+CALC_CRC16 = 0x080489A0                 # crc: three ScriptReadWord then this, and nothing else
+
+# bs111/bs112 again, from the two longest handlers. `setenigmaberry` and `givepokemon` are written
+# out call for call in the decomp, so every bl lands on a name by position - and every already
+# measured target in them (IsEnigmaBerryValid, ScriptReadWord, GetMonData,
+# CalculatePlayerPartyCount, memcpy, StringExpandPlaceholders) lands where it should.
+STRING_COPY_N = 0x0800C8CC              # setenigmaberry calls it twice, givepokemon twice
+STRING_COMPARE = 0x0800C938
+SET_ENIGMA_BERRY = 0x080A01B0
+SPECIES_TO_NATIONAL_POKEDEX_NUM = 0x08046994
+GET_SET_POKEDEX_FLAG = 0x0808C860       # givepokemon calls it twice: FLAG_SET_SEEN, FLAG_SET_CAUGHT
+ITEM_IS_MAIL = 0x0809BB18
+GIVE_MAIL_TO_MON2 = 0x0809B964
+COMPACT_PARTY_SLOTS = 0x080971FC
+
+# VarSet, WHICH NOTHING ELSE HAD REACHED. No ScrCmd body calls it - `setvar`'s worker is
+# GetVarPointer and a store through what it returns - so session 39 built `call-chain`'s `prev`
+# mechanism precisely because there was no VarSet to call. `MEScrCmd_setenigmaberry`'s last call is
+# `VarSet(VAR_ENIGMA_BERRY_AVAILABLE, 1)` [decomp:src/mystery_event_script.c], and it is here.
+#
+# The check is the layout: event_data.c declares GetVarPointer, then VarGet, then VarSet, and
+# 0x08071CC8 < 0x08071DDC < 0x08071DF8 in exactly that order - with 0x1C between VarGet and VarSet,
+# which is the whole of VarGet's body (GetVarPointer, a null test, one load).
+VAR_SET = 0x08071DF8
 
 
 # --- src/pokemon.c --------------------------------------------------------------------------------
@@ -259,6 +283,7 @@ CALLABLE = {
     "SeedRng": SEED_RNG,
     "CreateMon": CREATE_MON,
     "VarGet": VAR_GET,
+    "VarSet": VAR_SET,
     "GetVarPointer": GET_VAR_POINTER,
     "AddBagItem": ADD_BAG_ITEM,
     "RemoveBagItem": REMOVE_BAG_ITEM,
@@ -273,6 +298,14 @@ CALLABLE = {
     "IsEnoughMoney": IS_ENOUGH_MONEY,
     "AddMoney": ADD_MONEY,
     "RemoveMoney": REMOVE_MONEY,
+    "CalcCRC16": CALC_CRC16,
+    "GetSetPokedexFlag": GET_SET_POKEDEX_FLAG,
+    "SpeciesToNationalPokedexNum": SPECIES_TO_NATIONAL_POKEDEX_NUM,
+    "CompactPartySlots": COMPACT_PARTY_SLOTS,
+    "ItemIsMail": ITEM_IS_MAIL,
+    "StringCompare": STRING_COMPARE,
+    "InitRamScript": INIT_RAM_SCRIPT,
+    "RunScriptImmediately": RUN_SCRIPT_IMMEDIATELY,
 }
 
 
