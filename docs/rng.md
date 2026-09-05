@@ -454,6 +454,16 @@ a coincidence - a one-in-8192 event does not happen twice in two attempts. One r
 entry through bit 0, the trainer id read out of gSaveBlock2Ptr, and the draw model of
 CreateScriptedWildMon, all at once.
 
+**The script must not end at `dowildbattle`.** `StartScriptedWildBattle` sets
+`gMain.savedCallback = CB2_EndScriptedWildBattle`, which ends in
+`CB2_ReturnToFieldContinueScriptPlayMapMusic` [decomp:src/overworld.c:1670] - *continue script* - so
+the field engine resumes at the byte after `dowildbattle`. With nothing there it runs the zero fill
+`InitRamScript` left in the rest of the 995-byte body (opcode 0x00 is `nop`) and then walks off the
+end into the rest of SaveBlock1, executing the player's save as bytecode. That is very likely
+mev11's unexplained "a second wild battle re-triggered": 0xB6/0xB7 occur in save data like any other
+bytes. `releaseall` + `end` closes it, two bytes. mev16 ran with the tail and nothing followed the
+battle - though mev15 without it also showed nothing, so the decomp is the evidence, not the run.
+
 **The human is out of the loop entirely.** There is no press to time, no frame to aim at and no
 countdown to recompute; talking to the NPC is the whole procedure, and it is repeatable because the
 binding survives (`end`, not `endram`).
