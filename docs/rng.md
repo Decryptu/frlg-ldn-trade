@@ -144,6 +144,7 @@ on the draws that follow, and exactly one state survives. `lcg.recover_wild_stat
 | Magikarp (scripted) | 0 | 0 | 1 | mev19 |
 | Magikarp (scripted) | 1 | 0 | 2 | mev20 |
 | Magikarp (scripted) | 0 | 0 | 1 | mev21 |
+| Magikarp (scripted) | 0 | 1 | 4 | mev22 |
 
 Searching only the first gap finds the Weedle and **silently misses the other three** — they come
 back as "no state builds this mon", which reads like a broken recovery rather than an incomplete
@@ -738,8 +739,48 @@ established by the derivation above and by the offline tests; hardware has confi
 searches correctly and the mon comes out right. A run that catches Method 2 in the act would be
 confirmation on top, not the basis of the claim.
 
-Scripted encounters so far: bs53 Method 1, mev19 Method 1, mev20 **Method 2**, mev21 Method 1 —
-one in four, on a path that had looked clean.
+**mev22 caught it in the act, and the search held.** Same card but with the logging stub, so for
+the first time nothing had to be inferred: the console wrote the state it found into the save and
+`bs66` read it back. The logged state predicts the caught mon's PID **exactly** — 0x590263DF, no
+brute force, no candidate ambiguity — and the IVs came from **Method 4**:
+
+    logged found state 0x4FB97B07   (bs66)
+      Method 1 (clean)  25/10/30/20/ 9/25
+      Method 2 (stray)  20/ 9/25/21/ 3/ 1
+      Method 4          25/10/30/21/ 3/ 1   <- the mon that appeared (bs67, slot 3)
+
+SPEED 21, floor 20, **passed**. Method 4 is the placement `mon-seek-both` never builds a word for —
+it is covered as a consequence of testing the first triple on d3 and d4 and the second on d4 and
+d5. So the derivation above is not just argued, it has now been exercised on hardware by the very
+method it covers indirectly. mev21 was Method 1 and could not have shown this.
+
+Scripted encounters so far: bs53 Method 1, mev19 Method 1, mev20 **Method 2**, mev21 Method 1,
+mev22 **Method 4** — two in five, and BOTH stray methods occur here, on a path that had looked
+clean.
+
+### The cost of an iteration, measured instead of estimated
+
+`asm/field/mon-seek-log.s` counts its own loop, so the instruction count is exact rather than
+modelled. bs66 read the first one back:
+
+| | |
+|---|---|
+| iterations | 603,745 |
+| `lcg.distance(start, found)` | 603,745 — **difference 0** |
+| instructions (15 each) | 9,056,175 |
+| model at 3 cycles/instruction | 1.62 s |
+| observed by the player | 2–3 s |
+| implied | **3.7–5.6 cycles/instruction** |
+
+The distance check is worth stating on its own: the console's own counter and a discrete log over
+the LCG computed here agree **to the iteration**, from opposite ends. That is what makes the rest of
+the record trustworthy.
+
+`CYCLES_PER_INSTRUCTION_FROM_EWRAM = 3` therefore looks **low**, which is consistent with mev20 and
+mev21 both running long. It is left at 3: the instruction count is exact but the other side of the
+division is a person with a stopwatch, and one sample of it settles nothing. The freeze ceiling is
+conservative in the safe direction either way — a real cost above the estimate means a search is
+refused sooner than it needs to be, never later.
 
 **The freeze, measured twice.** mev20 (one placement, expected 1.5 s) paused 2–3 s; mev21 (two
 placements, expected 3.9 s) paused about 7 s. The RATIO is right — 2.8 observed against 2.6

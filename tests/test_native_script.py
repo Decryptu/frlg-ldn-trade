@@ -788,3 +788,43 @@ def test_an_exhausted_search_still_says_what_it_spent():
     assert log["exhausted"] and log["found"] == 0
     assert log["cap"] == 1
     assert result["rng"] == 0x12345678, "a miss must leave gRngValue exactly as it was"
+
+
+# --- mev22: the log closed the loop, and Method 4 fired ------------------------------------------
+
+MEV22_FOUND = 0x4FB97B07                    # bs66, written into the save by the stub itself
+MEV22_ITERATIONS = 603745                   # counted by the console
+MEV22_START = 0x91D7F204
+MEV22_PID = 0x590263DF                      # bs67, party slot 3
+MEV22_IVS = (25, 10, 30, 21, 3, 1)
+
+
+def test_the_consoles_own_counter_agrees_with_the_lcg_from_the_other_end():
+    """The stub counts its loop; `lcg.distance` solves the discrete log between the two states it
+    logged. Two independent computations, and they agree to the iteration - which is what makes
+    everything else in the record evidence rather than a number the console emitted."""
+    assert lcg.distance(MEV22_START, MEV22_FOUND) == MEV22_ITERATIONS
+
+
+def test_the_logged_state_predicts_the_caught_mon_with_no_recovery_at_all():
+    """Every earlier run brute-forced 2**16 candidates out of the PID and bs64 got two of them.
+    Here the state was read out of the save and the PID follows from it."""
+    draws, _ = lcg.draws(MEV22_FOUND, 5)
+    assert (draws[1] << 16) | draws[0] == MEV22_PID
+    assert lcg.nature_of(MEV22_PID) == 13                       # Jolly
+
+
+def test_mev22_fired_method_4_and_the_two_placement_search_still_held():
+    """Method 4 puts the first IV triple on d3 and the second on d5 - a word mon-seek-both never
+    builds. It passes as a CONSEQUENCE of the floors holding on d3 and d4 and on d4 and d5, and
+    mev22 is that consequence happening on hardware."""
+    criteria = native_script.MonCriteria(natures=(13,), iv_minimums=(0, 0, 0, 20, 0, 0))
+    draws, _ = lcg.draws(MEV22_FOUND, 5)
+    placements = {"1": _ivs_from(draws[2], draws[3]),
+                  "2": _ivs_from(draws[3], draws[4]),
+                  "4": _ivs_from(draws[2], draws[4])}
+    assert placements["4"] == MEV22_IVS, "the console used Method 4"
+    assert placements["1"] != MEV22_IVS and placements["2"] != MEV22_IVS
+    for name, ivs in placements.items():
+        assert all(iv >= f for iv, f in zip(ivs, criteria.iv_minimums)), name
+    assert MEV22_IVS[3] >= 20
