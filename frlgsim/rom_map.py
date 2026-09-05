@@ -144,6 +144,38 @@ TRY_SET_OBTAINED_ITEM_QUEST_LOG_EVENT = 0x0809E210   # ScrCmd_additem's second c
 # The literal ScrCmd_additem stores its result through, which is what gSpecialVar_Result must be.
 GSPECIAL_VAR_RESULT = 0x020370CC
 
+# The workers above, by the decomp's own name, so that a payload can be asked for one of them
+# instead of a bare address. Everything here was read off the console (bs84) or called on it
+# (bs85, AddBagItem); nothing is here on the strength of the decomp alone, because an address the
+# decomp knows is an address for a DIFFERENT build. `callable_function` returns the THUMB pointer
+# a `bx` needs.
+CALLABLE = {
+    "Random": RANDOM,
+    "SeedRng": SEED_RNG,
+    "CreateMon": CREATE_MON,
+    "VarGet": VAR_GET,
+    "GetVarPointer": GET_VAR_POINTER,
+    "AddBagItem": ADD_BAG_ITEM,
+    "RemoveBagItem": REMOVE_BAG_ITEM,
+    "CheckBagHasSpace": CHECK_BAG_HAS_SPACE,
+    "CheckBagHasItem": CHECK_BAG_HAS_ITEM,
+    "AddPCItem": ADD_PC_ITEM,
+    "FlagSet": FLAG_SET,
+    "FlagClear": FLAG_CLEAR,
+    "FlagGet": FLAG_GET,
+    "IncrementGameStat": INCREMENT_GAME_STAT,
+}
+
+
+def callable_function(name):
+    """-> the THUMB pointer for one of CALLABLE, by the decomp's name, case-insensitively."""
+    for known, address in CALLABLE.items():
+        if known.lower() == str(name).lower():
+            return thumb(address)
+    raise KeyError(f"{name!r} is not a function this project has measured; known: "
+                   + ", ".join(sorted(CALLABLE)))
+
+
 # --- gcc's THUMB-to-ARM call veneers ------------------------------------------------------------
 # Client_RunBufferScript reaches our ARM payload through one of these, which is why lr comes back
 # pointing into the caller rather than into the veneer.

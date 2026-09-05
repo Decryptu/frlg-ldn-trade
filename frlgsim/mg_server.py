@@ -963,6 +963,15 @@ class MysteryGiftServer:
             got = buffer_script.read_call(self.buffer_dump)
             self.trace.append(("buffer_call", got["function"], got["returned"]))
             return
+        if self.buffer_decode == buffer_script.CALL_CHAIN:
+            # The steps come off the payload we actually sent, so the log names each result by the
+            # step that produced it rather than by position in a table nobody has to hand.
+            asked = buffer_script.chain_parameters(self.buffer_code)
+            for line in buffer_script.describe_call_chain(self.buffer_dump, asked["steps"]):
+                self.info(f"  {line}")
+            chained = buffer_script.read_call_chain(self.buffer_dump)
+            self.trace.append(("buffer_chain", chained["executed"], chained["refused"]))
+            return
         if self.buffer_decode == buffer_script.CREATE_MON:
             asked = buffer_script.create_mon_parameters(self.buffer_code)
             for line in buffer_script.describe_create_mon(self.buffer_dump, asked):

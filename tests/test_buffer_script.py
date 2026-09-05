@@ -2221,8 +2221,265 @@ _MINIMAL_ARGS = {
     "rng-trace": {"trace_address": 0x03004220},
     "string-gather": {"gather_address": 0x08000000},
     "call": {"call_address": 0x080486D1},
+    "call-chain": {"chain_steps": (buffer_script.chain_call(0x080486D1, [0xB8C0]),)},
     "save-write": {"write_data": b"X", "dump_offset": 0xB20},
 }
+
+
+# --- call-chain: a list of calls and memory accesses, in one frame -------------------------------
+# The fixtures are the ones the single `call` tests already use - SeedRng and Random as bs14/bs13
+# read them out of the cartridge - plus one hand-assembled THUMB stub that returns a pointer, which
+# is the shape GetVarPointer has and the reason this payload exists.
+
+# THUMB: ldr r0,[pc,#0] ; bx lr ; .word POINTER. A one-argument function that ignores its argument
+# and answers with an address, which is what GetVarPointer does as far as a chain can tell.
+POINTER_STUB_BASE = 0x08100100
+POINTER_STUB_TARGET = 0x02025100
+POINTER_STUB_CODE = (bytes.fromhex("0048" "7047")
+                     + POINTER_STUB_TARGET.to_bytes(4, "little"))
+
+# THUMB: adds r0,r0,r1 ; adds r0,r0,r2 ; adds r0,r0,r3 ; bx lr. Four arguments, each a distinct
+# bit, so the total names exactly which of r0..r3 arrived.
+FOUR_ARG_BASE = 0x08100200
+FOUR_ARG_CODE = bytes.fromhex("4018" "8018" "c018" "7047")
+
+
+def _chain(*texts):
+    return [buffer_script.parse_chain_step(text) for text in texts]
+
+
+def test_a_chain_step_is_parsed_the_way_the_cli_takes_one():
+    call, read, write, keep = _chain(
+        "call:GetVarPointer,0x4024", "read16:prev", "write32:0x02024EA4,0xC0DE",
+        "read8+keep:prev+0x3")
+
+    assert call.op == buffer_script.CHAIN_CALL
+    assert call.target == rom_map.thumb(rom_map.GET_VAR_POINTER) == 0x08071CC9
+    assert call.args == (0x4024,)
+    assert read.target_from_prev and read.target == 0
+    assert write.op == buffer_script.CHAIN_WRITE32 and write.args == (0xC0DE,)
+    assert keep.keep_prev and keep.target_from_prev and keep.target == 3
+
+
+def test_a_step_that_names_a_function_this_project_has_not_measured_is_refused():
+    """The names come from rom_map.CALLABLE, which is bs84's list and bs85's one confirmation -
+    not from the decomp, whose addresses are a DIFFERENT build's."""
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.parse_chain_step("call:GiveMon,1")
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.parse_chain_step("poke:0x02024EA4,1")
+    with pytest.raises(buffer_script.BufferScriptError, match="FIRST argument"):
+        buffer_script.parse_chain_step("call:FlagSet,1,prev")
+
+
+def test_the_chain_operands_are_where_we_patch_them():
+    steps = _chain("call:FlagGet,0x828", "read16+keep:prev", "write16:prev,0x7")
+    asked = buffer_script.chain_parameters(buffer_script.build_call_chain(steps, unsafe=True))
+
+    assert asked["count"] == 3
+    assert [step.op for step in asked["steps"]] == [
+        buffer_script.CHAIN_CALL, buffer_script.CHAIN_READ16, buffer_script.CHAIN_WRITE16]
+    assert asked["steps"][0].args == (0x828,)          # the argument count rides in the op word
+    assert asked["steps"][1].keep_prev and asked["steps"][1].target_from_prev
+    assert asked["steps"][2].args == (7,)
+    assert buffer_script.describe(buffer_script.build_call_chain(steps, unsafe=True)) \
+        .startswith(buffer_script.CALL_CHAIN)
+
+
+def test_the_chain_refuses_what_would_hang_or_run_rubbish():
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call_chain([])
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call_chain(_chain("call:Random") * 17)
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call_chain(_chain("call:0x080486B0"))      # ARM pointer
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call_chain(_chain("call:0x02000001"))      # not in the cartridge
+    with pytest.raises(buffer_script.BufferScriptError, match="Name the function"):
+        buffer_script.build_call_chain(_chain("call:prev"))
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call_chain(_chain("read32:0x02024EA6"))    # unaligned
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call_chain(_chain("read32:0x00000000"))    # unreadable
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call_chain(
+            [buffer_script.chain_call(rom_map.thumb(rom_map.FLAG_SET), [1, 2, 3, 4, 5])])
+
+
+def test_a_write_step_needs_the_same_deliberate_override_a_save_write_does():
+    """There is no scratch region here: a chain writes wherever the game keeps the thing being
+    changed, and the console commits its save to flash afterwards."""
+    steps = _chain("write16:0x02024EA4,0x7")
+    with pytest.raises(buffer_script.BufferScriptError, match="write-unsafe"):
+        buffer_script.build_call_chain(steps)
+    assert buffer_script.build_call_chain(steps, unsafe=True)
+
+
+@needs_unicorn
+def test_the_chain_calls_the_console_s_own_seed_rng_and_reads_the_result_back():
+    """One frame, two steps, and the second is the evidence for the first: SeedRng returns
+    nothing at all [decomp:src/random.c:15], so only reading gRngValue afterwards says it ran."""
+    steps = _chain("call:SeedRng,0xB8C0", "read32:0x03004220")
+    run = buffer_script.emulate(
+        buffer_script.build_call_chain(steps),
+        memory={SEED_RNG_CODE_BASE: SEED_RNG_CODE},
+        send_size=buffer_script.CHAIN_ANSWER_SIZE)
+
+    got = buffer_script.read_call_chain(run.pending_send)
+    assert got["calls"] == 1, "a chain is one frame, whatever the step count"
+    assert got["executed"] == got["count"] == 2
+    assert got["values"][1] == 0xB8C0
+    assert run.param == 2, "*param is the steps executed"
+    assert len(run.pending_send) == buffer_script.CHAIN_ANSWER_SIZE == 80
+
+
+@needs_unicorn
+def test_a_pointer_a_call_returned_becomes_the_address_a_later_step_writes():
+    """THE REASON THIS PAYLOAD EXISTS. There is no VarSet among the workers bs84 read: setting a
+    var the game's own way is GetVarPointer followed by a store through what it returned, and no
+    single-call payload can do that. Read before, write, read after - one frame, one run."""
+    steps = _chain("call:0x08100101,0x4024", "read16+keep:prev", "write16:prev,0x7",
+                   "read16:prev")
+    run = buffer_script.emulate(
+        buffer_script.build_call_chain(steps, unsafe=True),
+        memory={POINTER_STUB_BASE: POINTER_STUB_CODE,
+                POINTER_STUB_TARGET: (3).to_bytes(2, "little")},
+        send_size=buffer_script.CHAIN_ANSWER_SIZE)
+
+    got = buffer_script.read_call_chain(run.pending_send)
+    assert got["values"][0] == POINTER_STUB_TARGET, "the address the game computed"
+    assert got["values"][1] == 3, "what was there before, through that same pointer"
+    assert got["values"][2] == 7, "the store, read back by the payload itself"
+    assert got["values"][3] == 7, "and read again afterwards"
+    assert run.instructions < 400, "one frame's work"
+
+
+@needs_unicorn
+def test_a_write_leaves_prev_alone_so_a_pointer_survives_the_store_through_it():
+    """Without this the third step would write to address 7, which is not memory at all."""
+    steps = _chain("call:0x08100101,0x4024", "write16:prev,0x7", "write16:prev+0x2,0x9",
+                   "read32:prev")
+    run = buffer_script.emulate(
+        buffer_script.build_call_chain(steps, unsafe=True),
+        memory={POINTER_STUB_BASE: POINTER_STUB_CODE},
+        send_size=buffer_script.CHAIN_ANSWER_SIZE)
+
+    got = buffer_script.read_call_chain(run.pending_send)
+    assert got["executed"] == 4
+    assert got["values"][3] == 0x00090007, "two halfwords, written through the same pointer"
+
+
+@needs_unicorn
+def test_a_read_that_does_not_keep_prev_replaces_the_pointer_with_what_it_read():
+    """The other half of the same rule, stated as a test so the trap is documented rather than
+    discovered on hardware: a plain read is the new prev."""
+    steps = _chain("call:0x08100101,0x4024", "read16:prev")
+    run = buffer_script.emulate(
+        buffer_script.build_call_chain(steps),
+        memory={POINTER_STUB_BASE: POINTER_STUB_CODE,
+                POINTER_STUB_TARGET: (0x1234).to_bytes(2, "little")},
+        send_size=buffer_script.CHAIN_ANSWER_SIZE)
+
+    asked = buffer_script.chain_parameters(
+        buffer_script.build_call_chain(steps))["steps"]
+    assert not asked[1].keep_prev
+    assert buffer_script.read_call_chain(run.pending_send)["values"][1] == 0x1234
+
+
+@needs_unicorn
+def test_all_four_arguments_arrive_in_r0_to_r3():
+    steps = [buffer_script.chain_call(FOUR_ARG_BASE | 1, [1, 2, 4, 8])]
+    run = buffer_script.emulate(
+        buffer_script.build_call_chain(steps), memory={FOUR_ARG_BASE: FOUR_ARG_CODE},
+        send_size=buffer_script.CHAIN_ANSWER_SIZE)
+
+    assert buffer_script.read_call_chain(run.pending_send)["values"][0] == 15, (
+        "each argument is a distinct bit, so the total says which registers arrived")
+
+
+@needs_unicorn
+def test_the_first_argument_can_be_the_previous_result():
+    """Random's answer handed straight to the next call: the chain carries a value the host never
+    sees until the run is over."""
+    steps = _chain("call:Random", "call:0x08100201,prev,0x2")
+    run = buffer_script.emulate(
+        buffer_script.build_call_chain(steps),
+        memory={RANDOM_CODE_BASE: RANDOM_CODE, FOUR_ARG_BASE: FOUR_ARG_CODE},
+        send_size=buffer_script.CHAIN_ANSWER_SIZE)
+
+    got = buffer_script.read_call_chain(run.pending_send)
+    assert got["values"][1] == got["values"][0] + 2
+
+
+@needs_unicorn
+def test_a_step_the_payload_does_not_have_stops_the_run_and_is_named_in_the_answer():
+    """A payload cannot fail silently here: what stopped it comes back with what did run."""
+    steps = [buffer_script.chain_call(SEED_RNG_CODE_BASE | 1, [0xB8C0]),
+             buffer_script.ChainStep(9, 0x02024EA4)]
+    code = bytearray(buffer_script.build_call_chain(steps[:1]))
+    code[buffer_script.CHAIN_COUNT_OFFSET] = 2      # a second step the builder would have refused
+    base = buffer_script.CHAIN_STEPS_OFFSET + buffer_script.CHAIN_STEP_SIZE
+    code[base:base + 4] = (9).to_bytes(4, "little")
+    run = buffer_script.emulate(
+        bytes(code), memory={SEED_RNG_CODE_BASE: SEED_RNG_CODE},
+        send_size=buffer_script.CHAIN_ANSWER_SIZE)
+
+    got = buffer_script.read_call_chain(run.pending_send)
+    assert got["executed"] == 1 and got["count"] == 2
+    assert got["refused"] == 9
+    assert "STOPPED" in "\n".join(buffer_script.describe_call_chain(run.pending_send))
+    with pytest.raises(buffer_script.BufferScriptError):
+        buffer_script.build_call_chain(steps)       # and the builder refuses it in the first place
+
+
+@needs_unicorn
+def test_a_full_chain_of_sixteen_steps_still_returns_in_one_frame():
+    """The capacity is a hard stop in the payload as well as in the builder, so a count that
+    overruns the step area cannot walk off the end of the image."""
+    steps = _chain(*(["call:Random"] * buffer_script.CHAIN_MAX_STEPS))
+    code = bytearray(buffer_script.build_call_chain(steps))
+    code[buffer_script.CHAIN_COUNT_OFFSET] = 0xFF       # more than there is room for
+    run = buffer_script.emulate(
+        bytes(code), memory={RANDOM_CODE_BASE: RANDOM_CODE},
+        send_size=buffer_script.CHAIN_ANSWER_SIZE)
+
+    got = buffer_script.read_call_chain(run.pending_send)
+    assert got["calls"] == 1 and got["executed"] == buffer_script.CHAIN_MAX_STEPS
+    assert run.done
+
+
+def test_the_chain_answer_is_described_step_by_step():
+    steps = _chain("call:FlagGet,0x828", "read16:0x02024EA4")
+    dump = (b"\x01\x00\x00\x00" b"\x02\x00\x00\x00" b"\x02\x00\x00\x00"
+            b"\x00\x00\x00\x00" + b"\x01\x00\x00\x00" + b"\x03\x00\x00\x00"
+            + bytes(4 * (buffer_script.CHAIN_MAX_STEPS - 2)))
+    lines = buffer_script.describe_call_chain(dump, steps)
+
+    assert "2 of 2 step(s)" in lines[0]
+    assert "call 0x08071F45(0x828) -> 0x00000001" in lines[1]
+    assert "read16 [0x02024EA4] -> 0x00000003" in lines[2]
+
+
+def test_the_cli_builds_a_chain_and_refuses_a_write_without_the_override():
+    config = _run_config([
+        "--buffer-script", "call-chain",
+        "--chain-step", "call:GetVarPointer,0x4024",
+        "--chain-step", "read16+keep:prev",
+        "--chain-step", "write16:prev,7",
+        "--write-unsafe"])
+
+    assert config.payload.dump_size == buffer_script.CHAIN_ANSWER_SIZE
+    assert config.payload.build_distribution().buffer_decode == buffer_script.CALL_CHAIN
+    asked = buffer_script.chain_parameters(config.payload.build_code())
+    assert asked["count"] == 3
+    assert asked["steps"][0].target == rom_map.thumb(rom_map.GET_VAR_POINTER)
+
+    with pytest.raises(SystemExit):
+        _run_config(["--buffer-script", "call-chain",
+                     "--chain-step", "write16:0x02024EA4,7"])
+    with pytest.raises(SystemExit):
+        _run_config(["--buffer-script", "call", "--call-address", "0x080486D1",
+                     "--chain-step", "call:Random"])
 
 
 # --- the lists a new payload has to be added to ------------------------------------------------

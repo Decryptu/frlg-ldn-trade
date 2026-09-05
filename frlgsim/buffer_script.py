@@ -788,6 +788,313 @@ def describe_call(dump, expected=None):
     return lines
 
 
+# --- call-chain: a list of calls and memory accesses, in one frame -------------------------------
+# `call` makes one call. This makes up to CHAIN_MAX_STEPS, in order, in a single frame, and sends
+# back one word per step. The reason is not convenience: every question about the console's game
+# state is read-change-read, and bs84 named twenty-four workers to ask them of. A run is the
+# expensive thing, not a call.
+#
+# The one new mechanism is PREV - a step can take its target or its first argument from the
+# previous step's result - and it exists for exactly one shape:
+#
+#     call GetVarPointer(0x4024); write16 [prev] = 7; read16 [prev]
+#
+# There is no VarSet among the workers: ScrCmd_setvar writes through GetVarPointer's return
+# [decomp:src/scrcmd.c:472], so setting a var the game's own way IS a call followed by an indirect
+# store, and no single-call payload can do it. asm/call-chain.s has the step layout.
+
+CALL_CHAIN = "call-chain"
+CHAIN_COUNT_OFFSET = 0x04
+CHAIN_STEPS_OFFSET = 0x10
+CHAIN_STEP_SIZE = 24
+CHAIN_MAX_STEPS = 16
+CHAIN_MAX_ARGS = 4                  # r0..r3; the stack arguments are `call`'s business
+CHAIN_RESULT_OFFSET = 0x190
+CHAIN_VALUES_OFFSET = 0x1A0
+CHAIN_ANSWER_SIZE = 16 + 4 * CHAIN_MAX_STEPS
+
+# The opcodes, as asm/call-chain.s dispatches them.
+CHAIN_END = 0
+CHAIN_CALL = 1
+CHAIN_READ32 = 2
+CHAIN_READ16 = 3
+CHAIN_READ8 = 4
+CHAIN_WRITE32 = 5
+CHAIN_WRITE16 = 6
+CHAIN_WRITE8 = 7
+# The two modifier bits in the op word, and the argument count above them. The payload does not
+# read the count - it loads all four argument words every time, exactly as call.s pushes all four
+# stack words whatever `argc` says, because a callee that takes fewer never reads them. It is here
+# so that a BUILT payload still says what it was asked for, which is what the log prints.
+CHAIN_TARGET_FROM_PREV = 0x100
+CHAIN_ARG_FROM_PREV = 0x200
+CHAIN_KEEP_PREV = 0x400
+CHAIN_ARGC_SHIFT = 16
+CHAIN_ARGC_MASK = 0xF
+
+CHAIN_OPS = {
+    "call": CHAIN_CALL,
+    "read32": CHAIN_READ32,
+    "read16": CHAIN_READ16,
+    "read8": CHAIN_READ8,
+    "write32": CHAIN_WRITE32,
+    "write16": CHAIN_WRITE16,
+    "write8": CHAIN_WRITE8,
+}
+CHAIN_OP_NAMES = {value: name for name, value in CHAIN_OPS.items()}
+CHAIN_READS = (CHAIN_READ32, CHAIN_READ16, CHAIN_READ8)
+CHAIN_WRITES = (CHAIN_WRITE32, CHAIN_WRITE16, CHAIN_WRITE8)
+# How wide each access is, which is also what its target must be aligned to.
+CHAIN_WIDTH = {CHAIN_READ32: 4, CHAIN_READ16: 2, CHAIN_READ8: 1,
+               CHAIN_WRITE32: 4, CHAIN_WRITE16: 2, CHAIN_WRITE8: 1}
+
+
+@dataclass(frozen=True)
+class ChainStep:
+    """One step: an opcode, a target, and up to four argument words.
+
+    `target_from_prev` makes the target the previous result plus `target` (so 0 is the pointer
+    itself and 4 is the word after it); `arg_from_prev` makes the first argument the previous
+    result. Both are the payload's op-word bits, not a builder convenience - the console resolves
+    them, which is the whole point: the address is one the GAME computed.
+    """
+    op: int
+    target: int = 0
+    args: tuple = ()
+    target_from_prev: bool = False
+    arg_from_prev: bool = False
+    keep_prev: bool = False
+
+    @property
+    def op_word(self):
+        return (int(self.op) & 0xFF
+                | (CHAIN_TARGET_FROM_PREV if self.target_from_prev else 0)
+                | (CHAIN_ARG_FROM_PREV if self.arg_from_prev else 0)
+                | (CHAIN_KEEP_PREV if self.keep_prev else 0)
+                | (min(len(self.args), CHAIN_ARGC_MASK) << CHAIN_ARGC_SHIFT))
+
+    @property
+    def name(self):
+        return CHAIN_OP_NAMES.get(int(self.op) & 0xFF, f"op {int(self.op) & 0xFF}")
+
+    def describe(self):
+        keep = " keep" if self.keep_prev else ""
+        target = "prev" if self.target_from_prev else f"0x{self.target:08X}"
+        if self.target_from_prev and self.target:
+            target = f"prev + 0x{self.target:X}"
+        if self.op == CHAIN_CALL:
+            args = ["prev" if self.arg_from_prev and i == 0 else f"0x{a:X}"
+                    for i, a in enumerate(self.args)] or (["prev"] if self.arg_from_prev else [])
+            return f"call {target}({', '.join(args)}){keep}"
+        if self.op in CHAIN_READS:
+            return f"{self.name} [{target}]{keep}"
+        value = "prev" if self.arg_from_prev else f"0x{(self.args or (0,))[0]:X}"
+        return f"{self.name} [{target}] = {value}"
+
+
+def chain_call(function, args=(), *, arg_from_prev=False):
+    """A CALL step. `function` is a THUMB pointer - rom_map.callable_function(name) gives one."""
+    return ChainStep(CHAIN_CALL, int(function), tuple(int(a) & 0xFFFFFFFF for a in args),
+                     arg_from_prev=bool(arg_from_prev))
+
+
+def chain_read(address, size=4, *, from_prev=False, keep_prev=False):
+    """A READ step of 1, 2 or 4 bytes. `from_prev` reads through the previous result, and
+    `keep_prev` leaves that pointer in place instead of replacing it with what was read."""
+    op = {4: CHAIN_READ32, 2: CHAIN_READ16, 1: CHAIN_READ8}.get(int(size))
+    if op is None:
+        raise BufferScriptError(f"a read is 1, 2 or 4 bytes, got {size}")
+    return ChainStep(op, int(address), target_from_prev=bool(from_prev),
+                     keep_prev=bool(keep_prev))
+
+
+def chain_write(address, value=0, size=2, *, from_prev=False, value_from_prev=False):
+    """A WRITE step of 1, 2 or 4 bytes, which reads itself back into the answer."""
+    op = {4: CHAIN_WRITE32, 2: CHAIN_WRITE16, 1: CHAIN_WRITE8}.get(int(size))
+    if op is None:
+        raise BufferScriptError(f"a write is 1, 2 or 4 bytes, got {size}")
+    return ChainStep(op, int(address), (int(value) & 0xFFFFFFFF,),
+                     target_from_prev=bool(from_prev), arg_from_prev=bool(value_from_prev))
+
+
+def parse_chain_step(text, resolve=None):
+    """-> a ChainStep from `OP:TARGET[,ARG]...`, which is how the CLI takes one.
+
+    `call:FlagSet,0x828`, `read16:0x02024EA4`, `write16:prev,7`, `read32:prev+4`. A target of
+    `prev` is the previous step's result, `prev+N` is N bytes past it, and an argument of `prev`
+    is the previous result itself. `resolve` turns a name into a THUMB pointer and defaults to
+    rom_map.callable_function, so only the functions this project has MEASURED are nameable.
+    """
+    resolve = rom_map.callable_function if resolve is None else resolve
+    head, _, rest = str(text).strip().partition(":")
+    head = head.strip().lower()
+    keep_prev = head.endswith("+keep")
+    if keep_prev:
+        head = head[:-len("+keep")].strip()
+    op = CHAIN_OPS.get(head)
+    if op is None:
+        raise BufferScriptError(
+            f"{text!r}: a step starts with one of {', '.join(sorted(CHAIN_OPS))}, each of which "
+            "may carry a +keep suffix meaning `do not make this step's result the new prev`")
+    fields = [f.strip() for f in rest.split(",")] if rest.strip() else []
+    if not fields:
+        raise BufferScriptError(f"{text!r}: a step needs a target")
+
+    def number(field):
+        try:
+            return int(field, 0) & 0xFFFFFFFF
+        except ValueError:
+            raise BufferScriptError(f"{text!r}: {field!r} is not a number") from None
+
+    target_text, args_text = fields[0], fields[1:]
+    target_from_prev, target = False, 0
+    if target_text.lower().startswith("prev"):
+        target_from_prev = True
+        tail = target_text[4:].strip()
+        if tail:
+            if not tail.startswith("+"):
+                raise BufferScriptError(
+                    f"{text!r}: a prev target is `prev` or `prev+N`, got {target_text!r}")
+            target = number(tail[1:].strip())
+    elif op == CHAIN_CALL:
+        try:
+            target = resolve(target_text)
+        except KeyError:
+            target = number(target_text)
+    else:
+        target = number(target_text)
+
+    arg_from_prev = False
+    args = []
+    for index, field in enumerate(args_text):
+        if field.lower() == "prev":
+            if index:
+                raise BufferScriptError(
+                    f"{text!r}: only the FIRST argument can be prev - the payload carries one "
+                    "previous result, not a register file")
+            arg_from_prev = True
+            args.append(0)
+        else:
+            args.append(number(field))
+    return ChainStep(op, target, tuple(args), target_from_prev=target_from_prev,
+                     arg_from_prev=arg_from_prev, keep_prev=keep_prev)
+
+
+def build_call_chain(steps, *, unsafe=False):
+    """The `call-chain` payload: up to CHAIN_MAX_STEPS steps, executed in order in one frame.
+
+    Every write needs `unsafe`: unlike save-write there is no scratch region here to be safe in,
+    because the target is wherever the game keeps the thing we are changing.
+    """
+    steps = list(steps)
+    if not steps:
+        raise BufferScriptError(
+            "a chain needs at least one step; an empty one would send back sixteen zeroes")
+    if len(steps) > CHAIN_MAX_STEPS:
+        raise BufferScriptError(
+            f"a chain is at most {CHAIN_MAX_STEPS} steps, got {len(steps)}")
+    code = bytearray(payload(CALL_CHAIN))
+    def put(offset, value):
+        code[offset:offset + 4] = (int(value) & 0xFFFFFFFF).to_bytes(4, "little")
+    put(CHAIN_COUNT_OFFSET, len(steps))
+    for index, step in enumerate(steps):
+        op = int(step.op) & 0xFF
+        if op not in CHAIN_OP_NAMES:
+            raise BufferScriptError(
+                f"step {index + 1}: {op} is not an opcode asm/call-chain.s dispatches; "
+                "the payload would stop there")
+        if len(step.args) > CHAIN_MAX_ARGS:
+            raise BufferScriptError(
+                f"step {index + 1}: a chained call passes at most {CHAIN_MAX_ARGS} arguments, in "
+                f"r0..r3; the stack arguments are what `{CALL}` is for (got {len(step.args)})")
+        if op == CHAIN_CALL:
+            if step.target_from_prev:
+                raise BufferScriptError(
+                    f"step {index + 1}: a call to an address computed on the console cannot be "
+                    "checked from here, and a wrong one hangs the Mystery Gift menu with no way "
+                    "out. Name the function.")
+            if not step.target & 1:
+                raise BufferScriptError(
+                    f"step {index + 1}: 0x{step.target:X} is an ARM pointer; the ROM is THUMB, so "
+                    "a callable address has bit 0 set (the `bx` selects the state from it)")
+            if not ROM_BASE <= step.target < SCAN_MAX_ADDRESS:
+                raise BufferScriptError(
+                    f"step {index + 1}: 0x{step.target:X} is not in the cartridge; calling it "
+                    "would run whatever is there")
+        else:
+            width = CHAIN_WIDTH[op]
+            if not step.target_from_prev:
+                if step.target % width:
+                    raise BufferScriptError(
+                        f"step {index + 1}: 0x{step.target:X} is not {width}-byte aligned")
+                if not SCAN_MIN_ADDRESS <= step.target < SCAN_MAX_ADDRESS:
+                    raise BufferScriptError(
+                        f"step {index + 1}: 0x{step.target:X} is outside the memory the CPU can "
+                        f"reach: 0x{SCAN_MIN_ADDRESS:X}..0x{SCAN_MAX_ADDRESS:X}")
+            if op in CHAIN_WRITES and not unsafe:
+                raise BufferScriptError(
+                    f"step {index + 1}: {CHAIN_OP_NAMES[op]} writes the console's live memory, "
+                    "which the console commits to flash when it saves. There is no scratch "
+                    "region to be safe in here, so every write needs --write-unsafe.")
+        base = CHAIN_STEPS_OFFSET + CHAIN_STEP_SIZE * index
+        put(base, step.op_word)
+        put(base + 4, step.target)
+        for slot in range(CHAIN_MAX_ARGS):
+            put(base + 8 + 4 * slot, step.args[slot] if slot < len(step.args) else 0)
+    return bytes(code)
+
+
+def chain_parameters(code):
+    """-> {count, steps} read back out of a built payload, as ChainSteps."""
+    code = bytes(code)
+    def word(offset):
+        return int.from_bytes(code[offset:offset + 4], "little")
+    count = min(word(CHAIN_COUNT_OFFSET), CHAIN_MAX_STEPS)
+    steps = []
+    for index in range(count):
+        base = CHAIN_STEPS_OFFSET + CHAIN_STEP_SIZE * index
+        op_word = word(base)
+        argc = min((op_word >> CHAIN_ARGC_SHIFT) & CHAIN_ARGC_MASK, CHAIN_MAX_ARGS)
+        steps.append(ChainStep(
+            op_word & 0xFF, word(base + 4),
+            tuple(word(base + 8 + 4 * slot) for slot in range(argc)),
+            target_from_prev=bool(op_word & CHAIN_TARGET_FROM_PREV),
+            arg_from_prev=bool(op_word & CHAIN_ARG_FROM_PREV),
+            keep_prev=bool(op_word & CHAIN_KEEP_PREV)))
+    return {"count": word(CHAIN_COUNT_OFFSET), "steps": steps}
+
+
+def read_call_chain(dump):
+    """-> what the chain answered, from the 80 bytes it sent back."""
+    dump = bytes(dump)
+    if len(dump) < CHAIN_ANSWER_SIZE:
+        raise BufferScriptError(
+            f"a chain answers with {CHAIN_ANSWER_SIZE} bytes, got {len(dump)}")
+    words = [int.from_bytes(dump[i:i + 4], "little") for i in range(0, CHAIN_ANSWER_SIZE, 4)]
+    calls, count, executed, refused = words[:4]
+    return {"calls": calls, "count": count, "executed": min(executed, CHAIN_MAX_STEPS),
+            "refused": refused, "values": words[4:4 + CHAIN_MAX_STEPS]}
+
+
+def describe_call_chain(dump, steps=None):
+    """The same, as lines to log, each result beside the step that produced it."""
+    got = read_call_chain(dump)
+    lines = [f"call-chain: {got['executed']} of {got['count']} step(s) ran in {got['calls']} "
+             "call(s) = frames"]
+    asked = list(steps or ())
+    for index in range(got["executed"]):
+        value = got["values"][index]
+        step = asked[index].describe() if index < len(asked) else "step"
+        lines.append(f"   {index + 1}. {step} -> 0x{value:08X} ({value & 0xFFFF} as a u16)")
+    if got["refused"]:
+        lines.append(f"   STOPPED: op word 0x{got['refused']:08X} is not one this payload has, "
+                     "so nothing after it ran")
+    elif got["executed"] < got["count"]:
+        lines.append(f"   STOPPED after {got['executed']} of {got['count']}: a step's op word was "
+                     "zero, which is END")
+    return lines
+
+
 # --- create-mon: a ROM call that takes eight arguments -------------------------------------------
 #   void CreateMon(struct Pokemon *mon, u16 species, u8 level, u8 fixedIV,
 #                  u8 hasFixedPersonality, u32 fixedPersonality, u8 otIdType, u32 fixedOtId)
@@ -1243,6 +1550,13 @@ SCRIPT_REGISTRY = {
         "--call-arg, --call-watch); the payload writes nothing itself, but the callee may, so the "
         "address has to have been read as code first",
         None),
+    CALL_CHAIN: BufferScriptSpec(
+        CALL_CHAIN,
+        "run a LIST of ROM calls and memory accesses in one frame and send back a word for each, "
+        "any step able to use the previous step's result as its address - which is how a function "
+        "that returns a pointer (GetVarPointer) becomes a write (--chain-step, repeatable; a write "
+        "step needs --write-unsafe)",
+        None),
 }
 
 
@@ -1373,10 +1687,10 @@ def script_choices():
 # 4 bytes because a new payload had been added to neither list. A new payload goes in here.
 DUMP_SCRIPTS = frozenset({
     MEMORY_DUMP, SAVE_DUMP, ANCHORS, SAVE_WRITE, MEMORY_SCAN, TABLE_SCAN, RNG_TRACE,
-    STRING_GATHER, CREATE_MON, CALL,
+    STRING_GATHER, CREATE_MON, CALL, CALL_CHAIN,
 })
 DECODED_SCRIPTS = frozenset({
-    MEMORY_SCAN, TABLE_SCAN, RNG_TRACE, STRING_GATHER, CREATE_MON, CALL,
+    MEMORY_SCAN, TABLE_SCAN, RNG_TRACE, STRING_GATHER, CREATE_MON, CALL, CALL_CHAIN,
 })
 # A payload whose answer the log decodes must first be one whose answer comes back as bytes.
 assert DECODED_SCRIPTS <= DUMP_SCRIPTS
@@ -1411,6 +1725,9 @@ PATCHED_SPANS = {
     # The operands and the six result words: everything a built call differs from the payload by.
     CALL: ((CALL_FUNCTION_OFFSET,
             CALL_RESULT_OFFSET - CALL_FUNCTION_OFFSET + CALL_ANSWER_SIZE),),
+    # The count, the sixteen steps and the answer: everything ahead of the code.
+    CALL_CHAIN: ((CHAIN_COUNT_OFFSET,
+                  CHAIN_RESULT_OFFSET - CHAIN_COUNT_OFFSET + CHAIN_ANSWER_SIZE),),
 }
 
 

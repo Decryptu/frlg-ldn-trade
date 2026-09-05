@@ -195,6 +195,16 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               "such as SeedRng, this is the only evidence the call did what it was called for"
               % rom_map.GRNG_VALUE))
     parser.add_argument(
+        "--chain-step", action="append", default=None, metavar="STEP",
+        help=("with --buffer-script call-chain: one step, repeatable, up to %d, run in order in "
+              "one frame. `call:NAME_OR_ADDR[,ARG]...` calls a ROM function (%s, or a THUMB "
+              "address); `read32|read16|read8:ADDR` reads; `write32|write16|write8:ADDR,VALUE` "
+              "writes and reads itself back, and needs --write-unsafe. A target of `prev` is the "
+              "PREVIOUS step's result and `prev+N` is N bytes past it, which is how a function "
+              "that returns a pointer becomes a write; an op may carry +keep to leave prev alone. "
+              "Example: --chain-step call:GetVarPointer,0x4024 --chain-step write16:prev,7"
+              % (buffer_script.CHAIN_MAX_STEPS, ", ".join(sorted(rom_map.CALLABLE)))))
+    parser.add_argument(
         "--create-mon-call", type=lambda v: int(v, 0), default=None, metavar="ADDR",
         help=("with --buffer-script create-mon: the ROM function to call with eight arguments, a "
               "THUMB pointer. The default is CreateMon at 0x%08X, read off this console in bs42; "
@@ -484,10 +494,12 @@ def build_run_config(parser, args):
             if write_data is not None and args.buffer_script != buffer_script.SAVE_WRITE:
                 parser.error(f"--write-* belongs to --buffer-script {buffer_script.SAVE_WRITE}")
             if args.write_unsafe and args.buffer_script not in (
-                    buffer_script.SAVE_WRITE, buffer_script.CREATE_MON):
+                    buffer_script.SAVE_WRITE, buffer_script.CREATE_MON,
+                    buffer_script.CALL_CHAIN):
                 parser.error(
-                    f"--write-unsafe belongs to --buffer-script {buffer_script.SAVE_WRITE} and "
-                    f"{buffer_script.CREATE_MON}, the two that write the console's memory")
+                    f"--write-unsafe belongs to --buffer-script {buffer_script.SAVE_WRITE}, "
+                    f"{buffer_script.CREATE_MON} and {buffer_script.CALL_CHAIN}, the three that "
+                    "write the console's memory")
             if args.buffer_script != buffer_script.CREATE_MON \
                     and (args.create_mon_call is not None or args.create_mon_destination
                          or args.create_mon_append or args.create_mon_append_dry_run):
@@ -503,6 +515,10 @@ def build_run_config(parser, args):
             if args.buffer_script != buffer_script.CALL \
                     and (args.call_address is not None or args.call_arg or args.call_watch):
                 parser.error(f"--call-* belongs to --buffer-script {buffer_script.CALL}")
+            if args.buffer_script != buffer_script.CALL_CHAIN and args.chain_step:
+                parser.error(f"--chain-step belongs to --buffer-script {buffer_script.CALL_CHAIN}")
+            chain_steps = tuple(buffer_script.parse_chain_step(step)
+                                for step in (args.chain_step or ()))
             if args.buffer_script != buffer_script.STRING_GATHER \
                     and args.gather_address is not None:
                 parser.error(
@@ -521,7 +537,7 @@ def build_run_config(parser, args):
                 trace_address=args.trace_address, trace_call=args.trace_call,
                 trace_samples=args.trace_samples,
                 call_address=args.call_address, call_args=tuple(args.call_arg or ()),
-                call_watch=args.call_watch,
+                call_watch=args.call_watch, chain_steps=chain_steps,
                 gather_address=args.gather_address, gather_count=args.gather_count,
                 gather_stride=args.gather_stride, gather_maxlen=args.gather_maxlen,
                 create_mon_call=args.create_mon_call,

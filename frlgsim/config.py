@@ -584,6 +584,10 @@ class BufferScriptPayload:
     call_address: int | None = None
     call_args: tuple = ()
     call_watch: int = 0
+    # call-chain: a LIST of those, as buffer_script.ChainStep, run in one frame. `write_unsafe`
+    # covers every write step here, because a chain has no scratch region to be safe in: its
+    # targets are wherever the game keeps the thing being changed.
+    chain_steps: tuple = ()
     # string-gather: an array of pointers to follow, and how far apart they are. This is the one
     # payload that dereferences, so the answer is the strings rather than a window around them.
     gather_address: int | None = None
@@ -671,6 +675,16 @@ class BufferScriptPayload:
             raise ValueError(
                 f"a function to call with chosen arguments is only meaningful with "
                 f"{buffer_script.CALL}")
+        if self.script == buffer_script.CALL_CHAIN:
+            if not self.chain_steps:
+                raise ValueError(
+                    f"{buffer_script.CALL_CHAIN} needs at least one step (--chain-step)")
+            # A fixed-size answer however many steps ran, so the host's length check stays the
+            # proof that the payload repointed the send.
+            object.__setattr__(self, "dump_size", buffer_script.CHAIN_ANSWER_SIZE)
+        elif self.chain_steps:
+            raise ValueError(
+                f"a list of steps is only meaningful with {buffer_script.CALL_CHAIN}")
         if self.script == buffer_script.STRING_GATHER:
             if self.gather_address is None:
                 raise ValueError(
@@ -739,6 +753,9 @@ class BufferScriptPayload:
         if self.script == buffer_script.CALL:
             return buffer_script.build_call(
                 self.call_address, self.call_args, self.call_watch)
+        if self.script == buffer_script.CALL_CHAIN:
+            return buffer_script.build_call_chain(
+                self.chain_steps, unsafe=self.write_unsafe)
         if self.script == buffer_script.STRING_GATHER:
             return buffer_script.build_string_gather(
                 self.gather_address, self.gather_count, self.gather_stride,

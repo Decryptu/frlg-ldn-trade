@@ -721,6 +721,70 @@ descend from 0xDF65, the answer names the hook instead of leaving a run unexplai
 What a caught Pokemon says about `gRngValue`, and how a state is recovered from one, is
 [on the RNG page](rng.md).
 
+## `call-chain`: a list of calls, in one frame
+
+`call` makes one call. Since bs84 named twenty-four workers, one call is the wrong unit: every
+question about the console's game state is *read it, change it, read it back*, and the expensive
+thing is the run, not the call. `call-chain` runs up to sixteen steps in order in a single frame and
+sends back one word per step.
+
+    ./scratchpad/run_mg_fast.sh bsNN --buffer-script call-chain \
+        --chain-step call:FlagGet,0x828 \
+        --chain-step call:FlagSet,0x828 \
+        --chain-step call:FlagGet,0x828 --version firered
+
+A step is 24 bytes - an op word, a target, and four argument words - and the ops are `call`,
+`read32`/`read16`/`read8` and `write32`/`write16`/`write8`. `--chain-step` takes them as
+`OP:TARGET[,ARG]...`, where a call's target may be one of the functions this project has **measured**
+(`rom_map.CALLABLE`: `AddBagItem`, `FlagSet`, `GetVarPointer`, `IncrementGameStat`, …) rather than an
+address. A name the decomp knows is not enough - the decomp's addresses are a different build's.
+
+**PREV is the one new mechanism, and it exists for one shape.** A step can take its target or its
+first argument from the previous step's result:
+
+    --chain-step call:GetVarPointer,0x4024      PREV = the address the GAME computed
+    --chain-step read16+keep:prev               the value before, PREV untouched
+    --chain-step write16:prev,7                 the store, read back by the payload itself
+    --chain-step read16:prev                    the value after
+
+There is no `VarSet` among the workers: `ScrCmd_setvar` writes through `GetVarPointer`'s return
+[decomp:src/scrcmd.c:472], so setting a var the game's own way *is* a call followed by an indirect
+store, and no single-call payload can do it. Two rules keep that sequence honest, and both are in
+the payload rather than in the builder:
+
+- **a write never becomes PREV**, so a pointer survives the store made through it;
+- **a read does**, unless the step carries `+keep` - which is exactly what a read *before* the write
+  needs, or it would replace the pointer with the value it just read.
+
+**Every write reads itself back**, and that read is what lands in the answer. A write whose value
+does not come back is a refused write or a target that is not what we thought, and there is no other
+way to tell those apart from here.
+
+    0x000  b .Lcode
+    0x004  count       how many steps are meant, 0..16
+    0x010  steps[16]   {op, target, a0, a1, a2, a3}, 24 bytes each
+    0x190  result      calls, count, steps executed, the op word that stopped it
+    0x1A0  values[16]  one word per step, in order
+
+The answer is the 80 bytes at 0x190, and `*param` comes back as the number of steps executed. A
+chain cannot fail silently: an opcode the payload does not have stops the run and is named in the
+answer beside everything that did run, and the step count is capped in the ARM as well as in the
+builder, so a count that overran the step area could not walk off the end of the image.
+
+**What the builder refuses**, all of it offline: an empty chain, more than sixteen steps, a call to
+an ARM pointer or to an address outside the cartridge, a call whose target comes from PREV (an
+address computed on the console cannot be checked from here, and a wrong one hangs the Mystery Gift
+menu with no way out), an unaligned or unreachable read, more than four arguments - the stack
+arguments are `call`'s business - and **any write at all without `--write-unsafe`**. Unlike
+`save-write` there is no scratch region to be safe in here: a chain writes wherever the game keeps
+the thing being changed, and the console commits its save to flash afterwards.
+
+The offline fixtures are the console's own `SeedRng` and `Random` bytes, as bs14 and bs13 read them
+out of the cartridge, plus a stub that returns a pointer the way `GetVarPointer` does.
+`scratchpad/mg_client_harness.py --buffer-script call-chain` runs the whole six-step sequence above
+through a simulated console and a real Mystery Gift session, so the payload, the send repointing and
+the host's decode are all proven before a run is spent.
+
 ## `table-scan`: finding a table by its shape
 
 Every address found by searching so far rested on a constant that only one place could hold:
@@ -849,8 +913,11 @@ building each payload's real distribution. Same family as the `run_mg_fast.sh --
 
 ## What is left
 
-1. **Which function to call next.** Calling into the ROM is done; what is missing is a reason. The
-   scan finds a function by any constant only it uses, and `call` / `rng-trace --trace-call` invoke
-   it.
+1. **Which function to call next.** Answered at bs82/bs84/bs85: `frlgsim/scrcmd_names.HANDLERS`
+   holds all 214 handlers and `rom_map` the workers behind twenty-four of them, and `call-chain`
+   calls them in lists. What is left is not addresses but *questions* - a worker whose effect the
+   player can see and which nothing else could have produced.
 2. **Writing a live field rather than scratch.** `--write-unsafe` exists; what it needs is a field
-   whose effect the player can check on the console's own screen.
+   whose effect the player can check on the console's own screen. `call-chain` is the shape for it:
+   read it, write it, read it back in the same frame, so the answer carries its own before-and-after
+   rather than needing a second run.
