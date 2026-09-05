@@ -422,23 +422,3 @@ def test_tracer_writes_jsonl(tmp_path=None):
     assert kinds == ["udp_out", "advert", "summary"]
     assert all(r["rec"] == "trace" and "ts" in r for r in recs)
     assert recs[0]["hex"] == "5c00" and recs[2]["counts"]["advert"] == 1
-
-
-# --- standalone runner (no pytest) ------------------------------------------------------------
-def _run():
-    tests = sorted((n, f) for n, f in globals().items() if n.startswith("test_") and callable(f))
-    failed = 0
-    for name, fn in tests:
-        try:
-            fn()
-        except Exception as e:                                  # noqa: BLE001 - report and continue
-            failed += 1
-            print(f"FAIL  {name}: {type(e).__name__}: {e}")
-        else:
-            print(f"ok    {name}")
-    print(f"\n{len(tests) - failed}/{len(tests)} passed")
-    return failed
-
-
-if __name__ == "__main__":
-    sys.exit(1 if _run() else 0)

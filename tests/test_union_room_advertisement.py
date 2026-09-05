@@ -151,14 +151,8 @@ def test_union_room_activity_flag_reaches_host_options():
 
 @functools.lru_cache(maxsize=1)
 def _party_files():
-    """Two throwaway party files, written where the test can be sure of them.
-
-    These tests used to name PARTY1.pk3 and PARTY2.pk3 relative to the working directory, which
-    only ever worked because two untracked files happened to sit in the repo root; the session-27
-    reorganisation moved them to scratchpad/ and five tests went red. `*.pk3` is gitignored on
-    purpose (CLAUDE.md: never commit one), so this writes its own rather than depending on a file
-    outside the repo.
-    """
+    """Two throwaway party files. `*.pk3` is gitignored (CLAUDE.md: never commit one), so the
+    tests write their own rather than depending on a file outside the repo."""
     directory = tempfile.mkdtemp(prefix="frlg-party-")
     paths = []
     for name, species, level in (("PARTY1.pk3", 129, 5),        # MAGIKARP, trade fodder
@@ -201,13 +195,6 @@ def test_host_app_advertises_the_chosen_in_room_activity():
     """The run we are about to spend: a console standing in the room needs IN_UNION_ROOM set."""
     activity = beacon.IN_UNION_ROOM | beacon.ACTIVITY_TRADE
     assert _advertised_activity(True, activity) == activity
-
-
-if __name__ == "__main__":
-    for name, fn in sorted(globals().items()):
-        if name.startswith("test_") and callable(fn):
-            fn()
-            print("ok", name)
 
 
 def _advertisements(union_room):

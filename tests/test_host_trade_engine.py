@@ -524,24 +524,6 @@ def test_host_session_consumes_shared_plan_and_profile():
     assert session.trade.lp.name == "Red"
 
 
-if __name__ == "__main__":
-    test_host_trade_timing_defaults_are_compatible_and_immutable()
-    test_host_trade_engine_uses_supplied_timing()
-    test_two_trades_then_graceful_cancel_and_close()
-    test_final_menu_waits_for_two_sided_native_cancel_decision()
-    test_early_child_cancel_is_latched_until_five_second_menu_wait()
-    test_extra_trade_selection_is_declined_without_false_exit()
-    test_leader_never_advances_without_child_ack_opcode()
-    test_entry_route_matches_native_and_exit_key_is_one_shot()
-    test_child_close_confirmation_keeps_peer_traffic_alive_for_fifteen_seconds()
-    test_save_chain_requires_six_consecutive_rounds()
-    test_party_pair_waits_for_link_task_idle_not_standby()
-    test_host_party_payloads_are_identical_to_client_payloads_for_1_to_6_mons()
-    test_host_identity_uses_redundant_gen3_name_terminators()
-    test_empty_mail_block_matches_firered_clear_mail_struct()
-    print("host trade engine tests: OK")
-
-
 def test_leave_menu_report_separates_a_silent_console_from_a_steadily_idling_one():
     """A console idling across the mark appends no new run, because feed_child_slot
     increments an unbroken run in place. Without frame counts that reads identically to a

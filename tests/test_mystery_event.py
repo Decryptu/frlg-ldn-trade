@@ -263,10 +263,6 @@ def test_end_to_end_a_console_holding_another_card_is_asked_before_anything_runs
     assert engine.server.mevent_status is None
 
 
-if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-q"]))
-
-
 # --- the questionnaire gate ------------------------------------------------------------------
 
 def _game_data(*, flag_id=0, questionnaire=(), profile=(), battles_won=0, trades=0):
@@ -457,12 +453,9 @@ def test_an_illegal_species_or_move_is_refused():
 
 
 def test_the_french_check_passes_language_safe_words_and_flags_guesses():
-    """bs18-bs36 changed what this can assert. `check` used to flag most of the vocabulary
-    because the French word for a slot had to be seen on a screen one at a time; EC_WORD_TRADE
-    was the example of an unverified guess here. All 1006 language-dependent slots have since
-    been read out of the console's own sEasyChatGroup_* tables, so a real word no longer needs
-    flagging - bs20 read this one as ECHANGER. What `check` still catches is an id that is not a
-    word at all."""
+    """All 1006 language-dependent slots have been read out of the console's own
+    sEasyChatGroup_* tables (bs18-bs36), so `check` flags no real word: what it still catches is
+    an id that is not a word at all."""
     from frlgsim import easychat, easychat_french
     assert easychat_french.check([easychat.species_word(55)]) == ()
     assert easychat_french.check([easychat.WORDS["hello"]]) == ()          # observed on hardware

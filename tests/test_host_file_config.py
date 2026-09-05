@@ -128,10 +128,3 @@ def test_public_override_api_is_strict_and_converts_to_runtime_models():
         "phy2", "/keys/prod.keys", 0x1006FA0233F8000)
     _raises(lambda: loaded.with_overrides({"host": {"channel": True}}),
             "host.channel")
-
-
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-    print("Host TOML configuration tests: OK")

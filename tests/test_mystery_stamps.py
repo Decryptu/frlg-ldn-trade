@@ -105,8 +105,6 @@ def test_virtual_offsets_are_relocation_safe_and_point_inside_the_script():
 
 
 def test_builder_alias_flag_validation_and_custom_level():
-    assert wonder_card.build_raikou_cutscene_gift() == \
-        wonder_card.build_legendary_beast_cutscene_gift()
     card, script = wonder_card.build_legendary_beast_cutscene_gift(
         level=100, flag_id=1019)
     assert int.from_bytes(card[:2], "little") == 1019
@@ -235,11 +233,3 @@ def test_all_three_clis_default_to_the_composed_fixed_level_65_cutscene():
     assert script != legacy_script
     assert script == gift_registry.GIFT_REGISTRY.build_distribution(
         wonder_card.GIFT_BEAST_CUTSCENE).ram_script
-
-
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-            print(f"ok    {name}")
-    print("Legendary-beast Mystery Gift tests: OK")

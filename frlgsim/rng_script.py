@@ -1,44 +1,10 @@
-"""A field script that sets gRngValue in the OVERWORLD, where our native code cannot reach.
+"""A field script that sets gRngValue with `setptr` [decomp:src/scrcmd.c:300], in the OVERWORLD.
 
-bs50 seeded the RNG during a Mystery Gift link and bs51 proved it never got out: the encounter was
-1,898,278,119 turns from the value we set. The reason is not timing and not a bug - it is the menu
-structure. Backing out of Mystery Gift runs
-`MainCB_FreeAllBuffersAndReturnToInitTitleScreen` -> `CB2_InitTitleScreen`
-[decomp:src/mystery_gift_menu.c:463], which calls `StartTimer1` [src/title_screen.c:351], and
-pressing START then re-runs `SeedRng(REG_TM1CNT_L)` [:735]. THERE IS NO ROUTE FROM MYSTERY GIFT TO
-THE OVERWORLD THAT DOES NOT RESEED, so the link is the wrong place to do it from.
-
-A RAM SCRIPT IS THE RIGHT PLACE, because it runs in the overworld, after the reseed.
-`initramscript` binds a field script to a map object (proven on hardware, mev03), `GetRamScript`
-hands the saved body to the ordinary field engine when the player interacts [decomp:src/script.c],
-and the field engine has a command that writes memory:
-
-    bool8 ScrCmd_setptr(struct ScriptContext * ctx)      // opcode 0x11
-    {
-        u8 value = ScriptReadByte(ctx);
-        *(u8 *)ScriptReadWord(ctx) = value;
-    }
-[decomp:src/scrcmd.c:300]
-
-An immediate BYTE and an absolute ADDRESS, both read straight out of the script. Four of them set
-`gRngValue` to anything we like.
-
-WHY THIS AND NOT `callnative`. `ScrCmd_callnative` (opcode 0x23) calls a function pointer out of
-the script, which would be native code in the overworld and strictly more powerful. It is also
-strictly harder to aim: our code would live in `gSaveBlock1Ptr->ramScript.data.script`, and
-gSaveBlock1Ptr carries a random 4-aligned offset re-rolled on every battle and load
-[SetSaveBlocksPointers, decomp:src/load_save.c:75] - bs45 and bs46 measured it moving 76 bytes
-between two runs minutes apart. Aiming at a moving target needs the address read first and a sled
-to absorb what is left. `setptr` needs neither, because **gRngValue is not in the save**: it is a
-link-time IWRAM global at 0x03004220, read out of Random's own literal pool in bs14, and it does
-not move. The weaker command is the one that fits the target. Keep callnative for something that
-actually needs it.
-
-THE SCRIPT ENDS WITH `end` (0x02), NOT `endram` (0x0d). `ScrCmd_endram` calls ClearRamScript
-[decomp:src/scrcmd.c:262]; `ScrCmd_end` does not. So the binding SURVIVES, and the player can
-re-trigger it by talking to the object again - one Mystery Gift session, then as many reseeds as
-the experiment needs. That matters because a RAM script and a Wonder Card are mutually exclusive
-(one slot, confirmed mev03-mev06), so installing one is not free.
+The Mystery Gift link is the wrong place to seed from: every route out of the menu re-runs
+`SeedRng` on the title screen, measured at bs50/bs51. A RAM script runs after that reseed, and
+gRngValue is a link-time IWRAM global at 0x03004220, so `setptr` needs no address read and no sled
+- unlike `callnative`, which would have to aim at a save block that moves. The script ends with
+`end` (0x02), not `endram`, so the binding survives and can be re-triggered. docs/rng.md.
 """
 
 from . import rom_map

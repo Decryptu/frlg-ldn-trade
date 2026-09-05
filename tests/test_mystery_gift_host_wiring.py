@@ -197,24 +197,3 @@ def test_engine_exposes_the_contract_the_host_application_drives():
     except RuntimeError:
         return
     raise AssertionError("mark_disconnect_sent before the close handshake must fail")
-
-
-# --- standalone runner ----------------------------------------------------------------------------
-def _run():
-    tests = sorted((n, f) for n, f in globals().items()
-                   if n.startswith("test_") and callable(f))
-    failed = 0
-    for name, fn in tests:
-        try:
-            fn()
-        except Exception as e:                                  # noqa: BLE001
-            failed += 1
-            print(f"FAIL  {name}: {type(e).__name__}: {e}")
-        else:
-            print(f"ok    {name}")
-    print(f"\n{len(tests) - failed}/{len(tests)} passed")
-    return failed
-
-
-if __name__ == "__main__":
-    sys.exit(1 if _run() else 0)

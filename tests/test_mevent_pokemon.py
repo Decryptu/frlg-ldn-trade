@@ -157,7 +157,3 @@ def test_a_full_party_is_reported_rather_than_overwritten():
     assert result.status == mystery_event.STATUS_INCOMPATIBLE
     assert result.effect("givepokemon") is None
     assert result.effect("givepokemon_full_party") is not None
-
-
-if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-q"]))

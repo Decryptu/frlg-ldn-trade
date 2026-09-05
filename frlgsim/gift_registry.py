@@ -1,7 +1,7 @@
 import argparse
 from dataclasses import dataclass
 
-from . import stamp_rally, wonder_card, wonder_card_events
+from . import wonder_card_events
 from .gift_composer import (
     GiftSpec, StampRallySpec, WonderGift, compile_definition, validate_definition,
 )
@@ -53,20 +53,6 @@ class GiftRegistry:
             raise ValueError(f"duplicate Mystery Gift slug {entry.slug!r}")
         self._entries[entry.slug] = entry
         return entry
-
-    def register_legacy(self, slug, builder, *, default_flag_id=1003,
-                        live=True, static=True, description="legacy Mystery Gift"):
-        def build(flag_id):
-            value = builder(flag_id=flag_id)
-            if isinstance(value, stamp_rally.MysteryGiftDistribution):
-                return value
-            card, ram_script = value
-            return stamp_rally.MysteryGiftDistribution(card, ram_script)
-
-        return self.register(GiftCatalogEntry(
-            slug=slug, default_flag_id=default_flag_id,
-            live=live, static=static, description=description,
-            builder=build))
 
     def register_definition(self, definition):
         validate_definition(definition)

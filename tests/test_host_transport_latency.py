@@ -42,10 +42,3 @@ def test_host_udp_tx_is_pinned_to_ldn_tap():
         transport.socket.SOL_SOCKET, transport.socket.SO_BINDTODEVICE, b"ldn-tap\x00")
     tx.bind.assert_called_once_with(("0.0.0.0", transport.PIA_PORT))
     rx.bind.assert_called_once_with(("ldn-tap", 0))
-
-
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-    print("host transport latency tests: OK")

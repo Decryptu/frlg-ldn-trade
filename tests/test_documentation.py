@@ -28,10 +28,3 @@ def test_readme_local_links_exist():
     links = re.findall(r"\[[^]]+\]\((?!https?://)([^)#]+)", readme)
     assert links
     assert all(Path(link).exists() for link in links)
-
-
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-    print("Documentation tests: OK")

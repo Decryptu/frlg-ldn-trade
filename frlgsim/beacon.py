@@ -198,20 +198,3 @@ def mutate_beacon(captured_app_data, *, name=None, trainer_id=None, rfu_session_
     if game_data_kwargs:
         rec[20:24] = game_data_word(**game_data_kwargs).to_bytes(4, "little")
     return header + b85_encode(bytes(rec))
-
-
-def _selftest():
-    from .transport import _b85_decode, _frlg_name
-    rec = build_record(trainer_id=0x2288, name="EMU", rfu_session_id=0x0002, trade_species=277)
-    assert len(rec) == RECORD_SIZE
-    round_tripped = _b85_decode(b85_encode(rec))[:RECORD_SIZE]
-    assert round_tripped == rec, (round_tripped.hex(), rec.hex())
-    assert int.from_bytes(round_tripped[0:2], "little") == 0x2288
-    assert _frlg_name(round_tripped[2:10]) == "EMU"
-    assert int.from_bytes(round_tripped[10:12], "little") == 0x0002
-    assert int.from_bytes(round_tripped[20:24], "little") >> 16 == 277
-    print("beacon self-test OK (record round-trips through _b85_decode)")
-
-
-if __name__ == "__main__":
-    _selftest()

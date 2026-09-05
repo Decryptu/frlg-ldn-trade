@@ -7,7 +7,7 @@ from collections import deque
 from . import (barrier as barriermod, block, buffer_script, charmap, ereader_trainer,
                linkplayer, mg_link, mg_script, mystery_event, rfu, wonder_news)
 from . import mystery_gift as mg
-from .mystery_gift import (MG_LINKID_CLIENT_SCRIPT, MG_LINKID_GAME_DATA, MG_LINKID_GAME_STAT,
+from .mystery_gift import (MG_LINKID_GAME_DATA, MG_LINKID_GAME_STAT,
                            MG_LINKID_READY_END, MG_LINKID_RESPONSE)
 
 ACTIVITY_WONDER_CARD = 21           # include/constants/union_room.h:46

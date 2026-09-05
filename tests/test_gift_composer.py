@@ -749,15 +749,6 @@ def test_registry_supports_composed_static_gifts_and_live_only_rally_slots():
     assert registry.live_choices == before
 
 
-if __name__ == "__main__":
-    tests = [(name, value) for name, value in sorted(globals().items())
-             if name.startswith("test_") and callable(value)]
-    for name, test in tests:
-        test()
-        print("ok   ", name)
-    print(f"\n{len(tests)}/{len(tests)} passed")
-
-
 def test_a_gift_mon_can_be_flagged_a_fateful_encounter_at_its_real_slot():
     """The official Surf Pichu script pairs `setmonmodernfatefulencounter` with `setmonmetlocation
     ..., METLOC_FATEFUL_ENCOUNTER` [decomp:data/mystery_event_msg.s:71]. Both take the slot through

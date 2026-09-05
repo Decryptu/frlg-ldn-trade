@@ -347,10 +347,3 @@ def test_a_hunt_too_slow_to_run_is_refused_on_the_command_line():
         else:
             raise AssertionError("a 6.5-million-state search should have been refused")
     assert "ceiling" in err.getvalue()
-
-
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-    print("Mystery Gift shared configuration tests: OK")

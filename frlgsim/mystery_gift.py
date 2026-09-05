@@ -77,14 +77,3 @@ def _crc16_tabledriven(data):
         crc ^= b
         crc = (hi ^ table[crc & 0xFF]) & 0xFFFF
     return (~crc) & 0xFFFF
-
-
-def _selftest():
-    for sample in (b"", b"\x00", b"GameFreak inc.", bytes(range(256)), b"\xff" * 333):
-        assert crc16(sample) == _crc16_tabledriven(sample), sample
-    assert MG_LINK_MAX_CHUNK == 252 and MG_LINK_HEADER_SIZE == 6
-    print("mystery_gift self-test OK (crc16 bitwise == table-driven)")
-
-
-if __name__ == "__main__":
-    _selftest()

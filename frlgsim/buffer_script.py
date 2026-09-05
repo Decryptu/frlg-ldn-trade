@@ -1687,14 +1687,6 @@ class _Machine:
         )
 
 
-def emulation_available():
-    try:
-        import unicorn  # noqa: F401
-    except ImportError:
-        return False
-    return True
-
-
 def emulate(code, *, param=0, sav2=b"", sav1=b"", memory=None, send_size=4,
             send_ident=0, rom=None, instruction_limit=_INSTRUCTION_LIMIT):
     """Run a payload the way Client_RunBufferScript does, on a model of the console's memory.

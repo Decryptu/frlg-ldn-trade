@@ -14,7 +14,31 @@ from .mystery_gift import (
     SEND_TYPE_DISALLOWED,
 )
 from .stamp_rally import MysteryGiftDistribution
-from .wonder_card import WONDER_CARD_SIZE, build_wonder_card, flag_for_flag_id
+from .wonder_card import build_wonder_card, flag_for_flag_id
+from .scrcmd import (
+    COMPARE_EQ as _COMPARE_EQ, OP_ADDVAR as _OP_ADDVAR,
+    OP_BUFFERNUMBERSTRING as _OP_BUFFERNUMBERSTRING, OP_CALLSTD as _OP_CALLSTD,
+    OP_CHECKFLAG as _OP_CHECKFLAG, OP_CHECKITEMSPACE as _OP_CHECKITEMSPACE,
+    OP_CLEARFLAG as _OP_CLEARFLAG, OP_CLOSEMESSAGE as _OP_CLOSEMESSAGE,
+    OP_COMPARE_VAR_TO_VALUE as _OP_COMPARE_VAR_TO_VALUE, OP_COPYBYTE as _OP_COPYBYTE,
+    OP_CREATEVOBJECT as _OP_CREATEVOBJECT, OP_DELAY as _OP_DELAY,
+    OP_DOWILDBATTLE as _OP_DOWILDBATTLE, OP_END as _OP_END, OP_FACEPLAYER as _OP_FACEPLAYER,
+    OP_GETPARTYSIZE as _OP_GETPARTYSIZE, OP_GETPLAYERXY as _OP_GETPLAYERXY,
+    OP_GIVEEGG as _OP_GIVEEGG, OP_GIVEMON as _OP_GIVEMON, OP_LOCK as _OP_LOCK,
+    OP_PLAYFANFARE as _OP_PLAYFANFARE, OP_RELEASE as _OP_RELEASE, OP_SETFLAG as _OP_SETFLAG,
+    OP_SETMONMETLOCATION as _OP_SETMONMETLOCATION,
+    OP_SETMONMODERNFATEFULENCOUNTER as _OP_SETMONMODERNFATEFULENCOUNTER,
+    OP_SETMONMOVE as _OP_SETMONMOVE, OP_SETVADDRESS as _OP_SETVADDRESS, OP_SETVAR as _OP_SETVAR,
+    OP_SETVAR_OR_COPY as _OP_SETVAR_OR_COPY, OP_SETWILDBATTLE as _OP_SETWILDBATTLE,
+    OP_SPECIAL as _OP_SPECIAL, OP_SPECIALVAR as _OP_SPECIALVAR, OP_VGOTO as _OP_VGOTO,
+    OP_VGOTO_IF as _OP_VGOTO_IF, OP_VMESSAGE as _OP_VMESSAGE,
+    OP_WAITBUTTONPRESS as _OP_WAITBUTTONPRESS, OP_WAITMESSAGE as _OP_WAITMESSAGE,
+    RAM_SCRIPT_VIRTUAL_BASE as _RAM_SCRIPT_VIRTUAL_BASE, STD_OBTAIN_ITEM as _STD_OBTAIN_ITEM,
+    VAR_0x8000 as _VAR_0x8000, VAR_0x8001 as _VAR_0x8001, VAR_0x8002 as _VAR_0x8002,
+    VAR_0x8003 as _VAR_0x8003, VAR_PLAYER_X as _VAR_PLAYER_X, VAR_PLAYER_Y as _VAR_PLAYER_Y,
+    VAR_RESULT as _VAR_RESULT,
+)
+from .mystery_event import ME_END as _ME_END, ME_RUNSCRIPT as _ME_RUNSCRIPT
 
 
 # Card-scoped FRLG event state [include/constants/{vars,flags}.h].
@@ -658,54 +682,10 @@ def validate_definition(definition, *, flag_id=None):
     return definition
 
 
-# Field-event bytecode [asm/macros/event.inc].
-_OP_END = 0x02
-_OP_CALLSTD = 0x09
-_OP_SETVAR = 0x16
-_OP_ADDVAR = 0x17
-_OP_SETVAR_OR_COPY = 0x1A
-_OP_COMPARE_VAR_TO_VALUE = 0x21
-_OP_SPECIAL = 0x25
-_OP_SETFLAG = 0x29
-_OP_CLEARFLAG = 0x2A
-_OP_CHECKFLAG = 0x2B
-_OP_SPECIALVAR = 0x26
-_OP_GETPLAYERXY = 0x42
-_OP_GETPARTYSIZE = 0x43
-_OP_CHECKITEMSPACE = 0x46
-_OP_FACEPLAYER = 0x5A
-_OP_CLOSEMESSAGE = 0x68
-_OP_LOCK = 0x6A
-_OP_RELEASE = 0x6C
-_OP_WAITMESSAGE = 0x66
-_OP_WAITBUTTONPRESS = 0x6D
-_OP_GIVEMON = 0x79
-_OP_GIVEEGG = 0x7A
-_OP_SETMONMOVE = 0x7B
-_OP_SETMONMODERNFATEFULENCOUNTER = 0xCD
-_OP_SETMONMETLOCATION = 0xD2
 METLOC_FATEFUL_ENCOUNTER = 0xFF   # a #define in the generator template, so not version-bound
                                   # [decomp:src/data/region_map/region_map_sections.constants.json.txt]
-_OP_PLAYFANFARE = 0x31
 MUS_OBTAIN_ITEM = 258
-_OP_CREATEVOBJECT = 0xAA
-_OP_SETWILDBATTLE = 0xB6
-_OP_DOWILDBATTLE = 0xB7
-_OP_SETVADDRESS = 0xB8
-_OP_VGOTO = 0xB9
-_OP_VGOTO_IF = 0xBB
-_OP_VMESSAGE = 0xBD
 
-_COMPARE_EQ = 1
-_VAR_PLAYER_X = 0x8004
-_VAR_PLAYER_Y = 0x8005
-_VAR_0x8000 = 0x8000
-_VAR_0x8001 = 0x8001
-_VAR_0x8002 = 0x8002
-_VAR_0x8003 = 0x8003
-_VAR_RESULT = 0x800D
-_STD_OBTAIN_ITEM = 0
-_RAM_SCRIPT_VIRTUAL_BASE = 0x08000000
 
 
 def _u16(value):
@@ -1129,9 +1109,6 @@ def _compile_gift(definition, flag_id):
                                    mevent=definition.mevent)
 
 
-# Mystery Event bytecode used by CLI_RUN_MEVENT_SCRIPT.
-_ME_RUNSCRIPT = 5
-_ME_END = 2
 
 
 def _build_activation(cursor, *, receipt_flag, install):
@@ -1309,8 +1286,6 @@ def build_talk_script(messages, *, slug="talk"):
 
 
 # --- the seed-reading script --------------------------------------------------------------------
-_OP_COPYBYTE = 0x15
-_OP_BUFFERNUMBERSTRING = 0x83
 
 SEED_READ_DEFAULT_LINES = ("RNG HI {STR_VAR_2}\n"
                            "RNG LO {STR_VAR_1}",)
@@ -1384,7 +1359,6 @@ def build_seed_read_script(*, address=None, var_address=None, lines=SEED_READ_DE
 # script that reads gRngValue, delays N frames and reads it again measures turns-per-frame with no
 # clock in it: lcg.distance gives the numerator exactly and N is the denominator exactly. Every
 # earlier attempt divided by a hand-timed elapsed, and one of them was circular. docs/rng.md.
-_OP_DELAY = 0x28
 RATE_PROBE_DEFAULT_FRAMES = 600         # ~10 s at 59.7275 Hz; the seconds are commentary, not data
 
 RATE_PROBE_DEFAULT_LINES = ("FIRST HI {STR_VAR_2}\n"

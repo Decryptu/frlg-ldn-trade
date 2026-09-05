@@ -763,10 +763,3 @@ def test_probe_construction_failure_closes_created_trace():
         raise AssertionError("transport construction failure was swallowed")
     assert tracer.closed == 1
     assert app.network is None and app.injector is None
-
-
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-    print("JoySpot discovery tests: OK")

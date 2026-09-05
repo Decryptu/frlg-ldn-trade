@@ -6,7 +6,7 @@ import json
 import os
 import time
 
-from . import crypto as cryptomod, reliable, gbaframe, rfu, pia_connect, ni, linkplayer
+from . import crypto as cryptomod, reliable, gbaframe, rfu, ni, linkplayer
 from .reliable import _E_ACKED as _E_ACKED_IDX
 
 RELIABLE_SEQ_START = 0xFFF0

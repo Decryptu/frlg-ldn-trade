@@ -61,12 +61,3 @@ def test_host_reuses_the_distribution_that_was_written_to_an_artifact():
     app = MysteryGiftHostApplication(
         MysteryGiftRunConfig(), distribution=distribution)
     assert app._build_distribution() is distribution
-
-
-if __name__ == "__main__":
-    tests = [(name, value) for name, value in sorted(globals().items())
-             if name.startswith("test_") and callable(value)]
-    for name, test in tests:
-        test()
-        print("ok   ", name)
-    print(f"\n{len(tests)}/{len(tests)} passed")

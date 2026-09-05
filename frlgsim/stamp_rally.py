@@ -9,6 +9,17 @@ from .wonder_card import (
     SPECIES_CELEBI, SPECIES_CLAYDOL, WONDER_CARD_SIZE, build_wonder_card,
     flag_for_flag_id,
 )
+from .scrcmd import (
+    COMPARE_EQ as _COMPARE_EQ, COMPARE_NE as _COMPARE_NE, OP_CHECKFLAG as _OP_CHECKFLAG,
+    OP_CLEARFLAG as _OP_CLEARFLAG, OP_COMPARE_VAR_TO_VALUE as _OP_COMPARE_VAR_TO_VALUE,
+    OP_END as _OP_END, OP_FACEPLAYER as _OP_FACEPLAYER, OP_GIVEMON as _OP_GIVEMON,
+    OP_LOCK as _OP_LOCK, OP_RELEASE as _OP_RELEASE, OP_SETFLAG as _OP_SETFLAG,
+    OP_SETVADDRESS as _OP_SETVADDRESS, OP_SETVAR as _OP_SETVAR, OP_VGOTO as _OP_VGOTO,
+    OP_VGOTO_IF as _OP_VGOTO_IF, OP_VMESSAGE as _OP_VMESSAGE,
+    OP_WAITBUTTONPRESS as _OP_WAITBUTTONPRESS, OP_WAITMESSAGE as _OP_WAITMESSAGE,
+    RAM_SCRIPT_VIRTUAL_BASE as _RAM_SCRIPT_VIRTUAL_BASE, VAR_RESULT as _VAR_RESULT,
+)
+from .mystery_event import ME_END as _ME_END, ME_RUNSCRIPT as _ME_RUNSCRIPT
 
 
 GIFT_SOLROCK_STAMP = "solrock-stamp"
@@ -180,27 +191,7 @@ def _script_text(text):
 
 
 # Field-event bytecode [asm/macros/event.inc].
-_OP_END = 0x02
-_OP_SETVAR = 0x16
-_OP_COMPARE_VAR_TO_VALUE = 0x21
-_OP_SETFLAG = 0x29
-_OP_CLEARFLAG = 0x2A
-_OP_CHECKFLAG = 0x2B
-_OP_FACEPLAYER = 0x5A
-_OP_WAITMESSAGE = 0x66
-_OP_LOCK = 0x6A
-_OP_WAITBUTTONPRESS = 0x6D
-_OP_RELEASE = 0x6C
-_OP_GIVEMON = 0x79
-_OP_SETVADDRESS = 0xB8
-_OP_VGOTO = 0xB9
-_OP_VGOTO_IF = 0xBB
-_OP_VMESSAGE = 0xBD
 
-_COMPARE_EQ = 1
-_COMPARE_NE = 5
-_VAR_RESULT = 0x800D
-_RAM_SCRIPT_VIRTUAL_BASE = 0x08000000
 
 
 class _FieldScriptBuilder:
@@ -350,9 +341,6 @@ def build_stamp_rally_delivery_script(*, flag_id=STAMP_RALLY_FLAG_ID):
     return result
 
 
-# Mystery Event opcodes [data/mystery_event_script_cmd_table.s].
-_ME_RUNSCRIPT = 5
-_ME_END = 2
 
 
 def build_stamp_activation_script(state_var, *, flag_id=STAMP_RALLY_FLAG_ID,
@@ -381,14 +369,3 @@ def _build_stamp_event(species, stamp_id, state_var, *, flag_id):
             state_var, flag_id=flag_id, install=True),
     )
 
-
-def build_solrock_stamp_event(*, flag_id=STAMP_RALLY_FLAG_ID):
-    return _build_stamp_event(
-        SPECIES_SOLROCK, SOLROCK_STAMP_ID, VAR_MYSTERY_GIFT_1,
-        flag_id=flag_id)
-
-
-def build_lunatone_stamp_event(*, flag_id=STAMP_RALLY_FLAG_ID):
-    return _build_stamp_event(
-        SPECIES_LUNATONE, LUNATONE_STAMP_ID, VAR_MYSTERY_GIFT_2,
-        flag_id=flag_id)

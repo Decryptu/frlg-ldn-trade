@@ -463,7 +463,3 @@ def main():
     test_leader_cumulatively_acks_connect_before_opening_with_a()
     test_two_trades_survive_loss_duplicate_reordering_and_close_cleanly()
     print("host full-stack end-to-end test: OK")
-
-
-if __name__ == "__main__":
-    main()

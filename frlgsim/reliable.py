@@ -480,7 +480,3 @@ def parse_app(data):
     station = int.from_bytes(stripped, "big") if len(stripped) == 2 else None
     return msgs, station, len(tail)
 
-
-def build_app(messages, station_id=STATION_HOST, pad=0):
-    blob = b"".join(messages) + station_id.to_bytes(2, "big")
-    return blob + b"\xff" * pad

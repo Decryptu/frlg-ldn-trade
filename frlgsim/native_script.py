@@ -1,58 +1,11 @@
-"""NATIVE CODE IN THE OVERWORLD: a RAM script that stages a stub into EWRAM and calls it.
+"""A RAM script that stages a THUMB stub into gDecompressionBuffer and `callnative`s it, which is
+how native code reaches the OVERWORLD - where an encounter is decided and the Mystery Gift link
+cannot go. docs/rng.md has the technique, the draw model and the runs; asm/field/ has the stubs.
 
-THE GAP THIS CLOSES. `CLI_RUN_BUFFER_SCRIPT` hands the console 1024 bytes of our own code and calls
-them [docs/buffer_script.md], but only while the Mystery Gift link is up - so native code could
-read and write the console's memory and could never be present at an ENCOUNTER, which is where
-everything about the RNG is decided. docs/rng.md records that as the structural limit, and the
-paragraph is correct about what it says: FIELD BYTECODE cannot walk an LCG or test for shininess,
-having only `compare` and `goto_if`, and a target computed before a Mystery Gift session is stale
-by the time the player is back outside because the title screen reseeds on the way out
-[mystery_gift_menu.c:463 -> CB2_InitTitleScreen -> SeedRng, title_screen.c:735].
-
-A STAGED NATIVE STUB IS NOT FIELD BYTECODE. The field script command table has both halves:
-
-    bool8 ScrCmd_setptr(struct ScriptContext * ctx)          // 0x11
-    { u8 value = ScriptReadByte(ctx); *(u8 *)ScriptReadWord(ctx) = value; }
-    bool8 ScrCmd_callnative(struct ScriptContext * ctx)      // 0x23
-    { void (*func)(void) = ((void (*)(void))ScriptReadWord(ctx)); func(); return FALSE; }
-[decomp:src/scrcmd.c:300, :120; data/script_cmd_table.inc]
-
-so a script can WRITE ARBITRARY BYTES ANYWHERE and then CALL THEM. `setptr` was already used here
-to set gRngValue [frlgsim/rng_script.py]; what is new is that the bytes it writes can be code.
-
-WHERE THIS CAME FROM, and it should be said plainly: notblisy/RUBYSAPPHIREDLC, found by the user.
-`SOURCE/*/eonticket.asm` stages sixteen bytes with sixteen `writebytetoaddr` (the Ruby/Sapphire
-spelling of `setptr`) and then does `callasm` on them, and `SOURCE/*/celebirng.txt` is the ARM it
-calls - an LCG loop that runs until the PID it would produce is shiny. Ruby/Sapphire, a completely
-different delivery (dot codes over the e-Reader's link cable, which the Switch release does not
-expose at all), and not one address in it is usable here. The TECHNIQUE is what transfers.
-REFERENCES.local.md has the reading.
-
-THE COST, AND IT IS THE ONLY BUDGET THAT BINDS. A RAM script body is 995 bytes
-[struct RamScriptData.script, decomp:include/global.h:439] and every staged byte costs SIX of them
-(opcode + immediate + a 4-byte absolute address), so:
-
-    staged bytes  <=  (995 - the rest of the script) / 6   ~=  160
-
-which is why the stubs are THUMB. asm/field/shiny-seek.s is 72 bytes = 432 script bytes, and the
-whole hunt script is under half the body. `budget()` states this from the numbers rather than from
-this comment.
-
-WHERE THE CODE GOES: gDecompressionBuffer, 0x0201C000, measured twice [rom_map, bs08 and bs11].
-It is a scratch buffer by design, it is fixed at link time (unlike anything in a save block, which
-carries a re-rolled ASLR offset - bs45/bs46), and CLI_RUN_BUFFER_SCRIPT has been executing our code
-out of it since bs01, so that EWRAM there is executable is not an assumption on this console.
-Everything the script does happens inside ONE field-engine loop, because `setptr` and `callnative`
-both return FALSE: no frame boundary between the last staged byte and the call.
-
-THUMB, AND BIT 0. `callnative` calls through a function pointer, so the low bit of the address
-selects the instruction set. The stubs are Thumb and `callnative_at` sets it. A word-aligned
-address would enter ARM state and execute the same bytes as garbage.
-
-A STUB MUST NOT BE ABLE TO HANG. There is no menu to back out of in the overworld; a loop that
-never returns freezes the game. Every stub takes a bounded iteration count and every one of them
-is run under unicorn here, offline, before it is ever staged - the same rule buffer payloads live
-under.
+Two invariants this module enforces, both of which cost a frozen overworld if broken: the entry
+address carries bit 0 (Thumb, `callnative` calls through a function pointer), and every stub is
+bounded and run under unicorn offline before it can be staged. `budget()` states the size limit
+from the numbers rather than from a comment.
 """
 
 import math

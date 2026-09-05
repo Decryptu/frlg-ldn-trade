@@ -3,8 +3,6 @@
 Every constant it stands on was measured on hardware, so these tests check the arithmetic against
 the runs rather than against a restatement of the same arithmetic.
 """
-import sys
-
 import pytest
 
 from frlgsim import lcg, rng_countdown, rng_script

@@ -35,10 +35,3 @@ def test_key_guide_covers_streaming_and_scp_over_an_ssh_alias():
     assert "scp -p" in text
     assert "mode `0700`" in text
     assert "mode `0600`" in text
-
-
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-    print("Switch key installer tests: OK")

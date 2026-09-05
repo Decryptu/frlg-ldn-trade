@@ -113,12 +113,3 @@ def test_distribution_survives_the_impaired_reliable_rfu_stack():
     assert run.console.saved_ram_script.startswith(distribution.ram_script)
     assert run.console.saved_ram_script[len(distribution.ram_script):] == \
         b"\x00" * (995 - len(distribution.ram_script))
-
-
-if __name__ == "__main__":
-    tests = [(name, value) for name, value in sorted(globals().items())
-             if name.startswith("test_") and callable(value)]
-    for name, test in tests:
-        test()
-        print("ok   ", name)
-    print(f"\n{len(tests)}/{len(tests)} passed")

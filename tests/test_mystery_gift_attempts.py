@@ -27,8 +27,3 @@ def test_attempt_ledger_uses_daily_csv_and_preserves_client_identity():
         ["1", "true", "15:23", "RED", "01267"],
         ["2", "false", "15:33", "", ""],
     ]
-
-
-if __name__ == "__main__":
-    test_attempt_ledger_uses_daily_csv_and_preserves_client_identity()
-    print("Mystery Gift attempt ledger tests: OK")

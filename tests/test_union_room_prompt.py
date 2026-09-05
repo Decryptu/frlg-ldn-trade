@@ -127,7 +127,6 @@ def test_trading_board_request_runs_mon_mail_animation_save_and_close():
     console sends its Pokemon (100 B) and mail (220 B) blocks with no request, then CB2_LinkTrade
     with the mons preselected, whose READY_FINISH / CONFIRM_FINISH and save barriers are the
     trade-centre ones; the room then closes the link [trade_scene.c:2722]. Proven u12."""
-    from frlgsim import mon as monmod
     from frlgsim.host_trade import H_ANIM, H_CLOSE, H_SAVE, H_UROOM_TRADE
     h = HostTradeEngine([_mon(1)], union_room=True, anim_delay=1)
     h._words.clear()

@@ -6,8 +6,6 @@ The host engine is the one proven on retail hardware, so a client that completes
 the same block/message protocol a console does.
 """
 
-import pytest
-
 from frlgsim import host_mystery_gift, linkplayer, mg_client, mg_script, rfu, wonder_card
 from frlgsim import mystery_gift as mg
 

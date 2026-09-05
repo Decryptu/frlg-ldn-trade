@@ -263,13 +263,6 @@ def test_every_child_command_is_echoed_even_when_they_arrive_in_a_burst(monkeypa
     assert echoed[-1] == expected[-1]
 
 
-if __name__ == "__main__":
-    for name, func in sorted(globals().copy().items()):
-        if name.startswith("test_") and callable(func):
-            func()
-            print(f"PASS {name}")
-
-
 def test_union_room_keepalive_re_presents_an_ni_start_before_uni():
     """Probe for the 'D' that follows five unanswered parent frames (u03-u05): after the child's
     name NI the leader re-presents the first parent NI_START subframe, which the console mirrors

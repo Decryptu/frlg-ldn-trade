@@ -1,14 +1,5 @@
-"""Test-time import paths.
-
-The four launchers moved to `bin/` in the reorganisation, and fifteen test modules import them by
-name (`import frlgmg_host`) to reach their `build_parser()` and their config plumbing. Before the
-move that worked because pytest is run from the repo root, which puts the root on sys.path; the
-launchers are not a package and there is nothing to import them as. This puts `bin/` where the root
-used to be, so those imports keep meaning the same thing.
-
-`tools/` is here for the same reason (test_joyspot_discovery imports `joyspot_probe`), and the repo
-root itself for `frlgsim` and for the tests that reach `vendor/LDN`.
-"""
+"""Test-time import paths: `bin/` and `tools/` for the launchers the tests import by name
+(`import frlgmg_host`), and the repo root for `frlgsim` and `vendor/LDN`."""
 
 import os
 import sys

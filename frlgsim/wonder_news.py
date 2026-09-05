@@ -10,7 +10,7 @@ Receiving news from a Friend sets newsType = WONDER_NEWS_RECV_FRIEND and rolls a
 [wonder_news.c:21]; the man in CeruleanCity_House4 hands it over. Five rewards, then 500 steps.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from . import charmap
 from .mystery_gift import (
@@ -169,17 +169,3 @@ def format_news_help():
     lines.extend(f"  {spec.slug:<{width}}  id {spec.news_id}: {spec.description}"
                  for spec in NEWS_REGISTRY.values())
     return "\n".join(lines)
-
-
-def _selftest():
-    news = PKCAMP_NEWS.build()
-    assert len(news) == WONDER_NEWS_SIZE and validate(news)
-    parsed = parse(news)
-    assert parsed["title"] == "PKCAMP NEWS", parsed["title"]
-    assert parsed["body"][0].startswith("This news travelled")
-    assert not validate(build_wonder_news(news_id=1, title="x")[2:])
-    print("wonder_news self-test OK (" + describe(news) + ")")
-
-
-if __name__ == "__main__":
-    _selftest()

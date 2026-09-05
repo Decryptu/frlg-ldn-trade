@@ -1,34 +1,11 @@
-"""The game's random number generator as arithmetic: where a state came from, and how far.
+"""The game's RNG as arithmetic: where a state came from, and how far.
 
-`Random` is a full-period affine map on 32 bits [decomp:include/random.h:18]
-
-    gRngValue = gRngValue * 1103515245 + 24691          ISO_RANDOMIZE1
-    return gRngValue >> 16                              only the TOP HALF is ever returned
-
-and bs13-bs15 measured all three parts of that on the console: the address (0x03004220), the
-function (0x080486B0) and the console's own consumption at the Mystery Gift menu, EXACTLY TWICE a
-frame on all 95 gaps. This module is the arithmetic that turns those readings into statements.
-
-WHY IT IS NOT `lcg_distance`. buffer_script.lcg_distance walks the orbit one step at a time and
-gives up after a limit, so it can only ever answer about the near neighbourhood - which is all a
-frame-to-frame gap needs. Every question worth asking about an ENCOUNTER is about a distance of
-thousands to millions, and "not found within the limit" cannot be told apart from "not on the
-orbit". `distance` here is exact and always answers, in ~2**17 operations instead of up to 2**32,
-because the map is affine: composing it with itself is multiplication of (a, c) pairs, so
-baby-step/giant-step applies. There is no such thing as "not on the orbit" - the map is a
-PERMUTATION of all 2**32 states, so a distance always exists, and that is exactly why a distance
-is only evidence when it is SMALL. A random pair of states sits ~2**31 apart; a pair that is
-40000 apart is 100000:1 against by chance, and THAT is the argument a run has to make.
-
-WHAT A 16-BIT STATE MEANS. `SeedRng` takes a u16 and assigns it whole [decomp:src/random.c:15], so
-every seeding in the game leaves gRngValue below 0x10000. In ordinary play there is exactly one:
-`SeedRngAndSetTrainerId` on the title screen [decomp:src/title_screen.c:735], seeding from the
-hardware timer REG_TM1CNT_L and then handing off to the main menu. Mystery Gift, the overworld and
-an encounter all run downstream of it with NOTHING reseeding in between - the only other call sites
-are two unused debug screens [link.c:318, link_rfu_2.c:2670] and the Switch-only RfuMain1 hook
-[link_rfu_2.c:2116], which `predecessors` is how we test for. So walking a state BACKWARD to the
-first value under 0x10000 recovers the seed the console booted with, and the number of steps is
-how much the game consumed getting from the title screen to wherever we read it.
+`Random` is a full-period affine map on 32 bits [decomp:include/random.h:18], measured on the
+console at bs13-bs15. Being affine makes `distance` exact at any range by baby-step/giant-step,
+where `buffer_script.lcg_distance` only walks the near neighbourhood; being a permutation of all
+2**32 states means a distance ALWAYS exists, so one is evidence only when it is small. `SeedRng`
+takes a u16 [decomp:src/random.c:15], which is what lets `predecessors` walk a state back to the
+seed the console booted with. docs/rng.md.
 """
 
 RAND_MULT = 1103515245                  # 0x41C64E6D [decomp:include/random.h:18]

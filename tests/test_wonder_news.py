@@ -295,7 +295,3 @@ def _run_all():
             test()
             print(f"ok  {name}")
     print("wonder news: all checks passed")
-
-
-if __name__ == "__main__":
-    _run_all()

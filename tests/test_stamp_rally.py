@@ -148,7 +148,6 @@ def test_live_cli_adds_stamp_choices_and_dynamic_flag_default_only():
         parser, parser.parse_args([
             "--live", "--gift", "solrock-stamp", "--flag-id", "1003"]))
     assert explicit_legacy.payload.flag_id == 1003
-    assert wonder_card.GIFT_CHOICES == ("beast-cutscene", "celebi")
 
 
 def test_activation_wrappers_modify_only_the_intended_state():
@@ -390,18 +389,3 @@ def test_delivery_script_contains_dialogue_for_every_outcome_and_fits_the_save()
             "You completed the STAMP RALLY!",
             "No room! Make space, then"):
         assert charmap.encode(text) in script
-
-
-if __name__ == "__main__":
-    tests = [(name, value) for name, value in sorted(globals().items())
-             if name.startswith("test_") and callable(value)]
-    failures = 0
-    for name, test in tests:
-        try:
-            test()
-            print("ok   ", name)
-        except Exception as exc:
-            failures += 1
-            print("FAIL ", name, f"{type(exc).__name__}: {exc}")
-    print(f"\n{len(tests) - failures}/{len(tests)} passed")
-    raise SystemExit(bool(failures))

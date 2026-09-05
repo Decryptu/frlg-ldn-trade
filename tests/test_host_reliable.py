@@ -141,7 +141,3 @@ def main():
     test_bootstrap_timeout_then_rtt_driven_timeout()
     test_window_backpressure_and_malformed_input()
     print("host reliable tests passed")
-
-
-if __name__ == "__main__":
-    main()

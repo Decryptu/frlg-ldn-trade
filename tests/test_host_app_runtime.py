@@ -360,13 +360,6 @@ def test_component_construction_failure_closes_created_resources():
     assert injector.stopped == 0
 
 
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-    print("host application runtime tests: OK")
-
-
 class _FakeActivity:
     def __init__(self, close_confirmed=False, done=False):
         self.close_confirmed = close_confirmed

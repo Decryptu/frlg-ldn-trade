@@ -7,6 +7,22 @@ from .mystery_gift import (
     CARD_TYPE_GIFT, SEND_TYPE_DISALLOWED, WONDER_CARD_FLAG_OFFSET, NUM_WONDER_CARD_FLAGS,
     FLAG_WONDER_CARD_UNUSED_1,
 )
+from .scrcmd import (
+    COMPARE_EQ as _COMPARE_EQ, OP_ADDVAR as _OP_ADDVAR, OP_CALLSTD as _OP_CALLSTD,
+    OP_CHECKFLAG as _OP_CHECKFLAG, OP_CLOSEMESSAGE as _OP_CLOSEMESSAGE,
+    OP_COMPARE_VAR_TO_VALUE as _OP_COMPARE_VAR_TO_VALUE, OP_CREATEVOBJECT as _OP_CREATEVOBJECT,
+    OP_DELAY as _OP_DELAY, OP_DOWILDBATTLE as _OP_DOWILDBATTLE, OP_END as _OP_END,
+    OP_FACEPLAYER as _OP_FACEPLAYER, OP_GETPARTYSIZE as _OP_GETPARTYSIZE,
+    OP_GETPLAYERXY as _OP_GETPLAYERXY, OP_GIVEMON as _OP_GIVEMON, OP_LOCK as _OP_LOCK,
+    OP_RELEASE as _OP_RELEASE, OP_SETFLAG as _OP_SETFLAG, OP_SETMONMOVE as _OP_SETMONMOVE,
+    OP_SETVADDRESS as _OP_SETVADDRESS, OP_SETVAR_OR_COPY as _OP_SETVAR_OR_COPY,
+    OP_SETWILDBATTLE as _OP_SETWILDBATTLE, OP_VGOTO_IF as _OP_VGOTO_IF,
+    OP_VMESSAGE as _OP_VMESSAGE, OP_WAITBUTTONPRESS as _OP_WAITBUTTONPRESS,
+    OP_WAITMESSAGE as _OP_WAITMESSAGE, RAM_SCRIPT_VIRTUAL_BASE as _RAM_SCRIPT_VIRTUAL_BASE,
+    STD_OBTAIN_ITEM as _STD_OBTAIN_ITEM, VAR_0x8000 as _VAR_0x8000, VAR_0x8001 as _VAR_0x8001,
+    VAR_PLAYER_X as _VAR_PLAYER_X, VAR_PLAYER_Y as _VAR_PLAYER_Y, VAR_RESULT as _VAR_RESULT,
+    VAR_STARTER_MON as _VAR_STARTER_MON,
+)
 
 # struct WonderCard layout [include/global.h:655-669], packed, little-endian.
 WONDER_CARD_TEXT_LENGTH = 40
@@ -67,48 +83,13 @@ DEFAULT_GIFT_ITEM = None
 
 GIFT_BEAST_CUTSCENE = "beast-cutscene"
 GIFT_CELEBI = "celebi"
-GIFT_CHOICES = (GIFT_BEAST_CUTSCENE, GIFT_CELEBI)
 LEGENDARY_BEAST_LEVEL = 65
 
 
-# Event-script opcodes [asm/macros/event.inc].
-_OP_END = 0x02
-_OP_CALLSTD = 0x09
-_OP_ADDVAR = 0x17
-_OP_SETVAR_OR_COPY = 0x1A
-_OP_SETFLAG = 0x29
-_OP_DELAY = 0x28
-_OP_GETPLAYERXY = 0x42
-_OP_FACEPLAYER = 0x5A
-_OP_CLOSEMESSAGE = 0x68
-_OP_LOCK = 0x6A
-_OP_RELEASE = 0x6C
-_OP_GIVEMON = 0x79
-_OP_SETMONMOVE = 0x7B
-_OP_GETPARTYSIZE = 0x43
-_OP_COMPARE_VAR_TO_VALUE = 0x21
-_OP_CHECKFLAG = 0x2B
-_OP_SETVADDRESS = 0xB8
-_OP_VGOTO_IF = 0xBB
-_OP_VMESSAGE = 0xBD
-_OP_WAITMESSAGE = 0x66
-_OP_WAITBUTTONPRESS = 0x6D
-_OP_CREATEVOBJECT = 0xAA
-_OP_SETWILDBATTLE = 0xB6
-_OP_DOWILDBATTLE = 0xB7
 
-_VAR_0x8000 = 0x8000
-_VAR_0x8001 = 0x8001
-_VAR_STARTER_MON = 0x4031
-_VAR_PLAYER_X = 0x8004
-_VAR_PLAYER_Y = 0x8005
-_VAR_RESULT = 0x800D
-_STD_OBTAIN_ITEM = 0           # gStdScripts index [event_scripts.s:78]
-_COMPARE_EQ = 1
 _PARTY_SIZE = 6
 # ScriptSetMonMoveSlot targets the last party mon only for index > PARTY_SIZE; 6 itself is out of bounds.
 _LAST_PARTY_MON_INDEX = _PARTY_SIZE + 1
-_RAM_SCRIPT_VIRTUAL_BASE = 0x08000000
 # Flags 0x3D8..0x3E7 are cleared by ClearMysteryGiftFlags when a replacement card is saved.
 _FLAG_REWARD_RECEIVED = 0x3D9
 
@@ -391,43 +372,3 @@ def build_legendary_beast_cutscene_gift(
         footer1="frlg-ldn-trade",
     )
     return card, build_legendary_beast_cutscene_script(level=level)
-
-
-def build_gift(gift, *, flag_id=1003):
-    if gift == GIFT_BEAST_CUTSCENE:
-        return build_legendary_beast_cutscene_gift(flag_id=flag_id)
-    if gift == GIFT_CELEBI:
-        return build_default_gift(flag_id=flag_id)
-    raise ValueError(f"unknown gift: {gift}")
-
-
-build_raikou_cutscene_script = build_legendary_beast_cutscene_script
-build_raikou_cutscene_gift = build_legendary_beast_cutscene_gift
-
-
-def _selftest():
-    card, script = build_default_gift()
-    assert len(card) == WONDER_CARD_SIZE, len(card)
-    assert int.from_bytes(card[0:2], "little") == 1003
-    bitfield = card[8]
-    assert (bitfield & 0x3) == CARD_TYPE_GIFT
-    assert ((bitfield >> 2) & 0xF) < 8
-    assert ((bitfield >> 6) & 0x3) == SEND_TYPE_DISALLOWED
-    assert card[9] == 0
-    expected = bytes.fromhex(
-        "6a5ab8000000082bd903bb014c00000843210d800600bb0155000008"
-        "79fb00320000000000000000000000"
-        "7b070049007b070169007b0702d7007b0703db0029aa0229d903"
-        "bd5e000008666d6c02bd89000008666d6c02bdb6000008666d6c02"
-        "fd0100e6d9d7d9ddead9d800d500bdbfc6bfbcc3fedae6e3e100e8dcd900d8d9e0ddead9e6ede1d5e2abff"
-        "cae0d9d5e7d900e0e3e3df00dae3e6ebd5e6d800e8e300dae9e8e9e6d9fec7d3cdcebfccd300c1c3c0cecdabff"
-        "c9dcb800ede3e9e600e4d5e6e8ed00d5e4e4d9d5e6e700e8e300d6d900dae9e0e0ad"
-        "fecae0d9d5e7d900e1d5dfd900e6e3e3e100d5e2d800d7e3e1d900d6d5d7dfabff")
-    assert script == expected, script.hex()
-    assert flag_for_flag_id(1003) == 0x2AA
-    assert flag_for_flag_id(1000) == 0x2A7
-    print("wonder_card self-test OK (card=%d B, ram_script=%d B)" % (len(card), len(script)))
-
-
-if __name__ == "__main__":
-    _selftest()

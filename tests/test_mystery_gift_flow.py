@@ -1178,27 +1178,6 @@ def test_end_to_end_a_console_holding_another_card_is_asked_to_toss_first():
     assert console.saved_card is None
 
 
-# --- standalone runner --------------------------------------------------------------------------
-def _run():
-    tests = sorted((n, f) for n, f in globals().items()
-                   if n.startswith("test_") and callable(f))
-    failed = 0
-    for name, fn in tests:
-        try:
-            fn()
-        except Exception as e:                                  # noqa: BLE001
-            failed += 1
-            print(f"FAIL  {name}: {type(e).__name__}: {e}")
-        else:
-            print(f"ok    {name}")
-    print(f"\n{len(tests) - failed}/{len(tests)} passed")
-    return failed
-
-
-if __name__ == "__main__":
-    sys.exit(1 if _run() else 0)
-
-
 def test_the_host_status_line_reports_the_state_of_row_one():
     """A live run must be able to say, from its own log, whether it gave the console back everything
     it sent - the one number that decided bs05."""

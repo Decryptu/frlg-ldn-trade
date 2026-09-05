@@ -160,10 +160,3 @@ def test_explicit_phy_wins_over_the_named_adapter_profile():
         transport.find_adapter_phy = old_find
     assert phy == "phy9"
     assert keys == __file__
-
-
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-    print("Host CLI TOML wiring tests: OK")

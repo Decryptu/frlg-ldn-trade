@@ -128,12 +128,3 @@ def test_distribution_survives_the_impaired_reliable_rfu_stack():
         b"\x00" * (995 - len(distribution.ram_script))
     assert run.console.dropped_inits == run.console.dropped_fragments == 0
     assert run.radio.dropped and run.radio.duplicated
-
-
-if __name__ == "__main__":
-    tests = [(name, value) for name, value in sorted(globals().items())
-             if name.startswith("test_") and callable(value)]
-    for name, test in tests:
-        test()
-        print("ok   ", name)
-    print(f"\n{len(tests)}/{len(tests)} passed")

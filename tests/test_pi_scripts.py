@@ -106,10 +106,3 @@ def test_pi_guide_keeps_keys_and_references_out_of_deployment():
     assert "Switch key setup" in text
     assert "Pokémon" in text or "Pokemon" in text
     assert "deploy_pi.sh" in text
-
-
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-    print("Pi script tests: OK")

@@ -587,24 +587,3 @@ def test_close_and_disconnect_handshake_finishes_the_session():
     # One parent poll per millisecond is the clean-link floor, so this bounds
     # what loss recovery cost: retransmission must not stretch a gift handout.
     assert run.elapsed < run.host.rfu.uni_out * 1.5
-
-
-# --- standalone runner ----------------------------------------------------------------------
-def _run():
-    tests = sorted((n, f) for n, f in globals().items()
-                   if n.startswith("test_") and callable(f))
-    failed = 0
-    for name, fn in tests:
-        try:
-            fn()
-        except Exception as e:                                  # noqa: BLE001
-            failed += 1
-            print(f"FAIL  {name}: {type(e).__name__}: {e}")
-        else:
-            print(f"ok    {name}")
-    print(f"\n{len(tests) - failed}/{len(tests)} passed")
-    return failed
-
-
-if __name__ == "__main__":
-    sys.exit(1 if _run() else 0)

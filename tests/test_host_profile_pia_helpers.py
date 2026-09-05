@@ -259,10 +259,3 @@ def test_parse_mac_reports_invalid_cli_values():
             assert "invalid MAC address" in str(error)
         else:
             raise AssertionError(f"invalid MAC accepted: {value!r}")
-
-
-if __name__ == "__main__":
-    for name, value in sorted(globals().items()):
-        if name.startswith("test_") and callable(value):
-            value()
-    print("host profile/Pia helper tests: OK")
