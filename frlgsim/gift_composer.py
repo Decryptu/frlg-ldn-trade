@@ -118,6 +118,7 @@ class GivePokemon:
     level: int
     held_item: int = 0
     moves: tuple[int, ...] = ()
+    fateful_encounter: bool = False
     failure_message: str | None = None
 
     def __post_init__(self):
@@ -128,6 +129,7 @@ class GivePokemon:
 class GiveEgg:
     species: int
     moves: tuple[int, ...] = ()
+    fateful_encounter: bool = False
     failure_message: str | None = None
 
     def __post_init__(self):
@@ -680,6 +682,10 @@ _OP_WAITBUTTONPRESS = 0x6D
 _OP_GIVEMON = 0x79
 _OP_GIVEEGG = 0x7A
 _OP_SETMONMOVE = 0x7B
+_OP_SETMONMODERNFATEFULENCOUNTER = 0xCD
+_OP_SETMONMETLOCATION = 0xD2
+METLOC_FATEFUL_ENCOUNTER = 0xFF   # a #define in the generator template, so not version-bound
+                                  # [decomp:src/data/region_map/region_map_sections.constants.json.txt]
 _OP_PLAYFANFARE = 0x31
 MUS_OBTAIN_ITEM = 258
 _OP_CREATEVOBJECT = 0xAA
@@ -860,6 +866,35 @@ def _emit_condition_branch(builder, condition, true_label, false_label, prefix):
         raise AssertionError(type(condition))
 
 
+# The slot the new mon lands in is the party count BEFORE it is given, which is what the official
+# Surf Pichu script reads with `specialvar ... CalculatePlayerPartyCount` [data/mystery_event_msg.s:46].
+# `getpartysize` is the same call without a version-bound special id, but it answers in VAR_RESULT and
+# `givemon` overwrites VAR_RESULT with its own result - so the count has to be saved first.
+_FATEFUL_SLOT_VAR = _VAR_0x8002
+
+
+def _save_party_slot():
+    """Keep the pre-give party count: it is the index the mon is about to occupy."""
+    return bytes([_OP_SETVAR_OR_COPY]) + _u16(_FATEFUL_SLOT_VAR) + _u16(_VAR_RESULT)
+
+
+def _mark_fateful_encounter():
+    """The pair the official script emits together: the bit, and the met location that reads as one.
+
+    TRAP: `ScrCmd_setmonmodernfatefulencounter` does NOT bounds-check its index - it is a plain
+    `SetMonData(&gPlayerParty[VarGet(...)], ...)` [decomp:src/scrcmd.c:2239], unlike
+    `setmonmove`, whose helper clamps anything above PARTY_SIZE to the last mon
+    [ScriptSetMonMoveSlot, src/script_pokemon_util.c:144]. So LAST_PARTY_MON_INDEX (7) must NOT be
+    handed to it: that writes 100 bytes past the party. The real slot is used instead, and the
+    caller's full-party guard is what keeps it inside 0..5 - a party of 6 jumps to the failure
+    label before the mon is given, so a mon sent to the PC is never marked either.
+    `setmonmetlocation` does check [`:2261`], and is passed the same var for the same reason.
+    """
+    return (bytes([_OP_SETMONMODERNFATEFULENCOUNTER]) + _u16(_FATEFUL_SLOT_VAR)
+            + bytes([_OP_SETMONMETLOCATION]) + _u16(_FATEFUL_SLOT_VAR)
+            + bytes([METLOC_FATEFUL_ENCOUNTER]))
+
+
 def _emit_action(builder, action, *, sprite_id, failure_label, completed_label):
     if isinstance(action, Message):
         builder.message(action.text)
@@ -871,8 +906,10 @@ def _emit_action(builder, action, *, sprite_id, failure_label, completed_label):
         builder.emit(bytes([_OP_SETVAR_OR_COPY]) + _u16(_VAR_0x8001) + _u16(action.quantity))
         builder.emit(bytes([_OP_CALLSTD, _STD_OBTAIN_ITEM]))
     elif isinstance(action, GivePokemon):
-        if action.moves:
+        if action.moves or action.fateful_encounter:
             builder.emit(bytes([_OP_GETPARTYSIZE]))
+            if action.fateful_encounter:
+                builder.emit(_save_party_slot())
             builder.emit(_compare(_VAR_RESULT, PARTY_SIZE))
             builder.vgoto_if(_COMPARE_EQ, failure_label)
         builder.emit(_givemon(action.species, action.level, action.held_item))
@@ -880,10 +917,14 @@ def _emit_action(builder, action, *, sprite_id, failure_label, completed_label):
         builder.vgoto_if(_COMPARE_EQ, failure_label)
         for slot, move in enumerate(action.moves):
             builder.emit(bytes([_OP_SETMONMOVE, LAST_PARTY_MON_INDEX, slot]) + _u16(move))
+        if action.fateful_encounter:
+            builder.emit(_mark_fateful_encounter())
         builder.emit(bytes([_OP_PLAYFANFARE]) + _u16(MUS_OBTAIN_ITEM))
     elif isinstance(action, GiveEgg):
-        if action.moves:
+        if action.moves or action.fateful_encounter:
             builder.emit(bytes([_OP_GETPARTYSIZE]))
+            if action.fateful_encounter:
+                builder.emit(_save_party_slot())
             builder.emit(_compare(_VAR_RESULT, PARTY_SIZE))
             builder.vgoto_if(_COMPARE_EQ, failure_label)
         builder.emit(bytes([_OP_GIVEEGG]) + _u16(action.species))
@@ -891,6 +932,8 @@ def _emit_action(builder, action, *, sprite_id, failure_label, completed_label):
         builder.vgoto_if(_COMPARE_EQ, failure_label)
         for slot, move in enumerate(action.moves):
             builder.emit(bytes([_OP_SETMONMOVE, LAST_PARTY_MON_INDEX, slot]) + _u16(move))
+        if action.fateful_encounter:
+            builder.emit(_mark_fateful_encounter())
         builder.emit(bytes([_OP_PLAYFANFARE]) + _u16(MUS_OBTAIN_ITEM))
     elif isinstance(action, ShowSprite):
         if isinstance(action.position, RelativeToPlayer):

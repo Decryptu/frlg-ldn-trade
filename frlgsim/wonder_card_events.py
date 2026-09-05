@@ -74,6 +74,7 @@ CELEBI_GIFT = WonderGift(
         GivePokemon(
             wonder_card.SPECIES_CELEBI,
             level=50,
+            fateful_encounter=True,
             moves=(
                 wonder_card.MOVE_LEECH_SEED,
                 wonder_card.MOVE_RECOVER,

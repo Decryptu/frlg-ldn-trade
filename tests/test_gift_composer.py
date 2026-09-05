@@ -33,6 +33,8 @@ class ScriptVM:
         self.mons = []
         self.eggs = []
         self.moves = []
+        self.fateful = []
+        self.met_locations = []
         self.sprites = []
         self.battles = []
         self.prepared_battle = None
@@ -40,6 +42,12 @@ class ScriptVM:
         self.fanfares = []
         self.release_count = 0
         self.ended = False
+
+    VARS_START = 0x4000
+
+    def var_get(self, value):
+        """`VarGet`: a var id resolves to its value, anything below VARS_START is the literal."""
+        return self.var(value) if value >= self.VARS_START else value
 
     def u16(self):
         value = int.from_bytes(self.script[self.pc:self.pc + 2], "little")
@@ -83,9 +91,9 @@ class ScriptVM:
             elif op == 0x17:  # addvar
                 variable, value = self.u16(), self.u16()
                 self.vars[variable] = (self.var(variable) + value) & 0xFFFF
-            elif op == 0x1A:  # setorcopyvar
+            elif op == 0x1A:  # setorcopyvar - `*dest = VarGet(src)`, so a var source is COPIED
                 variable, value = self.u16(), self.u16()
-                self.vars[variable] = value
+                self.vars[variable] = self.var_get(value)
             elif op == 0x21:  # compare var/value
                 variable, value = self.u16(), self.u16()
                 self.comparison = 1 if self.var(variable) == value else 0
@@ -145,6 +153,13 @@ class ScriptVM:
                     int.from_bytes(self.script[self.pc + 2:self.pc + 4], "little")
                 self.pc += 4
                 self.moves.append((party, slot, move))
+            elif op == 0xCD:  # setmonmodernfatefulencounter - a VAR, and NOT bounds-checked
+                self.fateful.append(self.var_get(self.u16()))
+            elif op == 0xD2:  # setmonmetlocation - a VAR, then a one-byte location
+                slot = self.var_get(self.u16())
+                location = self.script[self.pc]
+                self.pc += 1
+                self.met_locations.append((slot, location))
             elif op == 0xAA:  # createvobject
                 graphics, sprite = self.script[self.pc], self.script[self.pc + 1]
                 self.pc += 2
@@ -741,3 +756,44 @@ if __name__ == "__main__":
         test()
         print("ok   ", name)
     print(f"\n{len(tests)}/{len(tests)} passed")
+
+
+def test_a_gift_mon_can_be_flagged_a_fateful_encounter_at_its_real_slot():
+    """The official Surf Pichu script pairs `setmonmodernfatefulencounter` with `setmonmetlocation
+    ..., METLOC_FATEFUL_ENCOUNTER` [decomp:data/mystery_event_msg.s:71]. Both take the slot through
+    VarGet, and the FIRST OF THEM DOES NOT BOUNDS-CHECK IT [src/scrcmd.c:2239] - unlike setmonmove,
+    whose helper clamps 7 to the last mon. So the slot must be the real index, which is the party
+    count read BEFORE the mon is given."""
+    definition = _gift(
+        "fateful", _plan(gc.DeliveryStage(
+            gc.GivePokemon(251, 50, fateful_encounter=True))))
+    for party_size in range(gc.PARTY_SIZE):
+        run = ScriptVM(gc.compile_definition(definition).ram_script,
+                       party_size=party_size).run()
+        assert run.mons == [(251, 50, 0)]
+        # The index the mon actually landed in, never LAST_PARTY_MON_INDEX.
+        assert run.fateful == [party_size]
+        assert run.met_locations == [(party_size, gc.METLOC_FATEFUL_ENCOUNTER)]
+        assert party_size < gc.PARTY_SIZE
+
+    # A full party jumps to the failure label before the give, so nothing is marked and the
+    # out-of-bounds index 6 is never reached.
+    full = ScriptVM(gc.compile_definition(definition).ram_script,
+                    party_size=gc.PARTY_SIZE).run()
+    assert full.mons == [] and full.fateful == [] and full.met_locations == []
+
+
+def test_an_unflagged_gift_emits_neither_opcode():
+    """The flag is opt-in: every card built before it must be byte-identical."""
+    plain = _gift("plain", _plan(gc.DeliveryStage(gc.GivePokemon(251, 50))))
+    run = ScriptVM(gc.compile_definition(plain).ram_script, party_size=3).run()
+    assert run.mons == [(251, 50, 0)] and run.fateful == [] and run.met_locations == []
+
+
+def test_an_egg_can_be_flagged_too_which_is_what_the_official_script_does():
+    definition = _gift("fateful-egg", _plan(gc.DeliveryStage(
+        gc.GiveEgg(172, fateful_encounter=True))))
+    run = ScriptVM(gc.compile_definition(definition).ram_script, party_size=2).run()
+    assert run.eggs == [172]
+    assert run.fateful == [2]
+    assert run.met_locations == [(2, gc.METLOC_FATEFUL_ENCOUNTER)]
