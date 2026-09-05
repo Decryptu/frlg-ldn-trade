@@ -358,6 +358,11 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help=("append completed joined-attempt records to daily csv files in DIR; "
               "default: disabled (the supervised shell host enables logs/)"))
     parser.add_argument(
+        "--game-data-log", metavar="PATH", default=None,
+        help=("append what the console says about itself - its card counters, its four "
+              "questionnaire words and its Easy Chat battle profile - to this jsonl ledger. "
+              "tools/game_data_read.py reads it back and says what moved between sessions"))
+    parser.add_argument(
         "--make-artifact", action=argparse.BooleanOptionalAction, default=False,
         help=("write an annotated listing for the exact Mystery Gift bytes that "
               "will be sent (default: disabled)"))
@@ -547,7 +552,8 @@ def build_run_config(parser, args):
             ram_script_block_repeat=args.ram_script_block_repeat,
             end_on_success=args.end_on_success,
             idle_timeout_seconds=args.idle_timeout,
-            attempt_log_dir=args.attempt_log_dir)
+            attempt_log_dir=args.attempt_log_dir,
+            game_data_log=args.game_data_log)
     except ValueError as exc:
         parser.error(str(exc))
 

@@ -143,11 +143,30 @@ Two limits worth recording:
 
 ## Open
 
-### The player's own data, carried and ignored
+### The player's own data: kept now, and only useful as a difference
 
 `MysteryGiftLinkGameData` brings the player's Easy Chat profile and their Wonder Card stats
-(`CARD_STAT_BATTLES_WON` / `_LOST` / `_NUM_TRADES` / `_NUM_STAMPS`) on every session. The host logs
-them; nothing reads them.
+(`CARD_STAT_BATTLES_WON` / `_LOST` / `_NUM_TRADES` / `_NUM_STAMPS`) on every session, free, whether
+or not anything reads them [`src/mystery_gift.c:361`].
+
+`--game-data-log PATH` on `bin/frlgmg_host.py` appends one record per session to a jsonl ledger
+(`frlgsim/game_data_log.py`), and the host prints what moved since the last session of that same
+console. `tools/game_data_read.py PATH` reads the ledger back; `--session N` re-parses one session's
+raw bytes, so a question asked later costs no run.
+
+Why the ledger rather than the log line: **a counter is only evidence as a difference**. "3 battles
+won" is a number. "3, where the session before said 2, on the same card flag id" is the observation
+that the console maintains the counters a Battle Count Card is built on - and no single session can
+show it. The ledger reports a counter that moved across a card change with the change beside it, so
+it cannot be read as the first thing.
+
+The word ids are the other half. Anything the player typed arrives as a slot id, and the ledger
+names every id `easychat_french` has never seen rendered: each one is a single question to the
+player and then ground truth for every card composed afterwards
+[The French Easy Chat vocabulary](easy_chat_french.md).
+
+UNKNOWN, and what the ledger is for: whether the counters move at all on this build. Nothing has
+been observed changing yet.
 
 ### The smaller official scripts
 

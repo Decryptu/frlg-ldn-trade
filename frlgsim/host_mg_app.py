@@ -1,8 +1,11 @@
 """Application runtime for hosting one FRLG Mystery Gift distribution; subclasses HostApplication
 and overrides only the build/startup-log/progress seams."""
 
-from . import (buffer_script, charmap, config as configmod, gift_registry, host_session,
-               easychat, ldntrace, mystery_event, mystery_gift_attempts, wonder_news)
+import os
+
+from . import (buffer_script, charmap, config as configmod, game_data_log, gift_registry,
+               host_session, easychat, ldntrace, mystery_event, mystery_gift_attempts,
+               wonder_news)
 from .host_app import HostApplication
 from .host_beacon import build_wonder_card_app_data, build_wonder_news_app_data
 from .host_mystery_gift import (
@@ -213,7 +216,31 @@ class MysteryGiftHostApplication(HostApplication):
                 self.info(f"Attempt ledger: recorded attempt {attempt} in {path}")
             except OSError as exc:
                 self.info(f"Attempt ledger write failed: {exc}")
+        self._record_game_data(engine)
         return joined
+
+    def _record_game_data(self, engine):
+        """Keep what the console said about itself. The counters in it are only evidence as a
+        difference against the last session [frlgsim/game_data_log.py]."""
+        path = getattr(self.config, "game_data_log", None)
+        data = getattr(getattr(engine, "server", None), "game_data", None)
+        if not path or data is None:
+            return
+        try:
+            previous = game_data_log.read(path) if os.path.exists(path) else ()
+            capture = getattr(self.config.ldn, "capture_path", None)
+            # The run tag: every launcher names its capture after it (mev25.pcap).
+            tag = os.path.splitext(os.path.basename(capture))[0] if capture else None
+            _, entry = game_data_log.append(path, data, tag=tag)
+        except OSError as exc:
+            self.info(f"Game-data ledger write failed: {exc}")
+            return
+        self.info(f"Game-data ledger: session {len(previous) + 1} in {path}")
+        earlier = [item for item in previous
+                   if game_data_log.console_key(item) == game_data_log.console_key(entry)]
+        if earlier:
+            for line in game_data_log.changes(earlier[-1], entry):
+                self.info(f"  since the last session: {line}")
 
 
 class WonderNewsHostApplication(MysteryGiftHostApplication):

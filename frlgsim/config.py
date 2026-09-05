@@ -815,6 +815,9 @@ class MysteryGiftRunConfig:
     end_on_success: bool = False
     idle_timeout_seconds: int | None = None
     attempt_log_dir: str | None = None
+    # Where to keep what the console says about itself. See frlgsim/game_data_log.py: the
+    # card counters only mean something as a difference between two sessions.
+    game_data_log: str | None = None
 
     def __post_init__(self):
         if not isinstance(self.profile, TrainerProfile):
@@ -853,6 +856,8 @@ class MysteryGiftRunConfig:
             raise ValueError("idle_timeout_seconds must be between 1 and 86400")
         if self.attempt_log_dir is not None and not isinstance(self.attempt_log_dir, str):
             raise ValueError("attempt_log_dir must be a string or None")
+        if self.game_data_log is not None and not isinstance(self.game_data_log, str):
+            raise ValueError("game_data_log must be a string or None")
 
 
 def parse_trainer_id(value):
