@@ -79,12 +79,12 @@ FireRed can be handed a Wonder Card two ways. Both reach the **same** gift conve
 
 Both menus run the identical `InitializeRfuLinkManager_JoinGroup()` scan and then converge on the
 same `MysteryGiftClient_Create()` [mystery_gift_menu.c:1231]; `sourceIsFriend` selects only *how you
-connect*. The Switch's LDN bridge reports every peer's `serialNo` as `0x0002` — the value is written
+connect*. The Switch's LDN bridge reports every peer's `serialNo` as `0x0002` - the value is written
 by the emulator after our beacon has already been received, and `svc_47`'s parameter block carries no
 serial field at all [sloopsvc.c:9]. 21 controlled advertisements confirmed it. Full derivation and
 the tested surface: [docs/joyspot_discovery_findings.md](docs/joyspot_discovery_findings.md).
 
-So the distributor ships on the Friend path. Nothing about the gift is reduced by that — only the
+So the distributor ships on the Friend path. Nothing about the gift is reduced by that - only the
 zero-button auto-connect is lost.
 
 ## 2. What the console does after it joins
@@ -146,7 +146,7 @@ with the trade host and only the activity above it differs.
 
 **Size 0 means 1024, not empty.** `MysteryGiftLink_InitSend` [mystery_gift_link.c:55] expands a zero
 size to `MG_LINK_BUFFER_SIZE`. `SVR_COPY_SAVED_RAM_SCRIPT` never sets `ramScriptSize`
-[mystery_gift_server.c:275], so the RAM script goes out as a full 1024-byte message — as does
+[mystery_gift_server.c:275], so the RAM script goes out as a full 1024-byte message - as does
 `CLI_SEND_READY_END`. The CRC covers the padded buffer, not the meaningful prefix.
 
 **Block pacing has no acknowledgement.** `SEND_BLOCK_INIT` is *silently ignored* unless the
@@ -154,7 +154,7 @@ receiver's slot is `RECV_STATE_READY` [link_rfu_2.c:1146], and the slot only ret
 the console's `MGL_ResetReceived` runs. Nothing on the wire reports that, and the sender's own flow
 control does not help: `MGL_Send` waits on `MGL_HasReceived(sendPlayerId)`, which for the parent is
 its own slot 0, and `Rfu_SetBlockReceivedFlag` [link_rfu_2.c:1044] sets the parent's own flag
-immediately — the four-VBlank `numBlocksReceived` countdown [link_rfu_2.c:1220] applies only to
+immediately - the four-VBlank `numBlocksReceived` countdown [link_rfu_2.c:1220] applies only to
 blocks arriving *from a child*. A native parent therefore paces blocks about a frame apart and just
 relies on the console keeping up. `MysteryGiftTiming.inter_block_gap_frames` (36) buys far more:
 measured against the console model, the console may take 13 frames to consume a block with nothing

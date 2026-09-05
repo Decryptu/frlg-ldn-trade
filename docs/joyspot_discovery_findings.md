@@ -26,10 +26,10 @@ candidate slot 0 and associates with no button press. The gates, **in this order
    `partner[idx].serialNo == RFU_SERIAL_WONDER_DISTRIBUTOR (0x7F7D)`; otherwise it zeroes the entry.
    This runs inside the *listen* task.
 2. `groupScheduledAnim == UNION_ROOM_SPAWN_IN && !startedActivity`.
-3. `HasWonderCardOrNewsByLinkGroup` — the advertised `hasCard` bit; failing it plays **SE_BOO**.
+3. `HasWonderCardOrNewsByLinkGroup` - the advertised `hasCard` bit; failing it plays **SE_BOO**.
 4. `CreateTask_RfuReconnectWithParent(...)`.
 
-Because gate 1 zeroes the entry, gates 2–4 are unreachable while the serial is wrong, and no SE_BOO
+Because gate 1 zeroes the entry, gates 2-4 are unreachable while the serial is wrong, and no SE_BOO
 is produced. Uniform silence is the exact signature of gate 1 failing.
 
 ## 2. Measured conclusions
@@ -53,7 +53,7 @@ TID   | uname                   | parent| UNEXPLAINED | search| UNEXPLAINED
 
 If Sloop carried a serial in the 24-byte record, `02 00` (or `00 02`) would appear in one of those
 regions. It does not. Consistent with `svc_47` (`src/sloopsvc.c:34`), whose parameter block is
-`{u8 HostRfuGameData[0x10]; u8 HostRfuUsername[8]}` — 24 bytes, no serial field — while the candidate
+`{u8 HostRfuGameData[0x10]; u8 HostRfuUsername[8]}` - 24 bytes, no serial field - while the candidate
 list is written by the bridge through `svc_45_rfu_link_status()`.
 
 **Positive result: the record model is correct.** `0x1584 & 0x7F = 4 = ACTIVITY_TRADE` in the native
@@ -65,7 +65,7 @@ search word at `record[16:18]` decomposes as
 ## 3. Tested surface
 
 Every row is one controlled advertisement, held live until the operator answered. `auth` counts
-802.11 authentication attempts observed in the JSONL trace — the console never attempted association
+802.11 authentication attempts observed in the JSONL trace - the console never attempted association
 for any wireless candidate.
 
 | Stage | Candidate | Record on the air | Pia appVer | auth |
@@ -104,20 +104,20 @@ Raw traces: `joyspot_1.{0,1,2}_sweep*.jsonl` and `.log`.
 
 ### Note on stage 1.1
 
-Its four candidates varied `activity` and the `hasCard` hypothesis — both of which FireRed reads
+Its four candidates varied `activity` and the `hasCard` hypothesis - both of which FireRed reads
 *after* the serial gate. They could not have differed from one another, and four identical silences
 was the only possible outcome. The run is still evidence (it confirms gate ordering on hardware) but
 it tested variables downstream of the failure.
 
 ## 4. Deliberately not tested, and why
 
-- **`local_communication_id`** — the console's scan almost certainly filters on it, so a different
+- **`local_communication_id`** - the console's scan almost certainly filters on it, so a different
   value makes us invisible, which is indistinguishable from the serial gate failing. No informative
   negative is possible.
-- **Blind scene-ID brute force** — 65,536 values; forbidden by the plan. The Friend control already
+- **Blind scene-ID brute force** - 65,536 values; forbidden by the plan. The Friend control already
   proves scene `22287` is acceptable for Mystery Gift discovery generally, so scene is not the
   discriminator.
-- **Multi-variable combinations** — only worth exploring once a single variable produces a reaction.
+- **Multi-variable combinations** - only worth exploring once a single variable produces a reaction.
 
 ## 5. What would reopen this
 

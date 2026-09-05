@@ -156,7 +156,7 @@ do not match the proven profile.
    unmanaged-devices=interface-name:ldnclient;interface-name:ldn;interface-name:ldn-mon;interface-name:ldn-tap
    ```
 
-   then `sudo systemctl restart NetworkManager`. Name the file `zz-*` so it sorts last: some distros (e.g. Linux Mint's `ubuntu-system-adjustments.conf`) ship a later-sorting file that sets `unmanaged-devices=none` and silently overrides yours. Verify with `NetworkManager --print-config | grep unmanaged` — it must show the `interface-name:ldn...` list. (Stopping NetworkManager entirely also works, but the config file is a one-time setup that survives reboots.)
+   then `sudo systemctl restart NetworkManager`. Name the file `zz-*` so it sorts last: some distros (e.g. Linux Mint's `ubuntu-system-adjustments.conf`) ship a later-sorting file that sets `unmanaged-devices=none` and silently overrides yours. Verify with `NetworkManager --print-config | grep unmanaged` - it must show the `interface-name:ldn...` list. (Stopping NetworkManager entirely also works, but the config file is a one-time setup that survives reboots.)
 3. Ensure you can become root. The script requires root to run.
 
 ### Trainer identity
@@ -233,7 +233,7 @@ guide](docs/porygon_tm_gift.md) for live, export, injection, and test commands.
 The console's Mystery Gift menu has a second column, and `--news` serves it. Wonder News is 444
 bytes of title and body with no flag ID, no delivery script and no gift attached: the reward is a
 BERRY from the man in the house in Cerulean City. On the Switch choose **Mystery Gift → Wonder News
-→ Friend** — a Wonder Card host is not listed on that screen, and vice versa.
+→ Friend** - a Wonder Card host is not listed on that screen, and vice versa.
 
 ```bash
 sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --news
@@ -273,7 +273,7 @@ flow, timing ownership, trainer propagation, and shutdown sequence.
    **CANCEL** and confirm **YES**.
 6. Allow the automated room exit and disconnect to finish. The received Pokémon is saved as
    `output.pk3` (or the path passed to `--out`).
- 
+
 ## Credits
 - [kinnay](https://github.com/kinnay) - For the [LDN library](https://github.com/kinnay/LDN) this is built upon, and the excellent [NintendoClients Wiki](https://github.com/kinnay/NintendoClients/wiki)
 - [pokefirered](https://github.com/pret/pokefirered) - A full decompilation of FireRed/LeafGreen, including the Switch port. It served as an important reference.

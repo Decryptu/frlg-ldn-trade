@@ -7,10 +7,10 @@ nav_order: 6
 # LeafGreen: BPGF, and what does and does not transfer from FireRed
 
 Everything else in this section was read off **French FireRed, cartridge BPRF, software version
-0x0A**. The second console is **French LeafGreen, BPGF, 0x0A** — lg163 read that off the cartridge
+0x0A**. The second console is **French LeafGreen, BPGF, 0x0A** - lg163 read that off the cartridge
 header, `POKEMON LEAF`. The payloads work there unchanged; the addresses do not.
 
-Sixteen runs, lg160–lg175, every one of them inside the Mystery Gift menu. That matters practically:
+Sixteen runs, lg160-lg175, every one of them inside the Mystery Gift menu. That matters practically:
 the console never leaves its save point, so this can be done while the player is in the middle of
 something else.
 
@@ -38,7 +38,7 @@ something else.
 anything not in the table rather than falling back to the FireRed value.
 
 **RAM agrees; ROM does not.** Every IWRAM and EWRAM address measured so far is identical between the
-two builds — they are link-time globals of the same code. Every ROM address above 0x080486C8
+two builds - they are link-time globals of the same code. Every ROM address above 0x080486C8
 differs. That is a pattern with an explanation, not a law: it holds for fifteen symbols and the next
 one is still measured, not assumed.
 
@@ -46,7 +46,7 @@ one is still measured, not assumed.
 
 lg161 scanned LeafGreen for `RAND_MULT` and bs13 had scanned FireRed for the same constant. Eleven
 hits each, in the same order, so they pair one to one and give the delta at eleven points across
-1.3 MB — **for no hardware run at all**, out of two logs that already existed:
+1.3 MB - **for no hardware run at all**, out of two logs that already existed:
 
 | FireRed | delta |
 |---|---|
@@ -61,7 +61,7 @@ delta immediately below it.
 
 `rom_map.leafgreen_guess(firered_address)` answers inside the measured segments and **refuses the
 gaps**, where a boundary is known to exist and its position is not. It is a place to point a dump,
-never an answer — the delta says nothing about *content*.
+never an answer - the delta says nothing about *content*.
 
 ### The mistake that exposed all of this
 
@@ -76,12 +76,12 @@ when they share a blind spot.
 
 `sEasyChatGroups` was then found the way bs16 found FireRed's: groups 8, 9 and 10 each hold 69 words
 with 69 enabled, so `0x00450045` appears three times exactly 8 bytes apart. Three hits, at
-0x083E3580/3588/3590 — the count fields of entries 8, 9 and 10.
+0x083E3580/3588/3590 - the count fields of entries 8, 9 and 10.
 
 ## The French vocabulary transfers, and a console said so
 
 lg169 read the group table: 22 entries, every pointer in ROM, every count equal to FireRed's, and
-all 18 word-list pointers exactly −0x1C4 from theirs. That was evidence. lg170 is the confirmation —
+all 18 word-list pointers exactly −0x1C4 from theirs. That was evidence. lg170 is the confirmation -
 `string-gather` on LeafGreen's group 1 returned 26/26 words identical to bs20's FireRed reading, in
 the same slots: CE SERA TOI, JE T'AI EU, ECHANGER, SAPHIR … ARGENT.
 
@@ -93,7 +93,7 @@ and `easychat_french` answers for both consoles.
 lg172 pointed a `memory-dump` at 0x03004220 and the console died mid transmission with *erreur de
 connexion*. `acklag.py` read 0 stalls and `echo_gaps.py` read `never=[]` on every block, so it was
 neither the hold nor our own mirror. lg173 repeated the run **unchanged** and failed
-identically with a different CRC pair — the signature of a region that moves, not one that is
+identically with a different CRC pair - the signature of a region that moves, not one that is
 corrupted. lg174 then dumped the same 32 bytes from ROM and got lg166's bytes back exactly, which
 rules out the size.
 
@@ -121,6 +121,6 @@ size of a re-roll neither could have faked alone.
   Each bisection run halves a gap; nothing needs it yet.
 - **Nothing above `sEasyChatGroups` has been measured.** The −0x1C4 segment ends at 0x083E3700.
 - **The overworld is untouched here.** `gRngValue` and `gSaveBlock2Ptr` are both known, so
-  [the shiny-seek stub](rng.md) would work on LeafGreen as written — but installing a RAM script
+  [the shiny-seek stub](rng.md) would work on LeafGreen as written - but installing a RAM script
   means binding it to a map object and walking to it, which is the one thing the Mystery Gift menu
   cannot do for you.

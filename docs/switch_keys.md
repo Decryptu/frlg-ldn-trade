@@ -70,7 +70,7 @@ The private staging directory prevents other local accounts from traversing to
 the temporary file. `scp -p` also preserves an already-restrictive local file
 mode. Do not use a shared directory such as `/tmp` for the staging copy.
 
-After either method, verify only ownership and permissions—not key contents:
+After either method, verify only ownership and permissions - not key contents:
 
 ```bash
 ssh pi-ldn 'stat -c "%a %U %n" "$HOME/.switch" "$HOME/.switch/prod.keys"'

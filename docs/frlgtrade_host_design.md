@@ -202,7 +202,7 @@ Add protocol behavior at the lowest layer that understands it. Shared settings b
 the immutable run configuration and its nested values; OS/network behavior belongs in the application or transport; Pia messages belong
 in `HostPeerProtocol`; RFU behavior belongs in `RFULeader`; and Direct Corner decisions belong in
 `HostTradeEngine`. Keep encoders pure where possible and test each boundary using emitted datagrams,
-Reliable payloads, RFU frames, or command rows. Do not duplicate trainer fields—derive new identity
+Reliable payloads, RFU frames, or command rows. Do not duplicate trainer fields - derive new identity
 representations from `TrainerProfile`.
 
 The current implementation supports one joining Switch. Supporting more peers would require an
