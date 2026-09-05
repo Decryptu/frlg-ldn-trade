@@ -79,7 +79,7 @@ def test_accented_names_survive_the_charmap_round_trip():
     """encode() drops unknown characters, so before the accented range was added a French OT name
     went on the wire mangled: "Zoe(acute)" -> "Zo". Names are what the console displays for us."""
     from frlgsim import charmap
-    for name in ("Zoé", "Éloïse", "Jürgen", "Muñoz", "Grüße", "José", "Gurvan"):
+    for name in ("Zoé", "Éloïse", "Jürgen", "Muñoz", "Grüße", "José", "Renaud"):
         encoded = charmap.encode(name, width=8, pad=0x00)
         assert charmap.decode(encoded) == name, name
 
