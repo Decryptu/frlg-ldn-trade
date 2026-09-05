@@ -239,7 +239,19 @@ LEAFGREEN_DELTA_SEGMENTS = (
     (0x080EBA14, 0x0813E8CC, -0x28, "lg176b vs bs68b, 9 paired hits; lg161 vs bs13, 5 more"),
     (0x08148C74, 0x0824CDFC, -0x24, "lg176b vs bs68b, 3 paired hits; lg160, lg161-vs-bs13, lg165"),
     (0x083DE528, 0x083E3700, -0x1C4, "lg169: 18 word-list pointers and the table, all -0x1C4"),
+    (0x086003E0, 0x086803FC, -0x12D8, "bs69/lg178 and bs72/lg179, two points 0x80000 apart"),
 )
+
+# THE HIGH SEGMENT, and how it was measured without knowing a single symbol up there. Dump 1 KB off
+# one console, pick a word that occurs exactly once in it and has four distinct bytes, then scan a
+# window on the other console for that word: the address it comes back at IS the delta. Two runs a
+# point, anywhere in the ROM, needing no symbol and no decomp. bs69 dumped FireRed 0x08600000 and
+# lg178 found 0xE1926F4D at LeafGreen 0x085FF108; bs72 dumped 0x08680000 and lg179 found 0xC35D61AE
+# at 0x0867F124. Both -0x12D8, half a megabyte apart, which is what makes it a segment and not a
+# point - one point would have been the mistake lg167 already paid for.
+#
+# FireRed's ROM data ENDS between 0x08680400 and 0x08800000: bs71 read all 0xFF at 0x08800000 and
+# bs70 all 0x00 at 0x08E00000, while 0x08680000 is high-entropy data.
 
 # WHERE EACH BOUNDARY IS, which is the other half of the same measurement. lg176b scanned LeafGreen
 # for ITS gSpeciesInfo (0x0824CDD8) and bs68b scanned FireRed for ITS OWN (0x0824CDFC), each over

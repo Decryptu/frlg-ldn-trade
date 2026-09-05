@@ -228,6 +228,20 @@ def test_the_leafgreen_delta_is_four_measured_segments_and_refuses_the_gaps():
             rom_map.leafgreen_guess(gap)
 
 
+def test_the_high_segment_was_measured_without_knowing_a_symbol_up_there():
+    """bs69/lg178 and bs72/lg179: dump 1 KB off one console, take a word that occurs once in it, and
+    scan the other for it. Both points read -0x12D8, half a megabyte apart, so it is a segment. One
+    point would have been lg167's mistake again."""
+    assert rom_map.leafgreen_guess(0x086003E0) == 0x085FF108      # lg178, needle 0xE1926F4D
+    assert rom_map.leafgreen_guess(0x086803FC) == 0x0867F124      # lg179, needle 0xC35D61AE
+    assert rom_map.leafgreen_guess(0x086003E0) - 0x086003E0 == -0x12D8
+    # It is its own segment, far from the Easy Chat region's -0x1C4 and not reachable from it.
+    assert rom_map.leafgreen_guess(0x083E3700) - 0x083E3700 == -0x1C4
+    # And the span between them is a gap: more boundaries are in there and none is located.
+    with pytest.raises(ValueError, match="gap between measured segments"):
+        rom_map.leafgreen_guess(0x08500000)
+
+
 def test_every_leafgreen_boundary_sits_between_the_segments_it_joins():
     """A boundary is the span between the last paired hit at one delta and the first at the next, so
     the table and the segments are two readings of one measurement and must agree. Three boundaries

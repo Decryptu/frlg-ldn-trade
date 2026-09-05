@@ -184,9 +184,39 @@ Three things that were not certain before, and are now:
 The mev03 trap held here too: while the RAM script was installed the console reported **holding no
 Wonder Card**, in bs68's identity line, and the card was intact throughout.
 
+## Above `sEasyChatGroups`, with no symbol up there at all
+
+Every measurement so far started from a symbol. Above 0x083E3700 there is no symbol - nothing in
+that region has a name on either console - so the needle has to be made rather than found.
+
+**Dump 1 KB off one console and take a word out of it.** Any word that occurs exactly once in that
+kilobyte and has four distinct bytes is a fingerprint of a place, and scanning the other console for
+it over a window answers with the address that place has there. The difference is the delta. Two
+runs a point, anywhere in the ROM, needing no symbol, no decomp and no guess about content:
+
+| point | FireRed | LeafGreen | needle | delta |
+|---|---|---|---|---|
+| bs69 / lg178 | 0x086003E0 | 0x085FF108 | 0xE1926F4D | −0x12D8 |
+| bs72 / lg179 | 0x086803FC | 0x0867F124 | 0xC35D61AE | −0x12D8 |
+
+Each scan returned **exactly one match** in a 2 MB window, so neither address is ambiguous.
+
+**Two points, half a megabyte apart, agreeing - which is the whole reason there are two.** lg167 is
+in this page already: a single carried-forward delta predicted a place and the dump came back empty.
+One point here would have been that mistake again, and it would have looked just as convincing.
+
+So there is a fifth segment at −0x12D8, and the divergence really does keep growing along the link
+order: −0x24 at the species table, −0x1C4 at Easy Chat, −0x12D8 at 6 MB.
+
+Incidentally, **FireRed's ROM data ends between 0x08680400 and 0x08800000**: bs71 read all 0xFF at
+0x08800000 and bs70 all 0x00 at 0x08E00000, while 0x08680000 is high-entropy data. Two different
+padding values, so those two reads are not the same thing and neither has been chased.
+
 ## What is left
 
-- **The three boundaries are bracketed but not located.** Halving one needs a needle known to sit
-  inside that span; nothing needs it yet.
-- **Nothing above `sEasyChatGroups` has been measured.** The −0x1C4 segment ends at 0x083E3700, and
-  the species-table needle does not reach above 0x0815A630.
+- **The three low boundaries are bracketed but not located.** Halving one needs a needle known to
+  sit inside that span; nothing needs it yet.
+- **0x083E3700 .. 0x086003E0 is a gap, and a big one.** The delta goes from −0x1C4 to −0x12D8
+  across it, a difference of 0x1114, so there are many boundaries in there and none is located. The
+  make-a-needle method above costs two runs per point and would bisect it.
+- **Nothing between 0x086803FC and the end of the data has been measured.**
