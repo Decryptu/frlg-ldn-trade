@@ -234,11 +234,26 @@ LEAFGREEN = {
 # upward on faith and found nothing, which is what exposed them.
 LEAFGREEN_DELTA_SEGMENTS = (
     # (low, high, delta, evidence): the delta is measured at both ends of each span
-    (0x08000000, 0x080486C8, 0x00, "lg162/lg166 and the lg161-vs-bs13 pairing"),
-    (0x0807D238, 0x080AFC00, -0x2C, "lg161 vs bs13, 4 paired hits"),
-    (0x080F1EA0, 0x08122518, -0x28, "lg161 vs bs13, 5 paired hits"),
-    (0x08148C74, 0x0824CDFC, -0x24, "lg160 at 0x08148C74, lg161-vs-bs13 at 0x0814CBFC, lg165"),
+    (0x08000000, 0x0805359C, 0x00, "lg176b vs bs68b, 42 paired hits; lg162/lg166 below them"),
+    (0x0807D238, 0x080CE36C, -0x2C, "lg176b vs bs68b, 2 paired hits; lg161 vs bs13, 4 more"),
+    (0x080EBA14, 0x0813E8CC, -0x28, "lg176b vs bs68b, 9 paired hits; lg161 vs bs13, 5 more"),
+    (0x08148C74, 0x0824CDFC, -0x24, "lg176b vs bs68b, 3 paired hits; lg160, lg161-vs-bs13, lg165"),
     (0x083DE528, 0x083E3700, -0x1C4, "lg169: 18 word-list pointers and the table, all -0x1C4"),
+)
+
+# WHERE EACH BOUNDARY IS, which is the other half of the same measurement. lg176b scanned LeafGreen
+# for ITS gSpeciesInfo (0x0824CDD8) and bs68b scanned FireRed for ITS OWN (0x0824CDFC), each over
+# the whole ROM: every literal-pool reference to the species table, 56 hits on each console, so they
+# pair one to one and give the delta at 56 points for two runs. Three boundaries and no more are
+# visible in 0x08000000..0x0815A630, which is as high as a reference to that table goes.
+#
+# A boundary is the span between the last paired hit at one delta and the first at the next. It is
+# NOT located to the byte; halving one of these needs a needle known to sit inside it.
+LEAFGREEN_DELTA_BOUNDARIES = (
+    # (from_delta, to_delta, low, high, evidence)
+    (0x00, -0x2C, 0x0805359C, 0x0807D238, "lg176b/bs68b above, lg161/bs13 below"),
+    (-0x2C, -0x28, 0x080CE36C, 0x080EBA14, "lg176b vs bs68b, both ends"),
+    (-0x28, -0x24, 0x0813E8CC, 0x08148C74, "lg176b/bs68b below, lg160 above"),
 )
 
 def leafgreen_guess(firered_address):

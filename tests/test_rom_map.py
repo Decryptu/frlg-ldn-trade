@@ -203,7 +203,10 @@ def test_the_leafgreen_cartridge_is_identified_off_the_cartridge():
 def test_the_leafgreen_delta_is_four_measured_segments_and_refuses_the_gaps():
     """The eleven RAND_MULT hits lg161 found on LeafGreen pair one to one with the eleven bs13
     found on FireRed, and the pairs give the delta at eleven points: 0, then -0x2C, then -0x28,
-    then -0x24. At least three differences, not the one a two-point reading suggested."""
+    then -0x24. At least three differences, not the one a two-point reading suggested.
+
+    lg176b/bs68b then did the same with the species table's own address as the needle -- 56 hits on
+    each console, one to one -- which widened every segment and left the gaps below."""
     assert rom_map.leafgreen_guess(rom_map.CREATE_MON) == rom_map.leafgreen("CreateMon")
     assert rom_map.leafgreen_guess(rom_map.RANDOM) == rom_map.leafgreen("Random")
     assert rom_map.leafgreen_guess(rom_map.GSPECIES_INFO) == rom_map.leafgreen("gSpeciesInfo")
@@ -213,10 +216,34 @@ def test_the_leafgreen_delta_is_four_measured_segments_and_refuses_the_gaps():
                                (0x080AFC00, 0x080AFBD4), (0x080F1EA0, 0x080F1E78),
                                (0x08122518, 0x081224F0), (0x0814CBFC, 0x0814CBD8)):
         assert rom_map.leafgreen_guess(firered) == leafgreen
+    # The 56 lg176b/bs68b pairs, at the ends of each run of one delta.
+    for firered, leafgreen in ((0x080001BC, 0x080001BC), (0x0805359C, 0x0805359C),
+                               (0x080CBFB0, 0x080CBF84), (0x080CE36C, 0x080CE340),
+                               (0x080EBA14, 0x080EB9EC), (0x0813E8CC, 0x0813E8A4),
+                               (0x0815A3F4, 0x0815A3D0), (0x0815A630, 0x0815A60C)):
+        assert rom_map.leafgreen_guess(firered) == leafgreen
     # A boundary is known to be in here and its position is not.
-    for gap in (0x080C0000, 0x08130000, 0x08060000):
+    for gap in (0x08060000, 0x080D8000, 0x08142000):
         with pytest.raises(ValueError, match="gap between measured segments"):
             rom_map.leafgreen_guess(gap)
+
+
+def test_every_leafgreen_boundary_sits_between_the_segments_it_joins():
+    """A boundary is the span between the last paired hit at one delta and the first at the next, so
+    the table and the segments are two readings of one measurement and must agree. Three boundaries
+    are bracketed and none is located to the byte."""
+    segments = rom_map.LEAFGREEN_DELTA_SEGMENTS
+    assert len(rom_map.LEAFGREEN_DELTA_BOUNDARIES) == 3
+    for index, (before, after, low, high, evidence) in enumerate(
+            rom_map.LEAFGREEN_DELTA_BOUNDARIES):
+        assert low < high, f"boundary {index} is not a span"
+        assert evidence, f"boundary {index} has no run behind it"
+        # It joins two segments that are adjacent in the table, and it lies between them.
+        assert segments[index][2] == before and segments[index + 1][2] == after
+        assert segments[index][1] == low and segments[index + 1][0] == high
+        # Which is exactly the range leafgreen_guess refuses.
+        with pytest.raises(ValueError, match="gap between measured segments"):
+            rom_map.leafgreen_guess((low + high) // 2)
 
 
 def test_the_easy_chat_region_has_its_own_delta_and_it_is_not_the_one_below_it():

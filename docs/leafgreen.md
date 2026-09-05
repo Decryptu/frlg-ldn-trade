@@ -115,12 +115,78 @@ values had moved by exactly 12 since lg160's `anchors`, one shared 4-aligned off
 range `SetSaveBlocksPointers` rolls [decomp:src/load_save.c:75]. Two pointers cannot agree on the
 size of a re-roll neither could have faked alone.
 
+## All three boundaries, for two runs, with the table's own address as the needle
+
+The eleven RAND_MULT points above pair the two consoles wherever the LCG multiplier happens to sit.
+Nothing says those places are near a boundary, and none of the three was bracketed by them.
+
+**A pointer is a better needle than a constant, because every reference to it is a paired point.**
+lg176b scanned LeafGreen's whole ROM for LeafGreen's own `gSpeciesInfo` (0x0824CDD8) and bs68b
+scanned FireRed's for FireRed's own (0x0824CDFC). Each console answered with **56 hits** - every
+literal-pool reference to the species table, which is code that reads a Pokemon's base stats and so
+is spread across the whole game. Equal counts, ascending, so they pair one to one:
+
+| delta | FireRed span | paired hits |
+|---|---|---|
+| 0 | 0x080001BC .. 0x0805359C | 42 |
+| −0x2C | 0x080CBFB0 .. 0x080CE36C | 2 |
+| −0x28 | 0x080EBA14 .. 0x0813E8CC | 9 |
+| −0x24 | 0x0815A3F4 .. 0x0815A630 | 3 |
+
+Four segments, three steps, and each step is bracketed by the last hit below it and the first above
+it. Combined with the RAND_MULT points, which reach into two of the same segments:
+
+| boundary | somewhere in | span |
+|---|---|---|
+| 0 -> −0x2C | 0x0805359C .. 0x0807D238 | 171,164 B |
+| −0x2C -> −0x28 | 0x080CE36C .. 0x080EBA14 | 120,488 B |
+| −0x28 -> −0x24 | 0x0813E8CC .. 0x08148C74 | 41,896 B |
+
+`rom_map.LEAFGREEN_DELTA_BOUNDARIES` holds these, and a test asserts that the boundary table and the
+segment table are two readings of the same measurement. **None is located to the byte**, and
+`leafgreen_guess` still answers only from the segments; what changed is that the gaps it refuses are
+three named spans rather than "somewhere in the ROM".
+
+The method costs two runs and generalises: any address measured on both consoles is a needle whose
+every reference is a paired point. Its reach is the reach of those references - no hit here is above
+0x0815A630, so this says nothing about the Easy Chat region or anything past it.
+
+## The overworld, and a shiny Mewtwo (mev23)
+
+`gRngValue`, `gSaveBlock1Ptr` and `gSaveBlock2Ptr` are all link-time IWRAM words at the same
+addresses as FireRed's, and every literal in [the seek stubs](rng.md) is one of them - so the stubs
+needed no porting at all. What was missing was somewhere to put a RAM script: the player has to talk
+to a map object, and this save sits in Cerulean Cave B1F, in front of Mewtwo.
+
+**So the binding went on Mewtwo himself.** `initramscript` takes a map group, a map number and an
+object id, and `GetRamScript` runs our script INSTEAD of that object's own
+[decomp:src/field_control_avatar.c:458]. Cerulean Cave B1F is group 1 map 74
+[data/maps/map_groups.json] and Mewtwo is object 3 [data/maps/CeruleanCave_B1F/map.json].
+
+mev23 installed `rng-mon-hunt-both` there with `setwildbattle` set to species 150 at level 70. The
+console answered status 55, our marker past `initramscript`. What the player saw next is the whole
+result: **Mewtwo's own "Miou!" script did not run** - the battle started immediately, which is ours -
+and the Mewtwo that appeared was **shiny**.
+
+Three things that were not certain before, and are now:
+
+- The stray-draw search works on the second cartridge. The first attempt missed and the ones after
+  it hit. Both were the first talk after a load, so the miss is a placement miss and not a wrong
+  constant: the stub reads `TID ^ SID` off `gSaveBlock2Ptr` at run time
+  [asm/field/mon-seek-both.s:73], so it uses whichever console it is running on.
+- **The binding survives a power cycle.** The player reset and talked to Mewtwo cold, and the script
+  still ran. `gSaveBlock1Ptr` is re-rolled on every load [SetSaveBlocksPointers], so that is the
+  trampoline's run-time pointer read being right rather than lucky.
+- A buffer script does NOT take the slot back. bs68 ran on this console between the two and changed
+  nothing, because a buffer script sends no card. Only a Wonder Card session does, and lg177 - an
+  ordinary card - restored Mewtwo's own script through `InitRamScript_NoObjectEvent`.
+
+The mev03 trap held here too: while the RAM script was installed the console reported **holding no
+Wonder Card**, in bs68's identity line, and the card was intact throughout.
+
 ## What is left
 
-- **The gap boundaries are not bracketed.** Three of them are known to exist and none is located.
-  Each bisection run halves a gap; nothing needs it yet.
-- **Nothing above `sEasyChatGroups` has been measured.** The −0x1C4 segment ends at 0x083E3700.
-- **The overworld is untouched here.** `gRngValue` and `gSaveBlock2Ptr` are both known, so
-  [the shiny-seek stub](rng.md) would work on LeafGreen as written - but installing a RAM script
-  means binding it to a map object and walking to it, which is the one thing the Mystery Gift menu
-  cannot do for you.
+- **The three boundaries are bracketed but not located.** Halving one needs a needle known to sit
+  inside that span; nothing needs it yet.
+- **Nothing above `sEasyChatGroups` has been measured.** The −0x1C4 segment ends at 0x083E3700, and
+  the species-table needle does not reach above 0x0815A630.

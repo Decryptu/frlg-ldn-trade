@@ -615,6 +615,17 @@ MAP_GROUP_PLAYERS_HOUSE = 4
 MAP_NUM_PLAYERS_HOUSE = 0
 PLAYERS_HOUSE_OBJECT_MOM = 1
 
+# CERULEAN CAVE B1F, group 1 (gMapGroup_Dungeons) map 74 [data/maps/map_groups.json]. Local ids are
+# assigned in map.json order and start at 1, so the ULTRA BALL is 1, the MAX REVIVE is 2 and MEWTWO
+# at (7,12) is object 3 [data/maps/CeruleanCave_B1F/map.json]. He is MOVEMENT_TYPE_FACE_DOWN and
+# never wanders, which is the same requirement the mother satisfies. Binding here REPLACES his
+# encounter script, so the battle the player gets is the one we built, and it stays repeatable.
+MAP_GROUP_CERULEAN_CAVE = 1
+MAP_NUM_CERULEAN_CAVE_B1F = 74
+CERULEAN_CAVE_B1F_OBJECT_ULTRA_BALL = 1
+CERULEAN_CAVE_B1F_OBJECT_MAX_REVIVE = 2
+CERULEAN_CAVE_B1F_OBJECT_MEWTWO = 3
+
 
 def _at_mom(kwargs):
     """Bind to the mother unless the caller says otherwise: a stationary object is a hard
@@ -1061,17 +1072,18 @@ RNG_MON_HUNT_CRITERIA = native_script.MonCriteria(
     iv_minimums=(0, 0, 0, RNG_MON_HUNT_SPEED_FLOOR, 0, 0))
 
 
-def build_rng_mon_hunt_script(criteria=None, *, cap=None,
+def build_rng_mon_hunt_script(criteria=None, *, species=None, level=None, cap=None,
                               max_freeze_frames=native_script.MAX_FREEZE_FRAMES, **kwargs):
     return build_mevent_npc_script(
         field_script=native_script.build_mon_hunt_script(
-            RNG_MON_HUNT_SPECIES, RNG_MON_HUNT_LEVEL,
+            RNG_MON_HUNT_SPECIES if species is None else species,
+            RNG_MON_HUNT_LEVEL if level is None else level,
             criteria=RNG_MON_HUNT_CRITERIA if criteria is None else criteria,
             cap=cap, max_freeze_frames=max_freeze_frames), **_at_mom(kwargs))
 
 
-def build_rng_mon_hunt_gift(criteria=None, *, cap=None,
-                            max_freeze_frames=native_script.MAX_FREEZE_FRAMES):
+def build_rng_mon_hunt_gift(criteria=None, *, species=None, level=None, cap=None,
+                            max_freeze_frames=native_script.MAX_FREEZE_FRAMES, **kwargs):
     """-> the same card carrying a search for whatever was asked for.
 
     The registry holds the definition built with the defaults; a host that was given criteria on
@@ -1080,8 +1092,8 @@ def build_rng_mon_hunt_gift(criteria=None, *, cap=None,
     """
     return dataclasses.replace(
         RNG_MON_HUNT_GIFT,
-        mevent=build_rng_mon_hunt_script(criteria, cap=cap,
-                                         max_freeze_frames=max_freeze_frames))
+        mevent=build_rng_mon_hunt_script(criteria, species=species, level=level, cap=cap,
+                                         max_freeze_frames=max_freeze_frames, **kwargs))
 
 
 RNG_MON_HUNT_GIFT = WonderGift(
@@ -1130,20 +1142,21 @@ RNG_MON_HUNT_FAR_FLAG_ID = 1000
 RNG_MON_HUNT_FAR_FILLER = "the far end of the body, summed before the search will run"
 
 
-def build_rng_mon_hunt_far_script(criteria=None, *, cap=None,
+def build_rng_mon_hunt_far_script(criteria=None, *, species=None, level=None, cap=None,
                                   max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
                                   payload_bytes=None, **kwargs):
     return build_mevent_npc_script(
         field_script=native_script.build_mon_hunt_far_script(
-            RNG_MON_HUNT_SPECIES, RNG_MON_HUNT_LEVEL,
+            RNG_MON_HUNT_SPECIES if species is None else species,
+            RNG_MON_HUNT_LEVEL if level is None else level,
             criteria=RNG_MON_HUNT_CRITERIA if criteria is None else criteria,
             cap=cap, max_freeze_frames=max_freeze_frames,
             payload_bytes=payload_bytes), **_at_mom(kwargs))
 
 
-def build_rng_mon_hunt_far_gift(criteria=None, *, cap=None,
+def build_rng_mon_hunt_far_gift(criteria=None, *, species=None, level=None, cap=None,
                                 max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
-                                payload_bytes=None):
+                                payload_bytes=None, **kwargs):
     """-> the card carrying the body-hosted search, with whatever was asked for on the line.
 
     `payload_bytes` shortens the payload without changing anything else, which is how a partial
@@ -1151,9 +1164,9 @@ def build_rng_mon_hunt_far_gift(criteria=None, *, cap=None,
     """
     return dataclasses.replace(
         RNG_MON_HUNT_FAR_GIFT,
-        mevent=build_rng_mon_hunt_far_script(criteria, cap=cap,
+        mevent=build_rng_mon_hunt_far_script(criteria, species=species, level=level, cap=cap,
                                              max_freeze_frames=max_freeze_frames,
-                                             payload_bytes=payload_bytes))
+                                             payload_bytes=payload_bytes, **kwargs))
 
 
 RNG_MON_HUNT_FAR_GIFT = WonderGift(
@@ -1201,26 +1214,27 @@ RNG_MON_HUNT_BOTH_FLAG_ID = 1001
 # so a miss costs one more A press while a longer cap costs the stare. 232 bytes of stub, against
 # the 162 `setptr` could stage. docs/rng.md.
 
-def build_rng_mon_hunt_both_script(criteria=None, *, cap=None,
+def build_rng_mon_hunt_both_script(criteria=None, *, species=None, level=None, cap=None,
                                    max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
                                    payload_bytes=None, **kwargs):
     return build_mevent_npc_script(
         field_script=native_script.build_mon_hunt_both_script(
-            RNG_MON_HUNT_SPECIES, RNG_MON_HUNT_LEVEL,
+            RNG_MON_HUNT_SPECIES if species is None else species,
+            RNG_MON_HUNT_LEVEL if level is None else level,
             criteria=RNG_MON_HUNT_CRITERIA if criteria is None else criteria,
             cap=cap, max_freeze_frames=max_freeze_frames,
             payload_bytes=payload_bytes), **_at_mom(kwargs))
 
 
-def build_rng_mon_hunt_both_gift(criteria=None, *, cap=None,
+def build_rng_mon_hunt_both_gift(criteria=None, *, species=None, level=None, cap=None,
                                  max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
-                                 payload_bytes=None):
+                                 payload_bytes=None, **kwargs):
     """-> the card carrying the stray-draw-proof search, with whatever was asked for on the line."""
     return dataclasses.replace(
         RNG_MON_HUNT_BOTH_GIFT,
-        mevent=build_rng_mon_hunt_both_script(criteria, cap=cap,
+        mevent=build_rng_mon_hunt_both_script(criteria, species=species, level=level, cap=cap,
                                               max_freeze_frames=max_freeze_frames,
-                                              payload_bytes=payload_bytes))
+                                              payload_bytes=payload_bytes, **kwargs))
 
 
 RNG_MON_HUNT_BOTH_GIFT = WonderGift(
@@ -1266,26 +1280,27 @@ RNG_MON_HUNT_LOG_FLAG_ID = 1002
 #
 # and `native_script.decode_hunt_log`. One variable against rng-mon-hunt-both: the stub logs.
 
-def build_rng_mon_hunt_log_script(criteria=None, *, cap=None,
+def build_rng_mon_hunt_log_script(criteria=None, *, species=None, level=None, cap=None,
                                   max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
                                   payload_bytes=None, **kwargs):
     return build_mevent_npc_script(
         field_script=native_script.build_mon_hunt_log_script(
-            RNG_MON_HUNT_SPECIES, RNG_MON_HUNT_LEVEL,
+            RNG_MON_HUNT_SPECIES if species is None else species,
+            RNG_MON_HUNT_LEVEL if level is None else level,
             criteria=RNG_MON_HUNT_CRITERIA if criteria is None else criteria,
             cap=cap, max_freeze_frames=max_freeze_frames,
             payload_bytes=payload_bytes), **_at_mom(kwargs))
 
 
-def build_rng_mon_hunt_log_gift(criteria=None, *, cap=None,
+def build_rng_mon_hunt_log_gift(criteria=None, *, species=None, level=None, cap=None,
                                 max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
-                                payload_bytes=None):
+                                payload_bytes=None, **kwargs):
     """-> the card carrying the self-measuring search."""
     return dataclasses.replace(
         RNG_MON_HUNT_LOG_GIFT,
-        mevent=build_rng_mon_hunt_log_script(criteria, cap=cap,
+        mevent=build_rng_mon_hunt_log_script(criteria, species=species, level=level, cap=cap,
                                              max_freeze_frames=max_freeze_frames,
-                                             payload_bytes=payload_bytes))
+                                             payload_bytes=payload_bytes, **kwargs))
 
 
 RNG_MON_HUNT_LOG_GIFT = WonderGift(

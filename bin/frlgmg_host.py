@@ -290,6 +290,30 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               % (wonder_card_events.GIFT_RNG_MON_HUNT,
                  round(100 * native_script.SEARCH_CONFIDENCE))))
     parser.add_argument(
+        "--hunt-species", type=lambda v: int(v, 0), default=None, metavar="ID",
+        help=("with --gift %s: what the stub's own `setwildbattle` puts on the screen. Neither the\n"
+              "species nor the level is drawn from the rng, so this changes nothing about the\n"
+              "search. The default is a level 5 MAGIKARP, which is catchable in one ball."
+              % wonder_card_events.GIFT_RNG_MON_HUNT))
+    parser.add_argument(
+        "--hunt-level", type=lambda v: int(v, 0), default=None, metavar="N",
+        help="with --gift %s: the level that species appears at." % wonder_card_events.GIFT_RNG_MON_HUNT)
+    parser.add_argument(
+        "--ram-script-map-group", type=lambda v: int(v, 0), default=None, metavar="N",
+        help=("which map group the RAM script binds to (a group_order index in\n"
+              "[decomp:data/maps/map_groups.json]). The default is the player's house, where the\n"
+              "mother never moves. Cerulean Cave B1F is group %d map %d, and MEWTWO is object %d."
+              % (wonder_card_events.MAP_GROUP_CERULEAN_CAVE,
+                 wonder_card_events.MAP_NUM_CERULEAN_CAVE_B1F,
+                 wonder_card_events.CERULEAN_CAVE_B1F_OBJECT_MEWTWO)))
+    parser.add_argument(
+        "--ram-script-map-num", type=lambda v: int(v, 0), default=None, metavar="N",
+        help="which map in that group the RAM script binds to.")
+    parser.add_argument(
+        "--ram-script-object", type=lambda v: int(v, 0), default=None, metavar="N",
+        help=("which object event on that map. Local ids are assigned in map.json order and start\n"
+              "at 1. Binding REPLACES that object's own script, so choose one that never moves."))
+    parser.add_argument(
         "--hunt-freeze-frames", type=int, default=native_script.MAX_FREEZE_FRAMES, metavar="N",
         help=("with --gift %s: how long the search may block the overworld in the worst case,\n"
               "in frames (default %d, about %.0f s). The field engine has not returned while it\n"
@@ -353,8 +377,24 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     return parser
 
 
+def _hunt_bind(args):
+    """-> the map and object the RAM script binds to, empty when the default (the mother) stands."""
+    named = {"map_group": args.ram_script_map_group, "map_num": args.ram_script_map_num,
+             "object_id": args.ram_script_object}
+    given = {key: value for key, value in named.items() if value is not None}
+    if given and len(given) != 3:
+        missing = sorted(set(named) - set(given))
+        raise native_script.NativeScriptError(
+            "a binding is a map group, a map number and an object id together; "
+            f"--ram-script-* is missing {', '.join(missing)}")
+    return given
+
+
 def _hunt_asked(args):
-    return any(value is not None for value in (args.hunt_nature, args.hunt_iv, args.hunt_cap))
+    return any(value is not None for value in (args.hunt_nature, args.hunt_iv, args.hunt_cap,
+                                               args.hunt_species, args.hunt_level,
+                                               args.ram_script_map_group, args.ram_script_map_num,
+                                               args.ram_script_object))
 
 
 def _hunt_definition(parser, args):
@@ -384,8 +424,9 @@ def _hunt_definition(parser, args):
             wonder_card_events.GIFT_RNG_MON_HUNT_BOTH: wonder_card_events.build_rng_mon_hunt_both_gift,
             wonder_card_events.GIFT_RNG_MON_HUNT_LOG: wonder_card_events.build_rng_mon_hunt_log_gift,
         }.get(args.gift, wonder_card_events.build_rng_mon_hunt_gift)
-        definition = compose(criteria, cap=args.hunt_cap,
-                             max_freeze_frames=args.hunt_freeze_frames)
+        definition = compose(criteria, species=args.hunt_species, level=args.hunt_level,
+                             cap=args.hunt_cap, max_freeze_frames=args.hunt_freeze_frames,
+                             **_hunt_bind(args))
     except native_script.NativeScriptError as exc:
         parser.error(str(exc))
     print(f"hunting: {criteria.describe()} - 1 state in {1 / cost['probability']:,.0f}, "

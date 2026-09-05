@@ -549,6 +549,20 @@ indirectly.
 Scripted encounters so far: bs53 Method 1, mev19 Method 1, mev20 Method 2, mev21 Method 1, mev22
 Method 4 - two in five, and both stray methods occur on a path that had looked clean.
 
+**mev23 ran the same stub on the OTHER cartridge, and on a legendary.** The card bound
+`rng-mon-hunt-both` to Cerulean Cave B1F object 3 - Mewtwo's own object - on French LeafGreen, with
+`setwildbattle` set to species 150 at level 70. Mewtwo's script did not run; ours did, and the
+Mewtwo that appeared was shiny. Nothing in the stub was ported: every literal it uses (`gRngValue`,
+`gSaveBlock1Ptr`, `gSaveBlock2Ptr`, the LCG pair) is a link-time IWRAM word or a constant, all
+measured identical on LeafGreen, and `TID ^ SID` is read off the console at run time rather than
+baked in. The first attempt missed and the ones after it hit, both being the first talk after a
+load, so that miss is a placement miss like any other. docs/leafgreen.md has the run.
+
+A binding on a plot object is worth stating separately: `GetRamScript` replaces the object's script
+outright, so the legendary's encounter script never runs and the battle is entirely the one we
+built. It is also repeatable and it survives a power cycle, and an ordinary Wonder Card is what
+takes the slot back and gives the object its own script again.
+
 ## Where a hunt writes its report
 
 `asm/field/mon-seek-log.s` (288 bytes, `--gift rng-mon-hunt-log`, flagId 1002) writes
