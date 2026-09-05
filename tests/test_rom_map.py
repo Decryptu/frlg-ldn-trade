@@ -180,7 +180,14 @@ def test_leafgreen_is_its_own_table_and_never_falls_back_to_firered():
     assert rom_map.leafgreen("mystery_gift_call_site") != 0x08148C74
     assert rom_map.LEAFGREEN_CALL_SITE_DELTA == -0x24
     with pytest.raises(KeyError, match="not been measured on LeafGreen"):
-        rom_map.leafgreen("gPlayerParty")
+        rom_map.leafgreen("SeedRngButNotMeasured")
+
+
+def test_the_leafgreen_party_was_found_by_finding_a_pokemon():
+    """lg164, the bs47 method: every 4-aligned window of a dump that decodes as a struct Pokemon
+    with a valid checksum. The user named the same four back, in order, unprompted."""
+    assert rom_map.leafgreen("gPlayerParty") == 0x02024280
+    assert rom_map.leafgreen("gEnemyParty") == 0x02024280 - 600
 
 
 def test_every_leafgreen_address_carries_the_run_that_measured_it():
@@ -192,3 +199,14 @@ def test_every_leafgreen_address_carries_the_run_that_measured_it():
 def test_the_leafgreen_cartridge_is_identified_off_the_cartridge():
     assert rom_map.LEAFGREEN_GAME_CODE == b"BPGF"        # lg163; FireRed is BPRF
     assert rom_map.LEAFGREEN_SOFTWARE_VERSION == 0x0A
+
+
+def test_the_leafgreen_split_is_a_guess_that_refuses_where_nothing_is_known():
+    """Four measurements: delta 0 at CreateMon and Random, -0x24 at the Mystery Gift call site and
+    gSpeciesInfo. lg166 predicted the zero before the run. The split itself is NOT bracketed, so
+    inside it the helper must refuse rather than interpolate."""
+    assert rom_map.leafgreen_guess(rom_map.CREATE_MON) == rom_map.leafgreen("CreateMon")
+    assert rom_map.leafgreen_guess(rom_map.RANDOM) == rom_map.leafgreen("Random")
+    assert rom_map.leafgreen_guess(rom_map.GSPECIES_INFO) == rom_map.leafgreen("gSpeciesInfo")
+    with pytest.raises(ValueError, match="unbracketed split"):
+        rom_map.leafgreen_guess(0x08100000)

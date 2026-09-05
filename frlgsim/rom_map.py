@@ -374,7 +374,67 @@ LEAFGREEN = {
     "Random": (0x080486B0, "lg162"),
     "SeedRng": (0x080486D0, "lg162"),
     "gRngValue": (0x03004220, "lg162"),               # named twice, two independent pools
+    # lg164 found the party BY FINDING A POKEMON, the way bs47 did on FireRed: every 4-aligned
+    # window of a 1024-byte dump at 0x02024000 decoded as a struct Pokemon with a valid checksum.
+    # Four passed, and the user named their team back unprompted and IN ORDER - ALAKAZAM, RONFLEX,
+    # LIPOUTI (their nickname for a LIPOUTOU traded to an NPC, which is why its OT reads JOHAN and
+    # the others PAU), STAROSS - with KRABBY and FLORIZARRE in slots 5 and 6, past the window. That
+    # is why gPlayerPartyCount reads 6 while only four decoded. Nothing here was assumed from
+    # FireRed; the console named its own party.
+    "gPlayerParty": (0x02024280, "lg164"),
+    "gPlayerPartyCount": (0x02024025, "lg164"),        # read 6, matching a full party
+    "gEnemyParty": (0x02024028, "lg164"),              # 600 bytes below [src/pokemon.c:61-62]
+    # lg165: the dump at FireRed's gSpeciesInfo decoded as species entries 20 bytes out of phase -
+    # Ivysaur 60/62/63/60/80/80 GRASS/POISON and Venusaur 80/82/83/80/100/100 at a stride of 28,
+    # which places entry 0 at 0x0824CDD8. Two base-stat rows agreeing with their types is not
+    # something a wrong address produces.
+    "gSpeciesInfo": (0x0824CDD8, "lg165"),             # FireRed 0x0824CDFC, so -0x24
+    # lg166 was a PREDICTION MADE BEFORE THE RUN and it held: CreateMon's prologue, byte for byte
+    # (f0 b5 47 46 80 b4 87 b0, then the stack arguments at [sp,#52/56/60] that bs42 disassembled
+    # on FireRed), at exactly FireRed's address.
+    "CreateMon": (0x08041150, "lg166"),                # same as FireRed - BELOW the split
 }
+
+# --- THE SPLIT, and it is a HYPOTHESIS with four measurements under it --------------------------
+# FOUR POINTS, TWO EITHER SIDE:
+#
+#     CreateMon      0x08041150   same as FireRed        delta 0        lg166
+#     Random         0x080486B0   same as FireRed        delta 0        lg162
+#     MG call site   0x08148C74   -> 0x08148C50          delta -0x24    lg160
+#     gSpeciesInfo   0x0824CDFC   -> 0x0824CDD8          delta -0x24    lg165
+#
+# HYPOTHESIS: ONE difference of 36 bytes lies between 0x080486D0 and 0x08148C50, and everything
+# above it is FireRed's address minus 0x24. lg166 is the reason this is worth writing down rather
+# than a coincidence noticed afterwards - the delta was predicted to be ZERO there before the run,
+# because 0x08041150 is below the split, and the bytes came back identical.
+#
+# WHY IT IS STILL A HYPOTHESIS. Two points above the split both reading -0x24 is CONSISTENT with a
+# single insertion and does not prove one: several differences that happen to cancel would look the
+# same, and nothing here has bracketed the split itself. It is also silent about CONTENT - a table
+# can sit at the predicted address and hold different data, which is exactly what the French Easy
+# Chat vocabulary turned out to be against the English decomp (docs/easy_chat_french.md).
+#
+# HOW TO USE IT: as the first place to point a dump, never as an answer. `leafgreen()` still raises
+# for anything unmeasured, and every entry above carries the run that measured it.
+LEAFGREEN_HIGH_ROM_DELTA = -0x24    # HYPOTHESIS: applies above the split, not below it
+LEAFGREEN_SPLIT_BRACKET = (0x080486D0, 0x08148C50)   # measured 0 below, -0x24 above; not narrowed
+
+
+def leafgreen_guess(firered_address):
+    """-> where `firered_address` PROBABLY is on LeafGreen. A place to point a dump, not an answer.
+
+    Below the bracket the delta is measured to be 0; above it, -0x24 at two independent points.
+    Inside the bracket nothing is known, so it refuses rather than splitting the difference.
+    """
+    low, high = LEAFGREEN_SPLIT_BRACKET
+    address = int(firered_address)
+    if address <= low:
+        return address
+    if address >= high:
+        return address + LEAFGREEN_HIGH_ROM_DELTA
+    raise ValueError(
+        f"0x{address:X} is inside the unbracketed split 0x{low:X}..0x{high:X}; "
+        "the delta there has never been measured")
 # The only measured divergence so far, kept as a number rather than a story.
 LEAFGREEN_CALL_SITE_DELTA = LEAFGREEN["mystery_gift_call_site"][0] - 0x08148C74
 
