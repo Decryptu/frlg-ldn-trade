@@ -463,15 +463,32 @@ a coincidence - a one-in-8192 event does not happen twice in two attempts. One r
 entry through bit 0, the trainer id read out of gSaveBlock2Ptr, and the draw model of
 CreateScriptedWildMon, all at once.
 
-**The script must not end at `dowildbattle`.** `StartScriptedWildBattle` sets
-`gMain.savedCallback = CB2_EndScriptedWildBattle`, which ends in
-`CB2_ReturnToFieldContinueScriptPlayMapMusic` [decomp:src/overworld.c:1670] - *continue script* - so
-the field engine resumes at the byte after `dowildbattle`. With nothing there it runs the zero fill
-`InitRamScript` left in the rest of the 995-byte body (opcode 0x00 is `nop`) and then walks off the
-end into the rest of SaveBlock1, executing the player's save as bytecode. That is very likely
-mev11's unexplained "a second wild battle re-triggered": 0xB6/0xB7 occur in save data like any other
-bytes. `releaseall` + `end` closes it, two bytes. mev16 ran with the tail and nothing followed the
-battle - though mev15 without it also showed nothing, so the decomp is the evidence, not the run.
+**A battle moves the save block the script lives in, and that is a trap, not a detail.**
+`CB2_InitBattle` and `InitOverworldBgs` both call `MoveSaveBlocks_ResetHeap`
+[decomp:src/battle_main.c:614, src/overworld.c:1337], which re-rolls gSaveBlock1's address by a
+multiple of 4 in 0..124 (`SAVEBLOCK_MOVE_RANGE` 128, src/load_save.c:75). A RAM script lives in
+`gSaveBlock1Ptr->ramScript.data.script` and the engine runs it **through a pointer into that block**
+[GetRamScript, decomp:src/script.c:514] which it keeps across the battle. So the field engine
+resumes at an address the script no longer occupies, and **nothing written after `dowildbattle` is
+reachable**. One mechanism, three symptoms already recorded here: mev11's stray second battle (the
+landing hit a 0xB6/0xB7), mev15/mev16 walking away clean (it hit the zero fill, which is `nop`), and
+**mev18 freezing the overworld dead** - no A, no B, no START, the app had to be killed - because the
+bigger stub pushed the resume point to byte 972 of 995, where a negative shift lands inside the
+six-byte `setptr` records and decodes a command that waits for ever. `releaseall` + `end` was never
+a fix.
+
+**The fix is to start the battle from outside the save block**, in ten bytes
+[`rng_script.battle_and_exit`]:
+
+    setvar 0x8000, 0x02B7      ->  0x020370B4: B7 02  =  dowildbattle ; end
+    goto   0x020370B4
+
+gSpecialVar_0x8000 is 0x020370B4 [bs57] and does not move; nothing in the battle or overworld code
+writes it (`gSpecialVar_0x8000` appears only in event_data.c's table and scrcmd.c's var commands,
+and no field script runs during a battle). `ScriptContext_RunScript` calls
+`UnlockPlayerFieldControls()` the moment a script stops [decomp:src/script.c:335], so the `end`
+beside it is what gives the player back. **mev19 confirmed it on hardware**: caught the mon, walked
+away, saved.
 
 **The human is out of the loop entirely.** There is no press to time, no frame to aim at and no
 countdown to recompute; talking to the NPC is the whole procedure, and it is repeatable because the
@@ -538,3 +555,45 @@ search and the check are written from different directions.
 16-bit EWRAM, against 280,896 cycles a frame). mev15 reported nothing unusual either time - no
 reported hitch between the A press and the battle - which is consistent with the estimate but does
 not measure it.
+
+
+## Choosing the nature and the IVs, not just the shine
+
+`--gift rng-mon-hunt`, `asm/field/mon-seek.s`, flagId 1019. Same mechanism as above with all four
+draws tested instead of the first two: the personality decides shininess **and** the nature
+(`personality % 25` [decomp:src/pokemon.c:5020]), and draws 3 and 4 are the six IVs
+[decomp:src/pokemon.c:1836, HP/ATK/DEF then SPE/SPATK/SPDEF]. Nothing between them draws, so one
+state settles the whole mon.
+
+**PROVEN ON HARDWARE, mev19 + bs62.** Asked for shiny + Jolly + Speed IV >= 20 on a level 5
+MAGIKARP; the player talked to their MOM, caught it, and a party dump read back PID 0x01503B8A,
+shiny value 4, **Jolly**, IVs 6/2/25/**28**/12/7. `lcg.recover_wild_state` puts the console at
+0x7041F74F, which reproduces that PID and all six IVs through `rng_countdown` - so the stub found
+the state it was asked for and the ROM did the rest. Level 5 Magikarp because the nature and the
+IVs cannot be read off a screen: the mon has to be **caught** for the run to prove anything, and
+catch rate 255 at level 5 is one Ultra Ball.
+
+**The filter order is the cost model.** Shininess is tested in the hot loop, whose fifteen
+instructions are the whole search rate; the division by 25 and the six IV comparisons sit in a
+block only 1 state in 8192 reaches, so they cost nothing on average. A criterion never slows an
+iteration down - it multiplies how many are needed:
+
+| asked for | 1 state in | typical freeze | worst at the cap |
+|---|---|---|---|
+| shiny | 8,192 | 0.02 s | 0.10 s |
+| shiny + one nature | 204,800 | 0.55 s | 2.5 s |
+| shiny + nature + one IV >= 20 | 546,133 | 1.5 s | 6.7 s |
+| shiny + two IVs = 31 | 8,388,608 | 22 s | refused |
+
+`native_script.search_cost` computes this and the host refuses, on the command line, anything whose
+worst case exceeds `--hunt-freeze-frames` (default 900, ~15 s), because the field engine has not
+returned while it searches: the player sees a still frame with the music playing. **mev19 measured
+the pause at about 1 second** against an estimate of 1.5 s typical, so the clock arithmetic is
+close enough to quote.
+
+**160 bytes of the 163 the budget allows**, and the margin shaped the code: the shiny value is its
+own inverse so pidLo comes back in two instructions instead of being kept in a register; the
+divisor is its own loop counter; the IV floors carry a terminator bit at 30 so the loop needs no
+counter; both fields shift up to bits 27..31 so a five-bit comparison is an ordinary unsigned one.
+
+    --hunt-nature adamant,jolly   --hunt-iv speed=31 --hunt-iv attack=20   --hunt-cap N
