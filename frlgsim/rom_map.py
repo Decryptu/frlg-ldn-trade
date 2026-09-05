@@ -336,3 +336,55 @@ def read_client_funcs(dump):
         value = int.from_bytes(bytes(dump[4 * i:4 * i + 4]), "little")
         out.append((name, value & ~1, bool(value & 1)))
     return out
+
+
+# --- LEAFGREEN, AND WHY IT IS A SEPARATE TABLE --------------------------------------------------
+# Every address above was read off FRENCH FIRERED, cartridge BPRF, software version 0x0A. The user's
+# second console is FRENCH LEAFGREEN, BPGF 0x0A (lg163 read the header: "POKEMON LEAF", BPGF, 0x0A -
+# and that run exists BECAUSE the first three agreed with FireRed so exactly that nothing in them
+# could rule out having addressed the wrong console).
+#
+# WHAT WAS MEASURED, lg160-lg163, four runs, all first try:
+#
+#   lg160  anchors      gDecompressionBuffer 0x0201C000, the SAME as FireRed
+#                       the Mystery Gift call site 0x08148C50, which is FireRed's 0x08148C74 MINUS
+#                       0x24 - the ONE number that differs
+#   lg161  memory-scan  RAND_MULT, 11 matches in 0x08000000..0x09000000, the same COUNT as FireRed's
+#                       bs13, lowest at 0x080486C8
+#   lg162  memory-dump  Random at 0x080486B0 and SeedRng at 0x080486D0, byte-identical to FireRed's,
+#                       and gRngValue named TWICE from their two independent literal pools
+#   lg163  memory-dump  the cartridge header
+#
+# THE FINDING, AND IT IS NOT "THE ADDRESSES TRANSFER". random.o sits at the same place in both
+# builds and so does the RAM it names, but the Mystery Gift client does NOT - 0x24 of divergence has
+# accumulated by 0x08148C50. Two builds of the same game diverge where their DATA differs, and the
+# divergence grows along the link order, so an address read low in the ROM says nothing about one
+# read high in it. gRngValue agreeing is evidence about gRngValue and about nothing else.
+#
+# THE RULE: an address is LeafGreen's only when it was measured ON LEAFGREEN. Everything here has a
+# run tag; nothing is copied across because it "should" be the same. What is cheap is CHECKING - the
+# FireRed value is the first place to point a dump, and lg162 took one run to turn a guess into two
+# independent literal-pool readings.
+LEAFGREEN_GAME_CODE = b"BPGF"       # lg163, off the cartridge; FireRed is BPRF
+LEAFGREEN_SOFTWARE_VERSION = 0x0A   # lg163; the same Switch revision as FireRed
+LEAFGREEN = {
+    # symbol: (address, the run that measured it)
+    "gDecompressionBuffer": (0x0201C000, "lg160"),
+    "mystery_gift_call_site": (0x08148C50, "lg160"),   # FireRed 0x08148C74, so -0x24
+    "Random": (0x080486B0, "lg162"),
+    "SeedRng": (0x080486D0, "lg162"),
+    "gRngValue": (0x03004220, "lg162"),               # named twice, two independent pools
+}
+# The only measured divergence so far, kept as a number rather than a story.
+LEAFGREEN_CALL_SITE_DELTA = LEAFGREEN["mystery_gift_call_site"][0] - 0x08148C74
+
+
+def leafgreen(symbol):
+    """-> the LeafGreen address of `symbol`, or raise. Never falls back to the FireRed table."""
+    try:
+        return LEAFGREEN[symbol][0]
+    except KeyError:
+        raise KeyError(
+            f"{symbol!r} has not been measured on LeafGreen; have {sorted(LEAFGREEN)}. "
+            "Do not substitute the FireRed value - the two builds diverge along the link order "
+            "and lg160 measured 0x24 of it at the Mystery Gift client.") from None

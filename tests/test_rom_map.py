@@ -167,3 +167,28 @@ def test_the_two_parties_are_adjacent_as_the_decomp_declares_them():
     # And they are NOT the save block's copy: every gSaveBlock1Ptr this project has seen is far
     # above them, and those move while these do not.
     assert all(seen > rom_map.GPLAYER_PARTY + 600 for seen in rom_map.GSAVEBLOCK1_SEEN)
+
+
+# --- LeafGreen ------------------------------------------------------------------------------
+
+def test_leafgreen_is_its_own_table_and_never_falls_back_to_firered():
+    """The two builds diverge along the link order - lg160 measured 0x24 of it at the Mystery Gift
+    client while random.o sat at the same address in both. An address read low in the ROM says
+    nothing about one read high in it, so a missing symbol must RAISE, not borrow."""
+    assert rom_map.leafgreen("gRngValue") == rom_map.GRNG_VALUE == 0x03004220
+    assert rom_map.leafgreen("Random") == rom_map.RANDOM
+    assert rom_map.leafgreen("mystery_gift_call_site") != 0x08148C74
+    assert rom_map.LEAFGREEN_CALL_SITE_DELTA == -0x24
+    with pytest.raises(KeyError, match="not been measured on LeafGreen"):
+        rom_map.leafgreen("gPlayerParty")
+
+
+def test_every_leafgreen_address_carries_the_run_that_measured_it():
+    for symbol, (address, run) in rom_map.LEAFGREEN.items():
+        assert isinstance(address, int) and address > 0, symbol
+        assert run.startswith("lg"), f"{symbol} has no LeafGreen run tag"
+
+
+def test_the_leafgreen_cartridge_is_identified_off_the_cartridge():
+    assert rom_map.LEAFGREEN_GAME_CODE == b"BPGF"        # lg163; FireRed is BPRF
+    assert rom_map.LEAFGREEN_SOFTWARE_VERSION == 0x0A
