@@ -222,8 +222,12 @@ def test_all_three_clis_default_to_the_composed_fixed_level_65_cutscene():
     # The payload names WHICH gift, never how it is built; anything shaping the card itself belongs
     # in the composed definition. `questionnaire` and `denied_message` are session gating, not gift
     # content, which is why they are allowed here [SVR_CHECK_QUESTIONNAIRE, mg_server.py].
+    # `definition` is the same rule and not an exception to it: a gift that is a FAMILY rather than
+    # a constant (rng-mon-hunt, whose staged stub carries whatever search was asked for) is still
+    # composed in wonder_card_events and arrives already built. What this list refuses is a knob.
     assert [field.name for field in fields(host_config.payload)] == [
-        "gift", "flag_id", "questionnaire", "denied_message"]
+        "gift", "flag_id", "questionnaire", "denied_message", "definition"]
+    assert host_config.payload.definition is None
     assert host_config.payload.questionnaire is None
     card, script = host_config.payload.build()
     legacy_card, legacy_script = wonder_card.build_legendary_beast_cutscene_gift()

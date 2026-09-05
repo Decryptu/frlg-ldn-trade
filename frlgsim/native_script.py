@@ -55,8 +55,12 @@ is run under unicorn here, offline, before it is ever staged - the same rule buf
 under.
 """
 
+import math
+from dataclasses import dataclass, field
+
 from . import rom_map
 from .field_stubs import STUBS
+from .rng_countdown import NATURE_NAMES, NUM_NATURES
 # ONE encoder for `setptr`, not two. bs56 was lost to the same shape of duplication in config.py.
 from .rng_script import (MAX_RAM_SCRIPT_SIZE, SCR_END, SCR_SETPTR, RngScriptError,  # noqa: F401
                          SCR_DOWILDBATTLE, SCR_SETWILDBATTLE, SCR_RELEASEALL, BATTLE_TAIL,
@@ -150,19 +154,29 @@ def build_shiny_hunt_script(species, level, *, item=0, cap=1 << 18, scratch=SCRA
     playerTrainerId itself, so the same bytes are correct on FireRed and on LeafGreen and nothing
     here has to know, or be kept in step with, whose console it is [asm/field/shiny-seek.s].
     """
-    species, level, item, cap = int(species), int(level), int(item), int(cap)
-    if not 1 <= species <= MAX_SPECIES:
-        raise NativeScriptError(f"species is 1..{MAX_SPECIES}, got {species}")
-    if not 1 <= level <= MAX_LEVEL:
-        raise NativeScriptError(f"level is 1..{MAX_LEVEL}, got {level}")
-    if not 0 <= item <= 0xFFFF:
-        raise NativeScriptError(f"item is a u16, got {item}")
+    cap = int(cap)
     if not 1 <= cap <= 1 << 24:
         raise NativeScriptError(f"the iteration cap is 1..{1 << 24}, got {cap}")
     code = stub("shiny-seek",
                 rng=rom_map.GRNG_VALUE if rng_address is None else int(rng_address),
                 sav2ptr=rom_map.GSAVEBLOCK2PTR if sav2_pointer is None else int(sav2_pointer),
                 cap=cap)
+    return _stage_and_battle(code, species, level, item=item, scratch=scratch)
+
+
+def _stage_and_battle(code, species, level, *, item=0, scratch=SCRATCH):
+    """-> the staged stub, the call, and the encounter. ONE of these, for every hunt stub.
+
+    The tail is the whole reason the builders share a path: `releaseall` + `end` after
+    dowildbattle, because the battle RESUMES the script [rng_script.BATTLE_TAIL].
+    """
+    species, level, item = int(species), int(level), int(item)
+    if not 1 <= species <= MAX_SPECIES:
+        raise NativeScriptError(f"species is 1..{MAX_SPECIES}, got {species}")
+    if not 1 <= level <= MAX_LEVEL:
+        raise NativeScriptError(f"level is 1..{MAX_LEVEL}, got {level}")
+    if not 0 <= item <= 0xFFFF:
+        raise NativeScriptError(f"item is a u16, got {item}")
     battle = (bytes([SCR_SETWILDBATTLE]) + species.to_bytes(2, "little")
               + bytes([level]) + item.to_bytes(2, "little") + bytes([SCR_DOWILDBATTLE])
               + BATTLE_TAIL)      # the battle RESUMES the script; see rng_script.BATTLE_TAIL
@@ -174,6 +188,222 @@ def build_shiny_hunt_script(species, level, *, item=0, cap=1 << 18, scratch=SCRA
             f"{len(code)} bytes and at most {plan['max_code_size']} can be staged")
     assert len(body) == plan["total"]
     return body
+
+
+# --- asking for more than a shiny -----------------------------------------------------------
+# shiny-seek tests the first two draws. mon-seek tests all four, which is the whole mon: the
+# personality decides shininess AND the nature, and draws 3 and 4 are the six IVs
+# [decomp:src/pokemon.c:1836]. Everything here is the HOST half of asm/field/mon-seek.s - the
+# packed words it reads, and the cost of asking for each thing.
+
+# The IVs in the order the ROM draws them, which is the order the packed words use. It is NOT the
+# order a summary screen shows (that one puts SPEED last), and mixing the two silently asks for a
+# floor on the wrong stat, so the names are spelled out once here and parsed against.
+IV_FIELDS = ("hp", "attack", "defense", "speed", "sp_attack", "sp_defense")
+MAX_IV = 31                             # MAX_PER_STAT_IVS [decomp:include/constants/pokemon.h]
+IV_BITS = 5
+IV_TERMINATOR_BIT = 30                  # asm/field/mon-seek.s: the loop counts with this bit
+ANY_NATURE = (1 << NUM_NATURES) - 1
+
+# The hot loop, counted off the disassembly and asserted against unicorn in the tests: fifteen
+# THUMB instructions for a state that is not shiny, which is 8191 states in 8192.
+INSTRUCTIONS_PER_ITERATION = 15
+
+# HOW LONG A SEARCH MAY FREEZE THE OVERWORLD. There is no menu to back out of, the field engine
+# has not returned, and the player is looking at a still frame with the music still playing.
+# The ceiling is on the WORST case - the whole cap - which by construction of `cap_for` is what
+# 1 search in 100 costs; the expected search is `SEARCH_CONFIDENCE`-dependent and several times
+# shorter, and `search_cost` reports both so the number the player will actually see is the one
+# quoted to them. AN ESTIMATE FROM THE GBA's CLOCK, NOT A MEASUREMENT - see
+# CYCLES_PER_INSTRUCTION_FROM_EWRAM below, and the first run to report a visible pause settles it.
+MAX_FREEZE_FRAMES = 900                 # ~15 s at 59.7275 Hz
+SEARCH_CONFIDENCE = 0.99                # the default cap is the one that finds a state this often
+
+
+@dataclass(frozen=True)
+class MonCriteria:
+    """What mon-seek will accept. SHINY IS NOT A FIELD HERE - the hot loop always tests it.
+
+    `natures` is a tuple of nature ids (empty means any) and `iv_minimums` six floors in DRAW
+    order, IV_FIELDS. Both turn into one packed word the stub reads out of its literal pool.
+    """
+
+    natures: tuple = ()
+    iv_minimums: tuple = field(default_factory=lambda: (0,) * len(IV_FIELDS))
+
+    def __post_init__(self):
+        natures = tuple(sorted({int(n) for n in self.natures}))
+        for nature in natures:
+            if not 0 <= nature < NUM_NATURES:
+                raise NativeScriptError(
+                    f"nature ids are 0..{NUM_NATURES - 1}, got {nature}")
+        minimums = tuple(int(v) for v in self.iv_minimums)
+        if len(minimums) != len(IV_FIELDS):
+            raise NativeScriptError(
+                f"iv_minimums takes {len(IV_FIELDS)} floors in draw order "
+                f"({', '.join(IV_FIELDS)}), got {len(minimums)}")
+        for value in minimums:
+            if not 0 <= value <= MAX_IV:
+                raise NativeScriptError(f"an IV floor is 0..{MAX_IV}, got {value}")
+        object.__setattr__(self, "natures", natures)
+        object.__setattr__(self, "iv_minimums", minimums)
+
+    @property
+    def nature_mask(self):
+        """-> p_nature: bit N set = nature N accepted. No nature named means every one."""
+        if not self.natures:
+            return ANY_NATURE
+        mask = 0
+        for nature in self.natures:
+            mask |= 1 << nature
+        return mask
+
+    @property
+    def iv_word(self):
+        """-> p_ivmin: six 5-bit floors, plus the terminator the stub's loop counts with."""
+        word = 1 << IV_TERMINATOR_BIT
+        for index, minimum in enumerate(self.iv_minimums):
+            word |= minimum << (IV_BITS * index)
+        return word
+
+    @property
+    def probability(self):
+        """-> roughly what fraction of states pass all three tests.
+
+        An ESTIMATE, and the approximation is named: shininess and the nature are both functions
+        of the same personality, so they are not independent in the strict sense, and `% 25` over
+        2**32 favours 21 of the 25 residues by one part in 171 million. Neither moves a search
+        budget. The IV draws are separate draws and multiply exactly.
+        """
+        chance = SHINY_ODDS / 65536
+        chance *= (len(self.natures) or NUM_NATURES) / NUM_NATURES
+        for minimum in self.iv_minimums:
+            chance *= (MAX_IV + 1 - minimum) / (MAX_IV + 1)
+        return chance
+
+    def describe(self):
+        """-> one line naming everything asked for, read back out of the packed words."""
+        parts = ["shiny"]
+        if self.natures:
+            parts.append("/".join(NATURE_NAMES[n] for n in self.natures))
+        floors = [f"{name} >= {value}"
+                  for name, value in zip(IV_FIELDS, self.iv_minimums) if value]
+        parts.extend(floors)
+        return ", ".join(parts)
+
+
+def parse_natures(text):
+    """-> the nature ids in `text`: names as the game spells them, or plain numbers."""
+    if text is None or not str(text).strip():
+        return ()
+    lowered = {name.lower(): index for index, name in enumerate(NATURE_NAMES)}
+    out = []
+    for token in str(text).replace(",", " ").split():
+        if token.lower() in lowered:
+            out.append(lowered[token.lower()])
+            continue
+        try:
+            value = int(token, 0)
+        except ValueError:
+            raise NativeScriptError(
+                f"{token!r} is not a nature; they are {', '.join(NATURE_NAMES)}") from None
+        if not 0 <= value < NUM_NATURES:
+            raise NativeScriptError(f"nature ids are 0..{NUM_NATURES - 1}, got {value}")
+        out.append(value)
+    return tuple(sorted(set(out)))
+
+
+def parse_iv_minimums(items):
+    """-> six floors in draw order, from `stat=value` strings (`speed=31`, `hp=20`)."""
+    minimums = [0] * len(IV_FIELDS)
+    for item in items or ():
+        text = str(item).replace(">=", "=").replace(":", "=")
+        name, _, value = text.partition("=")
+        name = name.strip().lower().replace("-", "_")
+        aliases = {"atk": "attack", "def": "defense", "spe": "speed", "spd": "speed",
+                   "spa": "sp_attack", "spatk": "sp_attack", "spdef": "sp_defense",
+                   "spd_def": "sp_defense"}
+        name = aliases.get(name, name)
+        if name not in IV_FIELDS:
+            raise NativeScriptError(
+                f"{item!r} does not name an IV; they are {', '.join(IV_FIELDS)}")
+        try:
+            floor = int(value, 0)
+        except ValueError:
+            raise NativeScriptError(f"{item!r} needs a floor, as in {name}=31") from None
+        if not 0 <= floor <= MAX_IV:
+            raise NativeScriptError(f"an IV floor is 0..{MAX_IV}, got {floor}")
+        minimums[IV_FIELDS.index(name)] = floor
+    return tuple(minimums)
+
+
+def frames_for_iterations(iterations):
+    """-> how long a search of this many states blocks the field engine, in frames. AN ESTIMATE."""
+    return frames_for(float(iterations) * INSTRUCTIONS_PER_ITERATION)
+
+
+def cap_for(criteria, confidence=SEARCH_CONFIDENCE):
+    """-> the smallest cap that finds a state `confidence` of the time."""
+    chance = criteria.probability
+    if not 0 < confidence < 1:
+        raise NativeScriptError(f"confidence is a probability, got {confidence}")
+    return max(1, math.ceil(math.log1p(-confidence) / math.log1p(-chance)))
+
+
+def search_cost(criteria, cap):
+    """-> what asking for this costs: how long it is expected to take, and the worst it can take.
+
+    The freeze is what the player sees, so both are in frames. Everything here rests on
+    INSTRUCTIONS_PER_ITERATION and the GBA's clock and NOT on a hardware measurement; the first
+    run that reports a visible pause is the measurement, and it goes in docs/rng.md when it comes.
+    """
+    chance = criteria.probability
+    cap = int(cap)
+    expected = 1 / chance
+    return {"probability": chance,
+            "expected_iterations": expected,
+            "expected_frames": frames_for_iterations(expected),
+            "expected_seconds": frames_for_iterations(expected) / 59.7275,
+            "cap": cap,
+            "worst_frames": frames_for_iterations(cap),
+            "worst_seconds": frames_for_iterations(cap) / 59.7275,
+            "found_within_cap": 1 - (1 - chance) ** cap}
+
+
+def build_mon_hunt_script(species, level, *, criteria=None, item=0, cap=None,
+                          max_freeze_frames=MAX_FREEZE_FRAMES, scratch=SCRATCH,
+                          rng_address=None, sav2_pointer=None):
+    """The RAM script that makes the next scripted encounter a mon we described, from any state.
+
+    build_shiny_hunt_script with three tests instead of one, and the same one-frame guarantee:
+    every command before `dowildbattle` returns FALSE, so the search and the generation happen in
+    one pass of the field engine with nothing between them that draws.
+
+    THE COST IS CHECKED BEFORE THE CARD IS BUILT, not after the player is looking at a frozen
+    overworld. A criterion does not slow an iteration down - it multiplies how many are needed -
+    so `cap` is what bounds the freeze, and a cap whose worst case exceeds `max_freeze_frames` is
+    refused here. Raising that ceiling is a decision, so it is an argument and not a default.
+    """
+    criteria = MonCriteria() if criteria is None else criteria
+    if not isinstance(criteria, MonCriteria):
+        raise NativeScriptError("criteria must be a MonCriteria")
+    chosen_cap = cap_for(criteria) if cap is None else int(cap)
+    cost = search_cost(criteria, chosen_cap)
+    # The freeze is checked BEFORE the cap's own range, because a cap past that range is always a
+    # freeze past this ceiling and the ceiling is the answer that says what to do about it.
+    if cost["worst_frames"] > max_freeze_frames:
+        raise NativeScriptError(
+            f"{criteria.describe()} is 1 state in {1 / cost['probability']:,.0f}: searching for "
+            f"it can block the overworld for {cost['worst_frames']:,.0f} frames "
+            f"({cost['worst_seconds']:.1f} s), past the {max_freeze_frames} frame ceiling. Ask "
+            f"for less, or raise max_freeze_frames deliberately.")
+    if not 1 <= chosen_cap <= 1 << 24:
+        raise NativeScriptError(f"the iteration cap is 1..{1 << 24}, got {chosen_cap}")
+    code = stub("mon-seek",
+                rng=rom_map.GRNG_VALUE if rng_address is None else int(rng_address),
+                sav2ptr=rom_map.GSAVEBLOCK2PTR if sav2_pointer is None else int(sav2_pointer),
+                cap=chosen_cap, nature=criteria.nature_mask, ivmin=criteria.iv_word)
+    return _stage_and_battle(code, species, level, item=item, scratch=scratch)
 
 
 def describe(script):

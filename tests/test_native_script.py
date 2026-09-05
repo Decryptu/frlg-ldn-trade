@@ -279,3 +279,233 @@ def test_the_sweep_berry_validates_and_keeps_the_cartridge_own_description_point
     assert berry[10] != 0 and berry[20] != 0, "maxYield and stageDuration decide validity"
     assert int.from_bytes(berry[12:16], "little") == w.MEVENT_SWEEP_BERRY_DESC1
     assert int.from_bytes(berry[16:20], "little") == w.MEVENT_SWEEP_BERRY_DESC2
+
+
+# --- mon-seek: the whole mon, not just the shine -------------------------------------------------
+
+def _mon_run(state, criteria, *, cap=None, tid=CONSOLE_TID, sid=CONSOLE_SID,
+             instruction_limit=1 << 26):
+    save = bytearray(0x10)
+    save[0x0A:0x0C] = tid.to_bytes(2, "little")
+    save[0x0C:0x0E] = sid.to_bytes(2, "little")
+    code = native_script.stub(
+        "mon-seek", rng=rom_map.GRNG_VALUE, sav2ptr=rom_map.GSAVEBLOCK2PTR,
+        cap=native_script.cap_for(criteria) if cap is None else cap,
+        nature=criteria.nature_mask, ivmin=criteria.iv_word)
+    result = native_script.emulate(code, memory={
+        rom_map.GRNG_VALUE: int(state).to_bytes(4, "little"),
+        rom_map.GSAVEBLOCK2PTR: _SAV2.to_bytes(4, "little"),
+        _SAV2: bytes(save),
+    }, instruction_limit=instruction_limit)
+    return (int.from_bytes(result["memory"][rom_map.GRNG_VALUE], "little"),
+            result["instructions"])
+
+
+def _accepts(mon, criteria):
+    """The criteria read against `rng_countdown`'s mon, which is written from the other side."""
+    return (mon["shiny"]
+            and (not criteria.natures or mon["nature"] in criteria.natures)
+            and all(iv >= floor for iv, floor in zip(mon["ivs"], criteria.iv_minimums)))
+
+
+def test_the_packed_words_are_what_the_stub_reads():
+    """p_nature is a bit per nature and p_ivmin six 5-bit floors PLUS the terminator the loop
+    counts with: without bit 30 the IV loop in asm/field/mon-seek.s never ends, and a stub that
+    never ends is a frozen overworld."""
+    criteria = native_script.MonCriteria(natures=(0, 24), iv_minimums=(1, 2, 3, 4, 5, 6))
+    assert criteria.nature_mask == (1 << 0) | (1 << 24)
+    assert native_script.MonCriteria().nature_mask == native_script.ANY_NATURE == (1 << 25) - 1
+    word = criteria.iv_word
+    assert word & (1 << native_script.IV_TERMINATOR_BIT)
+    assert [(word >> (5 * i)) & 31 for i in range(6)] == [1, 2, 3, 4, 5, 6]
+    assert native_script.MonCriteria().iv_word == 1 << native_script.IV_TERMINATOR_BIT
+
+
+def test_the_criteria_are_checked_before_a_console_ever_sees_them():
+    for bad in ({"natures": (25,)}, {"natures": (-1,)}, {"iv_minimums": (0, 0, 0, 0, 0, 32)},
+                {"iv_minimums": (0, 0, 0)}):
+        with pytest.raises(native_script.NativeScriptError):
+            native_script.MonCriteria(**bad)
+
+
+def test_natures_and_iv_floors_are_parsed_by_the_names_the_game_uses():
+    assert native_script.parse_natures("adamant, Jolly") == (3, 13)
+    assert native_script.parse_natures("3 13") == (3, 13)
+    assert native_script.parse_natures(None) == ()
+    assert native_script.parse_iv_minimums(["speed=31", "atk>=20"]) == (0, 20, 0, 31, 0, 0)
+    for bad in (["nonesuch=1"], ["speed=32"], ["speed=x"]):
+        with pytest.raises(native_script.NativeScriptError):
+            native_script.parse_iv_minimums(bad)
+    with pytest.raises(native_script.NativeScriptError):
+        native_script.parse_natures("brisk")
+
+
+def test_the_iv_names_are_in_the_order_the_rom_draws_them():
+    """NOT the order a summary screen shows. `rng_countdown._mon_from` unpacks the two IV draws in
+    this order [decomp:src/pokemon.c:1836], and a floor named `speed` that landed on SPATK would
+    be invisible in every offline check that did not compare the two lists."""
+    assert native_script.IV_FIELDS == ("hp", "attack", "defense",
+                                       "speed", "sp_attack", "sp_defense")
+
+
+def test_what_a_criterion_costs_is_arithmetic_and_not_a_guess():
+    plain = native_script.MonCriteria()
+    assert plain.probability == pytest.approx(native_script.SHINY_ODDS / 65536)
+    nature = native_script.MonCriteria(natures=(3,))
+    assert nature.probability == pytest.approx(plain.probability / 25)
+    floored = native_script.MonCriteria(iv_minimums=(0, 0, 0, 16, 0, 0))
+    assert floored.probability == pytest.approx(plain.probability / 2)
+    # The cap is the one that finds a state SEARCH_CONFIDENCE of the time, and nothing else.
+    cap = native_script.cap_for(nature)
+    assert native_script.search_cost(nature, cap)["found_within_cap"] >= 0.99
+    assert native_script.search_cost(nature, cap - 1)["found_within_cap"] < 0.99
+
+
+def test_a_search_that_would_freeze_the_overworld_too_long_is_refused():
+    """A criterion never slows an iteration down, it multiplies how many are needed - so the cap
+    is what bounds the freeze, and the freeze is what the player sees."""
+    greedy = native_script.MonCriteria(natures=(3,), iv_minimums=(0, 31, 0, 31, 0, 0))
+    with pytest.raises(native_script.NativeScriptError, match="ceiling"):
+        native_script.build_mon_hunt_script(132, 50, criteria=greedy)
+    # Raising the ceiling is a decision, so it is an argument: the same criteria then build.
+    script = native_script.build_mon_hunt_script(132, 50, criteria=greedy,
+                                                 max_freeze_frames=10 ** 9, cap=1 << 24)
+    assert len(script) <= rng_script.MAX_RAM_SCRIPT_SIZE
+
+
+def test_the_mon_hunt_script_stages_calls_and_then_battles_like_the_shiny_one():
+    script = native_script.build_mon_hunt_script(132, 50)
+    lines = native_script.describe(script)
+    assert "UNKNOWN" not in "".join(lines)
+    assert lines[0].startswith("  setptr x160")
+    assert lines[1] == "  callnative 0x0201C001 (THUMB)"
+    assert lines[2].startswith("  setwildbattle species 132 Lv50")
+    assert script[-3:] == bytes([native_script.SCR_DOWILDBATTLE,
+                                 native_script.SCR_RELEASEALL, rng_script.SCR_END])
+    assert len(script) <= rng_script.MAX_RAM_SCRIPT_SIZE
+
+
+def test_the_bigger_stub_still_fits_the_only_budget_that_binds():
+    """160 bytes of the 163 a 995-byte RAM script allows. The margin is three bytes, so this is
+    the test that fails first when the stub grows."""
+    code = native_script.stub("mon-seek")
+    plan = native_script.budget(len(code), other=9)
+    assert plan["fits"] and plan["spare"] >= 0
+    _raw, _digest, symbols = STUBS["mon-seek"]
+    assert {"p_rng", "p_mult", "p_add", "p_sav2ptr", "p_cap",
+            "p_nature", "p_ivmin"} <= set(symbols)
+
+
+@needs_unicorn
+@pytest.mark.parametrize("state", [0x52E6B438, 0xF2A74DE4, 0x269E0D37, 0x6513270E])
+@pytest.mark.parametrize("criteria", [
+    native_script.MonCriteria(),
+    native_script.MonCriteria(natures=(3,)),
+    native_script.MonCriteria(natures=(3, 13), iv_minimums=(0, 0, 0, 20, 0, 0)),
+    native_script.MonCriteria(iv_minimums=(24, 0, 0, 0, 0, 0)),
+], ids=["shiny", "nature", "two-natures-and-speed", "hp-floor"])
+def test_the_stub_lands_on_the_first_state_that_satisfies_everything_asked_for(state, criteria):
+    """Two independent statements, and the second is the one that catches a filter that is merely
+    LOOSE: the state it lands on passes, AND no state between here and there does. A nature test
+    that always said yes would pass the first half of this and fail the second."""
+    landed, _instructions = _mon_run(state, criteria)
+    assert _accepts(rng_countdown._mon_from(landed, CONSOLE_TID, CONSOLE_SID), criteria)
+    walked = lcg.distance(state, landed)
+    assert walked < native_script.cap_for(criteria)
+    current = state
+    for _ in range(walked):
+        assert not _accepts(rng_countdown._mon_from(current, CONSOLE_TID, CONSOLE_SID), criteria)
+        current = lcg.advance(current, 1)
+    assert current == landed
+
+
+@needs_unicorn
+@pytest.mark.parametrize("index", range(6))
+def test_a_floor_lands_on_the_stat_it_names(index):
+    """The two IV draws are packed into one 30-bit word for the loop, 15 bits from each, and the
+    seam is between DEF and SPEED. A floor that landed one field over would still produce a shiny,
+    which is why the check is per stat and against the model rather than against the packing."""
+    floors = [0] * 6
+    floors[index] = 24
+    criteria = native_script.MonCriteria(iv_minimums=tuple(floors))
+    landed, _instructions = _mon_run(0x52E6B438, criteria)
+    mon = rng_countdown._mon_from(landed, CONSOLE_TID, CONSOLE_SID)
+    assert mon["shiny"] and mon["ivs"][index] >= 24
+
+
+@needs_unicorn
+def test_the_iteration_cost_the_host_quotes_is_the_one_unicorn_counts():
+    """`INSTRUCTIONS_PER_ITERATION` is what every freeze estimate rests on. Measure it instead of
+    trusting it: two states, and the count divided by the distance walked."""
+    criteria = native_script.MonCriteria()
+    for state in (0x52E6B438, 0x6513270E):
+        landed, instructions = _mon_run(state, criteria)
+        per_iteration = instructions / lcg.distance(state, landed)
+        assert per_iteration == pytest.approx(native_script.INSTRUCTIONS_PER_ITERATION, abs=0.5)
+
+
+@needs_unicorn
+def test_the_trainer_id_still_comes_off_the_console_when_the_criteria_are_richer():
+    criteria = native_script.MonCriteria(natures=(3, 13))
+    ours, _ = _mon_run(0x52E6B438, criteria)
+    theirs, _ = _mon_run(0x52E6B438, criteria, tid=0x1234, sid=0x5678)
+    assert ours != theirs
+    assert _accepts(rng_countdown._mon_from(theirs, 0x1234, 0x5678), criteria)
+    assert not rng_countdown._mon_from(theirs, CONSOLE_TID, CONSOLE_SID)["shiny"]
+
+
+@needs_unicorn
+def test_the_richer_stub_also_leaves_the_rng_alone_when_the_cap_runs_out():
+    state = 0x12345678
+    landed, _instructions = _mon_run(state, native_script.MonCriteria(natures=(3,)), cap=4)
+    assert landed == state
+
+
+def test_the_hunt_card_carries_the_criteria_it_says_it_does():
+    """The registry's definition is built with the defaults at import; a host given criteria on
+    the command line composes another card rather than mutating that one."""
+    from frlgsim import wonder_card_events as w
+    default = w.RNG_MON_HUNT_GIFT.mevent
+    assert len(default) <= 0x400                     # the console's receive buffer
+    other = w.build_rng_mon_hunt_gift(native_script.MonCriteria(natures=(0,))).mevent
+    assert other != default and len(other) == len(default)
+    assert w.RNG_MON_HUNT_GIFT.card.default_flag_id == w.RNG_MON_HUNT_FLAG_ID
+    # The two words the stub reads are the only difference between the two cards.
+    differing = [i for i, (a, b) in enumerate(zip(default, other)) if a != b]
+    assert 0 < len(differing) <= 4 * native_script.SETPTR_SIZE
+
+
+@needs_unicorn
+def test_the_bytes_the_console_will_actually_be_sent_search_for_what_the_card_says():
+    """THE WHOLE CHAIN, from the card down to the CPU, and starting from the bytes that go on the
+    air rather than from what we meant to build. The Mystery Event VM is run [mystery_event.run],
+    its `initramscript` payload is the field script the console would store, the `setptr` run in it
+    is read back into the bytes it stages, and THOSE are what unicorn executes. bs56's family of
+    bug - a path that only the live host takes - has no room left here."""
+    from frlgsim import mystery_event, wonder_card_events as w
+
+    effects = mystery_event.run(w.RNG_MON_HUNT_GIFT.mevent).effects
+    kind, _group, _num, _object, field_script = effects[0]
+    assert kind == "initramscript"
+
+    staged, index = bytearray(), 0
+    while index < len(field_script) and field_script[index] == native_script.SCR_SETPTR:
+        address = int.from_bytes(field_script[index + 2:index + 6], "little")
+        assert address == native_script.SCRATCH + len(staged), "the staging must be contiguous"
+        staged.append(field_script[index + 1])
+        index += native_script.SETPTR_SIZE
+    assert field_script[index:index + native_script.CALLNATIVE_SIZE] == \
+        native_script.callnative_at(native_script.SCRATCH)
+
+    save = bytearray(0x10)
+    save[0x0A:0x0C] = CONSOLE_TID.to_bytes(2, "little")
+    save[0x0C:0x0E] = CONSOLE_SID.to_bytes(2, "little")
+    state = 0x52E6B438
+    result = native_script.emulate(bytes(staged), memory={
+        rom_map.GRNG_VALUE: state.to_bytes(4, "little"),
+        rom_map.GSAVEBLOCK2PTR: _SAV2.to_bytes(4, "little"),
+        _SAV2: bytes(save),
+    }, instruction_limit=1 << 26)
+    landed = int.from_bytes(result["memory"][rom_map.GRNG_VALUE], "little")
+    assert _accepts(rng_countdown._mon_from(landed, CONSOLE_TID, CONSOLE_SID),
+                    w.RNG_MON_HUNT_CRITERIA)

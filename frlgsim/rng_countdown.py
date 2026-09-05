@@ -22,6 +22,14 @@ SHINY_ODDS = 8
 FPS = 59.7275                   # for turning frames into a spoken countdown, and nothing else
 TURNS_PER_FRAME = 2             # MEASURED, mev09 and mev10; not assumed
 
+# In the game's own order, so that index == the value `personality % NUM_NATURES` produces
+# [decomp:include/constants/pokemon.h, NATURE_HARDY..NATURE_QUIRKY]. ONE list: native_script's
+# criteria parse against this one rather than carrying a second copy (the bs56 family of bug).
+NATURE_NAMES = ("Hardy Lonely Brave Adamant Naughty Bold Docile Relaxed Impish Lax Timid Hasty "
+                "Serious Jolly Naive Modest Mild Quiet Bashful Rash Calm Gentle Sassy Careful "
+                "Quirky").split()
+NUM_NATURES = len(NATURE_NAMES)         # 25 [decomp:include/constants/pokemon.h:163]
+
 
 def _mon_from(state, tid, sid):
     """-> the mon `setwildbattle` would build from `state`: the next four draws, in order."""
@@ -68,9 +76,7 @@ def press_error(target, actual):
 
 
 def describe(state, tid, sid, frames=20000, limit=5):
-    natures = ("Hardy Lonely Brave Adamant Naughty Bold Docile Relaxed Impish Lax Timid Hasty "
-               "Serious Jolly Naive Modest Mild Quiet Bashful Rash Calm Gentle Sassy Careful "
-               "Quirky").split()
+    natures = NATURE_NAMES
     hits = scan(state, tid, sid, frames)
     lines = [f"from 0x{int(state):08X}, TID {tid} / SID {sid}",
              f"scanning {frames:,} frames ahead ({frames / FPS:,.0f} s at 59.7275 Hz)",

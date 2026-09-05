@@ -25,9 +25,11 @@ if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
 from frlgsim import (buffer_script, config as configmod, easychat, gift_artifact,  # noqa: E402
-                     gift_registry, host_cli, rom_map, trade_runtime, wonder_news)
+                     gift_registry, host_cli, native_script, rom_map, trade_runtime,
+                     wonder_news)
 from frlgsim.host_mg_app import (  # noqa: E402
     BufferScriptHostApplication, MysteryGiftHostApplication, WonderNewsHostApplication)
+from frlgsim import wonder_card_events  # noqa: E402
 from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
 
 HOST_GIFT_CHOICES = gift_registry.GIFT_REGISTRY.live_choices
@@ -270,6 +272,32 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help=("what a console that does not know the phrase reads (max 63 characters); "
               "the default is 'That is not the phrase.'"))
     parser.add_argument(
+        "--hunt-nature", default=None, metavar="NAMES",
+        help=("with --gift %s: which natures the search will accept, comma separated\n"
+              "(%s), or plain ids. Without this it takes any."
+              % (wonder_card_events.GIFT_RNG_MON_HUNT, ", ".join(native_script.NATURE_NAMES[:6])
+                 + ", ...")))
+    parser.add_argument(
+        "--hunt-iv", action="append", default=None, metavar="STAT=N",
+        help=("with --gift %s: a floor under one IV, repeatable (speed=31, attack=20). The stats\n"
+              "are %s, named in the order the ROM DRAWS them - which is not the order the summary\n"
+              "screen shows."
+              % (wonder_card_events.GIFT_RNG_MON_HUNT, ", ".join(native_script.IV_FIELDS))))
+    parser.add_argument(
+        "--hunt-cap", type=lambda v: int(v, 0), default=None, metavar="N",
+        help=("with --gift %s: how many states the stub may try before giving up and leaving the\n"
+              "RNG alone. The default is the smallest cap that finds one %d times in 100."
+              % (wonder_card_events.GIFT_RNG_MON_HUNT,
+                 round(100 * native_script.SEARCH_CONFIDENCE))))
+    parser.add_argument(
+        "--hunt-freeze-frames", type=int, default=native_script.MAX_FREEZE_FRAMES, metavar="N",
+        help=("with --gift %s: how long the search may block the overworld in the WORST case,\n"
+              "in frames (default %d, about %.0f s). The field engine has not returned while it\n"
+              "searches, so the player sees a still frame with the music playing; criteria whose\n"
+              "search could take longer than this are refused before the card is built."
+              % (wonder_card_events.GIFT_RNG_MON_HUNT, native_script.MAX_FREEZE_FRAMES,
+                 native_script.MAX_FREEZE_FRAMES / 59.7275)))
+    parser.add_argument(
         "--news-id", type=int, default=None, metavar="ID",
         help=("override the news id (1..65535). A console keeps news only when it differs from "
               "what it already holds [IsWonderNewsSameAsSaved], so bump this to re-send the same "
@@ -325,6 +353,42 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     return parser
 
 
+def _hunt_asked(args):
+    return any(value is not None for value in (args.hunt_nature, args.hunt_iv, args.hunt_cap))
+
+
+def _hunt_definition(parser, args):
+    """-> the card the command line asked for, composed, or None to send the registered one.
+
+    The cost is printed HERE, before anything is on the air, because the number that matters to
+    the player is how long the overworld stops while the stub searches - and a set of criteria
+    that would stop it for too long is refused by native_script rather than sent
+    [native_script.search_cost]."""
+    if not _hunt_asked(args):
+        return None
+    if args.gift != wonder_card_events.GIFT_RNG_MON_HUNT:
+        parser.error(f"--hunt-* belong to --gift {wonder_card_events.GIFT_RNG_MON_HUNT}; "
+                     f"--gift {args.gift} has no search to steer")
+    try:
+        criteria = native_script.MonCriteria(
+            natures=native_script.parse_natures(args.hunt_nature),
+            iv_minimums=native_script.parse_iv_minimums(args.hunt_iv))
+        cap = (native_script.cap_for(criteria) if args.hunt_cap is None else args.hunt_cap)
+        cost = native_script.search_cost(criteria, cap)
+        # Composed HERE, so that a search too slow to be allowed, or a stub too big to stage, is
+        # an error on the command line and not one raised at the moment a console joins.
+        definition = wonder_card_events.build_rng_mon_hunt_gift(
+            criteria, cap=args.hunt_cap, max_freeze_frames=args.hunt_freeze_frames)
+    except native_script.NativeScriptError as exc:
+        parser.error(str(exc))
+    print(f"hunting: {criteria.describe()} - 1 state in {1 / cost['probability']:,.0f}, "
+          f"cap {cost['cap']:,}")
+    print(f"  the overworld stops while it searches: about {cost['expected_seconds']:.1f} s "
+          f"typically, {cost['worst_seconds']:.1f} s at the cap "
+          f"(found {100 * cost['found_within_cap']:.1f}% of the time). ESTIMATED from the clock.")
+    return definition
+
+
 def build_run_config(parser, args):
     profile, ldn, role = host_cli.build_host_config(parser, args)
     try:
@@ -335,6 +399,9 @@ def build_run_config(parser, args):
                     "SVR_CHECK_QUESTIONNAIRE branch")
             if getattr(args, "_flag_id_explicit", False):
                 parser.error("--flag-id belongs to a Wonder Card; Wonder News has no flagId")
+            if _hunt_asked(args):
+                parser.error(f"--hunt-* steer --gift {wonder_card_events.GIFT_RNG_MON_HUNT}; "
+                             "Wonder News carries no field script")
             payload = configmod.WonderNewsPayload(
                 news=args.news, news_id=args.news_id)
         elif args.buffer_script is None and args.dump_address is not None:
@@ -346,6 +413,9 @@ def build_run_config(parser, args):
                     "script has no SVR_CHECK_QUESTIONNAIRE branch")
             if getattr(args, "_flag_id_explicit", False):
                 parser.error("--flag-id belongs to a Wonder Card; a buffer script has no flagId")
+            if _hunt_asked(args):
+                parser.error(f"--hunt-* steer --gift {wonder_card_events.GIFT_RNG_MON_HUNT}; "
+                             "a buffer script runs in the Mystery Gift menu, not the overworld")
             if args.news_id is not None:
                 parser.error("--news-id is only meaningful with --news")
             if args.write_text is not None and args.write_hex is not None:
@@ -418,7 +488,8 @@ def build_run_config(parser, args):
                       else easychat.parse_phrase(args.questionnaire))
             payload = configmod.MysteryGiftPayload(
                 gift=args.gift, flag_id=gift_registry.resolve_flag_id(args),
-                questionnaire=phrase, denied_message=args.denied_message)
+                questionnaire=phrase, denied_message=args.denied_message,
+                definition=_hunt_definition(parser, args))
         return configmod.MysteryGiftRunConfig(
             profile=profile, ldn=ldn, role=role,
             payload=payload, trust_pia=args.trust_pia,
@@ -458,7 +529,10 @@ def main(argv=None):
             "--make-artifact disassembles a delivery RAM script; a buffer script has none")
     if args.make_artifact:
         distribution = config.payload.build_distribution()
-        definition = gift_registry.GIFT_REGISTRY.entry(args.gift).definition
+        # The artifact must describe what is actually sent: a run given --hunt-* carries its own
+        # composed definition, and the registry still holds the one built with the defaults.
+        definition = (config.payload.definition
+                      or gift_registry.GIFT_REGISTRY.entry(args.gift).definition)
         try:
             artifact_path = gift_artifact.write_artifact(
                 args.artifact_dir, gift=args.gift, flag_id=config.payload.flag_id,

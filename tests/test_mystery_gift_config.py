@@ -288,6 +288,67 @@ def test_gate_1_legacy_serialized_fixtures_are_byte_identical():
         == "64a123dc7732ae4ee506aaa55154e36b563e0af4d68d67f3c152fa5739c5176e"
 
 
+
+def test_hunt_criteria_reach_the_card_and_belong_only_to_the_hunt(capsys):
+    """--hunt-* steer rng-mon-hunt's staged stub [asm/field/mon-seek.s]. The registry's own
+    definition is built with the defaults at import, so a run that was given criteria has to
+    compose another card - and one that was not must still send the registered one, byte for
+    byte."""
+    from frlgsim import native_script, wonder_card_events
+
+    plain = _build_mg(["--live", "--gift", wonder_card_events.GIFT_RNG_MON_HUNT])
+    assert plain.payload.definition is None
+    assert plain.payload.build_distribution().mevent == \
+        gift_registry.GIFT_REGISTRY.build_distribution(
+            wonder_card_events.GIFT_RNG_MON_HUNT).mevent
+
+    chosen = _build_mg(["--live", "--gift", wonder_card_events.GIFT_RNG_MON_HUNT,
+                        "--hunt-nature", "adamant", "--hunt-iv", "attack=16"])
+    assert chosen.payload.definition.slug == wonder_card_events.GIFT_RNG_MON_HUNT
+    assert chosen.payload.definition.mevent == wonder_card_events.build_rng_mon_hunt_gift(
+        native_script.MonCriteria(natures=(3,), iv_minimums=(0, 16, 0, 0, 0, 0))).mevent
+    chosen_distribution = chosen.payload.build_distribution()
+    plain_distribution = plain.payload.build_distribution()
+    assert chosen_distribution.mevent != plain_distribution.mevent
+    # Only the staged stub differs: the card, and the delivery script that installs it, do not.
+    assert chosen_distribution.card == plain_distribution.card
+    assert chosen_distribution.ram_script == plain_distribution.ram_script
+    # The cost of the search is printed before anything is on the air, not discovered by a player
+    # looking at a frozen overworld.
+    printed = capsys.readouterr().out
+    assert "shiny, Adamant, attack >= 16" in printed and "overworld stops" in printed
+
+    for argv in (["--live", "--gift", "celebi", "--hunt-nature", "adamant"],
+                 ["--live", "--news", "--hunt-iv", "speed=20"],
+                 ["--live", "--buffer-script", "--hunt-cap", "1000"]):
+        parser = frlgmg_host.build_parser()
+        with redirect_stderr(io.StringIO()) as err:
+            try:
+                frlgmg_host.build_run_config(parser, parser.parse_args(argv))
+            except SystemExit:
+                pass
+            else:
+                raise AssertionError(f"{argv} should not have built a run")
+        assert "--hunt-" in err.getvalue()
+
+
+def test_a_hunt_too_slow_to_run_is_refused_on_the_command_line():
+    """Not when the console joins. The stub searches with the field engine stopped, so criteria
+    whose search could outlast the ceiling are an error before the host ever comes up."""
+    from frlgsim import wonder_card_events
+    parser = frlgmg_host.build_parser()
+    with redirect_stderr(io.StringIO()) as err:
+        try:
+            frlgmg_host.build_run_config(parser, parser.parse_args(
+                ["--live", "--gift", wonder_card_events.GIFT_RNG_MON_HUNT,
+                 "--hunt-nature", "jolly", "--hunt-iv", "speed=31"]))
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError("a 6.5-million-state search should have been refused")
+    assert "ceiling" in err.getvalue()
+
+
 if __name__ == "__main__":
     for name, value in sorted(globals().items()):
         if name.startswith("test_") and callable(value):

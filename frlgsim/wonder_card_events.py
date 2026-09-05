@@ -1056,6 +1056,85 @@ RNG_SHINY_HUNT_GIFT = WonderGift(
 )
 
 
+GIFT_RNG_MON_HUNT = "rng-mon-hunt"
+RNG_MON_HUNT_FLAG_ID = 1019
+
+# THE WHOLE MON, NOT JUST THE SHINE. rng-shiny-hunt above stays exactly as it is - it is the card
+# that ran on hardware three times - and this one is the same delivery with asm/field/mon-seek.s
+# in place of shiny-seek: the search tests all four draws, so a nature and a floor under any of
+# the six IVs cost no new mechanism, only search. `native_script.MonCriteria` is what is asked
+# for and `native_script.search_cost` what it costs; the host refuses a combination whose search
+# could block the overworld for longer than it allows, before the card exists.
+#
+# THE DEFAULTS ARE CHOSEN AS AN EXPERIMENT, and each one answers something the shiny alone cannot:
+# JOLLY exercises the division by 25 and the mask shift (nature 13, so a broken shift lands
+# somewhere visible rather than on 0), and SPEED is IV index 3 - the first field of the SECOND
+# draw word, which is exactly the seam where the two halves are packed together. A shiny with the
+# wrong nature or a low speed is a failed test that still looks like a success on screen, which is
+# why the check is a party dump (save-dump) and not the battle.
+RNG_MON_HUNT_SPECIES = 132
+RNG_MON_HUNT_LEVEL = 50
+RNG_MON_HUNT_NATURE = 13                # NATURE_JOLLY [rng_countdown.NATURE_NAMES]
+RNG_MON_HUNT_SPEED_FLOOR = 20
+RNG_MON_HUNT_CRITERIA = native_script.MonCriteria(
+    natures=(RNG_MON_HUNT_NATURE,),
+    iv_minimums=(0, 0, 0, RNG_MON_HUNT_SPEED_FLOOR, 0, 0))
+
+
+def build_rng_mon_hunt_script(criteria=None, *, cap=None,
+                              max_freeze_frames=native_script.MAX_FREEZE_FRAMES, **kwargs):
+    return build_mevent_npc_script(
+        field_script=native_script.build_mon_hunt_script(
+            RNG_MON_HUNT_SPECIES, RNG_MON_HUNT_LEVEL,
+            criteria=RNG_MON_HUNT_CRITERIA if criteria is None else criteria,
+            cap=cap, max_freeze_frames=max_freeze_frames), **_at_mom(kwargs))
+
+
+def build_rng_mon_hunt_gift(criteria=None, *, cap=None,
+                            max_freeze_frames=native_script.MAX_FREEZE_FRAMES):
+    """-> the same card carrying a search for whatever was asked for.
+
+    The registry holds the definition built with the defaults; a host that was given criteria on
+    the command line composes another one here rather than mutating that. Same slug, same flagId,
+    same card - only the staged stub's two parameter words differ.
+    """
+    return dataclasses.replace(
+        RNG_MON_HUNT_GIFT,
+        mevent=build_rng_mon_hunt_script(criteria, cap=cap,
+                                         max_freeze_frames=max_freeze_frames))
+
+
+RNG_MON_HUNT_GIFT = WonderGift(
+    slug=GIFT_RNG_MON_HUNT,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="A POKEMON to order",
+        body=(
+            "Your MOM knows of a POKEMON",
+            "that shines and is quick with",
+            "it. Talk to her, then fight",
+            "what turns up. CATCH IT.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=RNG_MON_HUNT_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "Someone in PALLET TOWN has\n"
+                "found something choosy."),
+        ),
+    )),
+    completed_message="Talk to your MOM at home.",
+    mevent=build_rng_mon_hunt_script(),
+)
+
+
 GIFT_RNG_DRAW_COUNT = "rng-draw-count"
 RNG_DRAW_COUNT_FLAG_ID = 1018
 

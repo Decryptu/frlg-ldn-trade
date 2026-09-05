@@ -5,8 +5,8 @@ from pathlib import Path
 import tomllib
 from typing import Any, Mapping
 
-from . import (beacon, buffer_script, charmap, gift_registry, linkplayer, ni, rom_map, stamp_rally,
-               uroom_chat, wonder_card, wonder_news)
+from . import (beacon, buffer_script, charmap, gift_composer, gift_registry, linkplayer, ni,
+               rom_map, stamp_rally, uroom_chat, wonder_card, wonder_news)
 
 
 VERSIONS = {
@@ -482,6 +482,12 @@ class MysteryGiftPayload:
     # Chat word ids or nothing is sent [SVR_CHECK_QUESTIONNAIRE].
     questionnaire: tuple | None = None
     denied_message: str | None = None
+    # A COMPOSED DEFINITION, not a knob. Some gifts are a family rather than a constant -
+    # rng-mon-hunt carries whatever search the caller asked for [wonder_card_events.
+    # build_rng_mon_hunt_gift] - and the rule above still holds for them: the card is composed in
+    # wonder_card_events and arrives here already built, and this field only says to send THAT one
+    # instead of the registry's. Nothing gift-specific belongs in this dataclass.
+    definition: object = None
 
     def __post_init__(self):
         choices = gift_registry.GIFT_REGISTRY.live_choices
@@ -492,6 +498,9 @@ class MysteryGiftPayload:
             object.__setattr__(self, "flag_id",
                                gift_registry.GIFT_REGISTRY.default_flag_id(self.gift))
         wonder_card.flag_for_flag_id(self.flag_id)
+        if self.definition is not None and self.definition.slug != self.gift:
+            raise ValueError(
+                f"the composed definition is {self.definition.slug!r}, not {self.gift!r}")
 
     @property
     def receipt_flag(self):
@@ -502,8 +511,12 @@ class MysteryGiftPayload:
         return distribution.card, distribution.ram_script
 
     def build_distribution(self):
-        distribution = gift_registry.GIFT_REGISTRY.build_distribution(
-            self.gift, flag_id=self.flag_id)
+        if self.definition is not None:
+            distribution = gift_composer.compile_definition(
+                self.definition, flag_id=self.flag_id)
+        else:
+            distribution = gift_registry.GIFT_REGISTRY.build_distribution(
+                self.gift, flag_id=self.flag_id)
         if self.questionnaire is None:
             return distribution
         return dataclasses.replace(
