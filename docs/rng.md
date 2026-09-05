@@ -445,8 +445,18 @@ save, though never to the RNG.
 
 ## The stub that does the search
 
-`--gift rng-shiny-hunt`, `frlgsim/native_script.py`, `asm/field/shiny-seek.s`. **Offline only at
-the time of writing: 60/60 emulated states land shiny, and no console has run it.**
+`--gift rng-shiny-hunt`, `frlgsim/native_script.py`, `asm/field/shiny-seek.s`.
+**PROVEN ON HARDWARE, mev15, first try - and then a second time.** The card installed, the player
+talked to their MOM in PALLET TOWN, and the Ditto that appeared was SHINY. They fled and talked
+again: shiny again, from a different state, which is the part that makes it a mechanism rather than
+a coincidence - a one-in-8192 event does not happen twice in two attempts. One run settles
+`callnative` on this build, the `setptr` staging, execution out of gDecompressionBuffer, the Thumb
+entry through bit 0, the trainer id read out of gSaveBlock2Ptr, and the draw model of
+CreateScriptedWildMon, all at once.
+
+**The human is out of the loop entirely.** There is no press to time, no frame to aim at and no
+countdown to recompute; talking to the NPC is the whole procedure, and it is repeatable because the
+binding survives (`end`, not `endram`).
 
 The two commands that matter are in the field script table beside the ones this document already
 uses:
@@ -504,7 +514,8 @@ be staged (`tests/test_native_script.py`), and the answer is checked against `rn
 model that predicted seven fields of a mon the console built for itself in mev11/bs58 - so the
 search and the check are written from different directions.
 
-**Estimated cost on the console: about one frame.** 15 instructions an iteration, ~8192 iterations
-on average, ~3 cycles an instruction out of 16-bit EWRAM, against 280,896 cycles a frame. The worst
-of 40 emulated runs was 5.2 frames. That is a hitch, not a hang; interrupts stay enabled throughout.
-NOT MEASURED ON HARDWARE - it is arithmetic from the clock, and the first run is what settles it.
+**Cost on the console: not noticeable.** The estimate was ~1 frame typical and 5.2 frames worst of
+40 emulated runs (15 instructions an iteration, ~8192 iterations, ~3 cycles an instruction out of
+16-bit EWRAM, against 280,896 cycles a frame). mev15 reported nothing unusual either time - no
+reported hitch between the A press and the battle - which is consistent with the estimate but does
+not measure it.
