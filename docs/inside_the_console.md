@@ -31,3 +31,7 @@ Two rules hold across everything here:
   game code BPRF, software version `0x0A`, read out of its own cartridge header. `frlgsim/rom_map.py`
   records how each address was obtained. The decomp's *link order* is fair evidence and has now
   been used twice; its addresses never are.
+- **Nor from the other cartridge's.** The second console is French LeafGreen, BPGF `0x0A`. Every
+  payload here works on it unchanged and every RAM address measured so far is the same, but its ROM
+  is not FireRed's — see [LeafGreen](leafgreen.md), which has the measured deltas and the two runs
+  that were lost to assuming one.

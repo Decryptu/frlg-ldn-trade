@@ -145,5 +145,13 @@ picked up at index 83 with no word lost or repeated.
 `scratchpad/ec_locate.py` finds the table in a scan answer and checks a dump of it against the
 decomp's counts. The addresses of all 22 word arrays are in `scratchpad/ec_words.py`.
 
-**A LeafGreen console would need the whole thing again.** Every address here was read off the
-French FireRed cartridge (BPRF, software version 0x0A). Nothing about them transfers.
+**A LeafGreen console does NOT need the whole thing again — that claim stood here and was wrong.**
+Every address on this page was read off French FireRed (BPRF, software version 0x0A) and none of
+them is valid on LeafGreen, which is what the claim got right. What it got wrong is the conclusion:
+the whole Easy Chat region is a single uniform shift of **−0x1C4**, so every address here maps to
+its LeafGreen counterpart by subtraction, and the vocabulary itself is identical. lg169 read
+LeafGreen's group table — 22 entries, every count equal to the ones here — and lg170 then read
+group 1 with `string-gather` and got 26/26 words back in the same slots: CE SERA TOI, JE T'AI EU,
+ECHANGER, SAPHIR … ARGENT. So `easychat_french` answers for both consoles and the eighteen runs do
+not have to be repeated. See [LeafGreen](leafgreen.md); use `rom_map.leafgreen_guess`, which knows
+the region deltas and refuses the ranges where none has been measured.

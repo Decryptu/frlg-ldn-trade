@@ -270,27 +270,6 @@ def emulate(code, *, base=SCRATCH, memory=None, instruction_limit=_INSTRUCTION_L
                        for a, b in (memory or {}).items()}}
 
 
-def run_shiny_seek(state, tid, sid, *, cap=1 << 18, base=SCRATCH):
-    """-> the gRngValue the shiny-seek stub leaves, from `state`. Emulated, not modelled.
-
-    This is the check that matters, and it is not a re-reading of the builder: the ANSWER comes out
-    of the ARM7TDMI running the committed bytes, and what it is compared against is
-    `rng_countdown` - the model that already predicted seven fields of a mon the console built on
-    its own (mev11/bs58). Two independent things agreeing.
-    """
-    address, sav2 = rom_map.GRNG_VALUE, 0x02030000        # anywhere in EWRAM; the block moves
-    code = stub("shiny-seek", rng=address, sav2ptr=rom_map.GSAVEBLOCK2PTR, cap=int(cap))
-    save = bytearray(0x10)
-    save[0x0A:0x0C] = (int(tid) & 0xFFFF).to_bytes(2, "little")
-    save[0x0C:0x0E] = (int(sid) & 0xFFFF).to_bytes(2, "little")
-    result = emulate(code, base=base, memory={
-        address: int(state).to_bytes(4, "little"),
-        rom_map.GSAVEBLOCK2PTR: sav2.to_bytes(4, "little"),
-        sav2: bytes(save),
-    })
-    return int.from_bytes(result["memory"][address], "little")
-
-
 # The CPU is 16.78 MHz and a frame is 280,896 cycles [the GBA's clock]. A Thumb ALU instruction is
 # one cycle from IWRAM but this runs from EWRAM, which is 16-bit and WAITS: 3 cycles a halfword
 # fetch on the default waitstate setting, so ~3 cycles an instruction is the honest figure. The

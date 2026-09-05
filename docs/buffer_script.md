@@ -958,8 +958,9 @@ Nothing in this line. A Pokemon chosen by us, built by the console's own ROM fro
 we passed, lands in the player's party through a Mystery Gift link and survives the save.
 
 The next questions are elsewhere: `gRngValue` in a context that matters — an encounter rather than
-the gift menu — and LeafGreen, where every address in `rom_map.py` is FireRed BPRF v0x0A and none
-of it transfers. `--create-mon-destination`, `--create-mon-append` and the
+the gift menu, which [the RNG page](rng.md) now answers — and LeafGreen, which
+[has its own page](leafgreen.md): the same payloads work there unchanged, and sixteen runs have
+mapped enough of BPGF to use them. `--create-mon-destination`, `--create-mon-append` and the
 dry run are all proven offline, including that the dry run and the real append compute the *same*
 address at every party size — if they could disagree the dry run would prove nothing — and that
 the append writes nothing past `playerParty[6]`, which ends at 0x38 + 600 = 0x290, exactly where
