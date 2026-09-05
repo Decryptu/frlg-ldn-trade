@@ -226,10 +226,23 @@ Two things worth keeping from the wrong turn:
   writes.
 
 UNKNOWN: the prize itself. It needs `battlesWon == 3`, and battles only count through
-`CB2_ReturnFromCableClubBattle` [`src/cable_club.c:792`] - the battle colosseum, which our host does
-not advertise yet (the in-room Union Room battle returns through `CB2_ReturnToField` and counts
-nothing). Three wins also means three different host trainer ids, `--id` per run
-[`IncrementCardStatForNewTrainer`].
+`CB2_ReturnFromCableClubBattle` [`src/cable_club.c:792`] - the battle colosseum. The in-room Union
+Room battle returns through `CB2_ReturnToField` and counts nothing, which is why the prize was
+unreachable from every activity this host used to offer.
+
+**The colosseum is now built: `frlgtrade_host.py --colosseum`.** Pokemon Center 2F -> third NPC ->
+Colosseum -> Single Battle -> JOIN. It is the trade centre's own entry with a link battle where the
+trade menu would be - same `CB2_TransitionToCableClub`, so `--card-flag-id` arms the counters on this
+path exactly as it does for a trade - and the wire sequence is written up in
+[Console protocol notes](joiner_protocol_notes.md#the-cable-club-colosseum). Two things decide
+whether a run counts:
+
+- **A forfeit is a win for the console**, so the prize does not need three real losses. The
+  `B_OUTCOME_LINK_BATTLE_RAN` bit that a run ORs in [battle_main.c:4300] is cleared by
+  `HandleEndTurn_BattleWon` [:3734] before the outcome is switched on.
+- **Three wins need three different `--id` values**: the id recorded is the one in the 28-byte
+  `struct LinkPlayer` we send inside the colosseum [cable_club.c:794], and
+  `IncrementCardStatForNewTrainer` counts each id once [mystery_gift.c:630].
 
 ### Altering Cave - sent and proven, bs74/fr42/bs75
 

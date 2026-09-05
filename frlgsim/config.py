@@ -239,6 +239,10 @@ class HostOptions:
     union_room_battle: bool = False
     battle_forfeit: bool = True
     battle_move_slot: int = 0
+    # Host the cable-club colosseum (Direct Corner -> Colosseum -> Single Battle) instead of the
+    # trade centre: ACTIVITY_BATTLE_SINGLE on the air, then a link battle where the trade menu
+    # would be. Only this path increments the console's Wonder Card battlesWon [cable_club.c:792].
+    colosseum: bool = False
     # A file the running host tails: every line appended to it is sent into a live chat.
     chat_file: str | None = None
 

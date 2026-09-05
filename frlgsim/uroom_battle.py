@@ -80,12 +80,13 @@ def battler_header(version=VERSION_NON_MASTER, vs_flags=None, party_count=2):
     return bytes(out)
 
 
-def party_blocks(mons):
+def party_blocks(mons, *, limit=2):
     """The three 200-byte blocks of state 3/7/11. Exactly the transfer the trade already does, so
     `mon.party_blocks` is reused unchanged. SetUpPartiesAndStartBattle keeps only the two chosen
-    mons and zeroes the rest [union_room_battle.c:47], so pass at most two."""
-    if len(mons) > 2:
-        raise ValueError("a Union Room battle is two mons a side [union_room_battle.c:47]")
+    mons and zeroes the rest [union_room_battle.c:47], hence the default limit of two; the cable-club
+    colosseum has no selection step and fights the whole party, so it passes limit=6."""
+    if len(mons) > limit:
+        raise ValueError(f"this battle sends at most {limit} mons a side")
     return monmod.party_blocks(monmod.build_player_party(mons))
 
 
@@ -178,9 +179,11 @@ class BattleController:
             return bl.two_return_values(battler, bl.RET_CHOSEN_MOVE,
                                         self.move_slot | (bl.MASTER_BATTLER << 8))
         if cmd == bl.CHOOSEPOKEMON:
-            # A faint: send out the other one. Two mons a side, so "not the active one" is the whole
-            # decision [union_room_battle.c:47].
-            slot = 1 if self.active_index == 0 else 0
+            # A faint: send out the next mon we still have. In the Union Room that is always "the
+            # other one" of two [union_room_battle.c:47]; the colosseum fights the whole party, so
+            # walk it instead of assuming a party of two.
+            slot = next((i for i in range(len(self.mons)) if i != self.active_index),
+                        1 if self.active_index == 0 else 0)
             self._info(f"Union Room battle: sending out our party slot {slot}.")
             return bl.chosen_mon_return_value(battler, slot)
         if cmd == bl.OPENBAG:

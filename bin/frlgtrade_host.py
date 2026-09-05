@@ -42,6 +42,12 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help="host for the Union Room (the middle NPC on Pokemon Center 2F) instead of the trade "
              "centre's third NPC; use with --union-room-keepalive 120 and --board-type")
     parser.add_argument(
+        "--colosseum", action="store_true",
+        help="host the cable-club COLOSSEUM instead of the trade centre (Pokemon Center 2F, third "
+             "NPC -> Colosseum -> Single Battle -> JOIN). The entry is the trade centre's, so "
+             "--card-flag-id still arms the console's card counters, and only this path increments "
+             "its battlesWon [decomp:src/cable_club.c:792]. The whole party fights")
+    parser.add_argument(
         "--union-room-activity", choices=sorted(configmod.UNION_ROOM_ACTIVITIES), default=None,
         help="which activity --union-room advertises; default 'in-room', the bare IN_UNION_ROOM a "
              "console standing in the room connects to. 'search' is what the screen before the "
@@ -126,6 +132,15 @@ def _offered_slots(parser, args):
 
 def build_run_config(parser, args):
     profile, ldn, options = host_cli.build_host_config(parser, args)
+    if args.colosseum:
+        if args.union_room:
+            parser.error("--colosseum is a Direct Corner activity; it cannot be combined with "
+                         "--union-room")
+        # Nothing is offered in a battle, so the trade slot only has to be a valid index.
+        if args.slot >= len(args.party):
+            args.slot = 0
+        args.trades = 1
+        args.slots = ""
     try:
         plan = configmod.TradePlan(
             party_paths=tuple(args.party), output_path=args.out,

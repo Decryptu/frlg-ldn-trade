@@ -7,7 +7,7 @@ import time
 from . import config as configmod, host_session, host_trade, ldntrace, trade_runtime, transport
 from .linkplayer import HOST_NAME_PAD
 from .host_beacon import (
-    BeaconInjector, build_trade_app_data, build_union_room_app_data,
+    BeaconInjector, build_colosseum_app_data, build_trade_app_data, build_union_room_app_data,
 )
 from .host_pia import HostPeerProtocol
 from .host_support import resolve_keys
@@ -129,7 +129,8 @@ class HostApplication:
             chat_messages=tuple(getattr(self.options, "chat_messages", ()) or ()),
             union_room_battle=bool(getattr(self.options, "union_room_battle", False)),
             battle_forfeit=bool(getattr(self.options, "battle_forfeit", True)),
-            battle_move_slot=int(getattr(self.options, "battle_move_slot", 0) or 0))
+            battle_move_slot=int(getattr(self.options, "battle_move_slot", 0) or 0),
+            colosseum=bool(getattr(self.options, "colosseum", False)))
         if union_room:
             trade_board = None
             board_type = getattr(self.options, "union_room_board_type", None)
@@ -145,6 +146,11 @@ class HostApplication:
                 self.profile, self.session.rfu.host_session_id,
                 activity=getattr(self.options, "union_room_activity", None),
                 trade_board=trade_board)
+        elif getattr(self.options, "colosseum", False):
+            # Direct Corner -> Colosseum -> Single Battle. Only the advertised activity differs from
+            # the trade beacon [sAcceptedActivityIds_SingleBattle, src/data/union_room.h:398].
+            inactive, active = build_colosseum_app_data(
+                self.profile, self.session.rfu.host_session_id)
         else:
             inactive, active = build_trade_app_data(
                 self.profile, self.session.rfu.host_session_id)

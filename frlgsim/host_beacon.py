@@ -142,6 +142,18 @@ def build_union_room_app_data(profile, host_session_id, activity=None, trade_boa
                                     trade_board=trade_board)
 
 
+def build_colosseum_app_data(profile, host_session_id):
+    """Direct Corner -> Colosseum -> Single Battle -> JOIN, the cable-club battle.
+
+    The trade beacon is invisible on that screen: the console searches with
+    LINK_GROUP_SINGLE_BATTLE, whose accept list holds ACTIVITY_BATTLE_SINGLE alone
+    [sAcceptedActivityIds_SingleBattle, src/data/union_room.h:398]. Nothing else about the
+    advertisement changes - the activity byte is the whole difference between the two menus.
+    """
+    return _build_activity_app_data(profile, host_session_id,
+                                    beacon.ACTIVITY_BATTLE_SINGLE)
+
+
 def build_wonder_card_app_data(profile, host_session_id):
     """Mystery Gift -> Wonder Cards -> Friend (sAcceptedActivityIds_WonderCard)."""
     return _build_activity_app_data(profile, host_session_id,

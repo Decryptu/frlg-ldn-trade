@@ -11,6 +11,10 @@ PIA_HDR = 0x5C
 RECORD_SIZE = 24
 
 RFU_SERIAL_GAME = 0x0002
+# The cable-club colosseum: Direct Corner -> Colosseum -> Single Battle searches with
+# LINK_GROUP_SINGLE_BATTLE, whose accept list is this activity alone
+# [sAcceptedActivityIds_SingleBattle, src/data/union_room.h:398].
+ACTIVITY_BATTLE_SINGLE = 1
 ACTIVITY_TRADE = 4
 ACTIVITY_SEARCH = 12
 ACTIVITY_WONDER_CARD = 21

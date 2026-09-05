@@ -817,6 +817,66 @@ full step is that plus the return leg, giving the observed ~800 ms.
 **Do not look for a latency bug here, and do not "optimise" the tick.** Going faster means emitting
 more than one RFU slot per VBlank, which is not what the hardware link does.
 
+# The cable-club colosseum
+
+BUILT, NOT YET RUN. `frlgtrade_host.py --colosseum` hosts Pokemon Center 2F -> third NPC (club sans
+fil) -> Colosseum -> Single Battle -> JOIN. Everything here is read off the decomp; no hardware run
+has advertised `ACTIVITY_BATTLE_SINGLE` yet.
+
+**Why it exists.** Only `CB2_ReturnFromCableClubBattle` increments the Wonder Card's `battlesWon`
+[src/cable_club.c:792]. The in-room Union Room battle returns through `CB2_ReturnToField` and
+increments nothing, so the Battle Count Card's prize was unreachable from every activity we hosted.
+See [What Mystery Gift can do](mystery_gift_untried.md).
+
+**It is the trade centre's entry with a battle at the end.** `Task_StartActivity` treats
+`ACTIVITY_BATTLE_SINGLE` and `ACTIVITY_TRADE` almost identically [union_room.c:1903]: both call
+`CreateTrainerCardInBuffer(gBlockSendBuffer, TRUE)`, both `WarpForCableClubActivity` and both enter
+`CB2_TransitionToCableClub`. Only the destination map differs - `MAP_BATTLE_COLOSSEUM_2P` at (6, 8)
+instead of `MAP_TRADE_CENTER` at (5, 8) - plus a `HealPlayerParty()` the trade does not do. So the
+100-byte trainer-card exchange, and with it `MysteryGift_TryEnableStatsByFlagId`, runs exactly as it
+does for a trade: `--card-flag-id` arms the console's counters on this path too.
+
+Four things change, and that is the whole build:
+
+1. **The advertised activity byte.** The console searches with `LINK_GROUP_SINGLE_BATTLE`, whose
+   accept list is `{ACTIVITY_BATTLE_SINGLE, 0xFF}` [src/data/union_room.h:398], so the trade beacon
+   is invisible on that screen and vice versa. `build_colosseum_app_data` changes that byte and
+   nothing else - the same one-byte edit wn01 proved for Wonder News.
+2. **The spot, not the chair.** `BattleColosseum_2P_EventScript_PlayerSpot0/1` has no party check at
+   all [data/scripts/cable_club.inc:576] - the 4P colosseum's `ChooseHalfPartyForBattle` is the one
+   with a selection step. The seat handshake itself is unchanged: `SetInCableClubSeat` sets the
+   `KeyInterCB_SetReady` intercept and `GetCableClubPartnersReady` waits for
+   `PLAYER_LINK_STATE_READY` from everyone [overworld.c:2989], which is the READY key our host
+   already exchanges at the trade centre.
+3. **One more player record.** `Task_StartWirelessCableClubBattle` case 2 sends
+   `SendBlock(0, &gLocalLinkPlayer, sizeof(gLocalLinkPlayer))` [cable_club.c:701] - the bare 28-byte
+   `struct LinkPlayer`, **not** the 60-byte LinkPlayerBlock of the entry, so its two GameFreak magics
+   must not be added. There is no block request: both sides send unprompted and the console parks in
+   case 3 until every player's record has landed. Then 20 frames, an `IsLinkTaskFinished` wait, a
+   `SetLinkStandbyCallback` and another wait (cases 4-6, the `REVISION >= 0xA` shape), and
+   `CB2_InitBattle`.
+4. **The whole party fights.** There is no two-mon selection, so `party_blocks` is called with the
+   party as it stands rather than `SetUpPartiesAndStartBattle`'s two [union_room_battle.c:47].
+
+From `CB2_InitBattle` on it is byte for byte the Union Room battle documented above: the 31-byte
+`LinkBattlerHeader`, the three 200-byte party blocks, the controller loop, and the same version
+signature 0x200 that hands the console the master role. The one piece that does **not** appear is the
+0x20-byte 0x51 selection block, which belongs to `CB2_UnionRoomBattle` alone.
+
+## Two things that decide whether a run counts
+
+**A forfeit is still a win for the console.** `HandleAction_Run` in a link battle sets
+`B_OUTCOME_WON` on the side that did not run and ORs in `B_OUTCOME_LINK_BATTLE_RAN` (1 << 7)
+[battle_main.c:4300]. That extra bit would miss `CB2_ReturnFromCableClubBattle`'s
+`switch (gBattleOutcome) case B_OUTCOME_WON:` entirely - except `HandleEndTurn_BattleWon` clears it
+first [battle_main.c:3734]. So the proven forfeit path moves `battlesWon`, and we do not have to lose
+a real battle to test the counter.
+
+**Three wins need three `--id` values.** The id recorded is
+`gLinkPlayers[GetMultiplayerId() ^ 1].trainerId` [cable_club.c:794], which comes from the 28-byte
+record of point 3 above, and `IncrementCardStatForNewTrainer` counts each trainer id exactly once,
+remembering five per stat [mystery_gift.c:630].
+
 # Two host-side defects worth remembering
 
 **The host never stopped on its own after a successful close.** Of 356 host logs on disk, not one
