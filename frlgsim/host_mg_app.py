@@ -65,7 +65,8 @@ class MysteryGiftHostApplication(HostApplication):
             timing = MysteryGiftTiming(**overrides)
         engine = HostMysteryGiftEngine(
             distribution=self.distribution, link_player=link_player,
-            trust_pia=self.config.trust_pia, timing=timing, log=self.log)
+            trust_pia=self.config.trust_pia, timing=timing,
+            expect_console=getattr(self.config, "expect_console", None), log=self.log)
         self.session = host_session.HostSession(engine=engine, log=self.log)
         inactive, active = self._build_app_data()
         self.tracer = (ldntrace.Tracer(self.ldn.capture_path, log=self.log)

@@ -833,6 +833,10 @@ def _mystery_gift_host_defaults():
 class MysteryGiftRunConfig:
     profile: TrainerProfile = DEFAULT_TRAINER
     payload: MysteryGiftPayload = field(default_factory=MysteryGiftPayload)
+    # Which cartridge the run is for, read back off the console's own game data before anything is
+    # sent. None means the run does not care. lg180-lg183 are why this exists: four measurements
+    # aimed at LeafGreen, run against FireRed, each producing an answer that looked correct.
+    expect_console: str | None = None
     ldn: LdnConfig = field(default_factory=lambda: LdnConfig(phy="auto"))
     role: HostOptions = field(default_factory=_mystery_gift_host_defaults)
     trust_pia: bool = True

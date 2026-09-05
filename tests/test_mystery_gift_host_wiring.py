@@ -9,6 +9,7 @@ Run standalone (no pytest needed):   python tests/test_mystery_gift_host_wiring.
 
 import os
 import sys
+import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -197,3 +198,64 @@ def test_engine_exposes_the_contract_the_host_application_drives():
     except RuntimeError:
         return
     raise AssertionError("mark_disconnect_sent before the close handshake must fail")
+
+
+# --- the cartridge the run is for, lg180-lg183 ---------------------------------------------------
+# Four scans aimed at LeafGreen were run against FireRed, and every one of them "found" its needle
+# at the FireRed address - which is what searching a console for its own bytes does. The console
+# says which cartridge it is in the game data it volunteers before anything is sent, so the only
+# thing needed was to read it.
+
+def _console_game_data(version_code):
+    """The console's own MysteryGiftLinkGameData, with the version nibble set. The magic and the
+    game code are what parse_link_game_data insists on; nothing else matters here."""
+    from frlgsim import mg_script
+    raw = bytearray(0x64)
+    raw[0x00:0x04] = int(mg_script.LINK_GAME_DATA_MAGIC).to_bytes(4, "little") \
+        if hasattr(mg_script, "LINK_GAME_DATA_MAGIC") else b"\x00" * 4
+    raw[0x10:0x14] = int(version_code).to_bytes(4, "little")
+    raw[0x44] = 7
+    raw[0x45:0x4C] = b"\xff" * 7
+    raw[0x5C:0x60] = b"BPRF"
+    raw[0x60] = 0x0A
+    return mg_script.parse_link_game_data(bytes(raw))
+
+
+def test_a_run_aimed_at_the_other_cartridge_is_refused_before_anything_is_sent():
+    from frlgsim import mg_script, mg_server
+    card, ram_script = wonder_card.build_default_gift()
+    server = mg_server.MysteryGiftServer(card, ram_script, expect_console="leafgreen")
+    server.game_data = _console_game_data(mg_script.VERSION_CODE_FIRERED)
+
+    with pytest.raises(mg_server.MysteryGiftServerError, match="THIS RUN IS FOR LEAFGREEN"):
+        server._check_expected_console()
+    assert server.console_mismatch == ("leafgreen", "firered")
+
+
+def test_the_right_cartridge_passes_and_no_expectation_passes_anything():
+    from frlgsim import mg_script, mg_server
+    card, ram_script = wonder_card.build_default_gift()
+    for expected, code in (("firered", mg_script.VERSION_CODE_FIRERED),
+                           ("leafgreen", mg_script.VERSION_CODE_LEAFGREEN),
+                           (None, mg_script.VERSION_CODE_FIRERED)):
+        server = mg_server.MysteryGiftServer(card, ram_script, expect_console=expected)
+        server.game_data = _console_game_data(code)
+        server._check_expected_console()          # no raise
+        assert server.console_mismatch is None
+
+
+def test_the_expectation_has_to_name_a_cartridge():
+    from frlgsim import mg_server
+    card, ram_script = wonder_card.build_default_gift()
+    with pytest.raises(mg_server.MysteryGiftServerError):
+        mg_server.MysteryGiftServer(card, ram_script, expect_console="emerald")
+
+
+def test_the_cli_passes_the_expectation_through_to_the_engine():
+    import frlgmg_host
+    parser = frlgmg_host.build_parser()
+    config = frlgmg_host.build_run_config(
+        parser, parser.parse_args(["--buffer-script", "--expect-console", "leafgreen"]))
+
+    assert config.expect_console == "leafgreen"
+

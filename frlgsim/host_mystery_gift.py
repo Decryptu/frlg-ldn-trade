@@ -48,7 +48,7 @@ DEFAULT_MYSTERY_GIFT_TIMING = MysteryGiftTiming()
 
 class HostMysteryGiftEngine:
     def __init__(self, card=None, ram_script=None, *, distribution=None,
-                 link_player=None, trust_pia=True, timing=None,
+                 link_player=None, trust_pia=True, timing=None, expect_console=None,
                  log=lambda *a: None):
         self.lp = link_player or linkplayer.LinkPlayer(
             name="EMU", version=linkplayer.VERSION_FIRE_RED)
@@ -79,7 +79,7 @@ class HostMysteryGiftEngine:
                 raise ValueError("card and ram_script are required")
             server_extras = {}
         self.server = MysteryGiftServer(
-            card, ram_script, log=log, **server_extras)
+            card, ram_script, log=log, expect_console=expect_console, **server_extras)
 
         self.state = MG_LINK_PLAYER
         self.state_history = [self.state]

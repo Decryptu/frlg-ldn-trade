@@ -195,6 +195,12 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               "such as SeedRng, this is the only evidence the call did what it was called for"
               % rom_map.GRNG_VALUE))
     parser.add_argument(
+        "--expect-console", choices=("firered", "leafgreen"), default=None,
+        help=("refuse the session unless the console that joins is this cartridge. The console "
+              "says which it is in the game data it volunteers before anything is sent, so this "
+              "costs nothing and is the only thing that tells a measurement apart from the same "
+              "measurement run against the wrong console. Nothing is sent on a mismatch"))
+    parser.add_argument(
         "--chain-step", action="append", default=None, metavar="STEP",
         help=("with --buffer-script call-chain: one step, repeatable, up to %d, run in order in "
               "one frame. `call:NAME_OR_ADDR[,ARG]...` calls a ROM function (%s, or a THUMB "
@@ -561,7 +567,8 @@ def build_run_config(parser, args):
                 definition=_hunt_definition(parser, args))
         return configmod.MysteryGiftRunConfig(
             profile=profile, ldn=ldn, role=role,
-            payload=payload, trust_pia=args.trust_pia,
+            payload=payload, expect_console=args.expect_console,
+            trust_pia=args.trust_pia,
             client_ready_idle_frames=args.client_ready_idle_frames,
             inter_block_gap_frames=args.inter_block_gap_frames,
             block_repeat=args.block_repeat,
