@@ -24,6 +24,7 @@ is proven before it is ever put on the air.
 
 from dataclasses import dataclass
 
+from . import rom_map
 from .buffer_payloads import PAYLOADS
 
 # MG_LINK_BUFFER_SIZE [decomp:include/mystery_gift_link.h:4]. Client_Run memcpys exactly this many
@@ -1306,6 +1307,40 @@ def build_save_write(data, block=SAVE_BLOCK_2, offset=0xB20, *, unsafe=False):
     return bytes(code)
 
 
+# A DUMPED REGION MUST NOT CHANGE WHILE THE BLOCK IS BEING SENT, AND lg172/lg173 PAID FOR THIS.
+# MGL_Send takes the header CRC in one frame, sends the payload in the next and RE-CHECKS the CRC in
+# the one after [decomp:src/mystery_gift_link.c:155]:
+#
+#     case 0:  header.crc = CalcCRC16WithTable(link->sendBuffer, link->sendSize);
+#     case 1:  SendBlock(0, link->sendBuffer + blocksize, ...);
+#     case 2:  if (CalcCRC16WithTable(...) != link->sendCRC) LinkRfu_FatalError();
+#
+# So a region that changes between those frames produces a header CRC the payload cannot match, and
+# the console calls LinkRfu_FatalError - which the player reads as "erreur de connexion" mid
+# transmission. lg172 pointed a dump at gRngValue, which advances exactly two turns EVERY FRAME, and
+# it failed; lg173 repeated it unchanged and failed identically with a different CRC pair, which is
+# the signature of a moving region rather than a corrupted one. lg174 then dumped the same 32 bytes
+# from ROM and got them back byte-identical to lg166, which exonerated the size.
+#
+# gRngValue is the only address in the game GUARANTEED to move every frame, so it is the only one
+# named here. Anything else volatile has to be found the way this was.
+MOVING_REGIONS = (
+    (rom_map.GRNG_VALUE, 4, "gRngValue, which advances two turns every frame"),
+)
+
+
+def _refuse_a_moving_region(address, size):
+    for base, length, what in MOVING_REGIONS:
+        if address < base + length and base < address + size:
+            raise BufferScriptError(
+                f"0x{address:X}..0x{address + size - 1:X} overlaps {what}. MGL_Send takes the "
+                "header CRC one frame and sends the bytes the next "
+                "[decomp:src/mystery_gift_link.c:155], so a region that moves between them makes "
+                "the console call LinkRfu_FatalError - 'erreur de connexion' mid transmission "
+                "(lg172, lg173). Dump around it, or read it with rng-trace, which returns it "
+                "through the 4-byte channel instead of the block.")
+
+
 def build_memory_dump(address, size=MAX_BUFFER_SCRIPT_SIZE):
     """The memory-dump payload with its target address and length patched in.
 
@@ -1324,6 +1359,7 @@ def build_memory_dump(address, size=MAX_BUFFER_SCRIPT_SIZE):
         # CalcCRC16WithTable walks the region and the link sends it in halfwords; an odd base
         # would also make every later offset calculation lie about what was read.
         raise BufferScriptError(f"0x{address:X} is not halfword aligned")
+    _refuse_a_moving_region(address, size)
     code = bytearray(payload(MEMORY_DUMP))
     code[DUMP_TARGET_OFFSET:DUMP_TARGET_OFFSET + 4] = address.to_bytes(4, "little")
     code[DUMP_SIZE_OFFSET:DUMP_SIZE_OFFSET + 4] = size.to_bytes(4, "little")

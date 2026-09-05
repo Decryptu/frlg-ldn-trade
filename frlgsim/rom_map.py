@@ -401,6 +401,16 @@ LEAFGREEN = {
     # so the table starts 68 bytes below the first. lg169 read it: 22 entries, every pointer in ROM,
     # every count equal to FireRed's.
     "sEasyChatGroups": (0x083E353C, "lg168/lg169"),    # FireRed 0x083E3700, so -0x1C4
+    # lg171, bs57's method: gSpecialVars is a table of POINTERS, so it holds no constant to search
+    # for, but its first twelve entries point at twelve consecutive u16s - each word +2 on the last.
+    # Three such runs in the full 16 MB, and TWO of them start at 0x020370B4, which is FireRed's
+    # gSpecialVar_0x8000 exactly. Two independent tables naming the same EWRAM address is what makes
+    # it evidence rather than a coincidence of shape.
+    "gSpecialVar_0x8000": (0x020370B4, "lg171"),       # same as FireRed
+    # Of the three runs this is the one at FireRed's 0x081639A8 minus 0x24, inside the segment where
+    # that delta is measured. The other -0x2C..-0x28 candidate at 0x08071FC8 sits in an unmeasured
+    # gap and is a different table; it is recorded here only so nobody re-derives it as a surprise.
+    "gSpecialVars": (0x08163984, "lg171"),             # FireRed 0x081639A8, so -0x24
 }
 
 # --- THE ROM DELTA, MEASURED IN FOUR SEGMENTS AND NOT ONE ---------------------------------------

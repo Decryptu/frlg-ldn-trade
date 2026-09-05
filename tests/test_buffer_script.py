@@ -2251,3 +2251,17 @@ def test_table_scan_asks_for_its_whole_answer_and_gets_it_decoded():
 
     assert distribution.buffer_dump_size == buffer_script.TABLE_ANSWER_SIZE
     assert distribution.buffer_decode == buffer_script.TABLE_SCAN
+
+
+def test_a_dump_that_overlaps_grngvalue_is_refused_offline():
+    """lg172 and lg173 both died mid transmission with 'erreur de connexion'. MGL_Send takes the
+    header CRC one frame and sends the payload the next [decomp:src/mystery_gift_link.c:155], so a
+    region that moves between them cannot match its own header and the console calls
+    LinkRfu_FatalError. gRngValue moves every frame. lg174 dumped the same 32 bytes from ROM and got
+    lg166's bytes back exactly, which is what rules the SIZE out."""
+    for address in (rom_map.GRNG_VALUE, rom_map.GRNG_VALUE - 2, rom_map.GRNG_VALUE + 2):
+        with pytest.raises(buffer_script.BufferScriptError, match="erreur de connexion"):
+            buffer_script.build_memory_dump(address, 32)
+    # Immediately past it is fine - that is how the save-block pointers beside it get read.
+    buffer_script.build_memory_dump(rom_map.GRNG_VALUE + 4, 32)
+    buffer_script.build_memory_dump(rom_map.GRNG_VALUE - 32, 32)
