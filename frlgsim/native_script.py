@@ -59,7 +59,8 @@ from . import rom_map
 from .field_stubs import STUBS
 # ONE encoder for `setptr`, not two. bs56 was lost to the same shape of duplication in config.py.
 from .rng_script import (MAX_RAM_SCRIPT_SIZE, SCR_END, SCR_SETPTR, RngScriptError,  # noqa: F401
-                         SCR_DOWILDBATTLE, SCR_SETWILDBATTLE, MAX_LEVEL, MAX_SPECIES, setptr)
+                         SCR_DOWILDBATTLE, SCR_SETWILDBATTLE, SCR_RELEASEALL, BATTLE_TAIL,
+                         MAX_LEVEL, MAX_SPECIES, setptr)
 
 SCR_CALLNATIVE = 0x23
 
@@ -163,7 +164,8 @@ def build_shiny_hunt_script(species, level, *, item=0, cap=1 << 18, scratch=SCRA
                 sav2ptr=rom_map.GSAVEBLOCK2PTR if sav2_pointer is None else int(sav2_pointer),
                 cap=cap)
     battle = (bytes([SCR_SETWILDBATTLE]) + species.to_bytes(2, "little")
-              + bytes([level]) + item.to_bytes(2, "little") + bytes([SCR_DOWILDBATTLE]))
+              + bytes([level]) + item.to_bytes(2, "little") + bytes([SCR_DOWILDBATTLE])
+              + BATTLE_TAIL)      # the battle RESUMES the script; see rng_script.BATTLE_TAIL
     body = stage(code, scratch) + callnative_at(scratch) + battle
     plan = budget(len(code), other=len(battle))
     if not plan["fits"]:
@@ -206,7 +208,10 @@ def describe(script):
                          f"item {int.from_bytes(script[i + 4:i + 6], 'little')}")
             i += 6
         elif op == SCR_DOWILDBATTLE:
-            lines.append("  dowildbattle (yields; the script stops here)")
+            lines.append("  dowildbattle (yields; the battle RESUMES the script after it)")
+            i += 1
+        elif op == SCR_RELEASEALL:
+            lines.append("  releaseall")
             i += 1
         elif op == SCR_END:
             lines.append("  end (the binding SURVIVES; endram 0x0d would clear it)")

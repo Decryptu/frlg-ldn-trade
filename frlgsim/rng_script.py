@@ -150,6 +150,19 @@ def describe_seed_script(script):
 
 SCR_SETWILDBATTLE = 0xB6
 SCR_DOWILDBATTLE = 0xB7
+SCR_RELEASEALL = 0x6B
+
+# THE SCRIPT DOES NOT END AT `dowildbattle`, AND mev11 SAW WHAT THAT COSTS.
+# `StartScriptedWildBattle` sets `gMain.savedCallback = CB2_EndScriptedWildBattle`
+# [decomp:src/battle_setup.c], and that callback ends with
+# `SetMainCallback2(CB2_ReturnToFieldContinueScriptPlayMapMusic)` [src/overworld.c:1670] - CONTINUE
+# SCRIPT. So when the battle is over the field engine RESUMES THIS SCRIPT at the byte after
+# dowildbattle. If nothing is there, opcode 0x00 is `ScrCmd_nop` [data/script_cmd_table.inc], so it
+# runs the zero fill InitRamScript left in the rest of the 995-byte body and then WALKS OFF THE END
+# INTO THE REST OF SaveBlock1, executing the player's save data as bytecode. mev11's unexplained
+# "a second wild battle re-triggered after dowildbattle" is exactly that: 0xB6/0xB7 occur in save
+# data like any other bytes. `releaseall` + `end` is the fix, and it is two bytes.
+BATTLE_TAIL = bytes([SCR_RELEASEALL, SCR_END])
 
 MAX_SPECIES = 411           # the internal table's last entry
 MAX_LEVEL = 100
@@ -177,6 +190,7 @@ def build_wild_battle_script(seed, species, level, item=0, address=None):
     body += (bytes([SCR_SETWILDBATTLE]) + species.to_bytes(2, "little")
              + bytes([level]) + item.to_bytes(2, "little"))
     body += bytes([SCR_DOWILDBATTLE])                   # this one yields, and stops the script
+    body += BATTLE_TAIL                                 # ...and the battle RESUMES it; see above
     if len(body) > MAX_RAM_SCRIPT_SIZE:
         raise RngScriptError(f"{len(body)} bytes will not fit in {MAX_RAM_SCRIPT_SIZE}")
     return body

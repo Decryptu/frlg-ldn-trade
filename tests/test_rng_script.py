@@ -65,7 +65,7 @@ def test_it_fits_the_ram_script_the_save_actually_has_room_for():
 
 def test_the_wild_battle_script_is_the_seed_then_the_two_battle_commands():
     script = rng_script.build_wild_battle_script(0x81F6816D, 132, 50)
-    assert len(script) == 31
+    assert len(script) == 33      # + releaseall, end: the battle RESUMES the script
     assert script[:24] == rng_script.build_seed_script(0x81F6816D, sound=None)[:24]
     assert script[24] == rng_script.SCR_SETWILDBATTLE == 0xB6
     assert int.from_bytes(script[25:27], "little") == 132       # DITTO

@@ -149,9 +149,15 @@ def test_nothing_between_the_call_and_the_generation_can_yield():
     leaves is the state CreateScriptedWildMon consumes. Anything that yields between them - a
     playse/waitse, a message - would let the per-frame consumer turn the RNG and break it."""
     script = native_script.build_shiny_hunt_script(132, 50)
-    yields = {rng_script.SCR_PLAYSE, rng_script.SCR_WAITSE, 0x27, 0x66, 0x67, 0x6D}
-    call = script.index(native_script.SCR_CALLNATIVE, len(script) - 12)
-    assert not (set(script[call:]) & yields - {132 & 0xFF}), "nothing between the call and the mon"
+    code_size = len(native_script.stub("shiny-seek", rng=rom_map.GRNG_VALUE,
+                                       sav2ptr=rom_map.GSAVEBLOCK2PTR, cap=1 << 18))
+    call = code_size * native_script.SETPTR_SIZE          # the staged run ends, callnative begins
+    assert script[call] == native_script.SCR_CALLNATIVE
+    # Everything from the call to the generation, byte for byte. No room for anything that yields.
+    assert script[call:] == (native_script.callnative_at(native_script.SCRATCH)
+                             + bytes([native_script.SCR_SETWILDBATTLE]) + (132).to_bytes(2, "little")
+                             + bytes([50]) + (0).to_bytes(2, "little")
+                             + bytes([native_script.SCR_DOWILDBATTLE]) + rng_script.BATTLE_TAIL)
 
 
 def test_the_species_and_level_are_checked_before_a_console_ever_sees_them():
@@ -232,3 +238,16 @@ def test_a_stub_that_never_returns_is_refused_rather_than_run():
     forever = bytes.fromhex("fee7")                      # b .   (Thumb, branch to itself)
     with pytest.raises(native_script.NativeScriptError):
         native_script.emulate(forever, instruction_limit=1000)
+
+
+def test_the_script_does_not_fall_off_the_end_after_the_battle():
+    """mev11's unexplained second wild battle. `StartScriptedWildBattle` sets savedCallback to
+    CB2_EndScriptedWildBattle, which ends in CB2_ReturnToFieldContinueScriptPlayMapMusic
+    [decomp:src/overworld.c:1670] - CONTINUE SCRIPT - so the field engine RESUMES at the byte after
+    dowildbattle. Nothing there means opcode 0x00 (nop) through the rest of the 995-byte body and
+    then off the end into SaveBlock1, executing the player's save as bytecode. 0xB6/0xB7 occur in
+    save data like any other bytes, which is a second wild battle out of nowhere."""
+    for script in (native_script.build_shiny_hunt_script(132, 50),
+                   rng_script.build_wild_battle_script(0xC0DE, 132, 50)):
+        assert script[-3:] == bytes([native_script.SCR_DOWILDBATTLE,
+                                     native_script.SCR_RELEASEALL, rng_script.SCR_END])
