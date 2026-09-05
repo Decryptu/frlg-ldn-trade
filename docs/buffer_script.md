@@ -796,6 +796,28 @@ each one is a `bl` or two away from the real worker - `ScrCmd_additem` from `Add
 The handlers are what the field engine `bx`es to with a `struct ScriptContext *`, so a payload that
 wants the worker disassembles the handler rather than calling it.
 
+## bs84: the workers behind the commands, from one more dump
+
+The handlers are entry points, not the functions worth calling: each takes a `struct ScriptContext *`
+and reads its arguments out of the script stream. One 1 KB dump of 0x0806DE00 covered 24 of them,
+and each one names its worker by position - the decomp's body is `VarGet(ScriptReadHalfword(ctx))`
+per argument and then one call [src/scrcmd.c:463-590]:
+
+    ScriptReadHalfword   0x0806D1E8      AddBagItem           0x0809DA70
+    VarGet               0x08071DDC      RemoveBagItem        0x0809DBC4
+    GetVarPointer        0x08071CC8      CheckBagHasSpace     0x0809D9EC
+    FlagSet              0x08071EF4      CheckBagHasItem      0x0809D92C
+    FlagClear            0x08071F1C      AddPCItem            0x0809DDB4
+    FlagGet              0x08071F44      IncrementGameStat    0x080587A4
+
+`ScrCmd_additem` matches the decomp instruction for instruction, down to the `(u8)quantity` cast
+appearing as `lsls r1, #24; lsrs r1, #24`, and it stores its result through a literal at 0x0806DF18
+that reads 0x020370CC - `gSpecialVar_Result`.
+
+**The check that makes this a measurement.** `ScrCmd_random`'s third call is 0x080486B0, which is
+`Random`, found independently at bs13 out of its own literal pool. A misaligned window or a
+mis-decoded BL pair could not land on an address this project already held.
+
 **bs57: `gSpecialVars` = 0x081639A8, `gSpecialVar_0x8000` = 0x020370B4.** 939 frames, ~23 s, 2.75 MB
 searched, exactly one twelve-word run rising by 2 in all of it. The console held its link throughout.
 The four consistency checks are in `frlgsim/rom_map.py` beside the symbols.

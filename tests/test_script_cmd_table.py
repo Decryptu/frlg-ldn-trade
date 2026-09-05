@@ -74,3 +74,31 @@ def test_a_handler_is_reachable_by_name():
     assert scrcmd_names.handler("additem") == 0x0806DED0
     assert scrcmd_names.handler("callnative") == 0x0806D854
     assert scrcmd_names.handler("nop") == scrcmd_names.HANDLERS[0]
+
+
+# --- the workers behind the handlers, bs84 ------------------------------------------------------
+
+def test_the_worker_addresses_sit_inside_the_dumped_rom():
+    for name in ("ADD_BAG_ITEM", "REMOVE_BAG_ITEM", "CHECK_BAG_HAS_SPACE", "CHECK_BAG_HAS_ITEM",
+                 "ADD_PC_ITEM", "FLAG_SET", "FLAG_CLEAR", "FLAG_GET", "INCREMENT_GAME_STAT",
+                 "VAR_GET", "GET_VAR_POINTER", "SCRIPT_READ_HALFWORD"):
+        value = getattr(rom_map, name)
+        assert 0x08000000 <= value < 0x08400000, name
+        assert value % 2 == 0, f"{name} is stored without the thumb bit"
+
+
+def test_the_extraction_lands_on_an_address_measured_independently():
+    """ScrCmd_random's third call is Random, found at bs13 from its own literal pool. This is the
+    check that the bs84 extraction is aligned, not the item addresses themselves."""
+    assert rom_map.RANDOM == 0x080486B0
+
+
+def test_the_flag_helpers_are_three_consecutive_functions():
+    """FlagSet, FlagClear and FlagGet are written in that order [decomp:src/event_data.c], and the
+    handlers called them in that order, so the addresses must ascend."""
+    assert rom_map.FLAG_SET < rom_map.FLAG_CLEAR < rom_map.FLAG_GET
+
+
+def test_calling_add_bag_item_needs_the_thumb_bit():
+    """--call-address takes the value a bx needs; every entry here is stored without it."""
+    assert rom_map.thumb(rom_map.ADD_BAG_ITEM) == 0x0809DA71

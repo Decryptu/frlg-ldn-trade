@@ -119,6 +119,31 @@ PROBABLE = (
     ("HasSuperEffectiveMoveAgainstOpponents", 0x0803CD94),
 )
 
+# --- the workers behind the field-script commands, bs84 -----------------------------------------
+# One 1 KB dump of 0x0806DE00 covered 24 handlers, and each one names its worker by position: the
+# decomp's body is `VarGet(ScriptReadHalfword(ctx))` per argument and then one call
+# [decomp:src/scrcmd.c:463-590]. Every address below is that call, matched instruction for
+# instruction - ScrCmd_additem's `(u8)quantity` cast is even visible as `lsls r1,#24; lsrs r1,#24`.
+#
+# THE CHECK THAT MAKES IT A MEASUREMENT: ScrCmd_random's third call is 0x080486B0, which is RANDOM
+# above, found independently at bs13 from its own literal pool. A misaligned or mis-decoded
+# extraction could not land on an address this file already held.
+SCRIPT_READ_HALFWORD = 0x0806D1E8   # u16 ScriptReadHalfword(ctx), every command's argument reader
+VAR_GET = 0x08071DDC                # u16 VarGet(u16), the value behind a var id or a literal
+GET_VAR_POINTER = 0x08071CC8        # u16 *GetVarPointer(u16), what addvar/setvar write through
+ADD_BAG_ITEM = 0x0809DA70           # bool8 AddBagItem(u16 itemId, u8 quantity)
+REMOVE_BAG_ITEM = 0x0809DBC4        # bool8 RemoveBagItem(u16 itemId, u8 quantity)
+CHECK_BAG_HAS_SPACE = 0x0809D9EC    # bool8 CheckBagHasSpace(u16 itemId, u8 quantity)
+CHECK_BAG_HAS_ITEM = 0x0809D92C     # bool8 CheckBagHasItem(u16 itemId, u8 quantity)
+ADD_PC_ITEM = 0x0809DDB4            # bool8 AddPCItem(u16 itemId, u16 quantity)
+FLAG_SET = 0x08071EF4               # void FlagSet(u16 flagId)
+FLAG_CLEAR = 0x08071F1C             # void FlagClear(u16 flagId)
+FLAG_GET = 0x08071F44               # bool8 FlagGet(u16 flagId)
+INCREMENT_GAME_STAT = 0x080587A4    # void IncrementGameStat(u8 statId)
+TRY_SET_OBTAINED_ITEM_QUEST_LOG_EVENT = 0x0809E210   # ScrCmd_additem's second call
+# The literal ScrCmd_additem stores its result through, which is what gSpecialVar_Result must be.
+GSPECIAL_VAR_RESULT = 0x020370CC
+
 # --- gcc's THUMB-to-ARM call veneers ------------------------------------------------------------
 # Client_RunBufferScript reaches our ARM payload through one of these, which is why lr comes back
 # pointing into the caller rather than into the veneer.
