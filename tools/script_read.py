@@ -4,9 +4,15 @@ next.
 
     ./.venv/bin/python tools/script_read.py DUMP.bin --base 0x081A7600 [--start ADDR ...]
     ./.venv/bin/python tools/script_read.py DUMP.bin --base 0x081640EC --std-scripts
+    ./.venv/bin/python tools/script_read.py DUMP.bin --base ADDR --with-every-dump
 
 `--base` is the `--dump-address` the run used; without `--start` the whole dump is walked as
 back-to-back scripts, which is what a region of `data/scripts/*.inc` actually is.
+
+`--with-every-dump` adds every other ROM dump in `scratchpad/`, paired with the `--dump-address`
+its launcher log records. 127 runs are on disk and a script does not care which one caught the
+block it jumps to; without this the plan proposes runs for bytes we already have. `--dump
+PATH@0xADDR` adds one by hand.
 
 The operands are named, not just printed: a var, a flag, a special and a comparison all come back
 with the decomp's own name beside the number [frlgsim/symbol_names.py, special_names.py]. An
@@ -20,12 +26,32 @@ several unknowns usually share one 1 KB window. docs/buffer_script.md.
 """
 import argparse
 import os
+import pathlib
+import re
 import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from frlgsim import rom_map, scrcmd
+
+
+def every_dump(directory):
+    """-> [(base, data)] for every ROM dump in `directory`, from what its launcher log recorded.
+
+    The log line is the run's own argv, so the pairing is the run's, not a guess. A dump with no
+    `--dump-address` was a save-block or a scan and has no ROM address to place it at."""
+    directory = pathlib.Path(directory)
+    found = []
+    for log in sorted((directory / "launcher_logs").glob("*_launcher.log")):
+        tag = log.name[: -len("_launcher.log")]
+        dump = directory / f"{tag}_dump.bin"
+        if not dump.exists():
+            continue
+        match = re.search(r"--dump-address\s+(0x[0-9A-Fa-f]+)", log.read_text())
+        if match:
+            found.append((int(match.group(1), 0), dump.read_bytes()))
+    return found
 
 
 def entry_points(data, base, args):
@@ -67,11 +93,25 @@ def main():
     ap.add_argument("--window", type=lambda v: int(v, 0), default=1024,
                     help="the dump size the plan should propose (default 1024)")
     ap.add_argument("--quiet", action="store_true", help="the plan only, no disassembly")
+    ap.add_argument("--with-every-dump", action="store_true",
+                    help="add every other ROM dump in scratchpad/, placed by its launcher log")
+    ap.add_argument("--dump", action="append", default=[], metavar="PATH@0xADDR",
+                    help="add another dump at an address; repeatable")
+    ap.add_argument("--scratchpad", default="scratchpad",
+                    help="where the dumps and launcher logs live (default scratchpad)")
     args = ap.parse_args()
 
     data = open(args.path, "rb").read()
+    segments = [(args.base, data)]
+    if args.with_every_dump:
+        segments += every_dump(args.scratchpad)
+    for spec in args.dump:
+        path, _, address = spec.rpartition("@")
+        segments.append((int(address, 0), open(path, "rb").read()))
+    memory = scrcmd.Memory(segments)
+
     starts = entry_points(data, args.base, args)
-    reached, referenced = scrcmd.follow(data, args.base, starts)
+    reached, referenced = scrcmd.follow(memory, starts)
 
     if not args.quiet:
         for address in sorted(reached):
@@ -80,7 +120,8 @@ def main():
                 print(line)
             print()
 
-    print(f"{len(data)} bytes at 0x{args.base:08X}: {len(starts)} entry points, "
+    print(f"{len(memory)} bytes in {len(memory.segments)} region"
+          f"{'s' if len(memory.segments) != 1 else ''}: {len(starts)} entry points, "
           f"{len(reached)} blocks read, {len(referenced)} addresses wanted and not held")
     if referenced:
         print("\nreached for, and not in this dump:")

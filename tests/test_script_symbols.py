@@ -152,3 +152,39 @@ def test_the_plan_puts_the_window_that_catches_the_most_first():
     assert len(plan) == 4
     covered = sum(int(line.split("size 1024   ")[1].split()[0]) for line in plan)
     assert covered == len(STD_SCRIPT_POINTERS), "every wanted address has to appear in the plan"
+
+
+def test_two_dumps_that_touch_become_one_region():
+    """A block that straddles the join between two runs has to disassemble, so overlapping and
+    adjacent segments merge rather than sitting side by side."""
+    memory = scrcmd.Memory([(0x08000000, b"\x00" * 16), (0x08000010, b"\x11" * 16)])
+    assert len(memory.segments) == 1 and len(memory) == 32
+    overlapping = scrcmd.Memory([(0x08000000, b"\x00" * 16), (0x08000008, b"\x11" * 16)])
+    assert len(overlapping.segments) == 1 and len(overlapping) == 24
+    apart = scrcmd.Memory([(0x08000000, b"\x00" * 16), (0x08000020, b"\x11" * 16)])
+    assert len(apart.segments) == 2
+    assert 0x08000000 in apart and 0x08000018 not in apart
+
+
+def test_a_script_split_across_two_dumps_still_walks():
+    """The real fixture cut in half and handed over as two separate runs. Every block still reads,
+    which is the point of holding all the dumps at once: a script does not care which run caught
+    the block it jumps to."""
+    half = len(TRAINER_BATTLE_BYTES) // 2
+    memory = scrcmd.Memory([
+        (TRAINER_BATTLE_BASE, TRAINER_BATTLE_BYTES[:half]),
+        (TRAINER_BATTLE_BASE + half, TRAINER_BATTLE_BYTES[half:])])
+    reached, referenced = scrcmd.follow(memory, 0x081A76A6)
+    whole, _ = scrcmd.follow(TRAINER_BATTLE_BYTES, TRAINER_BATTLE_BASE, 0x081A76A6)
+    assert reached == whole
+    assert set(referenced) == {0x081A77A3, 0x081A77A5, 0x081A77B0, 0x081A77B2, 0x081A7805}
+
+
+def test_a_dump_that_ends_mid_command_says_so():
+    """A command with a known shape whose operands run off the end means the DUMP is short, not
+    that the bytes are not a script. Reading `no shape here` for that sends you looking for a bug
+    in the table - it happened, on the last command of bs107."""
+    truncated = bytes([0x0F, 0x00, 0x11, 0x22])          # loadword wants 1 + 4, four bytes given
+    assert scrcmd.shape(truncated, 0, 0) is None
+    assert "truncated" in scrcmd.disassemble(truncated, 0, 0)[-1]
+    assert "no shape here" in scrcmd.disassemble(bytes([0xD5]), 0, 0)[-1]

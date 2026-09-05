@@ -1025,6 +1025,39 @@ first window cost the same as one would. **An address a script asked for is not 
 the difference between this and scanning: `table-scan` and `memory-scan` search, and this reads a
 list the cartridge wrote.
 
+### bs107: the plan spent, and what one run bought
+
+`--buffer-script memory-dump --dump-address 0x081A8C00 --dump-size 1024`, the first line the plan
+printed. It closed **four of the five** open script addresses in a single run:
+
+| address | what it turned out to be |
+|---|---|
+| 0x081A8E49 | `gStdScripts[0]`, Std_ObtainItem: `additem`, then the message helper |
+| 0x081A8F81 | `gStdScripts[1]`, the ground-item pickup - `checkitemspace`, `removeobject VAR_LAST_TALKED`, `additem`, and a TM name buffered through special 406 |
+| 0x081A8F3A | `gStdScripts[7]`, Std_ObtainDecoration: `adddecoration` and the same shape again |
+| 0x081A8E43 | the text-colour restore that Std_ReceivedItem calls at 0x081A7681 |
+
+22 blocks off one dump. Special 406 came back named `BufferTMHMMoveName`, from the table bs93
+already held - a run that names a call target it never had to search for.
+
+Two things the run taught the tooling, both fixed:
+
+**A dump ending mid-command is not "no shape here".** The last command in the window was a
+`loadword` whose four-byte operand ran off the end, and the reader said the bytes were not a
+script. A known command whose operands run past the end means the DUMP is short; the message says
+which it is now, because the other reading sends you hunting a bug in the width table.
+
+**One dump at a time made the plan wrong.** The follow-up plan proposed a run for 0x081A79F0, which
+bs98 has held since session 39. `scrcmd.Memory` takes every dump at once - overlapping and adjacent
+regions merged, so a block straddling two runs still walks - and `tools/script_read.py
+--with-every-dump` places all 127 by the `--dump-address` in each launcher log. `run_mg_fast.sh`
+now records that line to `scratchpad/launcher_logs/` instead of only echoing it: it is the one place
+the address is paired with the bytes, and a foreground run used to lose it.
+
+With every dump loaded, following all ten `gStdScripts` reads **31 blocks** and leaves four
+addresses: three message strings and `gStdScripts[8]` at 0x081AB501, which is one more
+`--dump-address 0x081AB400`.
+
 ### bs99-bs103: the rest of the handlers, read by tool
 
 `scratchpad/handler_workers.py` does bs84's reading automatically: for every handler inside a dump

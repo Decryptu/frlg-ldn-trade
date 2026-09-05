@@ -195,10 +195,18 @@ def disassemble(data, base, start=None, limit=64, symbols=False):
         opcode = data[cursor]
         measured = shape(data, base, cursor)
         if measured is None:
+            from . import scrcmd_args
             name = (scrcmd_names.COMMANDS[opcode] if opcode < scrcmd_names.SCRIPT_CMD_COUNT
                     else "?")
-            lines.append(f"  0x{base + cursor:08X}  {opcode:02X}  {name}: "
-                         "no shape here, stopping")
+            # Two different answers wear the same None. A command with a known shape whose operands
+            # run off the end of the dump means the DUMP is short; anything else means these bytes
+            # are not a script. Saying "no shape here" for the first sends you looking for a bug.
+            widths = scrcmd_args.ARGS.get(opcode)
+            known = widths is not None or opcode in scrcmd_args.VARIABLE
+            why = ("truncated: the dump ends mid-command" if known and
+                   cursor + 1 + sum(widths or ()) > len(data)
+                   else "no shape here, stopping")
+            lines.append(f"  0x{base + cursor:08X}  {opcode:02X}  {name}: {why}")
             break
         name, operands, length = measured
         rendered = render_operands(opcode, operands, symbols)
@@ -224,6 +232,41 @@ def looks_like_a_script(data, base, start, steps=6):
     return True
 
 
+# --- many dumps at once -----------------------------------------------------------------------
+# 127 memory-dumps are on disk and a script does not care which run happened to catch the block it
+# jumps to. A plan built from one dump proposes runs for bytes another dump already holds, which is
+# the whole cost this is here to avoid.
+
+class Memory:
+    """Several dumps as one address space. `segments` is [(base, data)]; overlapping and adjacent
+    ones are merged, so a block that straddles two dumps still disassembles."""
+
+    def __init__(self, segments):
+        merged = []
+        for base, data in sorted((int(base), bytes(data)) for base, data in segments):
+            if merged and base <= merged[-1][0] + len(merged[-1][1]):
+                previous_base, previous = merged[-1]
+                overlap = previous_base + len(previous) - base
+                if overlap < len(data):
+                    merged[-1] = (previous_base, previous + data[overlap:])
+            else:
+                merged.append((base, data))
+        self.segments = merged
+
+    def segment(self, address):
+        """-> the (base, data) holding `address`, or None."""
+        for base, data in self.segments:
+            if base <= address < base + len(data):
+                return base, data
+        return None
+
+    def __contains__(self, address):
+        return self.segment(address) is not None
+
+    def __len__(self):
+        return sum(len(data) for _base, data in self.segments)
+
+
 # --- following a script where it goes ---------------------------------------------------------
 # The commands that transfer control, and where each one's target is. `ScriptJump`/`ScriptCall`
 # take the 4-byte `destination` [decomp:src/scrcmd.c:118-176]; `setptrbyte` and `copybyte` also
@@ -239,47 +282,50 @@ DATA_PARAMS = {"text", "msg", "movements", "products", "ptr", "ptr1", "ptr2", "p
 ROM_START, ROM_END = 0x08000000, 0x0A000000
 
 
-def follow(data, base, starts, limit=64, blocks=256):
+def follow(data, base, starts=None, limit=64, blocks=256):
     """-> (reached, referenced) for the script(s) at `starts`, chasing every goto and call.
 
-    `starts` is one address or many. `reached` is {address: disassembly} for every block that lies
-    inside the dump. `referenced` is
-    {address: set of (what it is, which address named it)} for everything the script points at that
-    the dump does NOT hold - which is the list of addresses a `memory-dump` should aim at next, and
-    the reason this is worth doing offline: a run is spent on an address the scripts themselves
-    asked for, not on a guess."""
-    data = bytes(data)
-    inside = (lambda address: 0 <= address - base < len(data))
+    `data` is a dump with its `base`, or a `Memory` of several (pass `starts` second then). `starts`
+    is one address or many. `reached` is {address: disassembly} for every block that lies inside the
+    memory. `referenced` is {address: set of (what it is, which address named it)} for everything
+    the scripts point at that is NOT held - which is the list of addresses a `memory-dump` should
+    aim at next, and the reason this is worth doing offline: a run is spent on an address the
+    scripts themselves asked for, not on a guess."""
+    from . import scrcmd_args
+    if isinstance(data, Memory):
+        memory, starts = data, base
+    else:
+        memory, starts = Memory([(base, data)]), starts
     queue = [starts] if isinstance(starts, int) else list(starts)
     reached, referenced = {}, {}
     while queue and len(reached) < blocks:
         address = queue.pop(0)
         if address in reached:
             continue
-        if not inside(address):
-            # An entry point the dump does not hold is the plainest thing there is to want next.
-            referenced.setdefault(address, set()).add(("entry point", base))
+        found = memory.segment(address)
+        if found is None:
+            # An entry point the dumps do not hold is the plainest thing there is to want next.
+            referenced.setdefault(address, set()).add(("entry point", address))
             continue
-        reached[address] = disassemble(data, base, address, limit=limit, symbols=True)
-        cursor = address - base
+        segment_base, segment = found
+        reached[address] = disassemble(segment, segment_base, address, limit=limit, symbols=True)
+        cursor = address - segment_base
         for _ in range(limit):
-            measured = shape(data, base, cursor)
+            measured = shape(segment, segment_base, cursor)
             if measured is None:
                 break
-            opcode, (_name, operands, length) = data[cursor], measured
-            params = None
+            opcode, (_name, operands, length) = segment[cursor], measured
+            params = scrcmd_args.PARAMS.get(opcode) or ()
             for index, (width, value) in enumerate(operands):
-                from . import scrcmd_args
-                params = params or scrcmd_args.PARAMS.get(opcode) or ()
                 param = params[index] if index < len(params) else None
                 kind = (JUMPS.get(opcode) if param == "destination" and opcode in JUMPS
                         else param if param in DATA_PARAMS else None)
                 if kind is None or not ROM_START <= value < ROM_END:
                     continue
-                if opcode in JUMPS and inside(value):
+                if opcode in JUMPS and value in memory:
                     queue.append(value)
-                elif not inside(value):
-                    referenced.setdefault(value, set()).add((kind, base + cursor))
+                elif value not in memory:
+                    referenced.setdefault(value, set()).add((kind, segment_base + cursor))
             cursor += length
             if opcode in TERMINATORS:
                 break
