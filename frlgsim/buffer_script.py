@@ -827,7 +827,7 @@ CHAIN_WRITE8 = 7
 # stack words whatever `argc` says, because a callee that takes fewer never reads them. It is here
 # so that a BUILT payload still says what it was asked for, which is what the log prints.
 CHAIN_TARGET_FROM_PREV = 0x100
-CHAIN_ARG_FROM_PREV = 0x200
+CHAIN_ARG_FROM_PREV = 0x200      # the first argument is PREV + a0, so a0 is an offset
 CHAIN_KEEP_PREV = 0x400
 CHAIN_ARGC_SHIFT = 16
 CHAIN_ARGC_MASK = 0xF
@@ -854,9 +854,10 @@ class ChainStep:
     """One step: an opcode, a target, and up to four argument words.
 
     `target_from_prev` makes the target the previous result plus `target` (so 0 is the pointer
-    itself and 4 is the word after it); `arg_from_prev` makes the first argument the previous
-    result. Both are the payload's op-word bits, not a builder convenience - the console resolves
-    them, which is the whole point: the address is one the GAME computed.
+    itself and 4 is the word after it); `arg_from_prev` does the same to the first argument, which
+    is how a ROM function is handed an address inside a block whose base only the console knows -
+    `AddMoney(&gSaveBlock1Ptr->money, ...)` is prev + 0x290. Both are the payload's op-word bits,
+    not a builder convenience: the console resolves them, which is the whole point.
     """
     op: int
     target: int = 0
@@ -883,12 +884,18 @@ class ChainStep:
         if self.target_from_prev and self.target:
             target = f"prev + 0x{self.target:X}"
         if self.op == CHAIN_CALL:
-            args = ["prev" if self.arg_from_prev and i == 0 else f"0x{a:X}"
-                    for i, a in enumerate(self.args)] or (["prev"] if self.arg_from_prev else [])
+            def argument(index, value):
+                if index or not self.arg_from_prev:
+                    return f"0x{value:X}"
+                return f"prev + 0x{value:X}" if value else "prev"
+            args = [argument(i, a) for i, a in enumerate(self.args)] \
+                or (["prev"] if self.arg_from_prev else [])
             return f"call {target}({', '.join(args)}){keep}"
         if self.op in CHAIN_READS:
             return f"{self.name} [{target}]{keep}"
-        value = "prev" if self.arg_from_prev else f"0x{(self.args or (0,))[0]:X}"
+        first = (self.args or (0,))[0]
+        value = (("prev" if not first else f"prev + 0x{first:X}") if self.arg_from_prev
+                 else f"0x{first:X}")
         return f"{self.name} [{target}] = {value}"
 
 
@@ -921,8 +928,9 @@ def parse_chain_step(text, resolve=None):
     """-> a ChainStep from `OP:TARGET[,ARG]...`, which is how the CLI takes one.
 
     `call:FlagSet,0x828`, `read16:0x02024EA4`, `write16:prev,7`, `read32:prev+4`. A target of
-    `prev` is the previous step's result, `prev+N` is N bytes past it, and an argument of `prev`
-    is the previous result itself. `resolve` turns a name into a THUMB pointer and defaults to
+    `prev` is the previous step's result and `prev+N` is N bytes past it; a FIRST argument of
+    `prev`/`prev+N` is the same thing, which is how `AddMoney(&money, n)` is reached when only the
+    console knows the base. `resolve` turns a name into a THUMB pointer and defaults to
     rom_map.callable_function, so only the functions this project has MEASURED are nameable.
     """
     resolve = rom_map.callable_function if resolve is None else resolve
@@ -967,13 +975,17 @@ def parse_chain_step(text, resolve=None):
     arg_from_prev = False
     args = []
     for index, field in enumerate(args_text):
-        if field.lower() == "prev":
+        if field.lower().startswith("prev"):
             if index:
                 raise BufferScriptError(
                     f"{text!r}: only the FIRST argument can be prev - the payload carries one "
                     "previous result, not a register file")
             arg_from_prev = True
-            args.append(0)
+            tail = field[4:].strip()
+            if tail and not tail.startswith("+"):
+                raise BufferScriptError(
+                    f"{text!r}: a prev argument is `prev` or `prev+N`, got {field!r}")
+            args.append(number(tail[1:].strip()) if tail else 0)
         else:
             args.append(number(field))
     return ChainStep(op, target, tuple(args), target_from_prev=target_from_prev,

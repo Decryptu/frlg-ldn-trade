@@ -141,6 +141,28 @@ FLAG_CLEAR = 0x08071F1C             # void FlagClear(u16 flagId)
 FLAG_GET = 0x08071F44               # bool8 FlagGet(u16 flagId)
 INCREMENT_GAME_STAT = 0x080587A4    # void IncrementGameStat(u8 statId)
 TRY_SET_OBTAINED_ITEM_QUEST_LOG_EVENT = 0x0809E210   # ScrCmd_additem's second call
+
+# --- the money workers, bs89 --------------------------------------------------------------------
+# A second 1 KB dump, of 0x0806F800, by exactly the method bs84 established. ScrCmd_addmoney,
+# _removemoney, _checkmoney and _updatemoneybox each read their argument and then make ONE call
+# through a pointer they build the same way: `ldr r0,[0x03004228]; ldr r0,[r0]; r1 = 0xA4 << 2;
+# adds r0,r0,r1` - gSaveBlock1Ptr, then &money [decomp:src/scrcmd.c, include/global.h:774].
+#
+# THE CHECKS THAT MAKE IT A MEASUREMENT: that literal is 0x03004228, which is GSAVEBLOCK1PTR as
+# lg175 measured it; 0xA4 << 2 is 0x290, which is `struct SaveBlock1.money`'s own offset; and
+# ScrCmd_givemon in the same window calls 0x08071DDC, which is VarGet from bs84.
+SCRIPT_READ_WORD = 0x0806D200        # u32 ScriptReadWord(ctx), the u32 sibling of ReadHalfword
+GET_MONEY = 0x080A3764               # u32 GetMoney(u32 *money)
+IS_ENOUGH_MONEY = 0x080A3794         # bool8 IsEnoughMoney(u32 *money, u32 cost)
+ADD_MONEY = 0x080A37AC               # void AddMoney(u32 *money, u32 toAdd), capped at MAX_MONEY
+REMOVE_MONEY = 0x080A37E4            # void RemoveMoney(u32 *money, u32 toSub), floored at 0
+CHANGE_AMOUNT_MONEY_BOX = 0x080A39AC  # ScrCmd_updatemoneybox's second call
+
+# MONEY IS ENCRYPTED, which is why GetMoney exists at all: `*moneyPtr ^ encryptionKey`
+# [decomp:src/money.c:14], the key being gSaveBlock2Ptr->encryptionKey. So a raw read of
+# SAV1_MONEY is the ciphertext and the two together give the key.
+SAV1_MONEY = 0x290                   # struct SaveBlock1.money [decomp:include/global.h:774]
+SAV2_ENCRYPTION_KEY = 0xF20          # struct SaveBlock2.encryptionKey [:358]
 # The literal ScrCmd_additem stores its result through, which is what gSpecialVar_Result must be.
 GSPECIAL_VAR_RESULT = 0x020370CC
 
@@ -164,6 +186,10 @@ CALLABLE = {
     "FlagClear": FLAG_CLEAR,
     "FlagGet": FLAG_GET,
     "IncrementGameStat": INCREMENT_GAME_STAT,
+    "GetMoney": GET_MONEY,
+    "IsEnoughMoney": IS_ENOUGH_MONEY,
+    "AddMoney": ADD_MONEY,
+    "RemoveMoney": REMOVE_MONEY,
 }
 
 

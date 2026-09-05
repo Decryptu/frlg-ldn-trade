@@ -2387,6 +2387,25 @@ def test_a_read_that_does_not_keep_prev_replaces_the_pointer_with_what_it_read()
 
 
 @needs_unicorn
+def test_an_argument_can_be_an_offset_from_the_previous_result():
+    """THE MONEY SHAPE. `AddMoney(&gSaveBlock1Ptr->money, n)` needs an address inside a block whose
+    base moves on every load and battle [SetSaveBlocksPointers, src/load_save.c:75], so the offset
+    has to be added on the console. bs89 read that handler: the base comes from 0x03004228 and the
+    field is 0xA4 << 2 past it."""
+    steps = _chain("read32:0x03004228", "call+keep:0x08100201,prev+0x290,0x2")
+    run = buffer_script.emulate(
+        buffer_script.build_call_chain(steps),
+        memory={rom_map.GSAVEBLOCK1PTR: (0x02025548).to_bytes(4, "little"),
+                FOUR_ARG_BASE: FOUR_ARG_CODE},
+        send_size=buffer_script.CHAIN_ANSWER_SIZE)
+
+    got = buffer_script.read_call_chain(run.pending_send)
+    assert got["values"][0] == 0x02025548
+    assert got["values"][1] == 0x02025548 + 0x290 + 2, "r0 = prev + the offset, r1 = the literal"
+    assert "prev + 0x290" in steps[1].describe()
+
+
+@needs_unicorn
 def test_all_four_arguments_arrive_in_r0_to_r3():
     steps = [buffer_script.chain_call(FOUR_ARG_BASE | 1, [1, 2, 4, 8])]
     run = buffer_script.emulate(

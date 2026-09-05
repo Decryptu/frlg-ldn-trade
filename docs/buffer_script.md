@@ -785,6 +785,69 @@ out of the cartridge, plus a stub that returns a pointer the way `GetVarPointer`
 through a simulated console and a real Mystery Gift session, so the payload, the send repointing and
 the host's decode are all proven before a run is spent.
 
+### bs86-bs88: the chain on hardware, and a live save written through a pointer the game computed
+
+Three runs, no traps, nothing changed in the payload between them.
+
+**bs86, seven steps, reads only.** `gSaveBlock1Ptr` read 0x02025548 and `GetVarPointer(0x4024)`
+answered 0x02026590 - a difference of **exactly 0x1048**, which is `SAV1_VARS + 2 * 0x24`, the
+offset `buffer_script.sav1_var_offset` computes from the decomp. The var read 0 through that
+pointer and 0 through `VarGet`, the two independent routes agreeing. `CheckBagHasItem(MASTER_BALL,
+5)` returned TRUE, so bs85's five Master Balls were still in the bag two sessions later, and
+`FlagGet(FLAG_SYS_POKEDEX_GET)` returned TRUE.
+
+**bs87, eight steps, the first write.** `AddPCItem(RARE_CANDY, 5)` returned TRUE, with
+`CheckBagHasItem(RARE_CANDY, 5)` FALSE both before and after it - so the items went to the **PC**
+and not to the bag, which is the discrimination a single call could not have made. Then the shape
+this payload was built for:
+
+    call GetVarPointer(0x4024)   -> 0x020265B4
+    read16 [prev] keep           -> 0
+    write16 [prev] = 3           -> 3        the store, read back by the payload
+    read16 [prev]                -> 3
+    call VarGet(0x4024)          -> 3        the GAME's own reader, same frame
+
+**bs88, a new session: it persisted.** `GetVarPointer(0x4024)` answered 0x02026574 this time - a
+third SaveBlock1 base, because `SetSaveBlocksPointers` re-rolls a 4-aligned offset in 0..124 on
+every load and battle [decomp:src/load_save.c:75] - and the var behind it still read **3**. That is
+also why a var write goes through `GetVarPointer` rather than a computed address: the pointer is
+correct on the console whatever the base is that session. The same run took the bag from five
+Master Balls to one with `RemoveBagItem(MASTER_BALL, 4)`, checked either side of the call.
+
+### bs89, bs90: the money workers, and the encryption key
+
+bs89 dumped 1 KB at 0x0806F800 - bs84's method, a second window - and `ScrCmd_addmoney`,
+`_removemoney`, `_checkmoney` and `_updatemoneybox` each gave up their one call. All four build the
+same pointer first: `ldr r0,[0x03004228]; ldr r0,[r0]; r1 = 0xA4 << 2; adds r0,r0,r1`.
+
+    GetMoney         0x080A3764      AddMoney       0x080A37AC
+    IsEnoughMoney    0x080A3794      RemoveMoney    0x080A37E4
+    ScriptReadWord   0x0806D200      ChangeAmountMoneyBox  0x080A39AC
+
+Three things make that a measurement rather than a reading: the literal is 0x03004228, which is
+`gSaveBlock1Ptr` as lg175 measured it; `0xA4 << 2` is 0x290, `struct SaveBlock1.money`'s own offset
+[decomp:include/global.h:774]; and `ScrCmd_givemon`, in the same window, calls 0x08071DDC, which is
+`VarGet` from bs84.
+
+**Money is encrypted**, which is why `GetMoney` exists at all: `*moneyPtr ^
+gSaveBlock2Ptr->encryptionKey` [decomp:src/money.c:14]. bs90 read both sides of that in one frame,
+and it is the run that shows what a chain is worth - an address the host cannot know (the base
+moves), an offset added on the console, and an answer that checks itself twice:
+
+    read32 [0x03004228]              -> 0x02025554     gSaveBlock1Ptr
+    read32 [prev + 0x290] keep       -> 0x93E78EEE     the ciphertext, before
+    call GetMoney(prev + 0x290) keep -> 0x00034103     213251, the plaintext
+    call AddMoney(prev + 0x290, 1234) keep
+    call GetMoney(prev + 0x290) keep -> 0x000345D5     214485, exactly +1234
+    read32 [prev + 0x290]            -> 0x93E78A38     the ciphertext, after
+
+0x93E78EEE ^ 213251 and 0x93E78A38 ^ 214485 are both **0x93E4CFED**: the key, derived twice from
+two independent pairs. `AddMoney`'s cap and `RemoveMoney`'s floor are the game's own
+[src/money.c:35,55], so the player's wallet cannot be pushed out of range by these.
+
+`rom_map.SAV1_MONEY` and `SAV2_ENCRYPTION_KEY` hold the offsets, and `rom_map.CALLABLE` the four
+functions, so none of this costs a run again.
+
 ## `table-scan`: finding a table by its shape
 
 Every address found by searching so far rested on a constant that only one place could hold:

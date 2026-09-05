@@ -23,7 +23,7 @@
 @ A step is 24 bytes:
 @
 @   +0x00  op         low byte = the opcode below; bit 8 = target is PREV + target;
-@                     bit 9 = a0 is PREV (the literal a0 is ignored); bit 10 = leave PREV alone
+@                     bit 9 = a0 is PREV + a0; bit 10 = leave PREV alone
 @   +0x04  target     a THUMB function pointer for CALL, an address for the reads and writes
 @   +0x08  a0         r0, or the value to store
 @   +0x0C  a1         r1
@@ -126,7 +126,8 @@ _start:
     addne   r2, r2, r7              @ ... offset from PREV, which is how a returned pointer is used
     ldr     r3, [r5, #0x08]         @ a0
     tst     r0, #0x200
-    movne   r3, r7                  @ ... or PREV itself
+    addne   r3, r3, r7              @ ... or offset from PREV, which is how &money is reached:
+                                    @ the base is a pointer only the console knows
 
     cmp     r1, #1
     beq     .Lopcall
