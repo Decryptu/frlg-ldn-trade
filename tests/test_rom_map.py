@@ -239,3 +239,13 @@ def test_the_french_vocabulary_itself_transfers_because_a_console_said_so():
     _run, _address, words = easychat_french_words.GROUPS[1]
     assert len(words) == 26
     assert words[0] == "CE SERA TOI" and words[25] == "ARGENT"
+
+
+def test_the_leafgreen_save_block_pointers_are_the_firered_ones():
+    """lg175 read them past gRngValue, which could not be dumped. Both values had moved by exactly
+    12 since lg160's anchors - one shared 4-aligned offset in the 0..124 SetSaveBlocksPointers
+    rolls, which two arbitrary words could not agree on."""
+    assert rom_map.leafgreen("gSaveBlock1Ptr") == rom_map.GSAVEBLOCK1PTR
+    assert rom_map.leafgreen("gSaveBlock2Ptr") == rom_map.GSAVEBLOCK2PTR
+    seen = (0x02025560 - 0x02025554, 0x020245BC - 0x020245B0)
+    assert seen[0] == seen[1] and seen[0] % 4 == 0 and seen[0] <= rom_map.SAVEBLOCK_MOVE_MASK

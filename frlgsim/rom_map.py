@@ -411,6 +411,15 @@ LEAFGREEN = {
     # that delta is measured. The other -0x2C..-0x28 candidate at 0x08071FC8 sits in an unmeasured
     # gap and is a different table; it is recorded here only so nobody re-derives it as a surprise.
     "gSpecialVars": (0x08163984, "lg171"),             # FireRed 0x081639A8, so -0x24
+    # lg175, and it verifies itself. The two words read 0x02025560 and 0x020245BC, while lg160's
+    # anchors had reported 0x02025554 and 0x020245B0 for the same two blocks - BOTH moved by exactly
+    # 12, one shared 4-aligned offset inside the 0..124 SetSaveBlocksPointers rolls
+    # [decomp:src/load_save.c:75]. Two pointers agreeing on the size of a re-roll they cannot both
+    # have faked is what makes these the save-block pointers and not two arbitrary words.
+    # The dump had to start at 0x03004224 rather than 0x03004220: see MOVING_REGIONS in
+    # buffer_script.py, which lg172 and lg173 paid for.
+    "gSaveBlock1Ptr": (0x03004228, "lg175"),           # same as FireRed
+    "gSaveBlock2Ptr": (0x0300422C, "lg175"),           # same as FireRed
 }
 
 # --- THE ROM DELTA, MEASURED IN FOUR SEGMENTS AND NOT ONE ---------------------------------------
