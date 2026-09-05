@@ -220,3 +220,37 @@ padding values, so those two reads are not the same thing and neither has been c
   across it, a difference of 0x1114, so there are many boundaries in there and none is located. The
   make-a-needle method above costs two runs per point and would bisect it.
 - **Nothing between 0x086803FC and the end of the data has been measured.**
+
+## lg180-lg183: the script layer is the SAME on both cartridges
+
+The delta map's first gap was 0x0805359C..0x0807D238 - delta 0 below it, -0x2C above, and no
+boundary located in between. Four runs closed most of it, and they cost nothing to set up because
+the FireRed side was already on disk: take a word out of a dump we hold, one with four distinct
+bytes that occurs once, and scan the other console for it. Instructions are position independent,
+so where it comes back IS the delta.
+
+| needle | taken from | found on LeafGreen at | delta |
+|---|---|---|---|
+| 0x49050B80 | bs92, inside `ScrCmd_special` | 0x0806D7F4 | 0 |
+| 0x4831D940 | bs103, the top of the handler block | 0x080701C0 | 0 |
+| 0x49040A00 | bs105, inside the flag/var workers | 0x08071E1C | 0 |
+| 0x47708008 | bs105, above `FlagGet` | 0x08071FC4 | 0 |
+
+So the delta-0 segment reaches **0x08071FC4**, and the first boundary is bracketed to
+0x08071FC4..0x0807D238 - a twenty-fivefold narrowing. What that buys is bigger than the map entry:
+everything the console API is built on is at the same address on both cartridges.
+
+- the whole `gScriptCmdTable` handler block, 0x0806D7C0..0x080700B8
+- the script engine: `ScriptContext_Stop`, `ScriptJump`, `ScriptCall`, `ScriptReturn`, and the
+  native-pointer setter `callnative` rides
+- `GetVarPointer`, `VarGet`, `FlagSet`, `FlagClear`, `FlagGet`
+- the `_call_via_r0` veneer that `ScrCmd_special` and `ScrCmd_callnative` both use
+
+`rom_map.SHARED_WITH_LEAFGREEN_THROUGH` is that boundary. **A prediction follows and is not
+measured**: the item and money workers sit above 0x0807D238, in the -0x2C segment, which puts
+`AddBagItem` at 0x0809DA44 and `AddMoney` at 0x080A3780 on LeafGreen. One `call-chain` run on that
+console settles it.
+
+The lower needle (0x47708008) came back twice, the second hit at 0x08000554 in the entry code, which
+is a reminder that a needle is only evidence at the address it was predicted to appear at - the
+method is the pair, not the search.

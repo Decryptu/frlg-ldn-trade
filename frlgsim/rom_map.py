@@ -257,6 +257,22 @@ SET_RESPAWN = 0x08058DE0               # ScrCmd_setrespawn: where a white-out re
 # overworld to warp: they belong to a FIELD stub, which runs from the field engine. docs/rng.md
 # has how a stub is staged.
 
+# --- what the two cartridges SHARE, lg180-lg183 -------------------------------------------------
+# Four needles taken out of FireRed dumps and searched for on LeafGreen came back at THE SAME
+# ADDRESS every time: 0x0806D7F4 (inside ScrCmd_special), 0x080701C0, 0x08071E1C and 0x08071FC4.
+# So the delta-0 segment reaches at least 0x08071FC4, and everything below it is one cartridge's
+# address as much as the other's:
+#
+#   the whole gScriptCmdTable handler block   0x0806D7C0 .. 0x080700B8
+#   the script engine                          ScriptContext_Stop/Jump/Call/Return, 0x0806D0E4..
+#   GetVarPointer, VarGet, FlagSet, FlagClear, FlagGet, and the special/callnative veneer path
+#
+# PREDICTION, not measured: the item and money workers are above 0x0807D238 and so in the -0x2C
+# segment, which puts AddBagItem at 0x0809DA44 and AddMoney at 0x080A3780 on LeafGreen. One chain
+# run on that console would settle it, and a wrong answer would move the boundary rather than break
+# anything - the addresses are only ever passed to a payload the builder has already range-checked.
+SHARED_WITH_LEAFGREEN_THROUGH = 0x08071FC4
+
 # --- gcc's THUMB-to-ARM call veneers ------------------------------------------------------------
 # Client_RunBufferScript reaches our ARM payload through one of these, which is why lr comes back
 # pointing into the caller rather than into the veneer.
@@ -377,7 +393,8 @@ LEAFGREEN = {
 # upward on faith and found nothing, which is what exposed them.
 LEAFGREEN_DELTA_SEGMENTS = (
     # (low, high, delta, evidence): the delta is measured at both ends of each span
-    (0x08000000, 0x0805359C, 0x00, "lg176b vs bs68b, 42 paired hits; lg162/lg166 below them"),
+    (0x08000000, 0x08071FC4, 0x00, "lg176b vs bs68b, 42 paired hits; lg180-lg183 carried the "
+     "delta-0 segment up from 0x0805359C to 0x08071FC4, four needles from bs92/bs103/bs105"),
     (0x0807D238, 0x080CE36C, -0x2C, "lg176b vs bs68b, 2 paired hits; lg161 vs bs13, 4 more"),
     (0x080EBA14, 0x0813E8CC, -0x28, "lg176b vs bs68b, 9 paired hits; lg161 vs bs13, 5 more"),
     (0x08148C74, 0x0824CDFC, -0x24, "lg176b vs bs68b, 3 paired hits; lg160, lg161-vs-bs13, lg165"),
@@ -406,7 +423,8 @@ LEAFGREEN_DELTA_SEGMENTS = (
 # NOT located to the byte; halving one of these needs a needle known to sit inside it.
 LEAFGREEN_DELTA_BOUNDARIES = (
     # (from_delta, to_delta, low, high, evidence)
-    (0x00, -0x2C, 0x0805359C, 0x0807D238, "lg176b/bs68b above, lg161/bs13 below"),
+    (0x00, -0x2C, 0x08071FC4, 0x0807D238, "lg180-lg183 below (four needles at the same "
+     "address on both cartridges), lg161/bs13 above; was 0x0805359C, narrowed 25x"),
     (-0x2C, -0x28, 0x080CE36C, 0x080EBA14, "lg176b vs bs68b, both ends"),
     (-0x28, -0x24, 0x0813E8CC, 0x08148C74, "lg176b/bs68b below, lg160 above"),
 )

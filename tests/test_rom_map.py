@@ -223,7 +223,9 @@ def test_the_leafgreen_delta_is_four_measured_segments_and_refuses_the_gaps():
                                (0x0815A3F4, 0x0815A3D0), (0x0815A630, 0x0815A60C)):
         assert rom_map.leafgreen_guess(firered) == leafgreen
     # A boundary is known to be in here and its position is not.
-    for gap in (0x08060000, 0x080D8000, 0x08142000):
+    # 0x08060000 used to be a gap; lg180/lg181 put it inside the measured
+    # delta-0 segment, so the first gap is now 0x080701C0..0x0807D238.
+    for gap in (0x0807A000, 0x080D8000, 0x08142000):
         with pytest.raises(ValueError, match="gap between measured segments"):
             rom_map.leafgreen_guess(gap)
 
