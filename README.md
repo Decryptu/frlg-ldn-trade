@@ -15,9 +15,13 @@ This demo was recorded using the **ALFA AWUS036ACHM**. The RZ616 is half as fast
 
 ## Features
 
-- End-to-end trading with a real game running on a real Switch
+- End-to-end trading with a real game running on a real Switch, in both directions
 - .pk3/.ek3 input and output
-- Mystery Gift distribution with a Wonder Card and scripted deliveryman gift
+- Mystery Gift distribution: Wonder Cards with scripted deliveryman gifts, Wonder News, and a
+  visiting Battle Tower trainer
+- Union Room: greetings, trading-board trades, live chat, and full link battles
+- Native code on the console through the gift link: reading and writing its save, mapping its ROM,
+  and calling its own functions. See [the documentation site](https://decryptu.github.io/frlg-ldn-trade/)
 
 ## Requirements
 - Linux
@@ -53,12 +57,12 @@ contain this project's adapter compatibility fixes.
 | | |
 |---|---|
 | [`bin/`](bin) | the four things you run against a console: `frlgmg_host.py` (Mystery Gift, Wonder News and native code), `frlgmg_client.py` (receive a card from a console), `frlgtrade_host.py` (trade and Union Room host), `frlgtrade.py` (trade joiner) |
-| [`tools/`](tools) | radio diagnostics that hold no game conversation: `ldn_scan.py`, `sniff.py`, `joyspot_probe.py`, `ldn_debug_report.sh` |
+| [`tools/`](tools) | offline helpers: `dump_read.py` (decode a save dump), plus the radio diagnostics `ldn_scan.py`, `sniff.py`, `joyspot_probe.py`, `ldn_debug_report.sh` |
 | [`frlgsim/`](frlgsim) | the package everything above is made of: the LDN/Pia transport, the RFU link, the Mystery Gift server and client, the payload builders |
 | [`asm/`](asm) | ARM sources for the payloads the console runs (`scripts/gen_buffer_scripts.py` assembles them into `frlgsim/buffer_payloads.py`) |
 | [`scripts/`](scripts) | setup, deployment and code generation - not things you point at a console |
 | [`config/`](config) | host profiles (`host.toml`, and `host.local.toml` for this machine) |
-| [`docs/`](docs) | the protocol findings, each with its decomp citations |
+| [`docs/`](docs) | the protocol findings, each with its decomp citations; published at [decryptu.github.io/frlg-ldn-trade](https://decryptu.github.io/frlg-ldn-trade/) |
 | [`tests/`](tests) | `python -m pytest tests/ -q` |
 | [`vendor/`](vendor) | the bundled LDN implementation and the mt7601u AP-mode driver |
 
@@ -112,6 +116,27 @@ or Wi-Fi hardware.
 
 The command above selects the ALFA profile. The help output is the authoritative list of supported
 options for each entry point.
+
+### Host a Union Room
+
+`--union-room` advertises on the middle NPC's path instead of the Direct Corner's, which is a
+different accept list on the console rather than a different transport. From the room the console
+can greet us, trade off the trading board, chat, or start a full link battle.
+
+```bash
+sudo -E ./.venv/bin/python bin/frlgtrade_host.py --union-room --union-room-keepalive 120 \
+  PARTY1.pk3 PARTY2.pk3
+```
+
+The console takes about ten seconds to appear to itself as connected; that wait is the RFU library's
+and not a fault. Add `--board-type normal` to register the offered Pokémon on the trading board,
+`--union-room-chat` with `--chat-message` or `--chat-file` for chat, and `--union-room-battle
+--battle-fight` for a link battle. In a battle the console elects itself master and computes
+everything, so we answer its controller commands rather than running any battle logic; it needs two
+non-egg Pokémon at level 30 or lower in its own party or it refuses on its own screen.
+
+See [Console protocol notes](docs/joiner_protocol_notes.md) for the connect sequence, the activity
+bytes, and the link buffer protocol.
 
 ### Hosting Wi-Fi adapter profiles
 
@@ -244,6 +269,24 @@ A console keeps news only when it differs from what it already holds, so re-send
 text is a deliberate no-op; `--news-id N` changes one field and makes the same text land again. See
 [the Wonder News guide](docs/wonder_news.md) for the struct, the advertisement change it needs, and
 the one place where the console answers the host back.
+
+### Read the console's save
+
+A Mystery Gift session can run native ARM code on the console, which is enough to read its live save
+back. That covers the two things the game never shows you: the **secret ID**, and every party
+Pokémon's PID, IVs and nature.
+
+```bash
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
+  --buffer-script save-dump --dump-block sav2 --dump-size 64 --dump-file dump.bin
+
+./.venv/bin/python tools/dump_read.py dump.bin --block sav2
+```
+
+The console stays on its Mystery Gift menu, nothing is written and no Wonder Card changes hands. See
+[Reading the save](docs/reading_the_save.md) for the party dump, the gotchas, and what else the same
+payload reaches; [Native code on the console](docs/buffer_script.md) has the mechanism and the other
+payloads built on it.
 
 See [the Mystery Gift distributor guide](docs/mystery_gift_distributor.md) for the protocol flow, payload,
 test commands, and why the Switch requires the Friend path rather than Wireless Communication.
