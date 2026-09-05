@@ -113,3 +113,45 @@ def test_the_bracket_a_real_answer_has_to_fall_in():
     assert ANSWER_LOW > rom_map.G_STD_SCRIPTS
     assert ANSWER_HIGH > ANSWER_LOW
     assert ANSWER_HIGH - ANSWER_LOW < 0x00200000, "the bracket is under 2 MB wide"
+
+
+# --- and then it was measured: bs109 found it, bs110 read it ---------------------------------------
+
+def test_the_table_was_found_where_the_bracket_said_it_had_to_be():
+    """bs109: one hit in all 256 KB of EWRAM, no false positives. The scan's value is the table."""
+    assert rom_map.G_MYSTERY_EVENT_CMD_TABLE == 0x081DE144
+    assert ANSWER_LOW < rom_map.G_MYSTERY_EVENT_CMD_TABLE < ANSWER_HIGH
+    assert rom_map.S_MYSTERY_EVENT_SCRIPT_CONTEXT + CTX_CMD_TABLE == 0x0203AA94
+
+
+def test_the_seventeen_entries_are_seventeen_functions():
+    """bs110 read the table. Every entry odd (THUMB), every one distinct, every one inside .text,
+    and all of them within about a kilobyte of each other - one object file's worth of functions.
+    Seventeen coincidences would not do that."""
+    addresses = [address for _name, address in rom_map.MYSTERY_EVENT_HANDLERS]
+    assert len(addresses) == MYSTERY_EVENT_CMD_COUNT
+    assert len(set(addresses)) == MYSTERY_EVENT_CMD_COUNT
+    assert all(address & 1 for address in addresses), "a ScrCmdFunc pointer is THUMB"
+    assert all(0x08000000 < address < rom_map.G_SCRIPT_CMD_TABLE for address in addresses)
+    assert max(addresses) - min(addresses) < 0x800
+
+
+def test_the_table_order_is_the_vms_own_opcode_order():
+    """The names in rom_map are the decomp's table order; mystery_event.OPCODE_NAMES was written
+    from the VM's behaviour on the console, run by run. They have to agree entry for entry."""
+    from frlgsim import mystery_event
+    assert [name for name, _address in rom_map.MYSTERY_EVENT_HANDLERS] == [
+        mystery_event.OPCODE_NAMES[opcode] for opcode in range(MYSTERY_EVENT_CMD_COUNT)]
+
+
+def test_the_end_of_the_table_is_the_end_of_script_data():
+    """`mystery_event_script_cmd_table.o(script_data)` is the LAST member of script_data and
+    lib_text follows it [ld_script_rev10.ld:318-330]. bs110 read 0x4C41B510 at that address -
+    `push {r4, lr}` - which is a THUMB prologue, so lib_text starts exactly there."""
+    assert rom_map.SCRIPT_DATA_END == 0x081DE188
+    assert rom_map.LIB_TEXT_START == rom_map.SCRIPT_DATA_END
+    assert rom_map.SCRIPT_DATA_END == (rom_map.G_MYSTERY_EVENT_CMD_TABLE
+                                       + 4 * MYSTERY_EVENT_CMD_COUNT)
+    # and script_data has to contain everything already measured inside it
+    for address in (rom_map.G_SCRIPT_CMD_TABLE, rom_map.G_SPECIALS, rom_map.G_STD_SCRIPTS):
+        assert rom_map.G_SCRIPT_CMD_TABLE <= address < rom_map.SCRIPT_DATA_END

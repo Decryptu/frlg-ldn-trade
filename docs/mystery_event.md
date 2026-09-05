@@ -42,9 +42,9 @@ Everything here is a decompilation fact unless it is marked otherwise.
 `frlgsim/mystery_event.py` assembles all of them; `MysteryEventScript.blob()` holds the data and the
 assembler resolves the pointers.
 
-## Where the table IS, on the console - the method, not yet the answer
+## Where the table IS, on the console
 
-**UNKNOWN: the address.** Every opcode in the table has been run on the console, but the table
+**MEASURED at bs109/bs110: `gMysteryEventScriptCmdTable` = 0x081DE144.** Until then, every opcode in the table has been run on the console, but the table
 itself has only ever been read from the decomp. It carries no constant to search for, and its 17
 entries are unrelated function addresses, so `table-scan`'s arithmetic-run fingerprint does not
 match the table either. That is why it was still open after `gSpecials` and `gStdScripts` fell.
@@ -88,9 +88,50 @@ between the highest event script read off the console (0x081AB569, bs108) and `.
 starts below `gSpeciesInfo` at 0x0824CDC0 (bs39). A hit outside that window is a coincidence in
 EWRAM, not the table.
 
-Once it is measured, bs84's method applies unchanged: the 17 entries are handler addresses, a 1 KB
-dump of them reads the workers out by position, and the Mystery Event VM becomes as callable as the
-field-script engine already is.
+### The runs
+
+**mev25** sent `mystery-event-probe` and the console answered status 42, which is our own
+`setstatus` - so a script had run and the context was filled. **bs109** then scanned all 256 KB of
+EWRAM for two adjacent words exactly 68 apart, in 86 calls: **one hit, no false positives at all**,
+at 0x0203AA94 with the value 0x081DE144. So `sMysteryEventScriptContext` is at **0x0203AA38** and
+the table is at **0x081DE144**, inside the bracket by 0x32BDB and 0x6EC38.
+
+**bs110** dumped 1 KB at 0x081DDE00 and read the table itself. Every one of the 17 entries is odd
+(a `ScrCmdFunc` pointer is THUMB), all 17 are distinct, all lie inside `.text`, and they span 1084
+bytes - one object file's worth of functions. Seventeen coincidences do not do that.
+
+| # | command | handler | | # | command | handler |
+|---|---|---|---|---|---|---|
+| 0 | `nop` | 0x080DE451 | | 9 | `givenationaldex` | 0x080DE61D |
+| 1 | `checkcompat` | 0x080DE401 | | 10 | `addrareword` | 0x080DE641 |
+| 2 | `end` | 0x080DE3F5 | | 11 | `setrecordmixinggift` | 0x080DE66D |
+| 3 | `setmsg` | 0x080DE465 | | 12 | `givepokemon` | 0x080DE681 |
+| 4 | `setstatus` | 0x080DE455 | | 13 | `addtrainer` | 0x080DE78D |
+| 5 | `runscript` | 0x080DE49D | | 14 | `enableresetrtc` | 0x080DE7D5 |
+| 6 | `initramscript` | 0x080DE5B5 | | 15 | `checksum` | 0x080DE7E9 |
+| 7 | `setenigmaberry` | 0x080DE4B9 | | 16 | `crc` | 0x080DE831 |
+| 8 | `giveribbon` | 0x080DE581 | | | | |
+
+The alignment check needs no extra run: `mystery_event.OPCODE_NAMES` was written from the VM's
+behaviour on the console, opcode by opcode, over many sessions, and the table read out of ROM lands
+in exactly that order.
+
+### The section boundary, free with it
+
+`data/mystery_event_script_cmd_table.o(script_data)` is the **last** member of `script_data`, with
+`lib_text` immediately after [`ld_script_rev10.ld:318-330`], so the end of this table is the end of
+the section. bs110 read **0x4C41B510** at 0x081DE188 - `push {r4, lr}`, a THUMB prologue - which is
+`libgcnmultiboot`, the first object in `lib_text`. So **script_data is 0x08163650..0x081DE188**,
+and every table this project has measured (`gScriptCmdTable`, `gSpecialVars`, `gSpecials`,
+`gStdScripts`) sits inside it, along with every event script.
+
+### What it opens
+
+bs84's method now applies unchanged: the 17 entries are handler addresses, a 1 KB dump of them
+reads the workers out by position the way `AddBagItem` and the flag helpers were read, and the
+Mystery Event VM becomes as callable through `call-chain` as the field-script engine already is.
+`MEScrCmd_givepokemon` at 0x080DE681 and `MEScrCmd_initramscript` at 0x080DE5B5 are the two this
+project already drives through the wire, and calling them directly would need no card at all.
 
 ## Why `checkcompat` is optional
 

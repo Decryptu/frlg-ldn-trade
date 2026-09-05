@@ -97,6 +97,45 @@ G_SPECIAL_VAR_0X8000 = 0x020370B4   # the first entry, read out of the table by 
 # is not the table's order; a dump of G_SPECIAL_VARS settles them.
 G_SPECIAL_VAR_0X8001 = G_SPECIAL_VAR_0X8000 + 2
 
+# --- the Mystery Event VM, bs109 + bs110 --------------------------------------------------------
+# The one table this project had only ever read from the decomp. It carries no constant to search
+# for and its 17 entries are unrelated function addresses, so neither `memory-scan` nor
+# `table-scan`'s arithmetic-run fingerprint matches the TABLE. What matches is where its ADDRESS is
+# kept: `InitMysteryEventScript` hands the table and its end to `InitScriptContext`
+# [decomp:src/mystery_event_script.c:52], `struct ScriptContext` stores them as ADJACENT words at
+# +0x5C and +0x60 [decomp:include/script.h], the table is 17 entries so they are exactly 68 apart,
+# and the context is `EWRAM_DATA static sMysteryEventScriptContext` - so after any Mystery Event
+# script runs, the pair sits in EWRAM for the rest of the boot.
+#
+# bs109 scanned all 256 KB of EWRAM for two adjacent words 68 apart: ONE hit, no false positives,
+# and its value inside the bracket ld_script forces. mev25 was the mystery-event gift that filled
+# the context an hour before it; a scan without one finds nothing, because 0 and 0 are not 68 apart.
+S_MYSTERY_EVENT_SCRIPT_CONTEXT = 0x0203AA38     # bs109, the hit at +0x5C
+G_MYSTERY_EVENT_CMD_TABLE = 0x081DE144          # bs109's value, bs110 read the table itself
+MYSTERY_EVENT_CMD_COUNT = 17                    # [decomp:data/mystery_event_script_cmd_table.s]
+G_MYSTERY_EVENT_CMD_TABLE_END = G_MYSTERY_EVENT_CMD_TABLE + 4 * MYSTERY_EVENT_CMD_COUNT
+
+# AND THE SECTION BOUNDARY, free with it. `data/mystery_event_script_cmd_table.o(script_data)` is
+# the LAST member of script_data and `lib_text` follows [ld_script_rev10.ld:318-330], so the end of
+# the table is the end of script_data. bs110 read 0x4C41B510 at that address - `push {r4, lr}`,
+# a THUMB prologue - which is libgcnmultiboot, the first thing in lib_text.
+SCRIPT_DATA_END = G_MYSTERY_EVENT_CMD_TABLE_END     # 0x081DE188
+LIB_TEXT_START = SCRIPT_DATA_END
+
+# The 17 handlers, in table order, as bs110 read them. All odd (THUMB), all distinct, all inside
+# .text and clustered in 1084 bytes - one object file's worth of functions, which is the check that
+# the table is a table and not seventeen coincidences.
+MYSTERY_EVENT_HANDLERS = (
+    ("nop", 0x080DE451), ("checkcompat", 0x080DE401), ("end", 0x080DE3F5),
+    ("setmsg", 0x080DE465), ("setstatus", 0x080DE455), ("runscript", 0x080DE49D),
+    ("initramscript", 0x080DE5B5), ("setenigmaberry", 0x080DE4B9), ("giveribbon", 0x080DE581),
+    ("givenationaldex", 0x080DE61D), ("addrareword", 0x080DE641),
+    ("setrecordmixinggift", 0x080DE66D), ("givepokemon", 0x080DE681),
+    ("addtrainer", 0x080DE78D), ("enableresetrtc", 0x080DE7D5), ("checksum", 0x080DE7E9),
+    ("crc", 0x080DE831),
+)
+
+
 # --- src/pokemon.c --------------------------------------------------------------------------------
 # gSpeciesInfo, found by a content fingerprint (bs38) and confirmed by reading it (bs39, 34/34
 # entries byte-identical to the decomp). The three all-100 species give a word at entry offset 0
