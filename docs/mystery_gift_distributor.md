@@ -21,48 +21,33 @@ on a Switch. The delivery script remains available after use for later conversat
 sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live
 ```
 
-Two hardware profiles are proven end to end. For the ALFA AWUS036ACHM (`mt76x0u`), use:
-
-```bash
-sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live \
-  --phy phy3 --skip-encryption --no-accept-decrypted-ccmp \
-  --native-nonce-sequence --session-response-first
-```
-
-`phy3` was the ALFA's name on the machine used for that run; PHY names can change after an adapter
-is reloaded or replugged. Use `iw dev` to find it, or omit `--phy` to select an AP-capable radio
-automatically. If more than one hosting adapter is attached, select the intended PHY explicitly.
-
-For the TP-Link Archer T3U (USB `2357:012d`, `rtw88_8822bu`), use:
-
-```bash
-sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live \
-  --skip-encryption --accept-decrypted-ccmp \
-  --native-nonce-sequence --session-response-first
-```
-
-The TP-Link command is hardware-proven through discovery, PIA/RFU negotiation, LinkPlayer exchange,
-Wonder Card transfer, save, and clean close. Its monitor output contains a retained CCMP header and
+Two hardware profiles are proven end to end. The checked-in `config/host.toml` **is** the TP-Link
+Archer T3U profile (USB `2357:012d`, `rtw88_8822bu`): live hosting, delegated transmit CCMP,
+retained-CCMP receive normalisation, the counter nonce and the session-response order are all on by
+default, so the command above needs no Wi-Fi flags. Its monitor output contains a retained CCMP
+header and
 MIC around already-decrypted receive plaintext. `--accept-decrypted-ccmp` normalizes that layout;
 the ALFA exposes standard receive frames and must leave the option disabled.
 
-Both adapters require `--skip-encryption`. The option only delegates transmit CCMP to
-mac80211/hardware, so frames remain encrypted over the air. Mystery Gift already defaults to the
-ALFA profile (`--skip-encryption` enabled and receive normalization disabled), but the commands use
-explicit flags so the selected hardware behavior is unambiguous. Startup reports the known adapter
-profile and warns when the selected flags do not match it.
+For the ALFA AWUS036ACHM (`mt76x0u`), override the receive mode and name its PHY explicitly, since
+PHY names change when an adapter is reloaded or replugged:
+
+```bash
+sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --live \
+  --phy phyN --skip-encryption --no-accept-decrypted-ccmp
+```
+
+Both adapters require `--skip-encryption`. It only delegates transmit CCMP to mac80211/hardware, so
+frames remain encrypted over the air. Startup reports the known adapter profile and warns when the
+selected flags do not match it.
 
 Then on the Switch: **Mystery Gift → Wonder Cards → Friend**, pick the host from the list.
 
-Companion docs: [docs/joyspot_discovery_findings.md](docs/joyspot_discovery_findings.md) (why the
-Wireless Communication path is not reachable) and
-[docs/frlgtrade_host_design.md](docs/frlgtrade_host_design.md).
-The live-host-only Solrock/Lunatone event is documented in
-[docs/stamp_rally.md](docs/stamp_rally.md).
-Future event authoring through validated, checkpointed action plans is documented in
-[docs/mystery_gift_composer.md](docs/mystery_gift_composer.md).
-The composed TM event is documented in
-[docs/porygon_tm_gift.md](docs/porygon_tm_gift.md).
+Companion pages: [JoySpot discovery](joyspot_discovery_findings.md) for why the Wireless
+Communication path is not reachable, [the trade-host design](frlgtrade_host_design.md),
+[composing gifts](mystery_gift_composer.md) for authoring an event from validated stages, and the
+two events with pages of their own, [the stamp rally](stamp_rally.md) and
+[the Porygon TM gift](porygon_tm_gift.md).
 
 ---
 
@@ -82,7 +67,7 @@ same `MysteryGiftClient_Create()` [mystery_gift_menu.c:1231]; `sourceIsFriend` s
 connect*. The Switch's LDN bridge reports every peer's `serialNo` as `0x0002` - the value is written
 by the emulator after our beacon has already been received, and `svc_47`'s parameter block carries no
 serial field at all [sloopsvc.c:9]. 21 controlled advertisements confirmed it. Full derivation and
-the tested surface: [docs/joyspot_discovery_findings.md](docs/joyspot_discovery_findings.md).
+the tested surface: [JoySpot discovery](joyspot_discovery_findings.md).
 
 So the distributor ships on the Friend path. Nothing about the gift is reduced by that - only the
 zero-button auto-connect is lost.
@@ -179,7 +164,7 @@ impaired Reliable/RFU path and a native-shaped ID16/ID17 framing fixture. These 
 regressions; a completed Switch Friend-path run is the hardware evidence for the shipping flow.
 
 The complete legendary-beast behavior and tool commands are documented in
-[docs/legendary_beast_gift.md](docs/legendary_beast_gift.md).
+[the legendary-beast gift](legendary_beast_gift.md).
 
 ## 6. Hardware validation record
 
