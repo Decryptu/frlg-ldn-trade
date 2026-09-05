@@ -257,6 +257,28 @@ SET_RESPAWN = 0x08058DE0               # ScrCmd_setrespawn: where a white-out re
 # overworld to warp: they belong to a FIELD stub, which runs from the field engine. docs/rng.md
 # has how a stub is staged.
 
+# --- what the two cartridges SHARE, lg184-lg189 -------------------------------------------------
+# Four needles out of FireRed dumps, searched for on a console the host CONFIRMED was LeafGreen
+# ('PAU', version LeafGreen, --expect-console leafgreen), all four at the same address:
+# 0x0806D7F4 (inside ScrCmd_special), 0x080701C0, 0x08071E1C, 0x08071FC4.
+#
+# THE CONTROL IS lg189 AND IT IS WHAT MAKES THE FOUR MEAN ANYTHING. Delta 0 is also exactly what a
+# run against the WRONG console answers, so a fifth needle was taken from inside AddBagItem, above
+# the 0x0807D238 boundary where the delta is known to be -0x2C: FireRed 0x0809DAAC came back at
+# 0x0809DA80 on LeafGreen, one match in the window, the predicted shift and not the FireRed
+# address. The method distinguishes shifted from unshifted, so the four zeros are measurements.
+# (lg180-lg183 were this same experiment with no control, run against FireRed; see NOTES.local.md.)
+#
+# So everything below 0x08071FC4 is one cartridge's address as much as the other's:
+#   the whole gScriptCmdTable handler block   0x0806D7C0 .. 0x080700B8
+#   the script engine                          ScriptContext_Stop/Jump/Call/Return, 0x0806D0E4..
+#   GetVarPointer, VarGet, FlagSet, FlagClear, FlagGet, and the special/callnative veneer path
+SHARED_WITH_LEAFGREEN_THROUGH = 0x08071FC4
+
+# Measured on LeafGreen by lg189's shift: AddBagItem is 0x0809DA44 there. The rest of the item and
+# money block is the same -0x2C by segment, which is a PREDICTION for each one until it is needed.
+LEAFGREEN_ADD_BAG_ITEM = 0x0809DA44
+
 # --- gcc's THUMB-to-ARM call veneers ------------------------------------------------------------
 # Client_RunBufferScript reaches our ARM payload through one of these, which is why lr comes back
 # pointing into the caller rather than into the veneer.
@@ -377,7 +399,8 @@ LEAFGREEN = {
 # upward on faith and found nothing, which is what exposed them.
 LEAFGREEN_DELTA_SEGMENTS = (
     # (low, high, delta, evidence): the delta is measured at both ends of each span
-    (0x08000000, 0x0805359C, 0x00, "lg176b vs bs68b, 42 paired hits; lg162/lg166 below them"),
+    (0x08000000, 0x08071FC4, 0x00, "lg176b vs bs68b, 42 paired hits; lg184-lg187 carried it up "
+     "from 0x0805359C with four needles from bs92/bs103/bs105, lg189 the control"),
     (0x0807D238, 0x080CE36C, -0x2C, "lg176b vs bs68b, 2 paired hits; lg161 vs bs13, 4 more"),
     (0x080EBA14, 0x0813E8CC, -0x28, "lg176b vs bs68b, 9 paired hits; lg161 vs bs13, 5 more"),
     (0x08148C74, 0x0824CDFC, -0x24, "lg176b vs bs68b, 3 paired hits; lg160, lg161-vs-bs13, lg165"),
@@ -406,7 +429,8 @@ LEAFGREEN_DELTA_SEGMENTS = (
 # NOT located to the byte; halving one of these needs a needle known to sit inside it.
 LEAFGREEN_DELTA_BOUNDARIES = (
     # (from_delta, to_delta, low, high, evidence)
-    (0x00, -0x2C, 0x0805359C, 0x0807D238, "lg176b/bs68b above, lg161/bs13 below"),
+    (0x00, -0x2C, 0x08071FC4, 0x0807D238, "lg184-lg187 below, lg161/bs13/lg189 above; was "
+     "0x0805359C, narrowed 25x"),
     (-0x2C, -0x28, 0x080CE36C, 0x080EBA14, "lg176b vs bs68b, both ends"),
     (-0x28, -0x24, 0x0813E8CC, 0x08148C74, "lg176b/bs68b below, lg160 above"),
 )

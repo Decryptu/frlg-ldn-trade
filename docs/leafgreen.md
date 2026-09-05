@@ -220,3 +220,42 @@ padding values, so those two reads are not the same thing and neither has been c
   across it, a difference of 0x1114, so there are many boundaries in there and none is located. The
   make-a-needle method above costs two runs per point and would bisect it.
 - **Nothing between 0x086803FC and the end of the data has been measured.**
+
+## lg184-lg189: the script layer is the same on both cartridges
+
+The delta map's first gap was 0x0805359C..0x0807D238 - delta 0 below it, -0x2C above, no boundary
+located between. Six runs on the LeafGreen console closed most of it, and the FireRed half of each
+pair was already on disk: take a word out of a dump we hold, one with four distinct bytes that
+occurs once, and scan the other console for it. Instructions are position independent, so where it
+comes back IS the delta.
+
+| needle | taken from | found on LeafGreen at | delta |
+|---|---|---|---|
+| 0x49050B80 | bs92, inside `ScrCmd_special` | 0x0806D7F4 | 0 |
+| 0x4831D940 | bs103, the top of the handler block | 0x080701C0 | 0 |
+| 0x49040A00 | bs105, inside the flag/var workers | 0x08071E1C | 0 |
+| 0x47708008 | bs105, above `FlagGet` | 0x08071FC4 | 0 |
+| 0x18210094 | bs106, inside `AddBagItem` | **0x0809DA80**, FireRed 0x0809DAAC | **-0x2C** |
+
+**The last row is the point of the table.** Delta 0 is also exactly what this experiment answers
+when it is run against the wrong console, so four zeros prove nothing on their own - which is how
+lg180-lg183 were lost. The fifth needle was taken from above the 0x0807D238 boundary, where the
+delta is known to be -0x2C, and it came back shifted, one match in the window, at the predicted
+address and not at the FireRed one. The method can tell the two apart, so the zeros are
+measurements. Every one of the six runs also had the host confirm the console: `--expect-console
+leafgreen`, and the log line reads `'PAU' ... on LeafGreen`.
+
+So the delta-0 segment reaches **0x08071FC4** and the first boundary is bracketed to
+0x08071FC4..0x0807D238, a twenty-fivefold narrowing. What that buys is bigger than the map entry:
+everything the console API is built on is at the same address on both cartridges.
+
+- the whole `gScriptCmdTable` handler block, 0x0806D7C0..0x080700B8
+- the script engine: `ScriptContext_Stop`, `ScriptJump`, `ScriptCall`, `ScriptReturn`, and the
+  native-pointer setter `callnative` rides
+- `GetVarPointer`, `VarGet`, `FlagSet`, `FlagClear`, `FlagGet`
+- the `_call_via_r0` veneer that `ScrCmd_special` and `ScrCmd_callnative` both use
+
+`rom_map.SHARED_WITH_LEAFGREEN_THROUGH` is that boundary, and `LEAFGREEN_ADD_BAG_ITEM` (0x0809DA44)
+is lg189's shift applied to the one item worker it measured. The rest of the item and money block
+is the same -0x2C by segment, which stays a prediction until a run needs it.
+
