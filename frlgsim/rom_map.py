@@ -393,6 +393,14 @@ LEAFGREEN = {
     # (f0 b5 47 46 80 b4 87 b0, then the stack arguments at [sp,#52/56/60] that bs42 disassembled
     # on FireRed), at exactly FireRed's address.
     "CreateMon": (0x08041150, "lg166"),                # same as FireRed - BELOW the split
+    # lg167 PREDICTED sEasyChatGroups at 0x083E36DC by carrying -0x24 up from gSpeciesInfo, and the
+    # dump came back as nothing at all - the first prediction in this run of work to FAIL, and worth
+    # more than the ones that held. lg168 then found it the way bs16 found FireRed's: groups 8, 9
+    # and 10 each hold 69 words with 69 enabled, so 0x00450045 appears three times exactly 8 bytes
+    # apart. Three hits at 0x083E3580/3588/3590, which are the count fields of entries 8, 9 and 10,
+    # so the table starts 68 bytes below the first. lg169 read it: 22 entries, every pointer in ROM,
+    # every count equal to FireRed's.
+    "sEasyChatGroups": (0x083E353C, "lg168/lg169"),    # FireRed 0x083E3700, so -0x1C4
 }
 
 # --- THE ROM DELTA, MEASURED IN FOUR SEGMENTS AND NOT ONE ---------------------------------------
@@ -426,7 +434,12 @@ LEAFGREEN_DELTA_SEGMENTS = (
     # lg160 measured -0x24 at the Mystery Gift call site, which is BELOW the lowest paired hit in
     # this segment - so the last boundary is under 0x08148C74, not under 0x0814CBFC. Combining the
     # two kinds of evidence tightens the gap by 0x3F88 for free.
-    (0x08148C74, 0x09000000, -0x24, "lg160 at 0x08148C74, lg161-vs-bs13 at 0x0814CBFC, lg165"),
+    (0x08148C74, 0x0824CDFC, -0x24, "lg160 at 0x08148C74, lg161-vs-bs13 at 0x0814CBFC, lg165"),
+    # THE EASY CHAT REGION, and it is the reason -0x24 must never be carried upward on faith.
+    # lg167 tried exactly that and found nothing. The real delta here is -0x1C4, SEVEN TIMES larger,
+    # and it is UNIFORM across the whole region: all 18 word-list pointers lg169 read are their
+    # FireRed addresses minus 0x1C4, and so is the group table itself.
+    (0x083DE528, 0x083E3700, -0x1C4, "lg169: 18 word-list pointers and the table, all -0x1C4"),
 )
 
 

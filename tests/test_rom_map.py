@@ -217,3 +217,25 @@ def test_the_leafgreen_delta_is_four_measured_segments_and_refuses_the_gaps():
     for gap in (0x080C0000, 0x08130000, 0x08060000):
         with pytest.raises(ValueError, match="gap between measured segments"):
             rom_map.leafgreen_guess(gap)
+
+
+def test_the_easy_chat_region_has_its_own_delta_and_it_is_not_the_one_below_it():
+    """lg167 carried -0x24 up from gSpeciesInfo to sEasyChatGroups and found nothing - the
+    prediction failed. The region's real delta is -0x1C4, uniform across the table and all 18
+    word-list pointers lg169 read [lg168 found the table by bs16's 0x00450045 fingerprint]."""
+    from frlgsim import easychat_french_words
+    assert rom_map.leafgreen("sEasyChatGroups") == 0x083E353C
+    assert rom_map.leafgreen_guess(0x083E3700) == 0x083E353C
+    for _run, firered_address, _words in easychat_french_words.GROUPS.values():
+        assert rom_map.leafgreen_guess(firered_address) == firered_address - 0x1C4
+    # And the address it would have had under the segment below is NOT where the table is.
+    assert 0x083E3700 - 0x24 != rom_map.leafgreen("sEasyChatGroups")
+
+
+def test_the_french_vocabulary_itself_transfers_because_a_console_said_so():
+    """lg170 read LeafGreen's group 1 with string-gather: 26/26 words identical to bs20's FireRed
+    reading, same slots, same order. The counts matching was evidence; this is the confirmation."""
+    from frlgsim import easychat_french_words
+    _run, _address, words = easychat_french_words.GROUPS[1]
+    assert len(words) == 26
+    assert words[0] == "CE SERA TOI" and words[25] == "ARGENT"
