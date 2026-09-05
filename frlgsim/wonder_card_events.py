@@ -1141,6 +1141,88 @@ RNG_MON_HUNT_GIFT = WonderGift(
 )
 
 
+GIFT_RNG_MON_HUNT_FAR = "rng-mon-hunt-far"
+RNG_MON_HUNT_FAR_FLAG_ID = 1000
+
+# THE SAME HUNT, RUN OUT OF THE SCRIPT BODY. One variable changes against rng-mon-hunt: WHERE THE
+# CODE LIVES. rng-mon-hunt stages 160 bytes with `setptr` at six script bytes each and is the
+# control, proven on hardware at mev19 + bs62; this card stages a 36-byte trampoline and puts the
+# search itself in the body behind the script, at ONE byte each, because the field engine runs a
+# RAM script IN PLACE out of gSaveBlock1Ptr->ramScript.data.script [GetRamScript,
+# decomp:src/script.c:514] and never reads past the last command. asm/field/ram-jump.s has the
+# mechanism and native_script.build_body_script the layout.
+#
+# 755 PAYLOAD BYTES INSTEAD OF 162, and the card is built to use every one of them: the 196-byte
+# stub and 559 bytes of non-zero filler, whose sum the stub checks BEFORE it will search. That is
+# what makes this a measurement rather than a demonstration. The screen then reads three ways:
+#
+#     a shiny JOLLY MAGIKARP with SPEED >= 20   995 bytes arrived, and ran from the body
+#     an ordinary MAGIKARP                      the tail is short, or the magic guard bailed
+#     the same battle rng-mon-hunt gives        (impossible: the criteria are identical, so this
+#                                                is the control's result and tells us nothing new)
+#
+# The mon still has to be CAUGHT for the nature and the IVs to be read - they are invisible on
+# screen - and Magikarp at 5 is one Ultra Ball, exactly as for the control.
+RNG_MON_HUNT_FAR_FILLER = "the far end of the body, summed before the search will run"
+
+
+def build_rng_mon_hunt_far_script(criteria=None, *, cap=None,
+                                  max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
+                                  payload_bytes=None, **kwargs):
+    return build_mevent_npc_script(
+        field_script=native_script.build_mon_hunt_far_script(
+            RNG_MON_HUNT_SPECIES, RNG_MON_HUNT_LEVEL,
+            criteria=RNG_MON_HUNT_CRITERIA if criteria is None else criteria,
+            cap=cap, max_freeze_frames=max_freeze_frames,
+            payload_bytes=payload_bytes), **_at_mom(kwargs))
+
+
+def build_rng_mon_hunt_far_gift(criteria=None, *, cap=None,
+                                max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
+                                payload_bytes=None):
+    """-> the card carrying the body-hosted search, with whatever was asked for on the line.
+
+    `payload_bytes` shortens the payload without changing anything else, which is how a partial
+    delivery would be bisected if the first run comes back with an ordinary Magikarp.
+    """
+    return dataclasses.replace(
+        RNG_MON_HUNT_FAR_GIFT,
+        mevent=build_rng_mon_hunt_far_script(criteria, cap=cap,
+                                             max_freeze_frames=max_freeze_frames,
+                                             payload_bytes=payload_bytes))
+
+
+RNG_MON_HUNT_FAR_GIFT = WonderGift(
+    slug=GIFT_RNG_MON_HUNT_FAR,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="A POKEMON to order",
+        body=(
+            "Your MOM knows of a POKEMON",
+            "that shines and is quick with",
+            "it. Talk to her, then CATCH",
+            "what turns up.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=RNG_MON_HUNT_FAR_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "Someone in PALLET TOWN has\n"
+                "found something choosy."),
+        ),
+    )),
+    completed_message="Talk to your MOM at home.",
+    mevent=build_rng_mon_hunt_far_script(),
+)
+
+
 GIFT_RNG_DRAW_COUNT = "rng-draw-count"
 RNG_DRAW_COUNT_FLAG_ID = 1018
 

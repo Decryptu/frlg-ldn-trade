@@ -527,3 +527,113 @@ def test_the_bytes_the_console_will_actually_be_sent_search_for_what_the_card_sa
     landed = int.from_bytes(result["memory"][rom_map.GRNG_VALUE], "little")
     assert _accepts(rng_countdown._mon_from(landed, CONSOLE_TID, CONSOLE_SID),
                     w.RNG_MON_HUNT_CRITERIA)
+
+
+# --- the payload in the body: one byte each instead of six ---------------------------------------
+
+def test_the_ramscript_offsets_are_the_decomps():
+    """A wrong offset here is a branch into whatever else is in the save block. The three come
+    from struct SaveBlock1 [decomp:include/global.h] and are checked against their neighbours:
+    unused_348C[400] ends where ramScript starts, and ramScript's own 1003 bytes end where
+    recordMixingGift starts at 0x3A08."""
+    assert native_script.RAMSCRIPT_IN_SAVEBLOCK1 == 0x361C
+    assert 0x348C + 400 == native_script.RAMSCRIPT_IN_SAVEBLOCK1
+    assert native_script.RAMSCRIPT_MAGIC_OFFSET == 0x3620       # past the u32 checksum
+    assert native_script.RAMSCRIPT_BODY_OFFSET == 0x3624        # past magic/mapGroup/mapNum/object
+    size = 4 + 4 + native_script.MAX_RAM_SCRIPT_SIZE
+    assert native_script.RAMSCRIPT_IN_SAVEBLOCK1 + size == 0x3A07        # 0x3A08 after alignment
+    assert native_script.RAM_SCRIPT_MAGIC == 51                 # [decomp:src/script.c:12]
+
+
+def test_the_payload_starts_word_aligned_and_not_merely_even():
+    """THE TRAP THIS PROJECT ALMOST SPENT A RUN ON. A Thumb stub reads its literal pool with
+    `ldr rN, [pc, #imm]` and its tail with `adr`, both of which use Align(PC, 4). Two bytes off
+    and every pool word is read from two bytes past where it lives - the branch still lands, the
+    code still runs, and the constants are garbage. Even is enough to BRANCH, which is what makes
+    it quiet."""
+    assert native_script.BODY_ALIGNMENT == 4
+    for tail in range(0, 40):
+        assert native_script.body_prefix_size(tail) % native_script.BODY_ALIGNMENT == 0
+    with pytest.raises(native_script.NativeScriptError):
+        native_script.ram_jump_stub(238)                 # even, and still wrong
+    native_script.ram_jump_stub(240)
+
+
+def test_the_body_carries_several_times_what_staging_ever_could():
+    """The whole point. `setptr` charges six script bytes a payload byte; the body charges one,
+    because GetRamScript hands the engine the body itself [decomp:src/script.c:514]."""
+    tail = rng_script.battle_and_exit(129, 5, 0)   # setwildbattle + setvar + goto
+    assert len(tail) == 16
+    room = native_script.body_capacity(len(tail))
+    assert room["staged_equivalent"] == 162              # what mev19's card could hold
+    assert room["payload"] == 755
+    assert room["payload"] > 4 * room["staged_equivalent"]
+    assert room["prefix"] + room["payload"] == native_script.MAX_RAM_SCRIPT_SIZE
+
+
+def test_the_trampoline_is_the_only_thing_that_still_pays_six():
+    """36 bytes staged, and everything after it is delivered at face value."""
+    trampoline = native_script.stub(native_script.TRAMPOLINE_STUB)
+    assert len(trampoline) == 36
+    body = native_script.build_mon_hunt_far_script(129, 5)
+    assert len(body) == native_script.MAX_RAM_SCRIPT_SIZE
+    lines = native_script.describe(body)
+    assert lines[0].startswith("  setptr x36")
+    assert "callnative 0x0201C001 (THUMB)" in lines[1]
+
+
+def _far(state, criteria, *, sb1_base=0x02025734, magic=native_script.RAM_SCRIPT_MAGIC,
+         truncate=0, cap=None, tid=CONSOLE_TID, sid=CONSOLE_SID):
+    """The REAL script, walked command by command, exactly as the field engine would."""
+    body = native_script.build_mon_hunt_far_script(
+        129, 5, criteria=criteria, cap=cap)
+    assert len(body) == native_script.MAX_RAM_SCRIPT_SIZE
+    return native_script.emulate_body_script(
+        body[:len(body) - truncate], sb1_base=sb1_base, magic=magic,
+        rng_state=state, trainer_id=tid, secret_id=sid)
+
+
+@needs_unicorn
+def test_the_whole_script_finds_the_mon_it_was_asked_for_from_the_body():
+    """Not the stub on its own: the 36 `setptr`s, the `callnative`, the trampoline reading
+    gSaveBlock1Ptr and branching back into the body, and the search. bs56 was lost to exercising
+    everything except the one path the hardware takes."""
+    criteria = native_script.MonCriteria(natures=(13,), iv_minimums=(0, 0, 0, 20, 0, 0))
+    for state in (0x12345678, 0x7041F74F, 1, 0xFFFFFFFF):
+        result = _far(state, criteria)
+        mon = rng_countdown._mon_from(result["rng"], CONSOLE_TID, CONSOLE_SID)
+        assert _accepts(mon, criteria), (hex(state), mon)
+
+
+@needs_unicorn
+def test_a_short_body_leaves_the_rng_alone_instead_of_searching():
+    """The filler is what makes the run prove the SIZE and not just the jump. Every filler byte is
+    non-zero and InitRamScript zero-fills what it was not given [ClearRamScript, script.c:495], so
+    a short delivery sums LOW and the stub returns without touching gRngValue: the player gets an
+    ordinary encounter, which is a readable miss and not a broken game."""
+    criteria = native_script.MonCriteria(natures=(13,))
+    for truncate in (1, 2, 64, 500):
+        result = _far(0x12345678, criteria, truncate=truncate)
+        assert result["rng"] == 0x12345678, truncate
+
+
+@needs_unicorn
+def test_a_wrong_save_block_offset_bails_instead_of_executing_anything():
+    """The magic guard is the whole safety argument for aiming at a moving block. If
+    ramScript.data.magic is not 51 the trampoline has not found the RamScript, so it must return
+    rather than branch - there is no menu to back out of in the overworld."""
+    result = _far(0x12345678, native_script.MonCriteria(), magic=0)
+    assert result["rng"] == 0x12345678
+    assert result["instructions"] < 20, "it should bail in single figures, not search"
+
+
+@needs_unicorn
+def test_it_follows_the_save_block_wherever_this_load_put_it():
+    """`offset = Random() & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3)` [decomp:src/load_save.c:75] is a
+    multiple of 4 in 0..124, re-rolled at every battle and load; bs45 and bs46 measured 76 bytes
+    of movement between two runs minutes apart. The trampoline reads the pointer at run time, so
+    the offset is not a thing the card has to know."""
+    criteria = native_script.MonCriteria(natures=(13,))
+    answers = {_far(0x12345678, criteria, sb1_base=0x02025734 + offset)["rng"]
+               for offset in (0, 4, 76, 124)}
+    assert len(answers) == 1 and 0x12345678 not in answers

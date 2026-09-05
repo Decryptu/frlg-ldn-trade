@@ -447,6 +447,12 @@ def describe(script):
             where = " (the trampoline)" if target == TRAMPOLINE_ADDRESS else ""
             lines.append(f"  goto 0x{target:08X}{where}")
             i += 5
+            # `goto` is unconditional, so nothing after it is script at all. On a body-hosted
+            # card what follows is the PAYLOAD, and decoding it as commands prints nonsense.
+            if i < len(script):
+                lines.append(f"  ... {len(script) - i} bytes of payload at offset {i}, never "
+                             f"read by the engine (the trampoline branches to it)")
+                break
         elif op == SCR_DOWILDBATTLE:
             lines.append("  dowildbattle (yields; the battle RESUMES the script after it)")
             i += 1
@@ -525,3 +531,268 @@ CYCLES_PER_FRAME = 280896
 def frames_for(instructions):
     """-> roughly how many frames a stub of this length blocks the field engine for."""
     return int(instructions) * CYCLES_PER_INSTRUCTION_FROM_EWRAM / CYCLES_PER_FRAME
+
+
+# --- THE PAYLOAD IN THE SCRIPT BODY: ONE BYTE EACH INSTEAD OF SIX -------------------------------
+# Everything above stages code with `setptr`, six script bytes a payload byte, which caps a field
+# stub at ~163 bytes and is why mon-seek.s reuses every register it has. The cap comes off here.
+#
+# THE FIELD ENGINE DOES NOT COPY THE BODY. `GetRamScript` returns `scriptData->script` itself
+# [decomp:src/script.c:514], a pointer INTO gSaveBlock1Ptr->ramScript.data, so the whole 995-byte
+# body is already sitting in EWRAM while the script runs - and the bytes after the script's last
+# command are never read by the engine at all. They are delivered storage that cost one byte each.
+#
+# THE ONLY REASON THAT WAS NOT USABLE BEFORE IS AIMING, and rng_script.py's header says so: the
+# save block "carries a random 4-aligned offset re-rolled on every battle and load"
+# [SetSaveBlocksPointers, decomp:src/load_save.c:75], measured 76 bytes apart in bs45 vs bs46. THAT
+# IS AN ARGUMENT ABOUT A BUILD-TIME CONSTANT. The offset is re-rolled at a battle or a load and is
+# fixed for the frame our script runs in, and &gSaveBlock1Ptr is a link-time IWRAM word that says
+# what it currently is. A 36-byte trampoline reads it and the target is exact - no sled, no search.
+#
+#     old:  163 bytes of code, 978 script bytes spent saying so
+#     new:  36 * 6 = 216 for the trampoline, and the payload costs its own length
+#
+# WHAT STILL BINDS. The body is 995 bytes [RamScriptData.script] and the whole Mystery Event script
+# carrying it is 1024 [mystery_event.MAX_SCRIPT_SIZE], of which the VM's own opcodes take 16 - so
+# 995 is the binding one, by 13 bytes. `body_capacity` states it.
+
+RAMSCRIPT_IN_SAVEBLOCK1 = 0x361C        # SaveBlock1.ramScript [decomp:include/global.h]
+RAMSCRIPT_MAGIC_OFFSET = RAMSCRIPT_IN_SAVEBLOCK1 + 4        # past the u32 checksum
+RAMSCRIPT_BODY_OFFSET = RAMSCRIPT_MAGIC_OFFSET + 4          # past magic, mapGroup, mapNum, objectId
+RAM_SCRIPT_MAGIC = 51                   # [decomp:src/script.c:12], written by InitRamScript [:505]
+
+TRAMPOLINE_STUB = "ram-jump"
+
+# THE TRAP, AND IT WOULD HAVE BEEN A HARDWARE RUN. The payload must start at a MULTIPLE OF FOUR,
+# not merely an even offset. A Thumb stub reaches its own literal pool with `ldr rN, [pc, #imm]`
+# and its own tail with `adr`, and BOTH use Align(PC, 4) - the assembler lays those immediates out
+# believing the code begins word-aligned. Place the same bytes two off and every pool word and
+# every `adr` reads TWO BYTES PAST what it means, which for mon-seek-far is a filler length of
+# 0x0433CF15 and a fault inside the checksum loop. Caught by emulate_body_script below, running the
+# real script bytes rather than the stub on its own, before anything went to a console.
+#
+# An even offset is enough for the BRANCH (Thumb fetches halfwords) and that is what makes the bug
+# quiet: `bx` lands, the code runs, and it is the loads that are wrong.
+#
+# Four is also SUFFICIENT, and provably so, which is why nothing checks it at run time:
+#     offset = (Random()) & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3);   [decomp:src/load_save.c:75]
+# is `& 0x7C`, always a multiple of 4, and `gSaveBlock1` is an EWRAM struct of u32 fields, so the
+# base is word-aligned and RAMSCRIPT_BODY_OFFSET (0x3624) keeps it that way.
+BODY_ALIGNMENT = 4
+
+
+def ram_jump_stub(payload_offset, *, sb1_pointer=None, magic_offset=RAMSCRIPT_MAGIC_OFFSET):
+    """-> the trampoline, patched to branch at the payload `payload_offset` bytes into the body.
+
+    `p_entry` is measured from the MAGIC BYTE rather than from the block base so the stub can add
+    the same register twice and needs no third pool word. See asm/field/ram-jump.s.
+    """
+    offset = int(payload_offset)
+    if offset < 0:
+        raise NativeScriptError(f"the payload offset is not negative, got {offset}")
+    if offset % 4:
+        raise NativeScriptError(
+            f"the payload must start at a MULTIPLE OF FOUR, got {offset}; see BODY_ALIGNMENT")
+    entry = (RAMSCRIPT_BODY_OFFSET - int(magic_offset)) + offset
+    return stub(TRAMPOLINE_STUB,
+                sb1ptr=rom_map.GSAVEBLOCK1PTR if sb1_pointer is None else int(sb1_pointer),
+                magic=int(magic_offset), entry=entry | 1)
+
+
+def body_prefix_size(tail_size):
+    """-> how many script bytes come before the payload: the staged trampoline, the call, the tail.
+
+    The trampoline's LENGTH does not depend on what it is patched with, so this is knowable before
+    the stub exists - which is what breaks the circularity of "the offset depends on the script
+    that contains the offset".
+    """
+    size = len(STUBS[TRAMPOLINE_STUB][0]) * SETPTR_SIZE + CALLNATIVE_SIZE + int(tail_size)
+    return size + (-size % BODY_ALIGNMENT)
+
+
+def body_capacity(tail_size):
+    """-> how many payload bytes fit after a tail of `tail_size`, and what the old way allowed."""
+    prefix = body_prefix_size(tail_size)
+    staged = (MAX_RAM_SCRIPT_SIZE - CALLNATIVE_SIZE - int(tail_size)) // SETPTR_SIZE
+    return {"prefix": prefix, "payload": MAX_RAM_SCRIPT_SIZE - prefix,
+            "staged_equivalent": staged, "limit": MAX_RAM_SCRIPT_SIZE}
+
+
+def build_body_script(payload, tail=b"", *, scratch=SCRATCH, sb1_pointer=None):
+    """-> the RAM script that stages the trampoline, calls it, runs `tail`, and carries `payload`.
+
+    The layout, and the order is the argument:
+
+        setptr x36    the trampoline, into gDecompressionBuffer      216 bytes
+        callnative    -> the trampoline -> the payload -> back         5
+        <tail>        whatever the script does after the payload has returned
+        <pad>         one byte at most, so the payload starts even
+        <payload>     never reached by the engine: `tail` ends in a `goto`
+
+    The payload returns with `pop {r4-r7, pc}`, which lands back in ScrCmd_callnative's caller
+    because the trampoline BRANCHES rather than calls, so the script continues into `tail`.
+    """
+    payload = bytes(payload)
+    tail = bytes(tail)
+    if not payload:
+        raise NativeScriptError("nothing to run")
+    prefix = body_prefix_size(len(tail))
+    code = ram_jump_stub(prefix, sb1_pointer=sb1_pointer)
+    body = (stage(code, scratch) + callnative_at(scratch) + tail
+            + b"\x00" * (prefix - len(stage(code, scratch)) - CALLNATIVE_SIZE - len(tail))
+            + payload)
+    assert body.index(payload, prefix) == prefix
+    if len(body) > MAX_RAM_SCRIPT_SIZE:
+        raise NativeScriptError(
+            f"{len(body)} bytes will not fit in {MAX_RAM_SCRIPT_SIZE}; the payload is "
+            f"{len(payload)} bytes and at most {body_capacity(len(tail))['payload']} fit")
+    return body
+
+
+# The filler that proves the far end of the body arrived. EVERY BYTE IS NON-ZERO, and that is the
+# whole design: `InitRamScript` zero-fills the body before copying what it was given
+# [ClearRamScript, decomp:src/script.c:495], so a short delivery reads back as zeros and the sum
+# the stub computes is STRICTLY LOWER than the one in its pool. A missing tail cannot sum right.
+FILLER_SEED = 0x5EED1E55
+
+
+def filler_bytes(count, seed=FILLER_SEED):
+    """-> `count` reproducible non-zero bytes. Not random, just not uniform: a constant fill would
+    sum the same under a reordering, and a zero byte would hide a truncation."""
+    out = bytearray()
+    state = int(seed) & 0xFFFFFFFF
+    while len(out) < int(count):
+        state = (state * 0x41C64E6D + 0x00006073) & 0xFFFFFFFF
+        out.append(((state >> 16) & 0xFE) + 1)      # 1..255, never 0
+    return bytes(out)
+
+
+def build_mon_hunt_far_script(species, level, *, criteria=None, item=0, cap=None,
+                              max_freeze_frames=MAX_FREEZE_FRAMES, scratch=SCRATCH,
+                              rng_address=None, sav2_pointer=None, sb1_pointer=None,
+                              payload_bytes=None, seed=FILLER_SEED):
+    """build_mon_hunt_script, with the code RUN OUT OF THE BODY and the body FILLED to prove it.
+
+    ONE variable changes against mev19's card: where the search code lives. Same criteria, same
+    species, same cap, same battle tail. What is new is the filler behind the stub and the sum the
+    stub takes over it before it will search at all - so the run distinguishes three things the
+    screen could not otherwise tell apart:
+
+        a shiny mon of the nature and IVs asked for   the whole body arrived and ran from the body
+        an ordinary mon                               the guard bailed, or the tail is short
+        a frozen overworld                            neither of the above; it must not happen
+
+    `payload_bytes` is how much of the body the payload occupies, filler included; it defaults to
+    every byte that fits. Passing a smaller number is the way to bisect a partial delivery without
+    changing anything else.
+    """
+    criteria = MonCriteria() if criteria is None else criteria
+    if not isinstance(criteria, MonCriteria):
+        raise NativeScriptError("criteria must be a MonCriteria")
+    chosen_cap = cap_for(criteria) if cap is None else int(cap)
+    cost = search_cost(criteria, chosen_cap)
+    if cost["worst_frames"] > max_freeze_frames:
+        raise NativeScriptError(
+            f"{criteria.describe()} is 1 state in {1 / cost['probability']:,.0f}: searching for "
+            f"it can block the overworld for {cost['worst_frames']:,.0f} frames "
+            f"({cost['worst_seconds']:.1f} s), past the {max_freeze_frames} frame ceiling. Ask "
+            f"for less, or raise max_freeze_frames deliberately.")
+    if not 1 <= chosen_cap <= 1 << 24:
+        raise NativeScriptError(f"the iteration cap is 1..{1 << 24}, got {chosen_cap}")
+
+    try:
+        tail = battle_and_exit(species, level, item)
+    except RngScriptError as error:
+        raise NativeScriptError(str(error)) from None
+    room = body_capacity(len(tail))["payload"]
+    total = room if payload_bytes is None else int(payload_bytes)
+    bare = len(STUBS["mon-seek-far"][0])
+    if not bare <= total <= room:
+        raise NativeScriptError(
+            f"the payload is {bare}..{room} bytes here; asked for {total}")
+    filler = filler_bytes(total - bare, seed)
+    code = stub("mon-seek-far",
+                rng=rom_map.GRNG_VALUE if rng_address is None else int(rng_address),
+                sav2ptr=rom_map.GSAVEBLOCK2PTR if sav2_pointer is None else int(sav2_pointer),
+                cap=chosen_cap, nature=criteria.nature_mask, ivmin=criteria.iv_word,
+                padlen=len(filler), padsum=sum(filler) & 0xFFFFFFFF)
+    return build_body_script(code + filler, tail, scratch=scratch, sb1_pointer=sb1_pointer)
+
+
+# --- running the WHOLE script offline, not just the stub ----------------------------------------
+# bs56's lesson, and it cost a run: "the offline harness passed throughout because it builds its
+# distribution DIRECTLY - the one path the hardware uses was the one never exercised offline."
+# `emulate` above runs a stub at an address someone hands it. That is not the path any more. The
+# path is: the engine walks the body, `setptr` writes the trampoline a byte at a time, `callnative`
+# enters it, the trampoline reads gSaveBlock1Ptr and branches BACK INTO THE BODY at an offset the
+# host computed. Every one of those can be wrong on its own, so all of them run here.
+
+def emulate_body_script(script, *, sb1_base=0x02025734, rng_state=0, trainer_id=0, secret_id=0,
+                        sav2_base=0x02024588, instruction_limit=1 << 26,
+                        magic=RAM_SCRIPT_MAGIC):
+    """Execute `script` the way the field engine would, and return what it left behind.
+
+    Only the four commands these scripts use are interpreted - `setptr`, `callnative`, and enough
+    of the battle tail to stop at it. `goto` ENDS the walk: it leaves the body for the trampoline
+    at gSpecialVar_0x8000, which is where the battle happens and where nothing offline can follow.
+
+    `sb1_base` stands in for whatever SetSaveBlocksPointers rolled this time; the default is the
+    address the console was actually seen at. The script's own bytes are placed at
+    sb1_base + RAMSCRIPT_BODY_OFFSET, which is where `GetRamScript` hands them to the engine, and
+    the magic byte in front of them is set to RAM_SCRIPT_MAGIC exactly as InitRamScript sets it.
+    """
+    script = bytes(script)
+    if len(script) > MAX_RAM_SCRIPT_SIZE:
+        raise NativeScriptError(f"{len(script)} bytes is past the {MAX_RAM_SCRIPT_SIZE}-byte body")
+    save2 = bytearray(0x10)
+    save2[0x0A:0x0C] = int(trainer_id).to_bytes(2, "little")
+    save2[0x0C:0x0E] = int(secret_id).to_bytes(2, "little")
+    # The RamScript as InitRamScript leaves it: magic, the three binding bytes, then the body
+    # zero-filled to 995 [ClearRamScript then memcpy, decomp:src/script.c:495].
+    ram_script = (bytes([int(magic) & 0xFF, 0xFF, 0xFF, 0xFF])
+                  + script.ljust(MAX_RAM_SCRIPT_SIZE, b"\0"))
+    staged, called, executed = {}, [], []
+    i = 0
+    while i < len(script):
+        op = script[i]
+        if op == SCR_SETPTR:
+            staged[int.from_bytes(script[i + 2:i + 6], "little")] = script[i + 1]
+            i += SETPTR_SIZE
+        elif op == SCR_CALLNATIVE:
+            called.append(int.from_bytes(script[i + 1:i + 5], "little"))
+            i += CALLNATIVE_SIZE
+        elif op == SCR_SETWILDBATTLE:
+            i += 6
+        elif op == SCR_SETVAR:
+            i += 5
+        elif op == SCR_GOTO:
+            break
+        elif op == SCR_END:
+            break
+        else:
+            raise NativeScriptError(f"unhandled opcode 0x{op:02X} at {i} of the body")
+    if len(called) != 1:
+        raise NativeScriptError(f"expected exactly one callnative, found {len(called)}")
+    # The staged bytes have to be contiguous or `callnative`'s entry means nothing.
+    low, high = min(staged), max(staged)
+    if sorted(staged) != list(range(low, high + 1)):
+        raise NativeScriptError("the staged bytes are not contiguous")
+    blob = bytes(staged[a] for a in range(low, high + 1))
+    entry = called[0]
+    if entry & ~1 != low:
+        raise NativeScriptError(
+            f"callnative goes to 0x{entry & ~1:08X}, the staged bytes start at 0x{low:08X}")
+    regions = {
+        rom_map.GRNG_VALUE: int(rng_state).to_bytes(4, "little"),
+        rom_map.GSAVEBLOCK1PTR: int(sb1_base).to_bytes(4, "little"),
+        rom_map.GSAVEBLOCK2PTR: int(sav2_base).to_bytes(4, "little"),
+        int(sav2_base): bytes(save2),
+        int(sb1_base) + RAMSCRIPT_MAGIC_OFFSET: ram_script,
+    }
+    result = emulate(blob, base=low, memory=regions, instruction_limit=instruction_limit)
+    executed.append(entry)
+    return {"rng": int.from_bytes(result["memory"][rom_map.GRNG_VALUE], "little"),
+            "instructions": result["instructions"],
+            "staged_bytes": len(blob), "staged_at": low, "entry": entry,
+            "payload_at": int(sb1_base) + RAMSCRIPT_BODY_OFFSET,
+            "body": ram_script}

@@ -366,8 +366,9 @@ def _hunt_definition(parser, args):
     [native_script.search_cost]."""
     if not _hunt_asked(args):
         return None
-    if args.gift != wonder_card_events.GIFT_RNG_MON_HUNT:
-        parser.error(f"--hunt-* belong to --gift {wonder_card_events.GIFT_RNG_MON_HUNT}; "
+    hunts = (wonder_card_events.GIFT_RNG_MON_HUNT, wonder_card_events.GIFT_RNG_MON_HUNT_FAR)
+    if args.gift not in hunts:
+        parser.error(f"--hunt-* belong to --gift {' or --gift '.join(hunts)}; "
                      f"--gift {args.gift} has no search to steer")
     try:
         criteria = native_script.MonCriteria(
@@ -377,8 +378,11 @@ def _hunt_definition(parser, args):
         cost = native_script.search_cost(criteria, cap)
         # Composed HERE, so that a search too slow to be allowed, or a stub too big to stage, is
         # an error on the command line and not one raised at the moment a console joins.
-        definition = wonder_card_events.build_rng_mon_hunt_gift(
-            criteria, cap=args.hunt_cap, max_freeze_frames=args.hunt_freeze_frames)
+        compose = (wonder_card_events.build_rng_mon_hunt_far_gift
+                   if args.gift == wonder_card_events.GIFT_RNG_MON_HUNT_FAR
+                   else wonder_card_events.build_rng_mon_hunt_gift)
+        definition = compose(criteria, cap=args.hunt_cap,
+                             max_freeze_frames=args.hunt_freeze_frames)
     except native_script.NativeScriptError as exc:
         parser.error(str(exc))
     print(f"hunting: {criteria.describe()} - 1 state in {1 / cost['probability']:,.0f}, "
