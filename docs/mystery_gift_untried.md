@@ -208,5 +208,20 @@ talk, nothing else in the sixteen bytes moved:
 So the whole event works on this build: the card installs, the script is repeatable, `addvar`
 writes the player's save, and the count is exactly the number of conversations.
 
-UNKNOWN: whether the cave's wild set follows the var on screen. That needs a player who can reach
-Outcast Island (Six Island), and it is the game reading the var, not the event writing it.
+**The game's half is proven too.** With the var at 3 the player walked into GROTTE METAMO on Six
+Island and the first encounter was a **MALOSSE (Houndour) at level 16** - and table 3 is
+`sSixIslandAlteringCave_4_FireRed`, all Houndour, whose first slot is exactly level 16
+[`src/data/wild_encounters.json`]. Houndour appears nowhere else in FireRed. So `addvar` from our
+card reached `i += alteringCaveId` at the encounter [`src/wild_encounter.c:192`], and the nine
+tables are one species each:
+
+| var | species | | var | species |
+|---|---|---|---|---|
+| 0 | Zubat | | 5 | Aipom |
+| 1 | Mareep | | 6 | Shuckle |
+| 2 | Pineco | | 7 | Stantler |
+| 3 | Houndour | | 8 | Smeargle |
+| 4 | Teddiursa | | | |
+
+The event is closed end to end: the card installs, each talk adds one, the var is in the save, and
+the cave gives what the var selects.
