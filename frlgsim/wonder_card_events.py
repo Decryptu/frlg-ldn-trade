@@ -713,7 +713,7 @@ RNG_DITTO_LEVEL = 50
 
 # The seed is not a nice round number and could not be: it is the ANSWER to "which gRngValue makes
 # CreateMon's next four draws a shiny Ditto with these IVs", found by walking the LCG orbit with a
-# sliding window over 25 million candidates. For GURVAN's TID 57189 / SID 58811 it gives shiny
+# sliding window over 25 million candidates. For this console's TID / SID it gives shiny
 # value 3 (SHINY needs < 8) and IVs 31/23/27/18/30/30 - 159 of 186, with a perfect HP.
 # lcg.draws(seed, 4) recomputes all of it; rng_script.predict_wild_mon states it.
 RNG_DITTO_SEED = 0x81F6816D
@@ -931,7 +931,7 @@ MEVENT_SWEEP_MARK_RAREWORD = 41
 MEVENT_SWEEP_MARK_TRAINER = 42
 
 
-def build_sweep_berry(name="GURVAN"):
+def build_sweep_berry(name="PKCAMP"):
     """struct Berry2, 28 bytes: the console's own growth data with a name that is unmistakably ours."""
     encoded = charmap.encode(name).ljust(6, b"\x00")[:6] + b"\xFF"
     return (encoded

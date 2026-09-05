@@ -13,12 +13,12 @@ from frlgsim import lcg, rng_countdown, rng_script
 MEV11_BEFORE = 0x9A4F5DAA
 MEV11_PID = 0x0BF87DD1
 MEV11_IVS = (25, 10, 28, 9, 19, 3)
-GURVAN_TID, GURVAN_SID = 57189, 58811
+CONSOLE_TID, CONSOLE_SID = 57189, 58811
 
 
 def test_the_mon_it_computes_is_the_one_the_console_actually_built():
     """The whole tool rests on this: frame 0 of a scan must reproduce mev11/bs58 exactly."""
-    mon = rng_countdown._mon_from(MEV11_BEFORE, GURVAN_TID, GURVAN_SID)
+    mon = rng_countdown._mon_from(MEV11_BEFORE, CONSOLE_TID, CONSOLE_SID)
 
     assert mon["personality"] == MEV11_PID
     assert mon["ivs"] == MEV11_IVS
@@ -29,7 +29,7 @@ def test_the_mon_it_computes_is_the_one_the_console_actually_built():
 def test_a_press_lands_only_on_even_turns_because_the_rate_is_two_per_frame():
     """mev09 and mev10 measured exactly 2 turns a frame, so the states a press can reach are
     advance(S, 2k) and nothing between them."""
-    hits = rng_countdown.scan(MEV11_BEFORE, GURVAN_TID, GURVAN_SID, frames=200)
+    hits = rng_countdown.scan(MEV11_BEFORE, CONSOLE_TID, CONSOLE_SID, frames=200)
     assert rng_countdown.TURNS_PER_FRAME == 2
     for hit in hits:
         assert hit["turns"] == 2 * hit["frames"]
@@ -38,14 +38,14 @@ def test_a_press_lands_only_on_even_turns_because_the_rate_is_two_per_frame():
 
 def test_every_frame_it_calls_shiny_really_is_shiny_and_none_are_missed():
     frames = 20000
-    hits = rng_countdown.scan(MEV11_BEFORE, GURVAN_TID, GURVAN_SID, frames=frames)
+    hits = rng_countdown.scan(MEV11_BEFORE, CONSOLE_TID, CONSOLE_SID, frames=frames)
     found = {hit["frames"] for hit in hits}
 
     state = MEV11_BEFORE
     expected = set()
     for k in range(frames + 1):
-        mon = rng_countdown._mon_from(state, GURVAN_TID, GURVAN_SID)
-        if (GURVAN_TID ^ GURVAN_SID ^ (mon["personality"] >> 16)
+        mon = rng_countdown._mon_from(state, CONSOLE_TID, CONSOLE_SID)
+        if (CONSOLE_TID ^ CONSOLE_SID ^ (mon["personality"] >> 16)
                 ^ (mon["personality"] & 0xFFFF)) < 8:
             expected.add(k)
         state = lcg.advance(state, 2)
@@ -57,8 +57,8 @@ def test_every_frame_it_calls_shiny_really_is_shiny_and_none_are_missed():
 
 
 def test_want_narrows_without_inventing_hits():
-    everything = rng_countdown.scan(MEV11_BEFORE, GURVAN_TID, GURVAN_SID, frames=60000)
-    picky = rng_countdown.scan(MEV11_BEFORE, GURVAN_TID, GURVAN_SID, frames=60000,
+    everything = rng_countdown.scan(MEV11_BEFORE, CONSOLE_TID, CONSOLE_SID, frames=60000)
+    picky = rng_countdown.scan(MEV11_BEFORE, CONSOLE_TID, CONSOLE_SID, frames=60000,
                                want=lambda mon: mon["iv_total"] >= 150)
 
     assert {hit["frames"] for hit in picky} <= {hit["frames"] for hit in everything}

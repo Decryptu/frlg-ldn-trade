@@ -83,14 +83,14 @@ DIVERGENT = frozenset({WORDS["enjoy"], WORDS["done"], WORDS["case"]})
 # The phrase this project's French FireRed currently holds in its Poke Mart questionnaire, read off
 # the console in mev03. `SVR_CHECK_QUESTIONNAIRE` compares all four ids in order, so this is the key
 # to `MysteryGiftServer(..., questionnaire=...)`.
-# What GURVAN's console currently answers with, read off it in bs07: the game's own DEFAULT French
+# What the player's console currently answers with, read off it in bs07: the game's own DEFAULT French
 # phrase, CONNEXION AVEC LES DRESSEURS. The player reverted it from the custom one, so this is what
 # any `--questionnaire` gate must be set to now. Every Mystery Gift session logs the current four
 # ("Console questionnaire words: ..."), so re-read them rather than trusting this line.
-GURVAN_QUESTIONNAIRE = (0x0209, 0x1030, 0x0E0C, 0x020B)     # CONNEXION AVEC LES DRESSEUR
+CONSOLE_QUESTIONNAIRE = (0x0209, 0x1030, 0x0E0C, 0x020B)     # CONNEXION AVEC LES DRESSEUR
 # The custom phrase the console held for mev04-mev06, kept because those runs are the proof that the
 # gate refuses a wrong phrase and accepts a right one.
-GURVAN_QUESTIONNAIRE_CUSTOM = (0x2A37, 0x123C, 0x24B1, 0x1E25)   # AKWAKWAK FURAX AEROBLAST POURQUOI
+CONSOLE_QUESTIONNAIRE_CUSTOM = (0x2A37, 0x123C, 0x24B1, 0x1E25)   # AKWAKWAK FURAX AEROBLAST POURQUOI
 
 
 class UnverifiedFrenchWord(Exception):
@@ -149,5 +149,5 @@ def observe(value, word, *, divergent=None):
 
 
 __all__ = [
-    "CONFIRMED", "DIVERGENT", "ROM_WORDS", "GURVAN_QUESTIONNAIRE", "GURVAN_QUESTIONNAIRE_CUSTOM", "UnverifiedFrenchWord", "check", "french", "observe", "render",
+    "CONFIRMED", "DIVERGENT", "ROM_WORDS", "CONSOLE_QUESTIONNAIRE", "CONSOLE_QUESTIONNAIRE_CUSTOM", "UnverifiedFrenchWord", "check", "french", "observe", "render",
 ]

@@ -107,7 +107,7 @@ The console is told the verdict in a message we compose. `CLI_MSG_BUFFER_SUCCESS
 
 **bs01 (2026-09-04), reproduced by bs03:**
 
-    Console identified itself: 'GURVAN' (TID 57189) on FireRed, holding card flagId 1009
+    Console identified itself: 'PLAYER' (TID 57189) on FireRed, holding card flagId 1009
     Buffer script status: 0xE5BBDF65 MATCHES 0xE5BBDF65 (the trainer id from the console's own game data)
 
 0xE5BBDF65's low half is 0xDF65 = 57189, the trainer ID on the player's own card, so the value
@@ -166,7 +166,7 @@ Mystery Event opcode or link message. [Reading the save](reading_the_save.md) is
 `tools/dump_read.py` decodes what comes back.
 
 Runs: bs04 read SaveBlock2 (256 bytes, struct SaveBlock2 exactly as [global.h:327] lays it out -
-`GURVAN` at 0x00, gender 0 at 0x08, trainerId 0xE5BBDF65 at 0x0A, playTimeHours 148 at 0x0E).
+`PLAYER` at 0x00, gender 0 at 0x08, trainerId 0xE5BBDF65 at 0x0A, playTimeHours 148 at 0x0E).
 bs06 read the whole party at 608 bytes. bs07 read 1024 bytes of the cartridge at 0x08000000:
 
     entry      b 0x08000204
@@ -551,7 +551,7 @@ What the models do not model is the ROM's own arithmetic. That is what the hardw
 
     create-mon: 1 call(s), built at 0x0201C038, calling 0x08041151
        personality 0x3ADF0001  otId 0xE5BBDF65  checksum VALID  SHINY
-       species 59 ARCANINE  Lv30  nickname 'ARCANIN'  OT 'GURVAN'  moves [44, 46, 52, 316]
+       species 59 ARCANINE  Lv30  nickname 'ARCANIN'  OT 'PLAYER'  moves [44, 46, 52, 316]
        IVs (HP ATK DEF SPE SPA SPD) [31, 31, 31, 31, 31, 31]
        stats (maxHP ATK DEF SPE SPA SPD) [103, 80, 68, 63, 74, 62]
 
@@ -623,10 +623,10 @@ minutes apart with no reboot, 76 bytes, inside the 0..124 the mask allows.
 bs47 found `gPlayerParty` = 0x02024280 and `gPlayerPartyCount` = 0x02024025 by finding a **Pokemon**
 rather than by looking where predicted. `scratchpad/find_party.py` walks every 4-aligned window of a
 dump and reports the ones that decode as a `struct Pokemon` with a valid checksum, which nothing
-passes by accident. Exactly one did, and the species, level and nickname in it (`CHANSEY Lv26 nick
-'Cheemsey' OT 'Tops'`) are things only the player's console knew. Two independent deductions had
-predicted the same address: bs42's pool, and `gEnemyParty[6]` being declared immediately before
-`gPlayerParty[6]` [pokemon.c:61-62], exactly 600 bytes apart.
+passes by accident. Exactly one did, and the species, level, nickname and OT in it were things only
+the player's console knew - the OT was not the player's own, so the mon had been traded to them.
+Two independent deductions had predicted the same address: bs42's pool, and `gEnemyParty[6]` being
+declared immediately before `gPlayerParty[6]` [pokemon.c:61-62], exactly 600 bytes apart.
 
     # dry run first: the same code with the two stores left out
     ./scratchpad/run_mg_fast.sh bsNN --buffer-script create-mon --create-mon-append-dry-run \

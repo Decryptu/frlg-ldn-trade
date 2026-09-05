@@ -73,8 +73,8 @@ than assuming them:
 - **`addrareword`** - `gSaveBlock1Ptr->additionalPhrases` (SaveBlock1 + 0x2F10) read back `01`, bit 0
   set, which is the id the card sent. Nothing changes on screen: the bit makes one more word
   *selectable* in the Easy Chat editor, it does not rewrite a phrase the player already set.
-- **`setenigmaberry`** - `gSaveBlock1Ptr->enigmaBerry` (+0x30EC) read back the name `GURVAN` where it
-  had held `ENIGMA`, with maxYield 2 and stageDuration 24, and a checksum of 0x9DB where it had been
+- **`setenigmaberry`** - `gSaveBlock1Ptr->enigmaBerry` (+0x30EC) read back the name the card sent
+  where it had held `ENIGMA`, with maxYield 2 and stageDuration 24, and a checksum of 0x9DB where it had been
   0x9B9, recomputed by `SetEnigmaBerry` itself. There is nothing to see in the Berry Pouch: the
   record defines what the Enigma Berry *is*, and the player still has no such item.
   `VAR_ENIGMA_BERRY_AVAILABLE`, which the opcode sets, is read nowhere else in FRLG; the record is

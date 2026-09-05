@@ -29,7 +29,7 @@ the secret ID, which appears nowhere in the game and travels in no link message.
     ./.venv/bin/python tools/dump_read.py dump.bin --block sav2
 
     dump.bin: 64 bytes from sav2 + 0x0
-      playerName    'GURVAN'
+      playerName    'PLAYER'
       gender        boy
       trainerId     0xE5BBDF65  TID 57189  SID 58811
       playTime      148h 12m 30s
@@ -51,8 +51,8 @@ SaveBlock1 0x34 is `playerPartyCount`, then `playerParty[6]` at 0x38, 100 bytes 
 
     party.bin: 608 bytes from sav1 + 0x34
       playerPartyCount 5
-      slot 1: ARCANINE  Lv72 nick='ARCANIN' OT='GURVAN' PID=0x30353ACA Lonely  IVs=[18,17,20,31,2,10] checksum ok
-      slot 2: LUGIA     Lv77 nick='LUGIA'   OT='GURVAN' PID=0x91F854FF Relaxed IVs=[21,9,11,31,28,21] checksum ok
+      slot 1: ARCANINE  Lv72 nick='ARCANIN' OT='PLAYER' PID=0x30353ACA Lonely  IVs=[18,17,20,31,2,10] checksum ok
+      slot 2: LUGIA     Lv77 nick='LUGIA'   OT='PLAYER' PID=0x91F854FF Relaxed IVs=[21,9,11,31,28,21] checksum ok
 
 IVs read HP, ATK, DEF, SPE, SPA, SPD. Pass `--tid`/`--sid` to fill in the shiny column; without them
 that column is left blank rather than guessed. Every stored mon carries a checksum over its

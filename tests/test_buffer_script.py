@@ -335,7 +335,7 @@ def _game_data_with_trainer_id(trainer_id):
     data = bytearray(mg_script.GAME_DATA_SIZE)
     data[0x00:0x04] = mg.GAME_DATA_VALID_VAR.to_bytes(4, "little")
     data[0x10:0x14] = mg.VERSION_CODE_FIRERED.to_bytes(4, "little")
-    name = charmap.encode("GURVAN") + b"\xff"
+    name = charmap.encode("PLAYER") + b"\xff"
     data[mg_script.GD_OFF_PLAYER_NAME:mg_script.GD_OFF_PLAYER_NAME + len(name)] = name
     data[mg_script.GD_OFF_TRAINER_ID:mg_script.GD_OFF_TRAINER_ID + 4] = \
         trainer_id.to_bytes(4, "little")
@@ -1429,7 +1429,7 @@ def test_the_cli_refuses_a_gather_without_an_array_and_an_array_without_a_gather
 # there, so these tests check the payload against the disassembly rather than against itself.
 
 CREATE_MON_ADDRESS = rom_map.thumb(rom_map.CREATE_MON)
-GURVAN_OT_ID = 0xE5BBDF65               # bs01: TID 57189, SID 58811
+CONSOLE_OT_ID = 0xE5BBDF65               # bs01: TID 57189, SID 58811
 
 
 def _create_mon_args(code, **kwargs):
@@ -1441,8 +1441,8 @@ def _create_mon_args(code, **kwargs):
     return run, result, dict(zip(buffer_script.CREATE_MON_ARG_FIELDS, words))
 
 
-def _valid_mon(species=151, level=30, ivs=31, personality=0x3ADE0000, ot_id=GURVAN_OT_ID,
-               nickname="MEW", ot_name="GURVAN"):
+def _valid_mon(species=151, level=30, ivs=31, personality=0x3ADE0000, ot_id=CONSOLE_OT_ID,
+               nickname="MEW", ot_name="PLAYER"):
     """100 bytes that decode as a struct Pokemon, built the way the ROM would have left them.
 
     Not a model of CreateMon - a fixture. What it is for is the DECODE: a mon that travels the
@@ -1482,7 +1482,7 @@ def test_the_create_mon_operands_are_where_we_patch_them():
     code = buffer_script.build_create_mon(
         CREATE_MON_ADDRESS, species=151, level=30, fixed_iv=31,
         has_fixed_personality=1, fixed_personality=0x3ADE0000,
-        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID,
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=CONSOLE_OT_ID,
         destination=0)
     assert buffer_script.create_mon_parameters(code) == {
         "function": CREATE_MON_ADDRESS, "destination": 0, "party_append": 0,
@@ -1491,7 +1491,7 @@ def test_the_create_mon_operands_are_where_we_patch_them():
         "party_base": rom_map.GPLAYER_PARTY, "party_count": rom_map.GPLAYER_PARTY_COUNT,
         "species": 151, "level": 30, "fixed_iv": 31, "has_fixed_personality": 1,
         "fixed_personality": 0x3ADE0000,
-        "ot_id_type": buffer_script.OT_ID_PRESET, "fixed_ot_id": GURVAN_OT_ID}
+        "ot_id_type": buffer_script.OT_ID_PRESET, "fixed_ot_id": CONSOLE_OT_ID}
 
 
 @needs_unicorn
@@ -1502,7 +1502,7 @@ def test_all_eight_arguments_arrive_where_the_console_s_prologue_reads_them():
     code = buffer_script.build_create_mon(
         CREATE_MON_ADDRESS, species=151, level=30, fixed_iv=31,
         has_fixed_personality=1, fixed_personality=0x3ADE0000,
-        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID)
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=CONSOLE_OT_ID)
 
     run, result, args = _create_mon_args(code)
 
@@ -1510,7 +1510,7 @@ def test_all_eight_arguments_arrive_where_the_console_s_prologue_reads_them():
     assert args["hasFixedPersonality"] == 1
     assert args["fixedPersonality"] == 0x3ADE0000
     assert args["otIdType"] == buffer_script.OT_ID_PRESET
-    assert args["fixedOtId"] == GURVAN_OT_ID
+    assert args["fixedOtId"] == CONSOLE_OT_ID
     # r0 is the mon, and it is inside our own image at the offset the source fixes.
     assert args["mon"] == result["built_at"] == (
         buffer_script.GDECOMPRESSION_BUFFER + buffer_script.CREATE_MON_MON_OFFSET)
@@ -1584,11 +1584,11 @@ def test_the_answer_decodes_as_a_struct_pokemon_and_every_argument_is_checked():
     """The other half: what comes back has to be readable as a mon, and the check has to be able
     to say WHICH argument disagreed. The copy model puts a real mon at the destination."""
     template = 0x08300000
-    mon = _valid_mon(species=151, level=30, ivs=31, personality=0x3ADE0000, ot_id=GURVAN_OT_ID)
+    mon = _valid_mon(species=151, level=30, ivs=31, personality=0x3ADE0000, ot_id=CONSOLE_OT_ID)
     code = buffer_script.build_create_mon(
         CREATE_MON_ADDRESS, species=151, level=30, fixed_iv=31,
         has_fixed_personality=1, fixed_personality=0x3ADE0000,
-        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID)
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=CONSOLE_OT_ID)
 
     run = buffer_script.emulate(code, memory={
         rom_map.CREATE_MON: buffer_script.create_mon_copy_model(template), template: mon})
@@ -1620,13 +1620,13 @@ def test_the_check_names_the_argument_that_disagreed():
 
 
 def test_a_shiny_personality_is_shiny_for_the_trainer_it_was_aimed_at():
-    """GURVAN's SECRET id is what makes this possible at all: it is printed nowhere in the game
+    """the player's SECRET id is what makes this possible at all: it is printed nowhere in the game
     and carried by no link message, and bs01 read it out of the save [rom_map.py]."""
     personality = buffer_script.shiny_personality(57189, 58811)
 
-    assert buffer_script.is_shiny(GURVAN_OT_ID, personality)
-    assert buffer_script.shiny_value(GURVAN_OT_ID, personality) == 0
-    assert not buffer_script.is_shiny(GURVAN_OT_ID, personality ^ 0x1000)
+    assert buffer_script.is_shiny(CONSOLE_OT_ID, personality)
+    assert buffer_script.shiny_value(CONSOLE_OT_ID, personality) == 0
+    assert not buffer_script.is_shiny(CONSOLE_OT_ID, personality ^ 0x1000)
 
 
 def test_create_mon_refuses_arguments_the_console_would_fault_on():
@@ -1655,13 +1655,13 @@ def test_create_mon_refuses_an_arm_pointer_and_an_address_outside_the_cartridge(
 @needs_unicorn
 def test_end_to_end_the_console_calls_create_mon_and_sends_the_mon_back():
     template = 0x08300000
-    mon = _valid_mon(species=151, level=30, ivs=31, personality=0x3ADE0000, ot_id=GURVAN_OT_ID)
+    mon = _valid_mon(species=151, level=30, ivs=31, personality=0x3ADE0000, ot_id=CONSOLE_OT_ID)
     console = ConsoleClientModel(flag_id=0, rom_stubs={
         rom_map.CREATE_MON: buffer_script.create_mon_copy_model(template), template: mon})
     code = buffer_script.build_create_mon(
         CREATE_MON_ADDRESS, species=151, level=30, fixed_iv=31,
         has_fixed_personality=1, fixed_personality=0x3ADE0000,
-        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID)
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=CONSOLE_OT_ID)
     distribution = stamp_rally.MysteryGiftDistribution(
         card=None, ram_script=None, buffer_code=code,
         buffer_dump_size=buffer_script.CREATE_MON_ANSWER_SIZE,
@@ -1736,7 +1736,7 @@ def test_a_built_create_mon_and_gather_are_still_named_by_their_own_bytes():
 # This is the one thing in the payload that touches a live save. Its safety is structural rather
 # than checked: the slot is playerParty[playerPartyCount], which is by definition the first FREE
 # one, so an occupied slot is never written whatever else is wrong. These tests are what say that
-# out loud, and the sav1 fixture is shaped like GURVAN's console - one mon in it.
+# out loud, and the sav1 fixture is shaped like the player's console - one mon in it.
 
 CHANSEY = b"\xAA" * buffer_script.PARTY_MON_SIZE     # a mon that must survive every append
 
@@ -1849,14 +1849,14 @@ def test_the_append_refuses_what_would_write_rubbish_or_ask_twice():
 @needs_unicorn
 def test_end_to_end_the_console_appends_the_mon_to_its_own_party():
     template = 0x08300000
-    mon = _valid_mon(species=59, level=30, ivs=31, personality=0x3ADF0001, ot_id=GURVAN_OT_ID,
+    mon = _valid_mon(species=59, level=30, ivs=31, personality=0x3ADF0001, ot_id=CONSOLE_OT_ID,
                      nickname="ARCANIN")
     console = ConsoleClientModel(flag_id=0, rom_stubs={
         rom_map.CREATE_MON: buffer_script.create_mon_copy_model(template), template: mon})
     code = buffer_script.build_create_mon(
         CREATE_MON_ADDRESS, species=59, level=30, fixed_iv=31,
         has_fixed_personality=1, fixed_personality=0x3ADF0001,
-        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=GURVAN_OT_ID, party_append=True, **PARTY_ARGS)
+        ot_id_type=buffer_script.OT_ID_PRESET, fixed_ot_id=CONSOLE_OT_ID, party_append=True, **PARTY_ARGS)
     distribution = stamp_rally.MysteryGiftDistribution(
         card=None, ram_script=None, buffer_code=code,
         buffer_dump_size=buffer_script.CREATE_MON_ANSWER_SIZE,
@@ -1885,7 +1885,7 @@ def test_bs43_and_bs44_dumps_still_read_without_a_party_word():
     are at the same offsets, so their dumps must still decode - and say `party` is not there
     rather than invent one."""
     import struct
-    mon = _valid_mon(species=59, level=30, ivs=31, personality=0x3ADF0001, ot_id=GURVAN_OT_ID)
+    mon = _valid_mon(species=59, level=30, ivs=31, personality=0x3ADF0001, ot_id=CONSOLE_OT_ID)
     old_answer = struct.pack("<4I", 1, 0, CREATE_MON_ADDRESS, 0x0201C038) + mon
 
     result = buffer_script.read_create_mon(old_answer)

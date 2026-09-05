@@ -281,7 +281,7 @@ def _game_data(*, flag_id=0, questionnaire=(), profile=(), battles_won=0, trades
         raw[0x50 + 2 * index:0x52 + 2 * index] = int(value).to_bytes(2, "little")
     raw[0x20:0x22] = int(battles_won).to_bytes(2, "little")
     raw[0x24:0x26] = int(trades).to_bytes(2, "little")
-    raw[0x45:0x4C] = b"GURVAN\xff"
+    raw[0x45:0x4C] = b"PLAYER\xff"
     return bytes(raw)
 
 
@@ -479,21 +479,21 @@ def test_the_french_check_passes_language_safe_words_and_flags_guesses():
 
 def test_the_phrase_read_off_the_console_gates_a_gift():
     """Every session logs the console's four questionnaire ids; they are the key the gate compares
-    against. GURVAN_QUESTIONNAIRE is whatever the console currently holds - the default phrase since
+    against. CONSOLE_QUESTIONNAIRE is whatever the console currently holds - the default phrase since
     bs07 - so this test follows the console rather than pinning a phrase."""
     from frlgsim import easychat_french
     card, ram_script = _probe_card()
     server = mg_server.MysteryGiftServer(
-        card, ram_script, questionnaire=easychat_french.GURVAN_QUESTIONNAIRE)
+        card, ram_script, questionnaire=easychat_french.CONSOLE_QUESTIONNAIRE)
 
     raw = bytearray(_game_data(flag_id=0))
-    for index, value in enumerate(easychat_french.GURVAN_QUESTIONNAIRE):
+    for index, value in enumerate(easychat_french.CONSOLE_QUESTIONNAIRE):
         raw[0x16 + 2 * index:0x18 + 2 * index] = value.to_bytes(2, "little")
     assert _run_server(server, bytes(raw)) == mg_server.SVR_MSG_CARD_SENT
     assert server.questionnaire_matched is True
 
     server = mg_server.MysteryGiftServer(
-        card, ram_script, questionnaire=easychat_french.GURVAN_QUESTIONNAIRE)
+        card, ram_script, questionnaire=easychat_french.CONSOLE_QUESTIONNAIRE)
     assert _run_server(server, _game_data(flag_id=0)) == mg_server.SVR_MSG_NOTHING_SENT
 
 
@@ -503,19 +503,19 @@ def test_the_cli_parses_a_phrase_in_every_form_it_accepts():
     from frlgsim import easychat, easychat_french
     import frlgmg_host
     assert easychat.parse_phrase("species:55,FEELINGS/60,move:177,why") \
-        == easychat_french.GURVAN_QUESTIONNAIRE_CUSTOM
+        == easychat_french.CONSOLE_QUESTIONNAIRE_CUSTOM
     assert easychat.parse_phrase("0x2a37,0x123c,0x24b1,0x1e25") \
-        == easychat_french.GURVAN_QUESTIONNAIRE_CUSTOM
+        == easychat_french.CONSOLE_QUESTIONNAIRE_CUSTOM
     assert easychat.parse_phrase("TRAINER/9,ENDINGS/48,SPEECH/12,TRAINER/11") \
-        == easychat_french.GURVAN_QUESTIONNAIRE
+        == easychat_french.CONSOLE_QUESTIONNAIRE
     assert easychat.parse_phrase("link,with,case,trainer") \
-        == easychat_french.GURVAN_QUESTIONNAIRE
+        == easychat_french.CONSOLE_QUESTIONNAIRE
 
     args = frlgmg_host.build_parser().parse_args(
         ["--live", "--gift", "mystery-event-probe",
          "--questionnaire", "species:55,FEELINGS/60,move:177,why"])
     config = frlgmg_host.build_run_config(frlgmg_host.build_parser(), args)
-    assert config.payload.questionnaire == easychat_french.GURVAN_QUESTIONNAIRE_CUSTOM
+    assert config.payload.questionnaire == easychat_french.CONSOLE_QUESTIONNAIRE_CUSTOM
     assert config.payload.build_distribution().is_gated
 
 

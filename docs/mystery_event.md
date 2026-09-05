@@ -283,7 +283,7 @@ required. mev03 did that at no cost: the console volunteered
     questionnaire: POKEMON/55  done [FEELINGS/60]  MOVE_1/177  why [MISC/37]
 
 for a player who had typed **AKWAKWAK FURAX AEROBLAST POURQUOI**. That is
-`easychat_french.GURVAN_QUESTIONNAIRE`, and it settled three separate questions:
+`easychat_french.CONSOLE_QUESTIONNAIRE`, and it settled three separate questions:
 
 - **`EC_GROUP_POKEMON` indexes by species number.** AKWAKWAK is Golduck, species 55; the slot is
   POKEMON/55.

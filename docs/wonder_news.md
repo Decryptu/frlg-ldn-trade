@@ -95,12 +95,12 @@ text lands again.
 
 ## On hardware (`wn01`, 2026-09-04, first try)
 
-A French FireRed (`GURVAN`, TID 57189) holding Wonder Card flagId 1008 took the news in 18 seconds
+A French FireRed (`PLAYER`, TID 57189) holding Wonder Card flagId 1008 took the news in 18 seconds
 with no retries, no stall and no hold:
 
 ```
 ident 16  sClientScript_SendGameData
-ident 17  MysteryGiftLinkGameData - GURVAN, FireRed, holding card flagId 1008
+ident 17  MysteryGiftLinkGameData - PLAYER, FireRed, holding card flagId 1008
 ident 16  sClientScript_SaveNews
 ident 23  MG_LINKID_NEWS - 444 bytes in three blocks
 ident 19  MG_LINKID_RESPONSE - FALSE: the console saved it
