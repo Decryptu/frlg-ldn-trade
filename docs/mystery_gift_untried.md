@@ -206,8 +206,30 @@ do not host yet.
 The counters live at `SaveBlock1 + 0x3434` (`buffer_script.SAV1_CARD_METADATA`), read with no CRC
 check [`src/mystery_gift.c:490`], so a save-dump reads them and a save-write sets them.
 
-UNKNOWN until a run: whether our flag id arms a retail console, and whether a trade with us moves
-its counter.
+**FACT, fr43/h9/bs76 -> fr44/h11/bs79.** A trade with our host moved the console's own counter:
+
+    bs78  0x3434: 0000 0000 0000 2300     battlesWon 0, lost 0, trades 0, icon 35 (CARD_TYPE_GIFT)
+    bs79  0x3434: 0000 0000 0100 2300     trades 1                       (CARD_TYPE_LINK_STAT)
+
+and the ledger said `trades 0 -> 1` on its own at the next session. The first three runs read zero
+because the card was CARD_TYPE_GIFT, and every other condition was already right - `card_block.py`
+reassembled both 100-byte exchange blocks out of the h10 capture and **both carried 1005 at offset
+96**, so the console had run `CreateTrainerCardInBuffer(TRUE)`, read our word, and armed. The type
+was the whole difference.
+
+Two things worth keeping from the wrong turn:
+
+- `sizeof(struct TrainerCard)` is **96** on this build, measured rather than assumed: the console
+  writes its own held flag id at offset 96 of the block it sends.
+- The trade centre reached through the wireless club is `union_room.c`'s Task_StartActivity path,
+  not `cable_club.c`'s - the console's block carries the flag id, which only the union-room builder
+  writes.
+
+UNKNOWN: the prize itself. It needs `battlesWon == 3`, and battles only count through
+`CB2_ReturnFromCableClubBattle` [`src/cable_club.c:792`] - the battle colosseum, which our host does
+not advertise yet (the in-room Union Room battle returns through `CB2_ReturnToField` and counts
+nothing). Three wins also means three different host trainer ids, `--id` per run
+[`IncrementCardStatForNewTrainer`].
 
 ### Altering Cave - sent and proven, bs74/fr42/bs75
 
