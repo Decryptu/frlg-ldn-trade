@@ -143,6 +143,7 @@ on the draws that follow, and exactly one state survives. `lcg.recover_wild_stat
 | Ditto (scripted) | 0 | 0 | 1 | bs53 |
 | Magikarp (scripted) | 0 | 0 | 1 | mev19 |
 | Magikarp (scripted) | 1 | 0 | 2 | mev20 |
+| Magikarp (scripted) | 0 | 0 | 1 | mev21 |
 
 Searching only the first gap finds the Weedle and **silently misses the other three** — they come
 back as "no state builds this mon", which reads like a broken recovery rather than an incomplete
@@ -720,3 +721,28 @@ so a short delivery sums **low** and the stub leaves `gRngValue` alone.
 talked to their MOM and caught a shiny Jolly Magikarp — which the console could only produce if the
 filler sum matched, so the whole body arrived and ran from inside the save block. The overworld
 paused 2–3 s, consistent with the three-criteria search and not with a search that skipped a test.
+
+**mev21, first try**, `--gift rng-mon-hunt-both`: the 232-byte two-placement stub, same criteria.
+Shiny, Jolly, **SPEED 22**. State 0xFCB5674F, and the point is the whole row:
+
+| method | IVs | floors |
+|---|---|---|
+| 1 (clean) | 4/1/10/**22**/14/21 | ok — what the console made |
+| 2 (mev20's) | 22/14/21/**25**/1/18 | ok |
+| 4 (bs52, bs54) | 4/1/10/**25**/1/18 | ok |
+
+**Stated precisely**: the console used Method 1 this time, so this run did not itself exercise a
+stray-draw encounter. What it shows is that the search now accepts *only* states that are correct
+whichever method fires, and that asking for that costs nothing but search. Method-independence is
+established by the derivation above and by the offline tests; hardware has confirmed the stub
+searches correctly and the mon comes out right. A run that catches Method 2 in the act would be
+confirmation on top, not the basis of the claim.
+
+Scripted encounters so far: bs53 Method 1, mev19 Method 1, mev20 **Method 2**, mev21 Method 1 —
+one in four, on a path that had looked clean.
+
+**The freeze, measured twice.** mev20 (one placement, expected 1.5 s) paused 2–3 s; mev21 (two
+placements, expected 3.9 s) paused about 7 s. The RATIO is right — 2.8 observed against 2.6
+predicted — so the cost model scales correctly. Both absolute figures run high, which would mean
+`CYCLES_PER_INSTRUCTION_FROM_EWRAM = 3` is optimistic. HYPOTHESIS ONLY: a single search is
+exponentially distributed, so two samples above the mean is unremarkable and settles nothing.
