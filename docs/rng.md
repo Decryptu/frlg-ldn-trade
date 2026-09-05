@@ -141,6 +141,8 @@ on the draws that follow, and exactly one state survives. `lcg.recover_wild_stat
 | Weedle #2 | 0 | 1 | 4 | bs52 |
 | Mankey | 0 | 1 | 4 | bs54 |
 | Ditto (scripted) | 0 | 0 | 1 | bs53 |
+| Magikarp (scripted) | 0 | 0 | 1 | mev19 |
+| Magikarp (scripted) | 1 | 0 | 2 | mev20 |
 
 Searching only the first gap finds the Weedle and **silently misses the other three** — they come
 back as "no state builds this mon", which reads like a broken recovery rather than an incomplete
@@ -148,7 +150,45 @@ search. The stray draw is in no line of `CreateBoxMon`; it comes from outside th
 recorded here as measured and unexplained.
 
 The half-order of `Random32()` — `(Random() | (Random() << 16))`, whose operand order C does not
-define — is **low half first**, at both call sites, on all five mons.
+define — is **low half first**, at both call sites, on every mon in the table.
+
+**A SCRIPTED ENCOUNTER IS NOT IMMUNE, and mev20 is where that was learned.** bs53's Ditto and
+mev19's Magikarp were both Method 1, which had made it reasonable to treat `setwildbattle` as the
+clean path. mev20 asked for shiny + Jolly + SPEED ≥ 20 and the console produced a shiny **Jolly**
+Magikarp with SPEED **10**. The state is not in doubt — exactly one state in 2<sup>32</sup> has
+that PID on its next two draws:
+
+    state 0x429D2189
+      draws 3,4 -> 15/0/12/25/7/14      what the stub tested: SPEED 25, passes
+      draws 4,5 -> 25/7/14/10/10/30     the mon that appeared
+
+So the search was correct and one `Random()` ran between the personality and the IVs. On a scripted
+encounter the stray draw is **intermittent, not absent**, which is worse than always-present: a
+one-placement search is right most of the time and silently wrong the rest.
+
+### Searching so the stray draw cannot move the answer
+
+`asm/field/mon-seek-both.s` tests the floors at **two** placements, and two cover all three methods.
+Let d3, d4, d5 be the draws after the personality:
+
+| method | first triple (HP/ATK/DEF) | second triple (SPE/SPATK/SPDEF) |
+|---|---|---|
+| 1 (clean) | d3 | d4 |
+| 2 (mev20) | d4 | d5 |
+| 4 (bs52, bs54) | d3 | d5 |
+
+Word A is `d3 | d4<<15` and word B is `d4 | d5<<15`. Requiring both puts the first triple's floors
+on d3 *and* d4, and the second triple's on d4 *and* d5 — so Method 4 passes without its word ever
+being built. The proof is the four placements, not the two words.
+
+The cost is search and not iteration: the hot loop is the same fifteen instructions and the IV
+block is reached by 1 state in 8192, so only the IV term is squared — shiny + Jolly + SPEED ≥ 20
+goes from 1 state in 546,000 to 1 in 1,456,000, about 4 s of frozen overworld typically. The cap
+is set at 95% rather than 99% on purpose: the script ends in `end`, so the binding survives and a
+miss costs one more A press, while a 99% cap costs 18 s of stare on the unlucky run.
+
+**This stub is 232 bytes and could not have been staged.** `setptr` allowed 162. It exists because
+the payload moved into the RAM script body — see below.
 
 The mon's identity is established before any RNG claim is made: its PID and IVs predict the six
 stats the console prints on its own summary screen. bs51's Weedle read 24/10/9/9/8/13 and nature
@@ -597,3 +637,86 @@ divisor is its own loop counter; the IV floors carry a terminator bit at 30 so t
 counter; both fields shift up to bits 27..31 so a five-bit comparison is an ordinary unsigned one.
 
     --hunt-nature adamant,jolly   --hunt-iv speed=31 --hunt-iv attack=20   --hunt-cap N
+
+## The payload moved into the script body: 755 bytes instead of 162
+
+Every stub above is staged by `setptr`, which writes **one** byte and spends **six** script bytes
+saying so — an opcode, the immediate, and a 4-byte absolute address. Against a 995-byte RAM script
+body that is ~162 bytes of code, and `asm/field/mon-seek.s` is at 160 of them. Every register in
+that file is reused as hard as it is because of this one number.
+
+The cap comes off, and the reason is one line of the decomp:
+
+```c
+const u8 *GetRamScript(u8 objectId, const u8 *script)
+{ ... return scriptData->script; }
+```
+[decomp:src/script.c:514]
+
+The field engine does **not** copy the body anywhere. It runs it **in place**, out of
+`gSaveBlock1Ptr->ramScript.data.script`. So the whole body is already in EWRAM while the script
+runs — and the bytes after the script's last command are never read by the engine at all. They are
+storage that has already been delivered, at one script byte each.
+
+The only thing that ever made that unusable was aiming at it. This document and
+`frlgsim/rng_script.py` both said so: the save block "carries a random 4-aligned offset re-rolled on
+every battle and load" [`SetSaveBlocksPointers`, decomp:src/load_save.c:75], measured 76 bytes apart
+in bs45 vs bs46. **That argument is about a build-time constant.** The offset is re-rolled at a
+battle or a load and is fixed for the whole frame our script runs in, and `&gSaveBlock1Ptr` is a
+link-time IWRAM word at 0x03004228 that says what it currently is. Read the pointer at run time and
+the target is exact — no sled, no search, no aiming.
+
+`asm/field/ram-jump.s` is 36 bytes and is now the only thing that still pays six:
+
+| | staged | body |
+|---|---|---|
+| cost per payload byte | 6 script bytes | 1 script byte |
+| room in a 995-byte body | 162 bytes of code | **755 bytes** |
+
+    setptr x36    the trampoline, into gDecompressionBuffer        216 bytes
+    callnative    -> trampoline -> payload -> back                   5
+    setwildbattle / setvar / goto                                   16
+    pad to a multiple of four                                        3
+    payload                                                        755
+
+It is a **tail branch**, not a call: `bx r0` with `lr` untouched, so the payload's own
+`pop {r4-r7, pc}` returns straight to `ScrCmd_callnative`'s caller and the script carries on to the
+battle. ARMv4T has no `blx <reg>` and does not need one here.
+
+**The guard is the whole safety argument.** The trampoline checks `ramScript.data.magic` is
+`RAM_SCRIPT_MAGIC` = 51 [decomp:src/script.c:12] before it branches. If the save-block offset is not
+what the host thinks, that byte is not 51 and the stub **returns** — the player gets an ordinary
+encounter, which is a miss and not a frozen overworld. There is no menu to back out of in the field,
+so a wrong address must not be able to execute anything.
+
+### The trap: a multiple of four, not merely an even offset
+
+A Thumb stub reaches its literal pool with `ldr rN, [pc, #imm]` and its own tail with `adr`, and
+**both use `Align(PC, 4)`**. The assembler lays those immediates out believing the code begins
+word-aligned. Place the same bytes two off and the branch still lands, the code still runs, and
+every pool word is read two bytes past where it lives — for `mon-seek-far` that is a filler length
+of `0x0433CF15` and a fault inside its own checksum loop. An even offset is enough to *branch*,
+which is exactly what makes the bug quiet.
+
+Four is also **sufficient**, and provably: `offset = (Random()) & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3)`
+[decomp:src/load_save.c:75] is `& 0x7C`, and `gSaveBlock1` is an EWRAM struct of u32 fields, so the
+base is word-aligned and `RAMSCRIPT_BODY_OFFSET` (0x3624) keeps it that way. Nothing checks it at
+run time because nothing can make it false.
+
+This was caught by `native_script.emulate_body_script`, which walks the **real** script bytes — the
+36 `setptr`s, the `callnative`, the trampoline reading `gSaveBlock1Ptr`, the branch back into the
+body — rather than running a stub at an address a harness chose. That is bs56's lesson applied
+before the run instead of after it.
+
+### Proving the size rather than the jump, on hardware
+
+Moving the code proves itself: if the branch missed, nothing shiny appears. That would prove the
+*jump* and say nothing about the *size*. So `asm/field/mon-seek-far.s` is followed by non-zero
+filler out to the last byte of the 995, and the stub sums it and refuses to search unless the sum
+matches. `InitRamScript` zero-fills what it was not given [`ClearRamScript`, decomp:src/script.c:495],
+so a short delivery sums **low** and the stub leaves `gRngValue` alone.
+
+**mev20, first try**: 995 bytes, 196 of stub and 559 of filler, `--gift rng-mon-hunt-far`. The player
+talked to their MOM and caught a shiny Jolly Magikarp — which the console could only produce if the
+filler sum matched, so the whole body arrived and ran from inside the save block. The overworld
+paused 2–3 s, consistent with the three-criteria search and not with a search that skipped a test.

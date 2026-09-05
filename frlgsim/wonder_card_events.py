@@ -1223,6 +1223,78 @@ RNG_MON_HUNT_FAR_GIFT = WonderGift(
 )
 
 
+GIFT_RNG_MON_HUNT_BOTH = "rng-mon-hunt-both"
+RNG_MON_HUNT_BOTH_FLAG_ID = 1001
+
+# THE SAME HUNT AGAIN, HELD AGAINST THE STRAY DRAW. mev20 proved the body-hosted payload and, in
+# the same run, caught the thing that defeats a one-placement search: one extra Random() between
+# the personality and the IV draws, so the mon was shiny and JOLLY as asked and its SPEED was 10
+# against a floor of 20. asm/field/mon-seek-both.s tests the floors at both placements and its
+# header has the proof that two words cover all three methods docs/rng.md records.
+#
+# ONE VARIABLE against rng-mon-hunt-far: the stub. Same species, same level, same criteria, same
+# delivery, same 995-byte body. What changes is the cost - the IV term is squared, so this is 1
+# state in 1,456,000 rather than 546,000, about 4 s of frozen overworld typically and 11.7 s at
+# the cap. The cap is set at 95% rather than 99% deliberately [native_script.BOTH_CONFIDENCE]:
+# the script ends in `end`, so a miss costs one more A press and a longer cap costs the stare.
+#
+# 232 BYTES OF STUB. rng-mon-hunt could stage 162. This card is the first thing in the project
+# that could not have existed before the payload moved into the body.
+
+
+def build_rng_mon_hunt_both_script(criteria=None, *, cap=None,
+                                   max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
+                                   payload_bytes=None, **kwargs):
+    return build_mevent_npc_script(
+        field_script=native_script.build_mon_hunt_both_script(
+            RNG_MON_HUNT_SPECIES, RNG_MON_HUNT_LEVEL,
+            criteria=RNG_MON_HUNT_CRITERIA if criteria is None else criteria,
+            cap=cap, max_freeze_frames=max_freeze_frames,
+            payload_bytes=payload_bytes), **_at_mom(kwargs))
+
+
+def build_rng_mon_hunt_both_gift(criteria=None, *, cap=None,
+                                 max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
+                                 payload_bytes=None):
+    """-> the card carrying the stray-draw-proof search, with whatever was asked for on the line."""
+    return dataclasses.replace(
+        RNG_MON_HUNT_BOTH_GIFT,
+        mevent=build_rng_mon_hunt_both_script(criteria, cap=cap,
+                                              max_freeze_frames=max_freeze_frames,
+                                              payload_bytes=payload_bytes))
+
+
+RNG_MON_HUNT_BOTH_GIFT = WonderGift(
+    slug=GIFT_RNG_MON_HUNT_BOTH,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="A POKEMON to order",
+        body=(
+            "Your MOM knows of a POKEMON",
+            "that shines and is quick with",
+            "it. Talk to her, then CATCH",
+            "what turns up.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=RNG_MON_HUNT_BOTH_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "Someone in PALLET TOWN has\n"
+                "found something choosy."),
+        ),
+    )),
+    completed_message="Talk to your MOM at home.",
+    mevent=build_rng_mon_hunt_both_script(),
+)
+
+
 GIFT_RNG_DRAW_COUNT = "rng-draw-count"
 RNG_DRAW_COUNT_FLAG_ID = 1018
 

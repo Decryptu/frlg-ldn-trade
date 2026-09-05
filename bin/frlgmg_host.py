@@ -366,7 +366,8 @@ def _hunt_definition(parser, args):
     [native_script.search_cost]."""
     if not _hunt_asked(args):
         return None
-    hunts = (wonder_card_events.GIFT_RNG_MON_HUNT, wonder_card_events.GIFT_RNG_MON_HUNT_FAR)
+    hunts = (wonder_card_events.GIFT_RNG_MON_HUNT, wonder_card_events.GIFT_RNG_MON_HUNT_FAR,
+             wonder_card_events.GIFT_RNG_MON_HUNT_BOTH)
     if args.gift not in hunts:
         parser.error(f"--hunt-* belong to --gift {' or --gift '.join(hunts)}; "
                      f"--gift {args.gift} has no search to steer")
@@ -378,9 +379,10 @@ def _hunt_definition(parser, args):
         cost = native_script.search_cost(criteria, cap)
         # Composed HERE, so that a search too slow to be allowed, or a stub too big to stage, is
         # an error on the command line and not one raised at the moment a console joins.
-        compose = (wonder_card_events.build_rng_mon_hunt_far_gift
-                   if args.gift == wonder_card_events.GIFT_RNG_MON_HUNT_FAR
-                   else wonder_card_events.build_rng_mon_hunt_gift)
+        compose = {
+            wonder_card_events.GIFT_RNG_MON_HUNT_FAR: wonder_card_events.build_rng_mon_hunt_far_gift,
+            wonder_card_events.GIFT_RNG_MON_HUNT_BOTH: wonder_card_events.build_rng_mon_hunt_both_gift,
+        }.get(args.gift, wonder_card_events.build_rng_mon_hunt_gift)
         definition = compose(criteria, cap=args.hunt_cap,
                              max_freeze_frames=args.hunt_freeze_frames)
     except native_script.NativeScriptError as exc:

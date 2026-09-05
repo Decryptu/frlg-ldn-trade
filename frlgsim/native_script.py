@@ -339,22 +339,38 @@ def frames_for_iterations(iterations):
     return frames_for(float(iterations) * INSTRUCTIONS_PER_ITERATION)
 
 
-def cap_for(criteria, confidence=SEARCH_CONFIDENCE):
+def probability_for(criteria, placements=1):
+    """-> the fraction of states that pass, when the IV floors must hold in `placements` words.
+
+    asm/field/mon-seek-both.s tests the floors at TWO draw placements because the stray draw moves
+    them (mev20; docs/rng.md's Methods 1, 2 and 4), so the IV term is raised to that power. The
+    shiny and nature terms are not: both come from the personality, which is drawn before the stray
+    and is the same word in every method.
+    """
+    chance = SHINY_ODDS / 65536
+    chance *= (len(criteria.natures) or NUM_NATURES) / NUM_NATURES
+    ivs = 1.0
+    for minimum in criteria.iv_minimums:
+        ivs *= (MAX_IV + 1 - minimum) / (MAX_IV + 1)
+    return chance * ivs ** int(placements)
+
+
+def cap_for(criteria, confidence=SEARCH_CONFIDENCE, placements=1):
     """-> the smallest cap that finds a state `confidence` of the time."""
-    chance = criteria.probability
+    chance = probability_for(criteria, placements)
     if not 0 < confidence < 1:
         raise NativeScriptError(f"confidence is a probability, got {confidence}")
     return max(1, math.ceil(math.log1p(-confidence) / math.log1p(-chance)))
 
 
-def search_cost(criteria, cap):
+def search_cost(criteria, cap, placements=1):
     """-> what asking for this costs: how long it is expected to take, and the worst it can take.
 
     The freeze is what the player sees, so both are in frames. Everything here rests on
     INSTRUCTIONS_PER_ITERATION and the GBA's clock and NOT on a hardware measurement; the first
     run that reports a visible pause is the measurement, and it goes in docs/rng.md when it comes.
     """
-    chance = criteria.probability
+    chance = probability_for(criteria, placements)
     cap = int(cap)
     expected = 1 / chance
     return {"probability": chance,
@@ -667,10 +683,20 @@ def filler_bytes(count, seed=FILLER_SEED):
     return bytes(out)
 
 
+# THE SEARCH MUST HOLD AT 95%, NOT 99%, WHEN THE FLOORS ARE TESTED TWICE, and the reason is what a
+# miss costs. The RAM script ends in `end` and not `endram`, so the binding SURVIVES and the player
+# re-triggers the whole thing by talking to their MOM again [rng_script]. A miss is one A press; a
+# 99% cap would freeze the overworld for 18 s on the unlucky run, every time it is unlucky. Cheap
+# retry, expensive stare - so buy the retry.
+BOTH_CONFIDENCE = 0.95
+
+
 def build_mon_hunt_far_script(species, level, *, criteria=None, item=0, cap=None,
                               max_freeze_frames=MAX_FREEZE_FRAMES, scratch=SCRATCH,
                               rng_address=None, sav2_pointer=None, sb1_pointer=None,
-                              payload_bytes=None, seed=FILLER_SEED):
+                              payload_bytes=None, seed=FILLER_SEED,
+                              stub_name="mon-seek-far", placements=1,
+                              confidence=SEARCH_CONFIDENCE):
     """build_mon_hunt_script, with the code RUN OUT OF THE BODY and the body FILLED to prove it.
 
     ONE variable changes against mev19's card: where the search code lives. Same criteria, same
@@ -689,8 +715,8 @@ def build_mon_hunt_far_script(species, level, *, criteria=None, item=0, cap=None
     criteria = MonCriteria() if criteria is None else criteria
     if not isinstance(criteria, MonCriteria):
         raise NativeScriptError("criteria must be a MonCriteria")
-    chosen_cap = cap_for(criteria) if cap is None else int(cap)
-    cost = search_cost(criteria, chosen_cap)
+    chosen_cap = (cap_for(criteria, confidence, placements) if cap is None else int(cap))
+    cost = search_cost(criteria, chosen_cap, placements)
     if cost["worst_frames"] > max_freeze_frames:
         raise NativeScriptError(
             f"{criteria.describe()} is 1 state in {1 / cost['probability']:,.0f}: searching for "
@@ -706,12 +732,12 @@ def build_mon_hunt_far_script(species, level, *, criteria=None, item=0, cap=None
         raise NativeScriptError(str(error)) from None
     room = body_capacity(len(tail))["payload"]
     total = room if payload_bytes is None else int(payload_bytes)
-    bare = len(STUBS["mon-seek-far"][0])
+    bare = len(STUBS[stub_name][0])
     if not bare <= total <= room:
         raise NativeScriptError(
             f"the payload is {bare}..{room} bytes here; asked for {total}")
     filler = filler_bytes(total - bare, seed)
-    code = stub("mon-seek-far",
+    code = stub(stub_name,
                 rng=rom_map.GRNG_VALUE if rng_address is None else int(rng_address),
                 sav2ptr=rom_map.GSAVEBLOCK2PTR if sav2_pointer is None else int(sav2_pointer),
                 cap=chosen_cap, nature=criteria.nature_mask, ivmin=criteria.iv_word,
@@ -796,3 +822,17 @@ def emulate_body_script(script, *, sb1_base=0x02025734, rng_state=0, trainer_id=
             "staged_bytes": len(blob), "staged_at": low, "entry": entry,
             "payload_at": int(sb1_base) + RAMSCRIPT_BODY_OFFSET,
             "body": ram_script}
+
+
+def build_mon_hunt_both_script(species, level, **kwargs):
+    """build_mon_hunt_far_script with asm/field/mon-seek-both.s: the floors tested at BOTH draw
+    placements, so the stray draw cannot move the IVs out from under the answer.
+
+    mev20 is why this exists and the .s header has the derivation: two words cover all three
+    methods docs/rng.md records, because word A puts the first IV triple on d3 and the second on
+    d4, and word B puts them on d4 and d5.
+    """
+    kwargs.setdefault("stub_name", "mon-seek-both")
+    kwargs.setdefault("placements", 2)
+    kwargs.setdefault("confidence", BOTH_CONFIDENCE)
+    return build_mon_hunt_far_script(species, level, **kwargs)

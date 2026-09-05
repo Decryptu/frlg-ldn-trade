@@ -637,3 +637,100 @@ def test_it_follows_the_save_block_wherever_this_load_put_it():
     answers = {_far(0x12345678, criteria, sb1_base=0x02025734 + offset)["rng"]
                for offset in (0, 4, 76, 124)}
     assert len(answers) == 1 and 0x12345678 not in answers
+
+
+# --- the stray draw, and the search that holds against it ----------------------------------------
+# mev20 read this off the console. It is the evidence for asm/field/mon-seek-both.s and it is a
+# fixture so that a change to the draw model has to answer for it.
+
+MEV20_PID = 0xCCCFF615                      # bs63, party slot 5, caught after mev20
+MEV20_IVS = (25, 7, 14, 10, 10, 30)         # hp atk def spe spa spd, off the Misc substructure
+MEV20_STATE = 0x429D2189                    # the unique state whose draws 1,2 are that PID
+
+
+def _ivs_from(first, second):
+    """The two IV draws unpacked the way CreateBoxMon does [decomp:src/pokemon.c:1836]."""
+    return ((first & 31), (first >> 5) & 31, (first >> 10) & 31,
+            (second & 31), (second >> 5) & 31, (second >> 10) & 31)
+
+
+def test_mev20_needed_one_extra_draw_between_the_personality_and_the_ivs():
+    """THE MEASUREMENT. The stub asked for shiny + Jolly + SPEED >= 20 and the console produced a
+    shiny Jolly MAGIKARP with SPEED 10. The state is not in doubt - exactly one state in 2**32 has
+    that PID on its next two draws - and from it the criteria are satisfied at draws 3,4 and the
+    mon that appeared came from draws 4,5. So the search was right and one Random() ran in
+    between. docs/rng.md already had this for wild encounters (bs51, Method 2); mev20 is the first
+    time it has been seen on a SCRIPTED one, where bs53 and mev19 were both clean."""
+    assert lcg.nature_of(MEV20_PID) == 13                       # Jolly
+    draws, _ = lcg.draws(MEV20_STATE, 5)
+    assert (draws[0], draws[1]) == (MEV20_PID & 0xFFFF, MEV20_PID >> 16), "low half first"
+    tested = _ivs_from(draws[2], draws[3])                      # what the stub checked
+    happened = _ivs_from(draws[3], draws[4])                    # what the console made
+    assert happened == MEV20_IVS
+    assert tested[3] >= 20 and happened[3] == 10, (tested, happened)
+
+
+def test_mev20_is_the_only_state_that_could_have_produced_that_pid():
+    """The claim above rests on the state being unique, so it is checked rather than asserted:
+    S1's low half is the PID's low half, which leaves 2**16 candidates, and one survives S2."""
+    lo, hi = MEV20_PID & 0xFFFF, MEV20_PID >> 16
+    found = [lcg.unstep((lo << 16) | top) for top in range(1 << 16)
+             if lcg.draw(lcg.unstep((lo << 16) | top))[0] == lo
+             and (lcg.step((lo << 16) | top) >> 16) == hi]
+    assert found == [MEV20_STATE]
+
+
+def test_two_words_cover_all_three_methods_docs_rng_records():
+    """The derivation in asm/field/mon-seek-both.s, checked rather than believed. Word A puts the
+    first IV triple on d3 and the second on d4; word B puts them on d4 and d5. Between them every
+    source draw each triple can have is covered, so Method 4 (first d3, second d5) passes without
+    its word ever being built."""
+    criteria = native_script.MonCriteria(natures=(13,), iv_minimums=(0, 0, 0, 20, 0, 0))
+    body = native_script.build_mon_hunt_both_script(129, 5, criteria=criteria)
+    result = native_script.emulate_body_script(
+        body, rng_state=0x12345678, trainer_id=CONSOLE_TID, secret_id=CONSOLE_SID)
+    d, _ = lcg.draws(result["rng"], 5)
+    methods = {"1 (clean)": _ivs_from(d[2], d[3]),
+               "2 (mev20)": _ivs_from(d[3], d[4]),
+               "4 (bs52/bs54)": _ivs_from(d[2], d[4])}
+    mon = rng_countdown._mon_from(result["rng"], CONSOLE_TID, CONSOLE_SID)
+    assert mon["shiny"] and mon["nature"] == 13
+    for name, ivs in methods.items():
+        assert all(iv >= floor for iv, floor in zip(ivs, criteria.iv_minimums)), (name, ivs)
+
+
+@needs_unicorn
+def test_the_two_placement_search_refuses_what_the_one_placement_search_accepts():
+    """The two stubs have to actually differ, or the run proves nothing. From the same state,
+    mon-seek-far stops at the first state that satisfies ONE placement and mon-seek-both walks
+    past it - so `both`'s answer is never earlier than `far`'s, and on at least one seed it is
+    strictly later because `far`'s answer fails Method 2."""
+    criteria = native_script.MonCriteria(natures=(13,), iv_minimums=(0, 0, 0, 20, 0, 0))
+    strictly_later = 0
+    for state in (0x12345678, 0x7041F74F, 0xDEADBEEF, 1):
+        far = native_script.emulate_body_script(
+            native_script.build_mon_hunt_far_script(129, 5, criteria=criteria),
+            rng_state=state, trainer_id=CONSOLE_TID, secret_id=CONSOLE_SID)["rng"]
+        both = native_script.emulate_body_script(
+            native_script.build_mon_hunt_both_script(129, 5, criteria=criteria),
+            rng_state=state, trainer_id=CONSOLE_TID, secret_id=CONSOLE_SID)["rng"]
+        d, _ = lcg.draws(far, 5)
+        if not all(iv >= f for iv, f in zip(_ivs_from(d[3], d[4]), criteria.iv_minimums)):
+            strictly_later += 1
+            assert far != both, hex(state)
+    assert strictly_later, "no seed exercised the difference; the test proves nothing"
+
+
+def test_the_second_placement_squares_the_iv_term_and_nothing_else():
+    """The shiny and nature terms come from the personality, which is drawn BEFORE the stray and
+    is the same word in every method, so only the IV term is raised."""
+    criteria = native_script.MonCriteria(natures=(13,), iv_minimums=(0, 0, 0, 20, 0, 0))
+    one = native_script.probability_for(criteria, 1)
+    two = native_script.probability_for(criteria, 2)
+    assert one == criteria.probability
+    assert two == pytest.approx(one * (12 / 32))
+    # And the freeze it buys stays inside the ceiling at the confidence the card actually uses.
+    cap = native_script.cap_for(criteria, native_script.BOTH_CONFIDENCE, 2)
+    cost = native_script.search_cost(criteria, cap, 2)
+    assert cost["worst_frames"] <= native_script.MAX_FREEZE_FRAMES
+    assert cost["expected_seconds"] < 6
