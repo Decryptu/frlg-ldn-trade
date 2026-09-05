@@ -818,6 +818,17 @@ that reads 0x020370CC - `gSpecialVar_Result`.
 `Random`, found independently at bs13 out of its own literal pool. A misaligned window or a
 mis-decoded BL pair could not land on an address this project already held.
 
+**bs85: `AddBagItem(ITEM_MASTER_BALL, 5)` returned TRUE.** `--buffer-script call --call-address
+0x0809DA71 --call-arg 1 --call-arg 5`, and the console's own function put five Master Balls in the
+player's bag. The watched word at `gSpecialVar_Result` stayed 0 either side of the call, which is
+the confirmation that the WORKER was called and not the handler: `ScrCmd_additem` is what assigns
+that variable [src/scrcmd.c:468]. The bag lives in SaveBlock1, so the console commits it on its next
+save.
+
+That is the answer to "which ROM function to call next", end to end and in three runs: bs82 read the
+whole command table (derived from a measurement already on file, no search), bs84 turned 24 of its
+handlers into the workers behind them, and bs85 called one.
+
 **bs57: `gSpecialVars` = 0x081639A8, `gSpecialVar_0x8000` = 0x020370B4.** 939 frames, ~23 s, 2.75 MB
 searched, exactly one twelve-word run rising by 2 in all of it. The console held its link throughout.
 The four consistency checks are in `frlgsim/rom_map.py` beside the symbols.
