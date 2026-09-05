@@ -42,6 +42,56 @@ Everything here is a decompilation fact unless it is marked otherwise.
 `frlgsim/mystery_event.py` assembles all of them; `MysteryEventScript.blob()` holds the data and the
 assembler resolves the pointers.
 
+## Where the table IS, on the console - the method, not yet the answer
+
+**UNKNOWN: the address.** Every opcode in the table has been run on the console, but the table
+itself has only ever been read from the decomp. It carries no constant to search for, and its 17
+entries are unrelated function addresses, so `table-scan`'s arithmetic-run fingerprint does not
+match the table either. That is why it was still open after `gSpecials` and `gStdScripts` fell.
+
+**FACT, from the decomp: the table's ADDRESS is kept somewhere far easier to find than the table.**
+
+    static void InitMysteryEventScript(struct ScriptContext *ctx, u8 *script)
+    {
+        InitScriptContext(ctx, gMysteryEventScriptCmdTable, gMysteryEventScriptCmdTableEnd);
+        ...
+
+[`src/mystery_event_script.c:52`]. `struct ScriptContext` keeps those two as **adjacent words** at
++0x5C and +0x60 [`include/script.h`], the table is 17 entries so they are exactly **68 apart**, and
+the context is not a local:
+
+    EWRAM_DATA static struct ScriptContext sMysteryEventScriptContext = {0};
+
+[`src/mystery_event_script.c:27`]. So once any Mystery Event script has run, that pair sits in
+EWRAM for the rest of the boot, and two adjacent words exactly 68 apart is precisely the shape
+`table-scan` was built for - `--table-delta 0x44 --table-runlen 2`, over EWRAM rather than ROM. The
+scan answers with where the run starts **and what value it starts with**, and that value IS
+`gMysteryEventScriptCmdTable`. Locating and reading are one run, exactly as with `gSpecialVars`.
+
+Proven offline against a planted context, in `tests/test_mystery_event_table.py`: the hit's address
+is the context and the hit's value is the table.
+
+**The one thing that makes the run uninformative** is a context that has never been filled. It is
+zero until a script runs, and 0 and 0 are not 68 apart - so the scan has to FOLLOW a mystery-event
+gift **in the same boot**, with no power cycle between. A test asserts the empty case answers
+nothing, so that this is known before the run rather than after it.
+
+**The control costs nothing extra to think about.** The same shape with `--table-delta 0x358` (856,
+which is 214 entries) finds the FIELD script context instead, whose `cmdTable` is `gScriptCmdTable`
+- an address bs82 already measured at 0x08163650. A scan that cannot produce that on the console is
+not measuring what it thinks it is.
+
+**Where a real answer has to fall.** `script_data` opens with `gScriptCmdTable` and the mystery
+event table is its LAST member, with `lib_text` immediately after [`ld_script_rev10.ld:318-328`] -
+so `gMysteryEventScriptCmdTableEnd` is the end of `script_data` itself. That brackets the answer
+between the highest event script read off the console (0x081AB569, bs108) and `.rodata`, which
+starts below `gSpeciesInfo` at 0x0824CDC0 (bs39). A hit outside that window is a coincidence in
+EWRAM, not the table.
+
+Once it is measured, bs84's method applies unchanged: the 17 entries are handler addresses, a 1 KB
+dump of them reads the workers out by position, and the Mystery Event VM becomes as callable as the
+field-script engine already is.
+
 ## Why `checkcompat` is optional
 
 `checkcompat` looks mandatory. It is the first command of every official script, it gates the
