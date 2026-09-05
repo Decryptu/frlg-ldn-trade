@@ -758,6 +758,29 @@ Scripted encounters so far: bs53 Method 1, mev19 Method 1, mev20 **Method 2**, m
 mev22 **Method 4** — two in five, and BOTH stray methods occur here, on a path that had looked
 clean.
 
+### Where a hunt writes its report, and why that is safe
+
+`asm/field/mon-seek-log.s` writes `{marker, start, found, iterations, cap}` to
+`gSaveBlock1Ptr + 0x348C` — `u8 unused_348C[400]` [decomp:include/global.h]. Two things had to be
+true before pointing native code at the save at all, and both were checked rather than assumed:
+
+- **bs65 read all 400 bytes off this console as zero**, before anything was ever written there. The
+  decomp's name for the block is therefore true of the build the Switch runs, not only of the
+  source. That dump was sized to 400 so it stopped one byte short of `ramScript` at 0x361C: a
+  region that changes between the CRC frame and the send frame is what cost lg172 and lg173, and
+  the RAM script is written during a session.
+- **It is outside `ramScript`**, so `CalculateRamScriptChecksum` is untouched and the binding
+  survives. The player can talk to their MOM again and the log is simply overwritten.
+
+It is in the save, so it survives the battle — `MoveSaveBlocks_ResetHeap` copies the blocks rather
+than abandoning them [decomp:src/load_save.c] — and reaches flash when the player saves. Read it
+back with the dump that was already being done:
+
+    --buffer-script save-dump --dump-block sav1 --dump-offset 0x348C --dump-size 32
+
+and `native_script.decode_hunt_log`. **A miss is legible now too**: an exhausted search writes
+`found` 0 with the marker present, which until now was indistinguishable from a stub that never ran.
+
 ### The cost of an iteration, measured instead of estimated
 
 `asm/field/mon-seek-log.s` counts its own loop, so the instruction count is exact rather than
