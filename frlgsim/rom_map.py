@@ -65,6 +65,11 @@ SEED_RNG = 0x080486D0               # void SeedRng(u16), whose pool names gRngVa
 # answer. gSpecialVar_0x8000 may be hardcoded because it is EWRAM_DATA, a link-time global; a
 # save-block address may not (see SAVEBLOCK_MOVE_RANGE below).
 G_SPECIAL_VARS = 0x081639A8         # u16 *const gSpecialVars[21], by var id
+# DERIVED, no run of its own: `script_data` opens with gScriptCmdTable and puts gSpecialVars
+# immediately after it [decomp:ld_script_rev10.ld:318], and the table is 214 entries of 4 bytes.
+# One dump of it names every field-script command's handler on this build; frlgsim/scrcmd_names.py
+# carries the order. docs/buffer_script.md.
+G_SCRIPT_CMD_TABLE = G_SPECIAL_VARS - 214 * 4       # 0x08163650
 G_SPECIAL_VAR_0X8000 = 0x020370B4   # the first entry, read out of the table by the same run
 # UNCONFIRMED: only entry 0 was read. The rest follow from event_data.c's declaration order, which
 # is not the table's order; a dump of G_SPECIAL_VARS settles them.
