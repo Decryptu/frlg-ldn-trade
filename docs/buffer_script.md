@@ -905,6 +905,75 @@ console's own bytes offline from here on.
 Any script in the cartridge can be read this way: a `memory-dump` at its address, then
 `scrcmd.disassemble`.
 
+**The five standard scripts were too small to be that proof.** Between them they use seven
+commands, all of them fixed-width and none of them conditional in the decomp's macros. The next
+section is what they could not catch.
+
+### The conditional macros, and 31 operand widths that were wrong
+
+Found offline, with no run, by reading the generator against `asm/macros/event.inc` rather than
+trusting its output.
+
+`scripts/gen_scrcmd_args.py` read each `.macro` as a flat list of directives: opcode first, then a
+width per `.byte`/`.2byte`/`.4byte`. **Eleven macros have conditional bodies, and a flat read
+concatenates every branch.** What that produced:
+
+| command | read as | actually | why |
+|---|---|---|---|
+| `applymovement` | 14 bytes | 7 | the `.ifb \map` else-branch was appended, opcode byte and all |
+| `waitmovement`, `removeobject`, `addobject` | 6 | 3 | the same |
+| `applymovementat`, `waitmovementat`, `removeobjectat`, `addobjectat` | absent | 9, 5, 5, 5 | they ARE that else-branch: a second opcode the flat read never reached |
+| `warp` and the eight other warps | 1 | 8 | the operands are all in `formatwarp`, a sub-macro the read dropped |
+| the ten `buffer*` commands | 3 | 4 | the `stringvar` sub-macro's byte, dropped |
+| `showobjectat`, `hideobjectat`, `resetobjectsubpriority` | 3 | 5 | the two bytes of the `map` sub-macro, dropped |
+| `trainerbattle` | 114 | 6 + 4..16 | all ten type branches concatenated |
+
+31 commands measured wrong and 4 missing entirely, of 214. The generator now walks each macro's
+branches separately and each route is one shape; a sub-macro defined in another file is expanded
+from SUBMACROS (`map` is two bytes [asm/macros/map.inc:4]) and an unknown one **raises**, because
+silently dropping emitted bytes is how the stream drifted in the first place.
+
+Two shapes of macro had to be told apart to do it. `warp` is `.byte 0x39` then `formatwarp` - ONE
+instruction whose operands live in the callee, so the callee must be inlined. `giveitem` is
+`loadword` then `callstd` - TWO instructions, and inlining it would register opcode 0x0F with a
+tail that belongs to the next command. The rule that separates them: a macro is a COMMAND macro
+only when every route through it starts with a literal opcode byte of its own AND it reaches no
+other command macro. `formatwarp` starts with `map`, so it inlines; `loadword` is a command, so
+`giveitem` is a composition and carries no shape at all.
+
+`trainerbattle` is the one command whose length is not fixed: a head of type, trainer and localId,
+then one to four pointers chosen by the type [asm/macros/event.inc]. It is `scrcmd_args.VARIABLE`,
+and a type outside the decomp's ten makes `scrcmd.shape` answer None rather than walk on at a
+guessed length.
+
+**The proof is bs98's own bytes, re-read.** 0x081A7699..0x081A77A3 of the French cartridge is
+`data/scripts/trainer_battle.inc`, and it uses `applymovement`. Before:
+
+    0x081A76A8  4F  applymovement 0x800F, 0x081A77B0, 0x51, 0x0000, 0x36800D26
+    0x081A76B6  00  nop
+    0x081A76B7  21  compare_var_to_value 0x800D, 0x0000
+
+After:
+
+    0x081A76A8  4F  applymovement 0x800F, 0x081A77B0     @ VAR_LAST_TALKED, Movement_RevealTrainer
+    0x081A76AF  51  waitmovement 0x0000
+    0x081A76B2  26  specialvar 0x800D, 0x0036            @ VAR_RESULT, Script_HasTrainerBeenFought
+
+which is `EventScript_TryDoNormalTrainerBattle` [decomp:data/scripts/trainer_battle.inc:8], command
+for command. The old walk desynchronised by seven bytes at that first `applymovement` and never
+recovered - it invented a `nop`, and further on a `pokemartdecoration` in the middle of a trainer
+script, which is what a mis-measured instruction looks like when nothing checks it.
+
+The boundary test is the strong one, and this region gives seven of them rather than five: the
+whole file is labels laid end to end, and every run has to stop on a terminator at the byte before
+the next label. `goto` joined `end` and `return` as a terminator to make that exact - control never
+falls through an unconditional jump, and the decomp puts `EventScript_NoTrainerBattle` on the byte
+immediately behind one [trainer_battle.inc:17]. All 266 bytes are a fixture in
+`tests/test_script_cmd_table.py`.
+
+The lesson worth keeping: **a generated table is a hypothesis until something reads real bytes back
+through it**, and a fixture too small to use the broken part cannot tell you that it is broken.
+
 ### bs99-bs103: the rest of the handlers, read by tool
 
 `scratchpad/handler_workers.py` does bs84's reading automatically: for every handler inside a dump

@@ -5,9 +5,12 @@
 scripts/gen_scrcmd_args.py; the decomp's macros are the authority for the shapes, and
 scrcmd_names.COMMANDS for the names.
 
-A macro with a variable tail (the trainerbattle family, whose operands depend on their first byte)
-is absent here rather than guessed: `disassemble` stops at an opcode it has no shape for and says
-so, which is the honest answer for a byte stream that may not be a script at all.
+`VARIABLE[opcode]` is the other kind: a fixed `head` of operands, one of which (`select`) chooses
+the `tail`. Only the trainerbattle family is shaped this way - its ten types carry between one and
+four pointers - so an instruction there is 1 + sum(head) + sum(tails[head[select]]) bytes. A type
+that is not in `tails` is not a trainerbattle, and the disassembler stops rather than guess.
+
+Do not hand-edit: run the generator. Its docstring has the branch rules and the trap they cost.
 """
 
 # opcode -> (operand widths in bytes)
@@ -70,15 +73,15 @@ ARGS = {
     0x36: (2,),    # fadenewbgm
     0x37: (1,),    # fadeoutbgm
     0x38: (1,),    # fadeinbgm
-    0x39: (),    # warp
-    0x3A: (),    # warpsilent
-    0x3B: (),    # warpdoor
-    0x3C: (),    # warphole
-    0x3D: (),    # warpteleport
-    0x3E: (),    # setwarp
-    0x3F: (),    # setdynamicwarp
-    0x40: (),    # setdivewarp
-    0x41: (),    # setholewarp
+    0x39: (1, 1, 1, 2, 2),    # warp
+    0x3A: (1, 1, 1, 2, 2),    # warpsilent
+    0x3B: (1, 1, 1, 2, 2),    # warpdoor
+    0x3C: (1, 1),    # warphole
+    0x3D: (1, 1, 1, 2, 2),    # warpteleport
+    0x3E: (1, 1, 1, 2, 2),    # setwarp
+    0x3F: (1, 1, 1, 2, 2),    # setdynamicwarp
+    0x40: (1, 1, 1, 2, 2),    # setdivewarp
+    0x41: (1, 1, 1, 2, 2),    # setholewarp
     0x42: (2, 2),    # getplayerxy
     0x43: (),    # getpartysize
     0x44: (2, 2),    # additem
@@ -92,16 +95,19 @@ ARGS = {
     0x4C: (2,),    # removedecoration
     0x4D: (2,),    # checkdecor
     0x4E: (2,),    # checkdecorspace
-    0x4F: (2, 4, 1, 2, 4),    # applymovement
-    0x51: (2, 1, 2),    # waitmovement
-    0x53: (2, 1, 2),    # removeobject
-    0x55: (2, 1, 2),    # addobject
+    0x4F: (2, 4),    # applymovement
+    0x50: (2, 4, 1, 1),    # applymovement
+    0x51: (2,),    # waitmovement
+    0x52: (2, 1, 1),    # waitmovement
+    0x53: (2,),    # removeobject
+    0x54: (2, 1, 1),    # removeobject
+    0x55: (2,),    # addobject
+    0x56: (2, 1, 1),    # addobject
     0x57: (2, 2, 2),    # setobjectxy
-    0x58: (2,),    # showobjectat
-    0x59: (2,),    # hideobjectat
+    0x58: (2, 1, 1),    # showobjectat
+    0x59: (2, 1, 1),    # hideobjectat
     0x5A: (),    # faceplayer
     0x5B: (2, 1),    # turnobject
-    0x5C: (1, 2, 2, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4),    # trainerbattle
     0x5D: (),    # dotrainerbattle
     0x5E: (),    # gotopostbattlescript
     0x5F: (),    # gotobeatenscript
@@ -134,15 +140,15 @@ ARGS = {
     0x7A: (2,),    # giveegg
     0x7B: (1, 1, 2),    # setmonmove
     0x7C: (2,),    # checkpartymove
-    0x7D: (2,),    # bufferspeciesname
-    0x7E: (),    # bufferleadmonspeciesname
-    0x7F: (2,),    # bufferpartymonnick
-    0x80: (2,),    # bufferitemname
-    0x81: (2,),    # bufferdecorationname
-    0x82: (2,),    # buffermovename
-    0x83: (2,),    # buffernumberstring
-    0x84: (2,),    # bufferstdstring
-    0x85: (4,),    # bufferstring
+    0x7D: (1, 2),    # bufferspeciesname
+    0x7E: (1,),    # bufferleadmonspeciesname
+    0x7F: (1, 2),    # bufferpartymonnick
+    0x80: (1, 2),    # bufferitemname
+    0x81: (1, 2),    # bufferdecorationname
+    0x82: (1, 2),    # buffermovename
+    0x83: (1, 2),    # buffernumberstring
+    0x84: (1, 2),    # bufferstdstring
+    0x85: (1, 4),    # bufferstring
     0x86: (4,),    # pokemart
     0x87: (4,),    # pokemartdecoration
     0x88: (4,),    # pokemartdecoration2
@@ -177,8 +183,8 @@ ARGS = {
     0xA5: (),    # doweather
     0xA6: (1,),    # setstepcallback
     0xA7: (2,),    # setmaplayoutindex
-    0xA8: (2, 1),    # setobjectsubpriority
-    0xA9: (2,),    # resetobjectsubpriority
+    0xA8: (2, 1, 1, 1),    # setobjectsubpriority
+    0xA9: (2, 1, 1),    # resetobjectsubpriority
     0xAA: (1, 1, 2, 2, 1, 1),    # createvobject
     0xAB: (1, 1),    # turnvobject
     0xAC: (2, 2),    # opendoor
@@ -200,14 +206,14 @@ ARGS = {
     0xBC: (1, 4),    # vcall_if
     0xBD: (4,),    # vmessage
     0xBE: (4,),    # vbuffermessage
-    0xBF: (4,),    # vbufferstring
+    0xBF: (1, 4),    # vbufferstring
     0xC0: (1, 1),    # showcoinsbox
     0xC1: (1, 1),    # hidecoinsbox
     0xC2: (1, 1),    # updatecoinsbox
     0xC3: (1,),    # incrementgamestat
-    0xC4: (),    # setescapewarp
+    0xC4: (1, 1, 1, 2, 2),    # setescapewarp
     0xC5: (),    # waitmoncry
-    0xC6: (2,),    # bufferboxname
+    0xC6: (1, 2),    # bufferboxname
     0xC7: (1,),    # textcolor
     0xC8: (4,),    # loadhelp
     0xC9: (),    # unloadhelp
@@ -218,9 +224,30 @@ ARGS = {
     0xCE: (2,),    # checkmonmodernfatefulencounter
     0xCF: (),    # trywondercardscript
     0xD0: (2,),    # setworldmapflag
-    0xD1: (),    # warpspinenter
+    0xD1: (1, 1, 1, 2, 2),    # warpspinenter
     0xD2: (2, 1),    # setmonmetlocation
     0xD3: (4,),    # getbraillestringwidth
-    0xD4: (2, 2),    # bufferitemnameplural
+    0xD4: (1, 2, 2),    # bufferitemnameplural
+}
+
+# opcode -> (head widths, index of the head operand that picks the tail,
+#           {that operand's value: tail widths})
+VARIABLE = {
+    0x5C: {    # trainerbattle
+        "head": (1, 2, 2),
+        "select": 0,
+        "tails": {
+            0: (4, 4),
+            1: (4, 4, 4),
+            2: (4, 4, 4),
+            3: (4,),
+            4: (4, 4, 4),
+            5: (4, 4),
+            6: (4, 4, 4, 4),
+            7: (4, 4, 4),
+            8: (4, 4, 4, 4),
+            9: (4, 4),
+        },
+    },
 }
 

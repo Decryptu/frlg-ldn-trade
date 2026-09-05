@@ -8,6 +8,9 @@ per builder. `native_script` adds the two commands that stage and run code (`set
 """
 
 OP_END = 0x02
+OP_RETURN = 0x03
+OP_GOTO = 0x05
+OP_GOTOSTD = 0x08
 OP_CALLSTD = 0x09
 OP_COPYBYTE = 0x15
 OP_SETVAR = 0x16
@@ -69,10 +72,60 @@ RAM_SCRIPT_VIRTUAL_BASE = 0x08000000
 # macros (scrcmd_args.ARGS, generated). Together they turn a dump into the script it is - which is
 # the only way to check a pointer into script data is really a script. docs/buffer_script.md.
 
+# Control never falls through these, so a linear walk stops: they are where one script ends and the
+# next begins. `goto` is in the set because the decomp's own labels sit right behind one -
+# EventScript_TryDoNormalTrainerBattle ends `goto EventScript_DoTrainerBattle` and
+# EventScript_NoTrainerBattle is the next byte [data/scripts/trainer_battle.inc:17].
+TERMINATORS = (OP_END, OP_RETURN, OP_GOTO, OP_GOTOSTD)
+
+
+def shape(data, base, cursor):
+    """-> (name, operands, length) for the instruction at offset `cursor`, or None if there is not
+    one there. An operand is (width, value). `length` counts the opcode byte.
+
+    Most commands have one fixed shape [scrcmd_args.ARGS]. The trainerbattle family has a fixed
+    head and a tail chosen by the head's own type byte [scrcmd_args.VARIABLE]: a type outside that
+    table is not a trainerbattle at all, so this answers None rather than walk on at a guessed
+    length - which is the whole point, since every byte after a mis-measured instruction is noise.
+    """
+    from . import scrcmd_args, scrcmd_names
+    if not 0 <= cursor < len(data):
+        return None
+    opcode = data[cursor]
+    name = scrcmd_names.COMMANDS[opcode] if opcode < scrcmd_names.SCRIPT_CMD_COUNT else "?"
+
+    def read(widths, at):
+        operands = []
+        for width in widths:
+            chunk = data[at:at + width]
+            if len(chunk) < width:
+                return None, at
+            operands.append((width, int.from_bytes(chunk, "little")))
+            at += width
+        return operands, at
+
+    widths = scrcmd_args.ARGS.get(opcode)
+    if widths is not None:
+        operands, at = read(widths, cursor + 1)
+        return None if operands is None else (name, operands, at - cursor)
+
+    variable = scrcmd_args.VARIABLE.get(opcode)
+    if variable is None:
+        return None
+    head, at = read(variable["head"], cursor + 1)
+    if head is None:
+        return None
+    tail_widths = variable["tails"].get(head[variable["select"]][1])
+    if tail_widths is None:
+        return None
+    tail, at = read(tail_widths, at)
+    return None if tail is None else (name, head + tail, at - cursor)
+
+
 def disassemble(data, base, start=None, limit=64):
     """-> lines of `ADDRESS  opcode  name  operands` for the script at `start` in a dump loaded at
-    `base`. Stops at `end`/`return`, at an opcode with no fixed shape, or when the dump runs out."""
-    from . import scrcmd_args, scrcmd_names
+    `base`. Stops at a TERMINATOR, at an opcode it cannot measure, or when the dump runs out."""
+    from . import scrcmd_names
     data = bytes(data)
     cursor = (base if start is None else start) - base
     lines = []
@@ -81,23 +134,18 @@ def disassemble(data, base, start=None, limit=64):
             lines.append(f"  0x{base + cursor:08X}  (past the end of the dump)")
             break
         opcode = data[cursor]
-        name = (scrcmd_names.COMMANDS[opcode] if opcode < scrcmd_names.SCRIPT_CMD_COUNT
-                else "?")
-        widths = scrcmd_args.ARGS.get(opcode)
-        if widths is None:
-            lines.append(f"  0x{base + cursor:08X}  {opcode:02X}  {name}: no fixed shape, stopping")
+        measured = shape(data, base, cursor)
+        if measured is None:
+            name = (scrcmd_names.COMMANDS[opcode] if opcode < scrcmd_names.SCRIPT_CMD_COUNT
+                    else "?")
+            lines.append(f"  0x{base + cursor:08X}  {opcode:02X}  {name}: "
+                         "no shape here, stopping")
             break
-        operands, at = [], cursor + 1
-        for width in widths:
-            chunk = data[at:at + width]
-            if len(chunk) < width:
-                operands.append("(truncated)")
-                break
-            operands.append(f"0x{int.from_bytes(chunk, 'little'):0{2 * width}X}")
-            at += width
-        lines.append(f"  0x{base + cursor:08X}  {opcode:02X}  {name} " + ", ".join(operands))
-        cursor = at
-        if opcode in (OP_END, 0x03):        # end, return
+        name, operands, length = measured
+        rendered = ", ".join(f"0x{value:0{2 * width}X}" for width, value in operands)
+        lines.append(f"  0x{base + cursor:08X}  {opcode:02X}  {name} " + rendered)
+        cursor += length
+        if opcode in TERMINATORS:
             break
     return lines
 
@@ -106,15 +154,12 @@ def looks_like_a_script(data, base, start, steps=6):
     """-> whether `steps` instructions decode with known shapes and stay inside the dump. A pointer
     into script data answers True; a pointer into code or a table does not, which is what makes
     this a check on gStdScripts rather than a rendering of it."""
-    from . import scrcmd_args
     data, cursor = bytes(data), start - base
     for _ in range(steps):
-        if not 0 <= cursor < len(data):
+        measured = shape(data, base, cursor)
+        if measured is None:
             return False
-        widths = scrcmd_args.ARGS.get(data[cursor])
-        if widths is None:
-            return False
-        cursor += 1 + sum(widths)
-        if data[cursor - 1 - sum(widths)] in (OP_END, 0x03):
+        if data[cursor] in TERMINATORS:
             return True
+        cursor += measured[2]
     return True

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate frlgsim/scrcmd_args.py from the decompilation's own script macros.
+r"""Regenerate frlgsim/scrcmd_args.py from the decompilation's own script macros.
 
 A field script is a byte stream: one opcode then its operands, and the operand WIDTHS are what say
 where the next opcode starts. asm/macros/event.inc is the authority - each macro emits its opcode
@@ -8,6 +8,39 @@ it rather than transcribed. scrcmd_names.COMMANDS already gives the names; this 
 and together they disassemble any script the console holds.
 
     ./.venv/bin/python scripts/gen_scrcmd_args.py [~/pokefirered]
+
+Eleven macros have CONDITIONAL bodies and they cannot be read as a flat list of directives, which
+is what this generator used to do - it concatenated every branch, so `applymovement` came out 14
+bytes long instead of 7 and `trainerbattle` 114 instead of 6 plus a tail. Each branch is walked
+separately here, and a macro's branches resolve one of two ways:
+
+  - different opcodes, one per branch (`applymovement`/`applymovementat` are the two halves of one
+    `.ifb \map`), which is two ordinary ARGS entries; or
+  - one opcode with a different tail per branch (`trainerbattle`, ten of them), which is a VARIABLE
+    entry: a fixed head, and the tail chosen by one of the head's own operands.
+
+A line inside a command macro that emits bytes without being a `.byte`/`.2byte`/`.4byte` directive
+is a macro invocation, and there are three kinds. A macro event.inc defines itself is INLINED at
+the call site - `warp` is `.byte 0x39` then `formatwarp`, and only the callee knows the five
+operands that follow, so dropping the call would lose them. A macro named by a PARAMETER
+(`\jump \condition`) cannot be resolved and its route is dropped; the macro it stands for is read
+on its own. A macro defined in ANOTHER file (`map \map`, two bytes, asm/macros/map.inc) has its
+widths in SUBMACROS, and an unknown one RAISES rather than being skipped, because silently dropping
+emitted bytes is exactly how the operand stream drifts.
+
+Which brings the last distinction: `warp` is `.byte 0x39` then `formatwarp`, ONE instruction, but
+`giveitem` is `loadword` then `callstd`, TWO - and inlining alone cannot tell them apart, because
+both come out as one long emit sequence. A macro is a COMMAND macro (one instruction, one shape)
+only when every route through it starts with a literal `.byte 0xNN` of its own AND it does not
+reach another command macro. `formatwarp` starts with `map`, `stringvar` has a `.byte \id` route,
+so neither is a command macro and both inline; `loadword` is one, so `giveitem` is a composition
+and is not read for shapes at all - `loadword` and `callstd` already carry them.
+
+Inlining needs no argument substitution: a callee's branches are taken for every combination, and
+what is read off each route is the WIDTHS, which do not depend on the values passed. `formatwarp`
+emits `.byte`, `.2byte`, `.2byte` down all four of its branches; `stringvar` one `.byte` down all
+four of its. Where a callee's branches did differ in width, the opcode would come out VARIABLE and
+the selector check would refuse it rather than pick one.
 """
 import pathlib
 import re
@@ -16,6 +49,12 @@ import sys
 DECOMP = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "~/pokefirered").expanduser()
 OUT = pathlib.Path(__file__).resolve().parent.parent / "frlgsim" / "scrcmd_args.py"
 
+WIDTHS = {".byte": 1, ".2byte": 2, ".4byte": 4}
+
+# Sub-macros invoked from inside a command macro, and the widths they emit.
+# `map` outputs the map group and the map number as separate bytes [asm/macros/map.inc:4].
+SUBMACROS = {"map": (1, 1)}
+
 HEADER = '''"""Operand widths for the field-script commands, from asm/macros/event.inc.
 
 `ARGS[opcode]` is a tuple of operand sizes in bytes, in order, so an instruction is
@@ -23,45 +62,211 @@ HEADER = '''"""Operand widths for the field-script commands, from asm/macros/eve
 scripts/gen_scrcmd_args.py; the decomp's macros are the authority for the shapes, and
 scrcmd_names.COMMANDS for the names.
 
-A macro with a variable tail (the trainerbattle family, whose operands depend on their first byte)
-is absent here rather than guessed: `disassemble` stops at an opcode it has no shape for and says
-so, which is the honest answer for a byte stream that may not be a script at all.
+`VARIABLE[opcode]` is the other kind: a fixed `head` of operands, one of which (`select`) chooses
+the `tail`. Only the trainerbattle family is shaped this way - its ten types carry between one and
+four pointers - so an instruction there is 1 + sum(head) + sum(tails[head[select]]) bytes. A type
+that is not in `tails` is not a trainerbattle, and the disassembler stops rather than guess.
+
+Do not hand-edit: run the generator. Its docstring has the branch rules and the trap they cost.
 """
 
 # opcode -> (operand widths in bytes)
 ARGS = {
 '''
 
-WIDTHS = {".byte": 1, ".2byte": 2, ".4byte": 4}
+
+def parse_body(lines, bodies, seen=()):
+    """-> a node list for one macro body. A node is ('emit', width) or ('cond', [(label, nodes)]).
+
+    `.if`/`.ifb`/`.ifnb` open a conditional, `.elseif`/`.else` add an arm, `.endif` closes it.
+    Nesting is handled by recursion on the arm's own lines. `bodies` is every macro event.inc
+    defines, by name, so a call to one is inlined here; `seen` guards against a macro reaching
+    itself."""
+    nodes, index = [], 0
+    while index < len(lines):
+        line = lines[index]
+        if re.match(r"\.(if|ifb|ifnb|ifdef|ifndef)\b", line):
+            depth, arms, label, arm, index = 1, [], line, [], index + 1
+            while index < len(lines):
+                inner = lines[index]
+                if re.match(r"\.(if|ifb|ifnb|ifdef|ifndef)\b", inner):
+                    depth += 1
+                elif inner.startswith(".endif"):
+                    depth -= 1
+                    if depth == 0:
+                        arms.append((label, arm))
+                        break
+                elif depth == 1 and re.match(r"\.(elseif|else)\b", inner):
+                    arms.append((label, arm))
+                    label, arm, index = inner, [], index + 1
+                    continue
+                arm.append(inner)
+                index += 1
+            nodes.append(("cond", [(lab, parse_body(body, bodies, seen))
+                                   for lab, body in arms]))
+        else:
+            directive = line.split()[0] if line.split() else ""
+            if directive in WIDTHS:
+                nodes.append(("emit", WIDTHS[directive], line))
+            elif directive in SUBMACROS:
+                nodes.extend(("emit", w, line) for w in SUBMACROS[directive])
+            elif directive in bodies and directive not in seen:
+                nodes.extend(parse_body(bodies[directive], bodies, seen + (directive,)))
+            elif directive in bodies or directive.startswith("\\"):
+                # A macro named by a PARAMETER cannot be resolved, and neither can a macro that has
+                # reached itself. The route carries no shape; the callee is read on its own.
+                nodes.append(("opaque", 0, line))
+            elif directive and not directive.startswith("."):
+                raise SystemExit(
+                    f"unknown sub-macro {directive!r} emits an unknown number of bytes: "
+                    f"add it to SUBMACROS with its widths ({line!r})")
+        index += 1
+    return nodes
+
+
+def paths(nodes):
+    """-> every (labels, emits) route through a node list. One route is one shape.
+
+    An emit is (width, source line, came from inside a conditional arm). That last flag is what
+    separates a variable command's fixed HEAD from its per-branch tail: taking the longest common
+    prefix of the shapes instead would swallow the pointer that every trainerbattle type happens to
+    share."""
+    routes = [((), ())]
+    for node in nodes:
+        if node[0] == "opaque":
+            return []                      # this route expands another macro: it has no shape here
+        if node[0] == "emit":
+            routes = [(labels, emits + ((node[1], node[2], False),)) for labels, emits in routes]
+            continue
+        routes = [(labels + (label,) + arm_labels,
+                   emits + tuple((w, line, True) for w, line, _ in arm_emits))
+                  for labels, emits in routes
+                  for label, arm in node[1]
+                  for arm_labels, arm_emits in paths(arm)]
+    return routes
+
+
+def reaches_a_command(name, bodies, is_command, seen=()):
+    """-> whether `name` invokes a command macro, directly or through another composition."""
+    if name in seen:
+        return False
+    for line in bodies[name]:
+        callee = line.split()[0]
+        if callee in bodies and (is_command(callee)
+                                 or reaches_a_command(callee, bodies, is_command, seen + (name,))):
+            return True
+    return False
+
+
+def command_macros(bodies):
+    """-> a memoised `is_command(name)`. A command macro emits exactly one instruction: every route
+    through it begins with a literal opcode byte of its own, and it reaches no other command."""
+    memo = {}
+
+    def is_command(name, stack=()):
+        if name in memo:
+            return memo[name]
+        if name in stack:
+            return False                   # a cycle cannot be a single instruction
+        memo[name] = False                 # provisional, so a re-entry answers False rather than loop
+        routes = paths(parse_body(bodies[name], bodies, (name,)))
+        literal = bool(routes) and all(
+            emits and re.fullmatch(r"\.byte\s+0x[0-9a-fA-F]+", emits[0][1])
+            for _labels, emits in routes)
+        answer = literal and not reaches_a_command(
+            name, bodies, lambda other: is_command(other, stack + (name,)))
+        memo[name] = answer
+        return answer
+
+    return is_command
+
+
+def constants(path, prefix):
+    """-> {NAME: value} for the `#define PREFIX...` lines of a decomp header."""
+    text = (DECOMP / path).read_text()
+    return {name: int(value, 0)
+            for name, value in re.findall(rf"^#define\s+({prefix}\w*)\s+(\d+)\s*$", text, re.M)}
 
 
 def main():
     text = (DECOMP / "asm" / "macros" / "event.inc").read_text()
-    table = {}
-    for block in re.findall(r"^\s*\.macro\s+(\w+)([^\n]*)\n(.*?)^\s*\.endm", text,
-                            re.M | re.S):
-        name, _params, body = block
-        emits = re.findall(r"^\s*(\.byte|\.2byte|\.4byte)\s+(.+)$", body, re.M)
-        if not emits or emits[0][0] != ".byte":
-            continue                      # a helper macro, not a command
-        try:
-            opcode = int(emits[0][1].strip().split()[0], 0)
-        except ValueError:
-            continue                      # the opcode itself is symbolic: not a command macro
-        if any(w not in WIDTHS for w, _ in emits[1:]):
+    battle_types = constants("include/constants/battle_setup.h", "TRAINER_BATTLE_")
+
+
+    shapes = {}                            # opcode -> [(macro, branch labels, emits)]
+    macros = re.findall(r"^\s*\.macro\s+(\w+)([^\n]*)\n(.*?)^\s*\.endm", text, re.M | re.S)
+    bodies = {name: [line for line in
+                     (re.sub(r"@.*$", "", raw).strip() for raw in body.splitlines()) if line]
+              for name, _params, body in macros}
+    is_command = command_macros(bodies)
+    for name, _params, _body in macros:
+        if not is_command(name):
+            continue                       # a composition: the macros it calls carry the shapes
+        for labels, emits in paths(parse_body(bodies[name], bodies, (name,))):
+            if not emits or emits[0][0] != 1:
+                continue                   # a helper macro: its first emit is not a one-byte opcode
+            try:
+                opcode = int(emits[0][1].split()[1], 0)
+            except (ValueError, IndexError):
+                continue                   # the opcode itself is symbolic: not a command macro
+            shapes.setdefault(opcode, []).append((name, labels, emits[1:]))
+
+    fixed, variable = {}, {}
+    for opcode, routes in sorted(shapes.items()):
+        widths = {tuple(width for width, _line, _branch in emits) for _n, _l, emits in routes}
+        if len(widths) == 1:
+            fixed[opcode] = (routes[0][0], widths.pop())
             continue
-        widths = tuple(WIDTHS[w] for w, _ in emits[1:])
-        if opcode in table and table[opcode][1] != widths:
-            continue                      # two macros, two shapes: leave it out rather than guess
-        table.setdefault(opcode, (name, widths))
+        # One opcode, several shapes. The head is what every route emits before its first
+        # conditional arm; the tail is chosen by the head operand that arm tests.
+        heads = {tuple((w, line) for w, line, branch in emits if not branch)
+                 for _n, _l, emits in routes}
+        if len(heads) != 1:
+            raise SystemExit(f"opcode {opcode:#04x}: routes disagree on the fixed head {heads}")
+        head_emits = heads.pop()
+        head = tuple(width for width, _line in head_emits)
+        tails, selects, name = {}, set(), None
+        for macro, labels, emits in routes:
+            name = macro
+            branch = next((match for match in
+                           (re.search(r"\\(\w+)\s*==\s*(\w+)", label) for label in labels)
+                           if match), None)
+            if branch is None or branch.group(2) not in battle_types:
+                raise SystemExit(f"{macro}: cannot tell which value picks a shape ({labels})")
+            # which HEAD operand is the macro parameter the branch tests? The one emitted from it.
+            wanted = "\\" + branch.group(1)
+            where = [index for index, (_w, line) in enumerate(head_emits)
+                     if wanted in line.split()[1:]]
+            if len(where) != 1:
+                raise SystemExit(f"{macro}: {wanted} is not exactly one head operand ({where})")
+            selects.add(where[0])
+            tails[battle_types[branch.group(2)]] = tuple(
+                width for width, _line, branch_emit in emits if branch_emit)
+        if len(selects) != 1:
+            raise SystemExit(f"{name}: branches disagree on which operand selects ({selects})")
+        variable[opcode] = (name, head, selects.pop(), tails)
+
     lines = [HEADER]
-    for opcode in sorted(table):
-        name, widths = table[opcode]
+    for opcode, (name, widths) in sorted(fixed.items()):
         lines.append(f"    0x{opcode:02X}: {widths!r},".replace(",)", ",)") + f"    # {name}")
     lines.append("}")
     lines.append("")
+    lines.append("# opcode -> (head widths, index of the head operand that picks the tail,")
+    lines.append("#           {that operand's value: tail widths})")
+    lines.append("VARIABLE = {")
+    for opcode, (name, head, select, tails) in sorted(variable.items()):
+        lines.append(f"    0x{opcode:02X}: {{    # {name}")
+        lines.append(f'        "head": {head!r},'.replace(",)", ",)"))
+        lines.append(f'        "select": {select},')
+        lines.append('        "tails": {')
+        for value, tail in sorted(tails.items()):
+            lines.append(f"            {value}: {tail!r},".replace(",)", ",)"))
+        lines.append("        },")
+        lines.append("    },")
+    lines.append("}")
+    lines.append("")
     OUT.write_text("\n".join(lines) + "\n")
-    print(f"wrote {OUT} ({len(table)} commands with a fixed shape)")
+    print(f"wrote {OUT} ({len(fixed)} fixed, {len(variable)} variable)")
 
 
 if __name__ == "__main__":
