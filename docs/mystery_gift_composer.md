@@ -91,6 +91,26 @@ The compiler shows `intro_message`, resumes the top-level stages using `VAR_MYST
 sets `FLAG_MYSTERY_GIFT_DONE` plus the card receipt flag on success. A later visit shows only
 `completed_message`. `GiftSpec(repeatable=True)` resets the cursor instead.
 
+### Writing the player's save: `SetVar` and `AddVar`
+
+`SetVar(variable, value)` emits `setvar` (0x16) and `AddVar(variable, value)` emits `addvar` (0x17),
+both restricted to a saved var (0x4000..0x40FF) or a special var (0x8000..0x8011). A stage
+`condition` of `VarEquals` compiles to `compare` + `vgoto_if`, and a stage whose condition is false
+is skipped, not abandoned - which is exactly the shape the official Altering Cave event has:
+
+```python
+delivery=DeliveryPlan(delivery=(
+    DeliveryStage(AddVar(VAR_ALTERING_CAVE_WILD_SET, 1)),
+    DeliveryStage(SetVar(VAR_ALTERING_CAVE_WILD_SET, 0),
+                  condition=VarEquals(VAR_ALTERING_CAVE_WILD_SET, 10)),
+    DeliveryStage(Message("There are rumors of rare POKEMON\nin ALTERING CAVE.")),
+))
+```
+
+with `GiftSpec(repeatable=True)`, because the script ends with `end` and not `endram`: the binding
+survives and each talk advances the var once. `--gift altering-cave`; see
+[What the gift link can still carry](mystery_gift_untried.md).
+
 `GiftSpec.shareable` maps to the Wonder Card `sendType` bits:
 
 | Value | Game behavior |

@@ -6,7 +6,7 @@ from pathlib import Path
 from . import charmap, ereader_trainer
 from .gift_composer import (
     BattleLegendary, BattlePokemon, GiftSpec, GiveEgg, GiveItem, GivePokemon,
-    Message, RequireSpecialResult, SetVar, ShowSprite, StampRallySpec,
+    AddVar, Message, RequireSpecialResult, SetVar, ShowSprite, StampRallySpec,
     SPECIAL_START_LEGENDARY_BATTLE,
 )
 from .mystery_gift import crc16
@@ -80,6 +80,8 @@ def _action_summary(action):
                 f"expected={action.expected})")
     if isinstance(action, SetVar):
         return f"SetVar(0x{action.variable:04X}, {action.value})"
+    if isinstance(action, AddVar):
+        return f"AddVar(0x{action.variable:04X}, +{action.value})"
     return type(action).__name__ + "()"
 
 

@@ -209,6 +209,15 @@ class SetVar:
 
 
 @dataclass(frozen=True)
+class AddVar:
+    """`addvar` (0x17): the var plus a constant, wrapping at 0x10000 like the game's own
+    [ScrCmd_addvar, decomp:src/scrcmd.c]. The official Altering Cave event is this and a wrap
+    [data/mystery_event_msg.s:327]."""
+    variable: int
+    value: int
+
+
+@dataclass(frozen=True)
 class Exit:
     pass
 
@@ -248,7 +257,7 @@ class AnyOf:
 Condition: TypeAlias = VarEquals | FlagSet | Not | AllOf | AnyOf
 GiftAction: TypeAlias = (
     Message | GiveItem | GivePokemon | GiveEgg | ShowSprite
-    | BattlePokemon | BattleLegendary | RequireSpecialResult | SetVar | Exit)
+    | BattlePokemon | BattleLegendary | RequireSpecialResult | SetVar | AddVar | Exit)
 _FALLIBLE_REWARD_TYPES = (GiveItem, GivePokemon, GiveEgg)
 _BATTLE_TYPES = (BattlePokemon, BattleLegendary)
 
@@ -457,7 +466,7 @@ def _validate_action(action, path):
         _validate_int(action.expected, 0, 0xFFFF,
                       f"{path}.expected", "expected result")
         _validate_message(action.failure_message, f"{path}.failure_message")
-    elif isinstance(action, SetVar):
+    elif isinstance(action, (SetVar, AddVar)):
         _validate_variable_id(action.variable, f"{path}.variable")
         _validate_int(action.value, 0, 0xFFFF, f"{path}.value", "value")
     elif isinstance(action, Exit):
@@ -949,6 +958,8 @@ def _emit_action(builder, action, *, sprite_id, failure_label, completed_label):
         builder.label(f"{failure_label}_success")
     elif isinstance(action, SetVar):
         builder.emit(_setvar(action.variable, action.value))
+    elif isinstance(action, AddVar):
+        builder.emit(bytes([_OP_ADDVAR]) + _u16(action.variable) + _u16(action.value))
     elif isinstance(action, Exit):
         builder.vgoto(completed_label)
     else:  # pragma: no cover - validation prevents this path.
@@ -1475,7 +1486,8 @@ __all__ = [
     "AllOf", "AnyOf", "BattleLegendary", "BattlePokemon", "DeliveryPlan",
     "DeliveryStage",
     "Exit", "FlagSet", "GiftSpec", "GiftValidationError", "GiveEgg", "GiveItem",
-    "GivePokemon", "MapPosition", "Message", "RelativeToPlayer", "SetVar", "ShowSprite",
+    "GivePokemon", "MapPosition", "Message", "RelativeToPlayer", "SetVar", "AddVar",
+    "ShowSprite",
     "Not", "RequireSpecialResult", "SHARE_ALWAYS", "SHARE_NEVER", "SHARE_ONCE",
     "SPECIAL_HAS_ALL_KANTO_MONS", "SPECIAL_START_LEGENDARY_BATTLE",
     "SHAREABLE_STATES", "StampRallySpec", "StampSlot", "VarEquals",

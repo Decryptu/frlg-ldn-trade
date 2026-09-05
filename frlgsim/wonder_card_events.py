@@ -1,4 +1,5 @@
 from .gift_composer import (
+    AddVar,
     AnyOf,
     BattleLegendary,
     DeliveryPlan,
@@ -1388,6 +1389,59 @@ RNG_DRAW_COUNT_GIFT = WonderGift(
 )
 
 
+GIFT_ALTERING_CAVE = "altering-cave"
+ALTERING_CAVE_FLAG_ID = 1004
+
+# VAR_ALTERING_CAVE_WILD_SET [decomp:include/constants/vars.h:71], read at the encounter:
+# `i += alteringCaveId` picks one of NUM_ALTERING_CAVE_TABLES consecutive wild headers, and an id
+# at or above the count is clamped to 0 [decomp:src/wild_encounter.c:192].
+VAR_ALTERING_CAVE_WILD_SET = 0x4024
+NUM_ALTERING_CAVE_TABLES = 9
+# The official script wraps at 10, not at 9 [decomp:data/mystery_event_msg.s:328]: id 9 is one the
+# reader clamps back to table 0, so a full cycle shows table 0 twice. Ported as it is written.
+ALTERING_CAVE_WRAP = 10
+SPECIES_ZUBAT = 41
+
+# `addvar VAR_ALTERING_CAVE_WILD_SET, 1` and a wrap - the whole of the official Altering Cave event
+# [decomp:data/mystery_event_msg.s:325]. It is repeatable on purpose: the script ends with `end`,
+# not `endram`, so the binding survives and each talk advances the cave one set. The var is at
+# SaveBlock1 + 0x1000 + 2 * 0x24 = +0x1048, which is how a run is checked without walking to Six
+# Island: --buffer-script save-dump --dump-block sav1 --dump-offset 0x1048.
+ALTERING_CAVE_GIFT = WonderGift(
+    slug=GIFT_ALTERING_CAVE,
+    card=WonderCardSpec(
+        icon_species=SPECIES_ZUBAT,
+        title="MYSTERY GIFT",
+        subtitle="Rumors from ALTERING CAVE",
+        body=(
+            "Rare POKEMON are rumored to",
+            "appear in ALTERING CAVE.",
+            "Talk to the delivery man on the",
+            "2nd floor of a POKEMON CENTER.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=ALTERING_CAVE_FLAG_ID,
+    ),
+    intro_message="Thank you for using the MYSTERY\nGIFT System.",
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            AddVar(VAR_ALTERING_CAVE_WILD_SET, 1),
+        ),
+        DeliveryStage(
+            SetVar(VAR_ALTERING_CAVE_WILD_SET, 0),
+            condition=VarEquals(VAR_ALTERING_CAVE_WILD_SET, ALTERING_CAVE_WRAP),
+        ),
+        DeliveryStage(
+            Message(
+                "There are rumors of rare POKEMON\n"
+                "in ALTERING CAVE."),
+        ),
+    )),
+    completed_message="There are rumors of rare POKEMON\nin ALTERING CAVE.",
+)
+
+
 GIFT_MASTER_BALL = "master-ball"
 MASTER_BALL_FLAG_ID = 1014
 
@@ -1427,6 +1481,8 @@ __all__ = [
     "GIFT_MEVENT_CELEBI", "MEVENT_CELEBI_GIFT", "MEVENT_CELEBI_FLAG_ID",
     "GIFT_MEVENT_NPC", "MEVENT_NPC_GIFT", "MEVENT_NPC_FLAG_ID",
     "GIFT_MASTER_BALL", "MASTER_BALL_GIFT", "MASTER_BALL_FLAG_ID",
+    "GIFT_ALTERING_CAVE", "ALTERING_CAVE_GIFT", "ALTERING_CAVE_FLAG_ID",
+    "VAR_ALTERING_CAVE_WILD_SET", "NUM_ALTERING_CAVE_TABLES", "ALTERING_CAVE_WRAP",
     "GIFT_RNG_SHINY_DITTO", "RNG_SHINY_DITTO_GIFT", "RNG_SHINY_DITTO_FLAG_ID",
     "RNG_DITTO_SEED", "SPECIES_DITTO", "build_rng_shiny_ditto_script",
     "build_mevent_npc_script",

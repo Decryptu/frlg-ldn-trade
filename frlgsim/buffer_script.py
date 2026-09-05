@@ -828,6 +828,15 @@ CREATE_MON_ANSWER_SIZE = CREATE_MON_HEADER_SIZE + PARTY_MON_SIZE + 4
 # erased by the console's own save seconds later. The offsets stay for reading it.
 SAV1_PARTY_COUNT = 0x34
 SAV1_PARTY = 0x38
+SAV1_VARS = 0x1000                  # u16 vars[VARS_COUNT], indexed by (id - VARS_START)
+
+
+def sav1_var_offset(var_id):
+    """-> where a saved var sits in SaveBlock1, for `save-dump --dump-block sav1 --dump-offset`.
+    `GetVarPointer` is `gSaveBlock1Ptr->vars[idx - VARS_START]` [decomp:src/event_data.c:186]."""
+    if not 0x4000 <= int(var_id) <= 0x40FF:
+        raise ValueError(f"0x{int(var_id):04X} is not a saved var (0x4000..0x40FF)")
+    return SAV1_VARS + 2 * (int(var_id) - 0x4000)
 
 # The status half of the party word the payload sends back.
 PARTY_WRITE_NONE = 0                # no party write was asked for

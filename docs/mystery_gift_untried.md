@@ -170,10 +170,31 @@ been observed changing yet.
 
 ### The smaller official scripts
 
-Verbatim in `data/mystery_event_msg.s`, none recreated:
+Verbatim in `data/mystery_event_msg.s`, one recreated (Altering Cave, below):
 
-- **Altering Cave** - `addvar VAR_ALTERING_CAVE_WILD_SET, 1` rotates the cave's wild set, read at
-  `wild_encounter.c:192`; ten sets exist.
 - **Battle Count Card** - a card that tracks wins, losses and trades against other holders of the
   same card, with a prize at three wins. Needs `MysteryGift_TryEnableStatsByFlagId`, which only arms
-  the counters while the console holds exactly that flag id [`mystery_gift.c`].
+  the counters while the console holds exactly that flag id [`mystery_gift.c`]. The counters it
+  would be built on are the ones the ledger above now watches.
+
+### Altering Cave - built, not yet run
+
+`--gift altering-cave` (flag id 1004) is the official script ported command for command
+[`data/mystery_event_msg.s:325`]: `addvar VAR_ALTERING_CAVE_WILD_SET, 1`, a wrap, and a message.
+It is repeatable, because the script ends with `end` and not `endram`, so each talk to the delivery
+man advances the cave one set.
+
+Two decomp facts shape it. The encounter reader does `i += alteringCaveId` against
+NUM_ALTERING_CAVE_TABLES = 9 consecutive wild headers and clamps anything at or above 9 to 0
+[`src/wild_encounter.c:192`], while **the official script wraps at 10, not at 9**
+[`:328`] - so one step of a full cycle is an id the reader turns back into table 0. Ported as
+written rather than corrected: the card is what the event was.
+
+The run does not need Six Island. `VAR_ALTERING_CAVE_WILD_SET` (0x4024) lives in
+`SaveBlock1.vars[0x24]`, at **SaveBlock1 + 0x1048** (`buffer_script.sav1_var_offset`), so the
+evidence is a save dump before and after:
+
+    --buffer-script save-dump --dump-block sav1 --dump-offset 0x1048 --dump-size 2
+
+UNKNOWN until a run: whether the var moves on this build, and whether the cave's wild set follows it
+on a console whose player can reach Outcast Island.
