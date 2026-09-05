@@ -848,6 +848,57 @@ two independent pairs. `AddMoney`'s cap and `RemoveMoney`'s floor are the game's
 `rom_map.SAV1_MONEY` and `SAV2_ENCRYPTION_KEY` hold the offsets, and `rom_map.CALLABLE` the four
 functions, so none of this costs a run again.
 
+### bs92-bs96: gSpecials, 444 more functions, and one of them called
+
+`ScrCmd_special` is the field engine's SECOND dispatch: a u16 index into `gSpecials`, bounds-checked
+against `gSpecialsEnd`, called through a veneer [decomp:src/scrcmd.c:101]. bs92 dumped 1 KB at
+0x0806D7C0 - the first handler window - and that command's own literal pool holds both ends:
+
+    gSpecials     0x081639FC        gSpecialsEnd  0x081640EC
+
+Three things make it a measurement rather than a reading, and none of them is the dump's own word.
+The span is 0x6F0 = **444 * 4**, which is exactly the number of `def_special` entries in
+`data/specials.inc`. The table starts at `gSpecialVars + 21 * 4`, which is the order the link script
+puts them in - the same reasoning that derived `gScriptCmdTable` at bs82, now confirmed from the
+other side. And the call goes through 0x081E2224, four bytes below the `_call_via_r1` veneer this
+project already held.
+
+**The index is the special**, so the decomp's ORDER makes every entry nameable:
+`scripts/gen_special_names.py` writes `frlgsim/special_names.py` from `data/specials.inc`, offline
+and at no cost, exactly as `scrcmd_names.COMMANDS` does for the 214 field commands.
+
+**bs93 and bs95 dumped the whole table** - 256 entries then the remaining 188 - and it proves its own
+alignment: every one of the 444 words came back a THUMB pointer into the cartridge, and the **171**
+indices the decomp calls `NullFieldSpecial` all came back with **one** address, across both dumps.
+A dump read at the wrong offset cannot do that. `rom_map.SPECIAL_ADDRESSES` holds all 444, and
+`rom_map.special_function("HealPlayerParty")` resolves one by name.
+
+The table also settles something the project reached from the opposite end: index 390 is
+`GetMysteryGiftCardStat`, and `MysteryEventScript_BattleCard` calls `special 390`
+[decomp:data/mystery_event_msg.s:162]. The Battle Count Card work never needed that address; the
+table now says it is 0x080D024C, and the two accounts agree.
+
+**bs94 called one, and the answer is the party.** A special takes no arguments and returns a u16, so
+the evidence has to be built around it - which is what a chain is for:
+
+    read8  [gPlayerPartyCount]   -> 4
+    read16 [party[0] + 0x56]     -> 254      current HP
+    read16 [party[0] + 0x58]     -> 254      max HP
+    write16 [party[0] + 0x56] = 1 -> 1       the lead mon, damaged by us
+    call HealPlayerParty()
+    read16 [party[0] + 0x56]     -> 254      the game's own healer put it back
+
+**bs96 called one WITH an argument.** A special reads its operands out of the special vars, so the
+idiom is write, call, read: `gSpecialVar_Result` = 2 (`GET_CARD_BATTLES_WON`), call special 390,
+and the return is the counter. It answered **3**, which is what cc1-cc4 put there, and the same run
+read the raw word at `SaveBlock1 + 0x3434` as 0x00000003 - the game's own accessor and the save
+itself agreeing inside one frame. `GET_CARD_NUM_TRADES` and `GET_NUM_STAMPS` both answered 0, the
+card having been replaced at bs80.
+
+That is the whole shape of the console's script layer now: 214 field commands (bs82), the workers
+behind two windows of them (bs84, bs89), and 444 specials (bs92-bs95) - with `call-chain` able to
+call any of them and check the answer in the same frame.
+
 ## `table-scan`: finding a table by its shape
 
 Every address found by searching so far rested on a constant that only one place could hold:

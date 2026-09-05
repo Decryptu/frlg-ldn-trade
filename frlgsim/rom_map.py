@@ -70,6 +70,28 @@ G_SPECIAL_VARS = 0x081639A8         # u16 *const gSpecialVars[21], by var id
 # One dump of it names every field-script command's handler on this build; frlgsim/scrcmd_names.py
 # carries the order. docs/buffer_script.md.
 G_SCRIPT_CMD_TABLE = G_SPECIAL_VARS - 214 * 4       # 0x08163650
+
+# --- gSpecials, bs92 ----------------------------------------------------------------------------
+# The field engine's SECOND dispatch table: ScrCmd_special reads a u16, bounds-checks &gSpecials[i]
+# against gSpecialsEnd and calls through it [decomp:src/scrcmd.c:101]. Both addresses came out of
+# that handler's own literal pool in one dump, needing no search and no scan.
+#
+# THREE CHECKS, none of them the dump's own: the span 0x081640EC - 0x081639FC is 0x6F0 = 444 * 4,
+# and 444 is exactly the length of data/specials.inc; the table starts at G_SPECIAL_VARS + 21 * 4,
+# which is the order ld_script puts them in; and the call goes through 0x081E2224, four bytes below
+# CALL_VIA_R1, so it is _call_via_r0 of the same veneer block.
+G_SPECIALS = 0x081639FC
+G_SPECIALS_END = 0x081640EC
+SPECIAL_COUNT = (G_SPECIALS_END - G_SPECIALS) // 4   # 444, and frlgsim/special_names.py names them
+CALL_VIA_R0 = 0x081E2224
+
+# DEDUCTION, not a measurement, and free: data/event_scripts.s puts `gStdScripts` immediately after
+# the `.include "data/specials.inc"` that ends gSpecials, under `.align 2` which gSpecialsEnd
+# already satisfies. So the ten standard scripts callstd reaches are at G_SPECIALS_END. Nothing
+# depends on this yet; a 40-byte dump would confirm it, every entry being a pointer into script
+# data rather than a THUMB function.
+G_STD_SCRIPTS = G_SPECIALS_END          # 0x081640EC, DEDUCED
+STD_SCRIPT_COUNT = 10
 G_SPECIAL_VAR_0X8000 = 0x020370B4   # the first entry, read out of the table by the same run
 # UNCONFIRMED: only entry 0 was read. The rest follow from event_data.c's declaration order, which
 # is not the table's order; a dump of G_SPECIAL_VARS settles them.
@@ -381,3 +403,137 @@ def leafgreen(symbol):
             f"{symbol!r} has not been measured on LeafGreen; have {sorted(LEAFGREEN)}. "
             "Do not substitute the FireRed value: the two builds differ at three or more points "
             "between 0x080486C8 and 0x0814CBFC (LEAFGREEN_DELTA_SEGMENTS).") from None
+
+
+# --- gSpecials as the console holds it, bs93 ----------------------------------------------------
+# All 444 entries, in two runs: bs93 dumped the first 256 at G_SPECIALS and bs95 the
+# remaining 188 at G_SPECIALS + 1024. frlgsim/special_names.SPECIALS
+# names them by index, and `special_function(name)` resolves one to a THUMB pointer.
+#
+# THE DUMP PROVES ITS OWN ALIGNMENT: every word came back a THUMB pointer into the cartridge, and
+# the 128 indices this half calls NullFieldSpecial all came back with ONE address (0x080CE8DC). A dump
+# read at the wrong offset could not produce that.
+SPECIAL_ADDRESSES = (
+    0x080A3A64, 0x08071900, 0x08081EAC, 0x08081F5C,
+    0x08084FA4, 0x08084FD0, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080848BC, 0x08084924, 0x0808494C, 0x0800D25C,
+    0x08085234, 0x080851E4, 0x08085224, 0x08084B64,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x0804FAF8,
+    0x0804FB38, 0x080A3D40, 0x08085288, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080A0240, 0x08083C1C,
+    0x08083E28, 0x08083E68, 0x08083C34, 0x08085D8C,
+    0x08083E78, 0x081107F4, 0x0811095C, 0x08083E00,
+    0x080900C8, 0x080A3C00, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CF9D8, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x08084980, 0x08072EF0, 0x080A4878, 0x08102AC0,
+    0x080C1564, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080A431C,
+    0x080A4334, 0x080A4370, 0x080A4388, 0x080CFABC,
+    0x080CFC8C, 0x080CFCBC, 0x080CE8DC, 0x080CE8DC,
+    0x080C1604, 0x080CE8DC, 0x0809DF2C, 0x08044338,
+    0x0808FB48, 0x0808FBEC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE1A8, 0x0805DF84, 0x080CE1B8,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE1D8,
+    0x080CE1F8, 0x080CE230, 0x080CE274, 0x080CE8DC,
+    0x080CE8DC, 0x080596D8, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080830E0, 0x080CFBA4, 0x080C33E4,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x08116E58,
+    0x08116D7C, 0x08116E98, 0x08116B58, 0x08116DC0,
+    0x08117004, 0x08116B9C, 0x08117024, 0x080866C0,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE268, 0x08049C84, 0x08049C9C, 0x08049770,
+    0x08049A94, 0x08049E70, 0x08049C48, 0x08048D68,
+    0x0804A310, 0x0804A2A0, 0x08049080, 0x08049020,
+    0x08048F10, 0x0804A608, 0x0804A7BC, 0x0804A694,
+    0x080D0D2C, 0x080A3808, 0x080A382C, 0x080A400C,
+    0x080CDEE0, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080A48C8, 0x080A48F0, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CDEF4, 0x080CE040, 0x080CE388, 0x080CE4C4,
+    0x080CED20, 0x080CE8DC, 0x080CE8DC, 0x080C3424,
+    0x080C34A4, 0x080C3690, 0x080C3538, 0x080C34F0,
+    0x080E8134, 0x080CE8DC, 0x080CE8DC, 0x080CE180,
+    0x080CE8DC, 0x080CE8DC, 0x080CE288, 0x080E9470,
+    0x080E9728, 0x080EA148, 0x080EA2FC, 0x080EB038,
+    0x080EA400, 0x080EA50C, 0x080EA78C, 0x080EA914,
+    0x080EAAB8, 0x080EAB58, 0x080EACD0, 0x080EAD4C,
+    0x080EADB8, 0x080A3D8C, 0x080EAF90, 0x080CE8DC,
+    0x080A3DE4, 0x080EF1AC, 0x080EF1FC, 0x080CE308,
+    0x080573B0, 0x0805767C, 0x08057D54, 0x08057640,
+    # --- bs95: indices 256..443, the rest of the table -------------------------------------
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080A0A2C, 0x080CE090,
+    0x080CE134, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080A4890, 0x080008D0,
+    0x080CDDB4, 0x080CEFB4, 0x080CE8DC, 0x080CE550,
+    0x080CE5A4, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE8DC, 0x080CE5C8, 0x080CE5D8, 0x0805FFC4,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE8DC,
+    0x080CE5FC, 0x080CE624, 0x080CE660, 0x0806D030,
+    0x0806D058, 0x08145B9C, 0x080CE8DC, 0x080CE320,
+    0x080CE8DC, 0x080CE8DC, 0x080CE694, 0x080CE8DC,
+    0x080CE6EC, 0x080CE8DC, 0x080CF09C, 0x080CE8DC,
+    0x080CE724, 0x08072210, 0x080CE744, 0x080832C0,
+    0x08083230, 0x08083314, 0x08083BE8, 0x080CE8DC,
+    0x080CE8DC, 0x0807EF10, 0x08081CC8, 0x08081DA0,
+    0x080CE8DC, 0x080CE8DC, 0x080E9970, 0x080831F0,
+    0x080CE8DC, 0x080CE8DC, 0x080CE8DC, 0x080CE870,
+    0x080C36FC, 0x080CE8DC, 0x080CE8DC, 0x0804FC28,
+    0x08082908, 0x080CE8DC, 0x080CE8DC, 0x0808C944,
+    0x080CE898, 0x080CE8DC, 0x080EB09C, 0x080A3C78,
+    0x080CE8DC, 0x0810F2D4, 0x0808315C, 0x080CE14C,
+    0x080CF2E0, 0x080CF778, 0x080CE8E0, 0x080CE908,
+    0x08060AA8, 0x080CEBC4, 0x080CECF4, 0x08049CE0,
+    0x080CF158, 0x080CF89C, 0x080CF8CC, 0x080CF8E8,
+    0x0810FEEC, 0x080D02B8, 0x080CFAFC, 0x080CFDD8,
+    0x080CFEE8, 0x080D0040, 0x0800CF90, 0x08119518,
+    0x0811A3A0, 0x0811C390, 0x08152BE8, 0x08071AA0,
+    0x0806D2D0, 0x0806D2AC, 0x0810FE4C, 0x0813138C,
+    0x081313F0, 0x0805855C, 0x0804A328, 0x0804A358,
+    0x0804A37C, 0x0804A3A4, 0x0804A3C4, 0x0814A8C8,
+    0x080CFFA8, 0x0812EFC0, 0x0812EFD4, 0x0812EFE8,
+    0x08147DC8, 0x0810F2B8, 0x0811D7B0, 0x0811D928,
+    0x08117400, 0x080CFFF0, 0x080D024C, 0x08114594,
+    0x08115E58, 0x0814A750, 0x080D02AC, 0x080A0EF0,
+    0x080A100C, 0x0812B5A0, 0x0812B60C, 0x08083C4C,
+    0x0812F0FC, 0x08160D40, 0x0814D468, 0x08071AD0,
+    0x081613C4, 0x0814EF18, 0x080D03D0, 0x080D044C,
+    0x0812F218, 0x0812F224, 0x0810F2D4, 0x0809D998,
+    0x08162A2C, 0x08162AAC, 0x08162848, 0x081628F4,
+    0x08162A08, 0x080D0478, 0x08152490, 0x080D0698,
+    0x080D07FC, 0x080F750C, 0x08157218, 0x080A1150,
+    0x080A12AC, 0x0814AF50, 0x0805FFC4, 0x080D0900,
+    0x080D0B0C, 0x0814AFE4, 0x080D0B38, 0x08161210,
+    0x0808C970, 0x080D0B78, 0x080D0B9C, 0x0811EF34,
+    0x080D0BF8, 0x0809FE94, 0x081571C8, 0x0809FFE8,
+    0x080CEE44, 0x080D0C58, 0x080D0CB8, 0x08047F34,
+)
+
+
+def special_function(name, addresses=None):
+    """-> the THUMB pointer for a special by the decomp's name, from what bs93 measured."""
+    from . import special_names
+    index = special_names.index(name)
+    table = SPECIAL_ADDRESSES if addresses is None else addresses
+    if index >= len(table):
+        raise KeyError(f"{name!r} is special {index}, past the {len(table)} entries bs93 dumped")
+    return thumb(table[index])

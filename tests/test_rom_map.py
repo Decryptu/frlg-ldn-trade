@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import rom_map  # noqa: E402
+from frlgsim import rom_map, special_names  # noqa: E402
 
 
 SCRATCH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scratchpad")
@@ -290,3 +290,53 @@ def test_the_leafgreen_save_block_pointers_are_the_firered_ones():
     assert rom_map.leafgreen("gSaveBlock2Ptr") == rom_map.GSAVEBLOCK2PTR
     seen = (0x02025560 - 0x02025554, 0x020245BC - 0x020245B0)
     assert seen[0] == seen[1] and seen[0] % 4 == 0 and seen[0] <= rom_map.SAVEBLOCK_MOVE_MASK
+
+
+# --- gSpecials, bs92 and bs93 --------------------------------------------------------------------
+
+def test_the_specials_table_sits_where_the_link_script_puts_it():
+    """bs92 read both ends out of ScrCmd_special's literal pool. Neither number is checked against
+    itself here: the span is the decomp's own entry count, and the start is where ld_script puts
+    the table - immediately after the 21 gSpecialVars that bs57 measured."""
+    assert rom_map.G_SPECIALS == rom_map.G_SPECIAL_VARS + 21 * 4 == 0x081639FC
+    assert rom_map.G_SPECIALS_END - rom_map.G_SPECIALS == 444 * 4
+    assert rom_map.SPECIAL_COUNT == special_names.SPECIAL_COUNT == 444
+    # The call goes through the veneer four bytes below the one rom_map already held.
+    assert rom_map.CALL_VIA_R0 == rom_map.CALL_VIA_R1 - 4
+
+
+def test_every_dumped_special_is_a_thumb_rom_pointer():
+    for index, address in enumerate(rom_map.SPECIAL_ADDRESSES):
+        assert 0x08000000 <= address < 0x08400000, \
+            f"special {index} ({special_names.SPECIALS[index]}) is not in the cartridge"
+        assert address % 2 == 0, "the thumb bit is stripped in the table we keep"
+
+
+def test_the_dump_proves_its_own_alignment_through_nullfieldspecial():
+    """171 of the 444 entries are the same function in the decomp. If either dump were read at the
+    wrong offset they could not all share one address - and the two dumps (bs93's 256 entries and
+    bs95's 188) corroborate each other, because the set is taken across both."""
+    null = {address for address, name
+            in zip(rom_map.SPECIAL_ADDRESSES, special_names.SPECIALS)
+            if name == "NullFieldSpecial"}
+    assert len(null) == 1
+    assert len(rom_map.SPECIAL_ADDRESSES) == rom_map.SPECIAL_COUNT == 444
+    assert sum(1 for n in special_names.SPECIALS if n == "NullFieldSpecial") == 171
+
+
+def test_the_special_the_battle_count_card_uses_is_where_the_table_says():
+    """The card work reached special 390 from the other end entirely - MysteryEventScript_BattleCard
+    calls `special 390` [decomp:data/mystery_event_msg.s:162] - and never needed its address. The
+    table names index 390 GetMysteryGiftCardStat, which is what that script is documented to call."""
+    assert special_names.SPECIALS[390] == "GetMysteryGiftCardStat"
+    assert rom_map.special_function("GetMysteryGiftCardStat") == rom_map.thumb(0x080D024C)
+
+
+def test_a_special_resolves_by_name_to_a_thumb_pointer():
+    assert rom_map.special_function("HealPlayerParty") == rom_map.thumb(0x080A3A64)
+    assert special_names.index("HealPlayerParty") == 0
+    with pytest.raises(KeyError):
+        special_names.index("NullFieldSpecial")        # 171 of them: the caller must say which
+    with pytest.raises(KeyError):
+        rom_map.special_function("NoSuchSpecial")
+
