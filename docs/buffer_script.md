@@ -771,6 +771,31 @@ is credited to a run whose `runstart` was never written and reads back as 0. `re
 discards any hit outside the range that was asked for; starting the range a block before anything of
 interest removes it entirely.
 
+## bs82: 214 function addresses for one dump, and none spent finding them
+
+`gScriptCmdTable` needed no search at all. `script_data` opens with it and puts `gSpecialVars`
+immediately after [ld_script_rev10.ld:318], the table is 214 entries of four bytes, and bs57 had
+already measured `gSpecialVars` - so the table starts at **0x08163650**, and one 856-byte
+`memory-dump` reads the whole thing. The index is the opcode, so `frlgsim/scrcmd_names.py` names
+every entry from the decomp's own table order and `scrcmd_names.handler("additem")` answers offline
+from then on.
+
+**FACT, bs82.** All 214 words came back THUMB pointers into 0x0806D7C0..0x080700B8, a 10488-byte
+span, and the read is self-proving: the ONLY two entries sharing an address are 0 and 213, exactly
+the two the decomp names `ScrCmd_nop`, with `ScrCmd_nop1` distinct between them at index 1. A table
+read one entry off cannot produce that pattern, so the derived address is a measurement rather than
+an assumption.
+
+    0x23 callnative   0x0806D854      0x44 additem      0x0806DED0
+    0x25 special      0x0806D7EC      0x79 givemon      0x0806F834
+    0x29 setflag      0x0806E0EC      0x90 addmoney     0x0806F998
+
+What this changes: "which ROM function to call next" was open because calling into the ROM was done
+and a *reason* was missing. Every field-script command the game has is now a named entry point, and
+each one is a `bl` or two away from the real worker - `ScrCmd_additem` from `AddBagItem`, and so on.
+The handlers are what the field engine `bx`es to with a `struct ScriptContext *`, so a payload that
+wants the worker disassembles the handler rather than calling it.
+
 **bs57: `gSpecialVars` = 0x081639A8, `gSpecialVar_0x8000` = 0x020370B4.** 939 frames, ~23 s, 2.75 MB
 searched, exactly one twelve-word run rising by 2 in all of it. The console held its link throughout.
 The four consistency checks are in `frlgsim/rom_map.py` beside the symbols.

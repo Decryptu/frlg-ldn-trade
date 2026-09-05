@@ -50,3 +50,27 @@ def test_a_table_read_at_the_wrong_address_fails_the_shape_test():
         b"".join((0x02024281).to_bytes(4, "little") for _ in range(214)),
         rom_map.G_SCRIPT_CMD_TABLE)
     assert scrcmd_names.plausible(entries) == []
+
+
+# --- the measured table, bs82 -------------------------------------------------------------------
+
+def test_every_measured_handler_is_a_rom_address():
+    assert len(scrcmd_names.HANDLERS) == 214
+    assert all(0x0806D000 <= a < 0x08071000 for a in scrcmd_names.HANDLERS)
+    assert all(a % 2 == 0 for a in scrcmd_names.HANDLERS), "the thumb bit is stripped"
+
+
+def test_the_only_shared_handler_is_the_pair_the_decomp_names_nop():
+    """This is the alignment proof, not a curiosity: ScrCmd_nop sits at opcode 0 and opcode 213
+    with ScrCmd_nop1 distinct between them, so a table read off by one entry cannot reproduce it."""
+    shared = [i for i, a in enumerate(scrcmd_names.HANDLERS)
+              if scrcmd_names.HANDLERS.count(a) > 1]
+    assert shared == [0, 213]
+    assert scrcmd_names.COMMANDS[0] == scrcmd_names.COMMANDS[213] == "nop"
+    assert scrcmd_names.HANDLERS[1] != scrcmd_names.HANDLERS[0]
+
+
+def test_a_handler_is_reachable_by_name():
+    assert scrcmd_names.handler("additem") == 0x0806DED0
+    assert scrcmd_names.handler("callnative") == 0x0806D854
+    assert scrcmd_names.handler("nop") == scrcmd_names.HANDLERS[0]
