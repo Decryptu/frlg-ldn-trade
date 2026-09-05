@@ -1058,6 +1058,12 @@ With every dump loaded, following all ten `gStdScripts` reads **31 blocks** and 
 addresses: three message strings and `gStdScripts[8]` at 0x081AB501, which is one more
 `--dump-address 0x081AB400`.
 
+**bs108 spent that one too, and gStdScripts is now closed.** Entry 8 is the pocket-message script -
+`bufferitemnameplural`, `checkitemtype`, the five-way `bufferstdstring` on the pocket id, then
+`callstd gStdScripts[4]`. All ten standard scripts have now been read off the console, 38 blocks in
+total, and nothing script-shaped is left: the only addresses still wanted are three message
+strings, which are text and not code.
+
 ### bs99-bs103: the rest of the handlers, read by tool
 
 `scratchpad/handler_workers.py` does bs84's reading automatically: for every handler inside a dump
