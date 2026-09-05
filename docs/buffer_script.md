@@ -785,54 +785,46 @@ out of the cartridge, plus a stub that returns a pointer the way `GetVarPointer`
 through a simulated console and a real Mystery Gift session, so the payload, the send repointing and
 the host's decode are all proven before a run is spent.
 
-### bs86-bs88: the chain on hardware, and a live save written through a pointer the game computed
+### bs86-bs88: the chain on hardware
 
-Three runs, no traps, nothing changed in the payload between them.
+**bs86**, seven steps, reads only. `gSaveBlock1Ptr` = 0x02025548 and `GetVarPointer(0x4024)` =
+0x02026590 - a difference of exactly 0x1048, which is what `buffer_script.sav1_var_offset` computes.
+The var read 0 through that pointer and 0 through `VarGet`. `CheckBagHasItem(MASTER_BALL, 5)` TRUE,
+so bs85's Master Balls were still there two sessions later.
 
-**bs86, seven steps, reads only.** `gSaveBlock1Ptr` read 0x02025548 and `GetVarPointer(0x4024)`
-answered 0x02026590 - a difference of **exactly 0x1048**, which is `SAV1_VARS + 2 * 0x24`, the
-offset `buffer_script.sav1_var_offset` computes from the decomp. The var read 0 through that
-pointer and 0 through `VarGet`, the two independent routes agreeing. `CheckBagHasItem(MASTER_BALL,
-5)` returned TRUE, so bs85's five Master Balls were still in the bag two sessions later, and
-`FlagGet(FLAG_SYS_POKEDEX_GET)` returned TRUE.
-
-**bs87, eight steps, the first write.** `AddPCItem(RARE_CANDY, 5)` returned TRUE, with
-`CheckBagHasItem(RARE_CANDY, 5)` FALSE both before and after it - so the items went to the **PC**
-and not to the bag, which is the discrimination a single call could not have made. Then the shape
-this payload was built for:
+**bs87**, the first write. `AddPCItem(RARE_CANDY, 5)` TRUE, with `CheckBagHasItem(RARE_CANDY, 5)`
+FALSE both before and after it - the items reached the PC, not the bag. Then the shape the payload
+exists for:
 
     call GetVarPointer(0x4024)   -> 0x020265B4
     read16 [prev] keep           -> 0
     write16 [prev] = 3           -> 3        the store, read back by the payload
     read16 [prev]                -> 3
-    call VarGet(0x4024)          -> 3        the GAME's own reader, same frame
+    call VarGet(0x4024)          -> 3        the game's own reader, same frame
 
-**bs88, a new session: it persisted.** `GetVarPointer(0x4024)` answered 0x02026574 this time - a
-third SaveBlock1 base, because `SetSaveBlocksPointers` re-rolls a 4-aligned offset in 0..124 on
-every load and battle [decomp:src/load_save.c:75] - and the var behind it still read **3**. That is
-also why a var write goes through `GetVarPointer` rather than a computed address: the pointer is
-correct on the console whatever the base is that session. The same run took the bag from five
-Master Balls to one with `RemoveBagItem(MASTER_BALL, 4)`, checked either side of the call.
+**bs88**, a new session: `GetVarPointer(0x4024)` = 0x02026574, a third SaveBlock1 base
+(`SetSaveBlocksPointers` re-rolls a 4-aligned offset in 0..124 on every load and battle
+[decomp:src/load_save.c:75]), and the var behind it still read 3. That is why a var write goes
+through `GetVarPointer` rather than a computed address. The same run took the bag from five Master
+Balls to one with `RemoveBagItem(MASTER_BALL, 4)`, checked either side.
 
 ### bs89, bs90: the money workers, and the encryption key
 
-bs89 dumped 1 KB at 0x0806F800 - bs84's method, a second window - and `ScrCmd_addmoney`,
-`_removemoney`, `_checkmoney` and `_updatemoneybox` each gave up their one call. All four build the
-same pointer first: `ldr r0,[0x03004228]; ldr r0,[r0]; r1 = 0xA4 << 2; adds r0,r0,r1`.
+bs89 dumped 1 KB at 0x0806F800. `ScrCmd_addmoney`, `_removemoney`, `_checkmoney` and
+`_updatemoneybox` each build the same pointer first - `ldr r0,[0x03004228]; ldr r0,[r0];
+r1 = 0xA4 << 2; adds r0,r0,r1` - and then make one call:
 
     GetMoney         0x080A3764      AddMoney       0x080A37AC
     IsEnoughMoney    0x080A3794      RemoveMoney    0x080A37E4
     ScriptReadWord   0x0806D200      ChangeAmountMoneyBox  0x080A39AC
 
-Three things make that a measurement rather than a reading: the literal is 0x03004228, which is
-`gSaveBlock1Ptr` as lg175 measured it; `0xA4 << 2` is 0x290, `struct SaveBlock1.money`'s own offset
-[decomp:include/global.h:774]; and `ScrCmd_givemon`, in the same window, calls 0x08071DDC, which is
-`VarGet` from bs84.
+Checks: the literal is `gSaveBlock1Ptr` as lg175 measured it; `0xA4 << 2` is 0x290, which is
+`struct SaveBlock1.money`'s offset [decomp:include/global.h:774]; and `ScrCmd_givemon` in the same
+window calls `VarGet` from bs84.
 
-**Money is encrypted**, which is why `GetMoney` exists at all: `*moneyPtr ^
-gSaveBlock2Ptr->encryptionKey` [decomp:src/money.c:14]. bs90 read both sides of that in one frame,
-and it is the run that shows what a chain is worth - an address the host cannot know (the base
-moves), an offset added on the console, and an answer that checks itself twice:
+**Money is encrypted**: `*moneyPtr ^ gSaveBlock2Ptr->encryptionKey` [decomp:src/money.c:14]. bs90
+read both sides in one frame, with an address the host cannot know and an offset added on the
+console:
 
     read32 [0x03004228]              -> 0x02025554     gSaveBlock1Ptr
     read32 [prev + 0x290] keep       -> 0x93E78EEE     the ciphertext, before
@@ -841,63 +833,44 @@ moves), an offset added on the console, and an answer that checks itself twice:
     call GetMoney(prev + 0x290) keep -> 0x000345D5     214485, exactly +1234
     read32 [prev + 0x290]            -> 0x93E78A38     the ciphertext, after
 
-0x93E78EEE ^ 213251 and 0x93E78A38 ^ 214485 are both **0x93E4CFED**: the key, derived twice from
-two independent pairs. `AddMoney`'s cap and `RemoveMoney`'s floor are the game's own
-[src/money.c:35,55], so the player's wallet cannot be pushed out of range by these.
+Both XOR pairs give **0x93E4CFED**, and bs91 read that word straight out of SaveBlock2 + 0xF20.
+`AddMoney`'s cap and `RemoveMoney`'s floor are the game's own [src/money.c:35,55].
+`rom_map.SAV1_MONEY`, `SAV2_ENCRYPTION_KEY` and `CALLABLE` hold all of it.
 
-`rom_map.SAV1_MONEY` and `SAV2_ENCRYPTION_KEY` hold the offsets, and `rom_map.CALLABLE` the four
-functions, so none of this costs a run again.
+### bs92-bs96: gSpecials, 444 more functions, and two called
 
-### bs92-bs96: gSpecials, 444 more functions, and one of them called
-
-`ScrCmd_special` is the field engine's SECOND dispatch: a u16 index into `gSpecials`, bounds-checked
-against `gSpecialsEnd`, called through a veneer [decomp:src/scrcmd.c:101]. bs92 dumped 1 KB at
-0x0806D7C0 - the first handler window - and that command's own literal pool holds both ends:
+`ScrCmd_special` indexes `gSpecials` with a u16, bounds-checks it against `gSpecialsEnd` and calls
+through a veneer [decomp:src/scrcmd.c:101]. bs92 dumped 1 KB at 0x0806D7C0 and both ends are in
+that handler's literal pool:
 
     gSpecials     0x081639FC        gSpecialsEnd  0x081640EC
 
-Three things make it a measurement rather than a reading, and none of them is the dump's own word.
-The span is 0x6F0 = **444 * 4**, which is exactly the number of `def_special` entries in
-`data/specials.inc`. The table starts at `gSpecialVars + 21 * 4`, which is the order the link script
-puts them in - the same reasoning that derived `gScriptCmdTable` at bs82, now confirmed from the
-other side. And the call goes through 0x081E2224, four bytes below the `_call_via_r1` veneer this
-project already held.
+Checks: the span is 0x6F0 = 444 * 4, and `data/specials.inc` has 444 entries; the table starts at
+`gSpecialVars + 21 * 4`, the link script's order; the call goes through 0x081E2224, four bytes
+below the `_call_via_r1` veneer already on file.
 
-**The index is the special**, so the decomp's ORDER makes every entry nameable:
-`scripts/gen_special_names.py` writes `frlgsim/special_names.py` from `data/specials.inc`, offline
-and at no cost, exactly as `scrcmd_names.COMMANDS` does for the 214 field commands.
+The index is the special, so `scripts/gen_special_names.py` names all 444 from the decomp offline.
+bs93 and bs95 dumped the table - every word a THUMB cartridge pointer, and the 171
+`NullFieldSpecial` indices all one address across both dumps. `rom_map.SPECIAL_ADDRESSES` holds
+them; `rom_map.special_function("HealPlayerParty")` resolves one by name.
 
-**bs93 and bs95 dumped the whole table** - 256 entries then the remaining 188 - and it proves its own
-alignment: every one of the 444 words came back a THUMB pointer into the cartridge, and the **171**
-indices the decomp calls `NullFieldSpecial` all came back with **one** address, across both dumps.
-A dump read at the wrong offset cannot do that. `rom_map.SPECIAL_ADDRESSES` holds all 444, and
-`rom_map.special_function("HealPlayerParty")` resolves one by name.
+Index 390 is `GetMysteryGiftCardStat`, which `MysteryEventScript_BattleCard` calls as `special 390`
+[decomp:data/mystery_event_msg.s:162] - the card work reached it from the other end and never
+needed the address.
 
-The table also settles something the project reached from the opposite end: index 390 is
-`GetMysteryGiftCardStat`, and `MysteryEventScript_BattleCard` calls `special 390`
-[decomp:data/mystery_event_msg.s:162]. The Battle Count Card work never needed that address; the
-table now says it is 0x080D024C, and the two accounts agree.
+**bs94** built the evidence around a special that takes no arguments:
 
-**bs94 called one, and the answer is the party.** A special takes no arguments and returns a u16, so
-the evidence has to be built around it - which is what a chain is for:
-
-    read8  [gPlayerPartyCount]   -> 4
-    read16 [party[0] + 0x56]     -> 254      current HP
-    read16 [party[0] + 0x58]     -> 254      max HP
-    write16 [party[0] + 0x56] = 1 -> 1       the lead mon, damaged by us
+    read8  [gPlayerPartyCount]    -> 4
+    read16 [party[0] + 0x56]      -> 254      current HP
+    read16 [party[0] + 0x58]      -> 254      max HP
+    write16 [party[0] + 0x56] = 1 -> 1
     call HealPlayerParty()
-    read16 [party[0] + 0x56]     -> 254      the game's own healer put it back
+    read16 [party[0] + 0x56]      -> 254
 
-**bs96 called one WITH an argument.** A special reads its operands out of the special vars, so the
-idiom is write, call, read: `gSpecialVar_Result` = 2 (`GET_CARD_BATTLES_WON`), call special 390,
-and the return is the counter. It answered **3**, which is what cc1-cc4 put there, and the same run
-read the raw word at `SaveBlock1 + 0x3434` as 0x00000003 - the game's own accessor and the save
-itself agreeing inside one frame. `GET_CARD_NUM_TRADES` and `GET_NUM_STAMPS` both answered 0, the
-card having been replaced at bs80.
-
-That is the whole shape of the console's script layer now: 214 field commands (bs82), the workers
-behind two windows of them (bs84, bs89), and 444 specials (bs92-bs95) - with `call-chain` able to
-call any of them and check the answer in the same frame.
+**bs96** called one with an argument - a special reads its operands out of the special vars, so the
+idiom is write, call, read. `gSpecialVar_Result` = 2 (`GET_CARD_BATTLES_WON`), special 390, answer
+**3**, with the raw word at `SaveBlock1 + 0x3434` reading 0x00000003 in the same frame.
+`GET_CARD_NUM_TRADES` and `GET_NUM_STAMPS` both 0, the card having been replaced at bs80.
 
 ### bs97, bs98: gStdScripts, and reading the console's scripts as scripts
 

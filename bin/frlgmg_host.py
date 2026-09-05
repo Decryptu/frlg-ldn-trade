@@ -196,10 +196,8 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               % rom_map.GRNG_VALUE))
     parser.add_argument(
         "--expect-console", choices=("firered", "leafgreen"), default=None,
-        help=("refuse the session unless the console that joins is this cartridge. The console "
-              "says which it is in the game data it volunteers before anything is sent, so this "
-              "costs nothing and is the only thing that tells a measurement apart from the same "
-              "measurement run against the wrong console. Nothing is sent on a mismatch"))
+        help=("refuse the session unless the console that joins is this cartridge, checked "
+              "against the version in its game data. Nothing is sent on a mismatch"))
     parser.add_argument(
         "--chain-step", action="append", default=None, metavar="STEP",
         help=("with --buffer-script call-chain: one step, repeatable, up to %d, run in order in "

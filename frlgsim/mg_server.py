@@ -507,11 +507,8 @@ class MysteryGiftServer:
                  buffer_success_message=None, buffer_failure_message=None,
                  questionnaire=None, denied_message=None, expect_console=None,
                  script=None, log=lambda *a: None):
-        # Which cartridge this run is FOR. The console says which it is in its game data, every
-        # session, before anything is sent [MysteryGiftLinkGameData]; without this the host will
-        # happily run a LeafGreen-only measurement against FireRed and the answer looks fine.
-        # lg180-lg183 were lost to exactly that: four scans for FireRed bytes, run on FireRed,
-        # which of course found them at the FireRed address.
+        # Which cartridge this run is for. The console names its own version in the game data it
+        # sends before anything else [MysteryGiftLinkGameData], so a mismatch is refused there.
         self.expect_console = None if expect_console is None else str(expect_console).lower()
         if self.expect_console not in (None, "firered", "leafgreen"):
             raise MysteryGiftServerError(
@@ -779,13 +776,8 @@ class MysteryGiftServer:
             self.info(line)
 
     def _check_expected_console(self):
-        """Refuse a run aimed at the other cartridge, before anything is sent.
-
-        The console's own version is in the game data it volunteers, so this costs nothing and is
-        the only thing that can tell a measurement apart from the same measurement run against the
-        wrong console. It raises rather than logs: a run that continues here produces an answer
-        that looks exactly like a real one.
-        """
+        """Refuse a run aimed at the other cartridge, before anything is sent. Raises rather than
+        logs: a run that continues here answers as if it were the right console."""
         if self.expect_console is None or self.game_data is None:
             return
         got = self.game_data.version_name.lower()

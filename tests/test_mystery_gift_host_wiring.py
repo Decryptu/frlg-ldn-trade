@@ -200,11 +200,7 @@ def test_engine_exposes_the_contract_the_host_application_drives():
     raise AssertionError("mark_disconnect_sent before the close handshake must fail")
 
 
-# --- the cartridge the run is for, lg180-lg183 ---------------------------------------------------
-# Four scans aimed at LeafGreen were run against FireRed, and every one of them "found" its needle
-# at the FireRed address - which is what searching a console for its own bytes does. The console
-# says which cartridge it is in the game data it volunteers before anything is sent, so the only
-# thing needed was to read it.
+# --- the cartridge the run is for ----------------------------------------------------------------
 
 def _console_game_data(version_code):
     """The console's own MysteryGiftLinkGameData, with the version nibble set. The magic and the
