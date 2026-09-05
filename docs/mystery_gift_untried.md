@@ -165,8 +165,9 @@ names every id `easychat_french` has never seen rendered: each one is a single q
 player and then ground truth for every card composed afterwards
 [The French Easy Chat vocabulary](easy_chat_french.md).
 
-UNKNOWN, and what the ledger is for: whether the counters move at all on this build. Nothing has
-been observed changing yet.
+ANSWERED: they move. `numTrades 0 -> 1` at fr44/h11/bs79 and `battlesWon 0 -> 3` at cc2/cc3/cc4,
+both read back through this ledger and through a save dump. The ledger is what made each one legible
+as a difference rather than a number.
 
 ### The smaller official scripts
 
@@ -225,7 +226,19 @@ Two things worth keeping from the wrong turn:
   not `cable_club.c`'s - the console's block carries the flag id, which only the union-room builder
   writes.
 
-UNKNOWN: the prize itself. It needs `battlesWon == 3`, and battles only count through
+**CLOSED, cc1-cc4 + bs81. The card paid its prize.** Three colosseum battles took the console's
+`battlesWon` from 0 to 3 and the delivery man handed over the POTION. Each battle was a forfeit -
+no real loss was needed - and each used a different host `--id` (the default, then 4242:1717, then
+9001:2323) because `IncrementCardStatForNewTrainer` counts a trainer id once. bs81 read the first
+win back two independent ways that agree:
+
+    save 0x3434:  0100 0000 0000 2300   battlesWon 1, lost 0, trades 0, icon 35 CARD_TYPE_LINK_STAT
+    game data:    "1 battles won"
+
+Note the `numTrades 1` of bs79 is gone: the metadata belongs to the card, and the card was replaced
+at bs80 to put flag id 1005 back on the console.
+
+The path, in one line: it needs `battlesWon == 3`, and battles only count through
 `CB2_ReturnFromCableClubBattle` [`src/cable_club.c:792`] - the battle colosseum. The in-room Union
 Room battle returns through `CB2_ReturnToField` and counts nothing, which is why the prize was
 unreachable from every activity this host used to offer.

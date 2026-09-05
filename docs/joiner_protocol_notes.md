@@ -819,9 +819,9 @@ more than one RFU slot per VBlank, which is not what the hardware link does.
 
 # The cable-club colosseum
 
-BUILT, NOT YET RUN. `frlgtrade_host.py --colosseum` hosts Pokemon Center 2F -> third NPC (club sans
-fil) -> Colosseum -> Single Battle -> JOIN. Everything here is read off the decomp; no hardware run
-has advertised `ACTIVITY_BATTLE_SINGLE` yet.
+PROVEN ON HARDWARE, cc1-cc4. `frlgtrade_host.py --colosseum` hosts Pokemon Center 2F -> third NPC
+(club sans fil) -> Colosseum -> Single Battle -> JOIN. Three battles were fought and the console's
+`battlesWon` went 0 -> 3, which paid the Battle Count Card's POTION.
 
 **Why it exists.** Only `CB2_ReturnFromCableClubBattle` increments the Wonder Card's `battlesWon`
 [src/cable_club.c:792]. The in-room Union Room battle returns through `CB2_ReturnToField` and
@@ -862,6 +862,43 @@ From `CB2_InitBattle` on it is byte for byte the Union Room battle documented ab
 `LinkBattlerHeader`, the three 200-byte party blocks, the controller loop, and the same version
 signature 0x200 that hands the console the master role. The one piece that does **not** appear is the
 0x20-byte 0x51 selection block, which belongs to `CB2_UnionRoomBattle` alone.
+
+## What the console actually did, cc1-cc4
+
+**FACT.** The design above held, and two things about it could only be learned on hardware.
+
+**The seat needs the READY key and nothing else.** cc1 sent no movement at all - our avatar stood at
+the door while the player walked to their own spot - and the console faded to black and went on to
+`Task_StartWirelessCableClubBattle` regardless. `GetCableClubPartnersReady` reads link states alone
+[overworld.c:2989], exactly as written, and the walk in `ENTRY_LEFT_CHAIR_ROUTE` is cosmetic.
+
+**But the colosseum has no post-seat standby rounds.** cc1 deadlocked: the host waited for the
+trade centre's standby sequence to declare the seat finished, while the console had already faded to
+black and parked in case 3 waiting for our record. The capture named it exactly - at 23.9 s the
+console sent `SEND_BLOCK_INIT` count 3 and the fragments `04 40 00 80 65 df | bb c8 ff 00 11 00 |
+01 00 03 00 00 00`, which is version 0x4004 (FireRed), `lp_field_2` 0x8000 and trainerId 0xE5BBDF65:
+its own `struct LinkPlayer`, ignored because the host was in the wrong state to expect it. The entry
+is therefore finished by that block's arrival, not by a standby count.
+
+**And the exit is a handshake we owe.** cc2 and cc3 both ended with the console stuck on
+*"conduire a la sortie de la piece, veuillez patienter"* until the link errored. Walking into the
+door runs `QueueExitLinkRoomKey`, which waits for every player to reach
+`PLAYER_LINK_STATE_EXITING_ROOM` [`KeyInterCB_WaitForPlayersToExit`, overworld.c:2977]. The trade
+centre answers that from `H_RETURN_FIELD`; after a battle the host is in the battle state, so nobody
+answered. With the key taken from the battle states too, cc4 left the room, closed the RFU link and
+**the host stopped on its own** - the normal close, no SIGTERM.
+
+The battle itself needed nothing new. cc2's controller loop was the Union Room's unchanged, our
+Chansey was sent as battler 1, and the console's `ENDLINKBATTLE` carried outcome 1 = `B_OUTCOME_WON`
+after our forfeit - the decomp's `B_OUTCOME_LINK_BATTLE_RAN` bit already cleared, as predicted.
+
+Reading it back at bs81, two independent ways that agree:
+
+    save 0x3434:  0100 0000 0000 2300    battlesWon 1, lost 0, trades 0, icon 35 CARD_TYPE_LINK_STAT
+    game data:    "1 battles won"
+
+and after cc3 (id 0x06B51092) and cc4 (id 0x09132329), the third distinct trainer id took the
+counter to 3 and the delivery man handed over the POTION.
 
 ## Two things that decide whether a run counts
 
