@@ -974,6 +974,57 @@ immediately behind one [trainer_battle.inc:17]. All 266 bytes are a fixture in
 The lesson worth keeping: **a generated table is a hypothesis until something reads real bytes back
 through it**, and a fixture too small to use the broken part cannot tell you that it is broken.
 
+### Naming the operands, and following a script to what it reaches
+
+`tools/script_read.py DUMP.bin --base ADDR` is the reader.
+
+    0x081A76A8  4F  applymovement 0x800F (VAR_LAST_TALKED), 0x081A77B0
+    0x081A76B2  26  specialvar 0x800D (VAR_RESULT), 0x0036 (Script_HasTrainerBeenFought)
+    0x081A76BC  06  goto_if 0x05 (!=), 0x081A76CD
+    0x081A76C2  25  special 0x0038 (PlayTrainerEncounterMusic)
+
+Every name there is one the decomp writes on that line. Three things put them in, and the first
+needs no table at all:
+
+**An operand of 0x4000 or more is a variable reference, in any command.** Every ScrCmd body passes
+its arguments through `VarGet`, which returns the number unchanged below `VARS_START` and reads the
+variable at or above it [decomp:src/event_data.c:235, GetVarPointer:214]. So `additem 0x8004` is not
+item 0x8004, it is the item id held in `VAR_0x8004` - and this holds for a command nothing else is
+known about. `frlgsim/symbol_names.py` has the 274 var and 1470 flag names, generated from
+`include/constants/vars.h` and `flags.h`, whose values are arithmetic on other constants and are
+evaluated rather than transcribed.
+
+**Which table an index reaches comes from the decomp's own parameter name.** `scrcmd_args.PARAMS`
+names every operand with the macro parameter that emits it, read per operand off the emit line, so
+`special`'s operand is `function` and `setflag`'s is `flag`. Two tables share the name `function` -
+`ScrCmd_special` reads a u16 index into `gSpecials`, `ScrCmd_callstd` a u8 into `gStdScripts` - and
+the width says which. No hand-written per-command list.
+
+**`goto_if 0x05` is `!=`** because `sScriptConditionTable`'s rows are <, =, >, <=, >=, !=
+[decomp:src/scrcmd.c:65].
+
+The generated table met a hardware measurement on the way in. bs74/bs75 watched the Altering Cave
+counter move at **SaveBlock1 + 0x1048**, and `GetVarPointer` is `vars[idx - VARS_START]`, so that
+offset is var 0x4024 - which is the id the decomp gives `VAR_ALTERING_CAVE_WILD_SET`. The name
+table and the run agree, and `tests/test_script_symbols.py` holds them to it.
+
+**Following the jumps is the part that plans the next run.** `scrcmd.follow` chases every `goto`,
+`call`, `goto_if` and `call_if` from a set of entry points, disassembles every block that lies
+inside the dump, and collects every address the scripts reach for that the dump does NOT hold. A
+data pointer (`text`, `movements`, a multichoice list) is reported and never followed - disassembling
+movement bytes as commands prints nonsense with confidence.
+
+`scrcmd.dump_plan` turns that into `--dump-address` lines, biggest catch first. Pointed at bs97's
+ten `gStdScripts` pointers with bs98 in hand:
+
+      --dump-address 0x081A8C00 --dump-size 1024   4 addresses (call, entry point)
+      --dump-address 0x081AB400 --dump-size 1024   1 address (entry point)
+
+Two runs close every script the console's own standard table points at, and the four that share the
+first window cost the same as one would. **An address a script asked for is not a guess**, which is
+the difference between this and scanning: `table-scan` and `memory-scan` search, and this reads a
+list the cartridge wrote.
+
 ### bs99-bs103: the rest of the handlers, read by tool
 
 `scratchpad/handler_workers.py` does bs84's reading automatically: for every handler inside a dump

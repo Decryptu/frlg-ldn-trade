@@ -1,0 +1,97 @@
+#!/usr/bin/env python3
+"""Read a ROM dump as field scripts: disassemble, follow every goto and call, and say what to dump
+next.
+
+    ./.venv/bin/python tools/script_read.py DUMP.bin --base 0x081A7600 [--start ADDR ...]
+    ./.venv/bin/python tools/script_read.py DUMP.bin --base 0x081640EC --std-scripts
+
+`--base` is the `--dump-address` the run used; without `--start` the whole dump is walked as
+back-to-back scripts, which is what a region of `data/scripts/*.inc` actually is.
+
+The operands are named, not just printed: a var, a flag, a special and a comparison all come back
+with the decomp's own name beside the number [frlgsim/symbol_names.py, special_names.py]. An
+operand of 0x4000 or more is a variable REFERENCE whatever it sits in, because every ScrCmd body
+passes its arguments through VarGet [decomp:src/event_data.c:235].
+
+The last section is the useful one. Following the jumps finds every address these scripts reach for,
+and the ones this dump does not hold are printed as ready-made `--dump-address` lines, biggest catch
+first. A dump aimed there is asked for by the console's own scripts rather than guessed at, and
+several unknowns usually share one 1 KB window. docs/buffer_script.md.
+"""
+import argparse
+import os
+import struct
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from frlgsim import rom_map, scrcmd
+
+
+def entry_points(data, base, args):
+    if args.std_scripts:
+        # gStdScripts is ten pointers [decomp:data/event_scripts.s]; a dump of it starts with them.
+        return list(struct.unpack_from("<10I", data, rom_map.G_STD_SCRIPTS - base))
+    if args.start:
+        return args.start
+    # No entry points given: walk the dump as one script after another, which is how the decomp
+    # lays a script file out. Each run stops on a terminator and the next begins on the next byte.
+    starts, cursor = [], 0
+    while cursor < len(data):
+        measured = scrcmd.shape(data, base, cursor)
+        if measured is None:
+            cursor += 1
+            continue
+        starts.append(base + cursor)
+        while cursor < len(data):
+            measured = scrcmd.shape(data, base, cursor)
+            if measured is None:
+                cursor += 1
+                break
+            opcode = data[cursor]
+            cursor += measured[2]
+            if opcode in scrcmd.TERMINATORS:
+                break
+    return starts
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    ap.add_argument("path")
+    ap.add_argument("--base", type=lambda v: int(v, 0), required=True,
+                    help="the --dump-address the run used")
+    ap.add_argument("--start", type=lambda v: int(v, 0), action="append",
+                    help="an entry point to follow; repeatable. Default: walk the whole dump")
+    ap.add_argument("--std-scripts", action="store_true",
+                    help="the dump IS gStdScripts: follow its ten pointers")
+    ap.add_argument("--window", type=lambda v: int(v, 0), default=1024,
+                    help="the dump size the plan should propose (default 1024)")
+    ap.add_argument("--quiet", action="store_true", help="the plan only, no disassembly")
+    args = ap.parse_args()
+
+    data = open(args.path, "rb").read()
+    starts = entry_points(data, args.base, args)
+    reached, referenced = scrcmd.follow(data, args.base, starts)
+
+    if not args.quiet:
+        for address in sorted(reached):
+            print(f"0x{address:08X}:")
+            for line in reached[address]:
+                print(line)
+            print()
+
+    print(f"{len(data)} bytes at 0x{args.base:08X}: {len(starts)} entry points, "
+          f"{len(reached)} blocks read, {len(referenced)} addresses wanted and not held")
+    if referenced:
+        print("\nreached for, and not in this dump:")
+        for address in sorted(referenced):
+            why = ", ".join(f"{kind} at 0x{source:08X}"
+                            for kind, source in sorted(referenced[address]))
+            print(f"  0x{address:08X}  {why}")
+        print("\nwhat to dump next:")
+        for line in scrcmd.dump_plan(referenced, args.window):
+            print(line)
+
+
+if __name__ == "__main__":
+    main()
