@@ -751,7 +751,13 @@ class HostTradeEngine:
         if key == LINK_KEY_READY and self.state == H_ENTRY_SEAT:
             self.trace.append(("child_key", "READY"))
             self._maybe_finish_entry()
-        elif key == LINK_KEY_EXIT_ROOM and self.state == H_RETURN_FIELD:
+        elif key == LINK_KEY_EXIT_ROOM and self.state in (H_RETURN_FIELD, H_CC_BATTLE_ENTRY,
+                                                          H_UROOM_BATTLE_LINK):
+            # cc2/cc3: after a colosseum battle the console returns to the map and walking into the
+            # door runs QueueExitLinkRoomKey, which then waits for EVERY player to reach
+            # PLAYER_LINK_STATE_EXITING_ROOM [KeyInterCB_WaitForPlayersToExit, overworld.c:2977].
+            # With no answer from us it sits on "veuillez patienter" until the link errors. There is
+            # no five-second host delay to observe here: the console has already asked.
             self.trace.append(("child_exit_first",))
             self._begin_room_exit(child_already_exited=True)
         elif key == LINK_KEY_EXIT_ROOM and self.state == H_EXIT:

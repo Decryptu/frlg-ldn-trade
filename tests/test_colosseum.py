@@ -300,3 +300,16 @@ def test_the_engine_plays_the_colosseum_route_at_the_seat():
     h._start_entry_route()
     assert h._held_label == "ENTRY_LEFT_CHAIR"
     assert len(h._held_plan) == sum(held for _key, held in ENTRY_LEFT_CHAIR_ROUTE)
+
+
+def test_the_console_leaving_the_colosseum_is_answered_with_our_own_exit_key():
+    """cc2/cc3: the console's door script waits for every player to reach
+    PLAYER_LINK_STATE_EXITING_ROOM [overworld.c:2977]; unanswered, it sits on "veuillez patienter"
+    until the link errors."""
+    from frlgsim.host_trade import H_EXIT, H_UROOM_BATTLE_LINK, LINK_KEY_EXIT_ROOM
+    h = _engine()
+    h._set_state(H_UROOM_BATTLE_LINK)
+    h._child_send_held_keys({"keycode": LINK_KEY_EXIT_ROOM})
+    assert h.state == H_EXIT
+    assert h._held_label == "EXIT_ROOM_KEY"
+    assert h._child_exit_seen is True
