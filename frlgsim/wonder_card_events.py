@@ -26,6 +26,7 @@ from .gift_composer import (
     build_draw_count_script,
     build_seed_rate_script,
     build_seed_read_script,
+    build_bound_script,
     build_talk_script,
 )
 import dataclasses
@@ -636,7 +637,7 @@ def _at_mom(kwargs):
 
 
 def build_mevent_npc_script(*, map_group=MAP_GROUP_PALLET_TOWN, map_num=MAP_NUM_PALLET_TOWN,
-                            object_id=PALLET_TOWN_OBJECT_FAT_MAN, lines=None,
+                            object_id=PALLET_TOWN_OBJECT_FAT_MAN, lines=None, actions=None,
                             field_script=None):
     """`initramscript`: bind a field script to ANY map and ANY object event, not just the Mystery
     Gift delivery man.
@@ -661,7 +662,11 @@ def build_mevent_npc_script(*, map_group=MAP_GROUP_PALLET_TOWN, map_num=MAP_NUM_
     [decomp:src/mystery_gift.c:186], which only passes for MAP_UNDEFINED / object 0xFF. The card is
     intact in the save; the menu just will not show it, and the next session sees HAS_NO_CARD.
     """
-    if field_script is None:
+    if actions is not None:
+        if field_script is not None or lines is not None:
+            raise ValueError("give actions, lines or a field_script, not more than one")
+        field_script = build_bound_script(actions, slug=GIFT_MEVENT_NPC)
+    elif field_script is None:
         lines = lines or (
             "The MYSTERY EVENT reached me before\n"
             "it reached you, {PLAYER}.",

@@ -68,6 +68,26 @@ bit clear, and `0xCD` is confirmed on its own rather than through the screen. `m
 the Misc substruct to read it: `modernFatefulEncounter` is BIT 31 of the ribbon word at Misc+0x08,
 not a byte of its own [decomp:include/pokemon.h:40-82].
 
+### `initramscript` in the composer
+
+`gift_composer.build_bound_script(actions)` compiles composer actions into the standalone field
+script `initramscript` binds, and `build_mevent_npc_script(actions=...)` takes them directly. Until
+now a bound script could only be built out of Messages, so an NPC could talk and nothing else; it is
+the same bytecode in the same interpreter out of the same `gSaveBlock1Ptr->ramScript.data.script`, so
+giving an item, giving a mon, showing a sprite and starting a battle all work there.
+
+**What is deliberately absent is the stage cursor and the receipt flag.** A delivery plan is
+resumable because the delivery man can be talked to again part-way through and must not repeat what
+he already gave. A bound script has no such contract - it ends in `end` rather than `endram`, the
+binding survives, and the player is meant to be able to run the whole thing again. Anything that
+must happen only once needs its own flag, written as an explicit `SetVar` or a condition, rather
+than inheriting one by accident.
+
+The trap that governs it is unchanged: a Wonder Card and an NPC-bound script share one RAM script
+slot, so installing this takes the card's slot and the console then reports it holds no card. Any
+ordinary card sent afterwards takes the slot back - which is also how mev23's Mewtwo binding was
+reverted.
+
 ## Closed - do not re-open
 
 - **Mystery Gift → Wonder Cards → Wireless Communication.** Blocked at the serial-number gate: the
@@ -122,13 +142,6 @@ Two limits worth recording:
   appears after a transfer.
 
 ## Open
-
-### `initramscript` in the composer
-
-Proven on hardware (mev03, mev15 onward) and reachable through `--gift mystery-event-npc` and the
-RNG hunts, but `gift_composer` has no action for it: a card that wants an NPC-bound script has to
-assemble the Mystery Event by hand. Note the trap that governs it - a Wonder Card and an NPC-bound
-script are mutually exclusive.
 
 ### The player's own data, carried and ignored
 

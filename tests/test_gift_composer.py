@@ -797,3 +797,43 @@ def test_an_egg_can_be_flagged_too_which_is_what_the_official_script_does():
     assert run.eggs == [172]
     assert run.fateful == [2]
     assert run.met_locations == [(2, gc.METLOC_FATEFUL_ENCOUNTER)]
+
+
+def test_a_bound_script_runs_composer_actions_outside_a_delivery_plan():
+    """`initramscript` binds a field script to an object, and until now the composer could only
+    build one out of Messages. It is the same bytecode in the same interpreter, so everything a
+    delivery stage can do works here - what is absent is the stage cursor and the receipt flag,
+    because a bound script ends in `end` and is meant to be run again."""
+    script = gc.build_bound_script([
+        gc.Message("Take this."),
+        gc.GiveItem(4, 2),
+        gc.GivePokemon(251, 30, fateful_encounter=True),
+    ], slug="npc")
+    run = ScriptVM(script, party_size=1).run()
+    assert run.messages == [gc._encode_message("Take this.")[:-1]]
+    assert run.items == [(4, 2)]
+    assert run.mons == [(251, 30, 0)]
+    assert run.fateful == [1] and run.met_locations == [(1, gc.METLOC_FATEFUL_ENCOUNTER)]
+    assert run.release_count == 1
+
+
+def test_a_bound_script_takes_the_failure_branch_and_still_releases_the_player():
+    """A bound script with no failure tail would leave the player LOCKed in the overworld, and there
+    is no menu to back out of in the field."""
+    script = gc.build_bound_script([gc.GivePokemon(251, 30, fateful_encounter=True)], slug="npc")
+    full = ScriptVM(script, party_size=gc.PARTY_SIZE).run()
+    assert full.mons == [] and full.fateful == [] and full.met_locations == []
+    assert full.messages == [gc._encode_message(gc.DEFAULT_PARTY_FULL_MESSAGE)[:-1]]
+    assert full.release_count == 1
+
+
+def test_a_fateful_give_without_moves_says_the_party_is_full_not_the_storage():
+    """Without moves a full party is not a failure - the mon goes to the PC - so the message is
+    about storage. fateful_encounter needs the mon IN the party, which brings the guard back, and
+    then the player's problem really is the party."""
+    assert gc._failure_message(gc.GivePokemon(1, 5)) == gc.DEFAULT_STORAGE_FULL_MESSAGE
+    assert gc._failure_message(
+        gc.GivePokemon(1, 5, fateful_encounter=True)) == gc.DEFAULT_PARTY_FULL_MESSAGE
+    assert gc._failure_message(gc.GiveEgg(1)) == gc.DEFAULT_STORAGE_FULL_MESSAGE
+    assert gc._failure_message(
+        gc.GiveEgg(1, fateful_encounter=True)) == gc.DEFAULT_PARTY_FULL_MESSAGE

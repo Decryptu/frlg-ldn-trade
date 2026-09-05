@@ -978,14 +978,14 @@ def _emit_action(builder, action, *, sprite_id, failure_label, completed_label):
 def _failure_message(action):
     if isinstance(action, GiveItem):
         return action.failure_message or DEFAULT_BAG_FULL_MESSAGE
-    if isinstance(action, GivePokemon):
+    if isinstance(action, (GivePokemon, GiveEgg)):
         if action.failure_message:
             return action.failure_message
-        return DEFAULT_PARTY_FULL_MESSAGE if action.moves else DEFAULT_STORAGE_FULL_MESSAGE
-    if isinstance(action, GiveEgg):
-        if action.failure_message:
-            return action.failure_message
-        return DEFAULT_PARTY_FULL_MESSAGE if action.moves else DEFAULT_STORAGE_FULL_MESSAGE
+        # Without moves a full party is not a failure at all - the mon goes to the PC, and only a
+        # full PC reaches the label. Moves and fateful_encounter both need the mon to be IN the
+        # party, so both emit the party-size guard, and then a full party is what the player hit.
+        needs_party = bool(action.moves) or action.fateful_encounter
+        return DEFAULT_PARTY_FULL_MESSAGE if needs_party else DEFAULT_STORAGE_FULL_MESSAGE
     if isinstance(action, RequireSpecialResult):
         return action.failure_message
     return None
@@ -1242,6 +1242,50 @@ def _compile_rally(definition, flag_id):
             install_activation_script=_build_activation(
                 cursor, receipt_flag=receipt_flag, install=True))
     return distributions
+
+
+def build_bound_script(actions, *, slug="bound"):
+    """Composer actions -> a standalone field script, the kind `initramscript` binds to an object.
+
+    `build_talk_script` below is this with only Message allowed. Everything the delivery plan can do
+    - give an item, give a mon, show a sprite, start a battle, read a special - is the same bytecode
+    running in the same interpreter out of the same `gSaveBlock1Ptr->ramScript.data.script`, so the
+    only thing that was missing was somewhere to put it that is not a DeliveryPlan.
+
+    WHAT IS DELIBERATELY NOT HERE: the stage cursor, the receipt flag and the completion bookkeeping.
+    A delivery plan is resumable because the delivery man can be talked to again mid-sequence and
+    must not repeat what he already gave. A bound script has no such contract - it ends in `end` and
+    not `endram`, so the binding survives and the player can simply run the whole thing again
+    [rng_script's header, and mev03]. Anything that must happen once needs its own flag, as an
+    explicit SetVar or a condition, rather than getting one by accident.
+
+    THE TRAP THAT GOVERNS ALL OF THIS: a Wonder Card and an NPC-bound script share one RAM script
+    slot, so installing this takes the card's slot and the console then reports it holds no card
+    [ValidateSavedWonderCard requires ValidateRamScript, decomp:src/mystery_gift.c:186]. The card is
+    intact; the menu will not show it. Sending any ordinary card afterwards takes the slot back.
+    """
+    builder = _FieldScriptBuilder()
+    builder.emit(bytes([_OP_SETVADDRESS])
+                 + _RAM_SCRIPT_VIRTUAL_BASE.to_bytes(4, "little"))
+    builder.emit(bytes([_OP_LOCK, _OP_FACEPLAYER]))
+    failures = []
+    sprite_counter = 0
+    for action_index, action in enumerate(actions):
+        failure_label = f"{slug}_failure_{action_index}"
+        message = _failure_message(action)
+        if message is not None:
+            failures.append((failure_label, message))
+        _emit_action(builder, action, sprite_id=sprite_counter,
+                     failure_label=failure_label, completed_label="exit")
+        if isinstance(action, ShowSprite):
+            sprite_counter += 1
+    builder.vgoto("exit")
+    _append_failures(builder, failures, "exit")
+    builder.label("exit")
+    builder.emit(bytes([_OP_RELEASE, _OP_END]))
+    script = builder.finish(slug)
+    _check_script_size(script, builder, slug)
+    return script
 
 
 def build_talk_script(messages, *, slug="talk"):
