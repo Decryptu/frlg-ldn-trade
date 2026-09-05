@@ -177,7 +177,7 @@ Verbatim in `data/mystery_event_msg.s`, one recreated (Altering Cave, below):
   the counters while the console holds exactly that flag id [`mystery_gift.c`]. The counters it
   would be built on are the ones the ledger above now watches.
 
-### Altering Cave - built, not yet run
+### Altering Cave - sent and proven, bs74/fr42/bs75
 
 `--gift altering-cave` (flag id 1004) is the official script ported command for command
 [`data/mystery_event_msg.s:325`]: `addvar VAR_ALTERING_CAVE_WILD_SET, 1`, a wrap, and a message.
@@ -196,5 +196,17 @@ evidence is a save dump before and after:
 
     --buffer-script save-dump --dump-block sav1 --dump-offset 0x1048 --dump-size 2
 
-UNKNOWN until a run: whether the var moves on this build, and whether the cave's wild set follows it
-on a console whose player can reach Outcast Island.
+**FACT, three runs.** bs74 read the var at **0**. fr42 sent the card, the player accepted it over
+the one the console held (flagId 1003 -> 1004) and talked to the delivery man three times; he said
+"Thank you for using the MYSTERY GIFT System. There are rumors of rare POKEMON in ALTERING CAVE."
+all three times, which is the binding surviving `end`. bs75 read the var back at **3** - one per
+talk, nothing else in the sixteen bytes moved:
+
+    bs74  0x1048: 0000 f401 0d00 cb30 ...
+    bs75  0x1048: 0300 f401 0d00 cb30 ...
+
+So the whole event works on this build: the card installs, the script is repeatable, `addvar`
+writes the player's save, and the count is exactly the number of conversations.
+
+UNKNOWN: whether the cave's wild set follows the var on screen. That needs a player who can reach
+Outcast Island (Six Island), and it is the game reading the var, not the event writing it.
