@@ -155,3 +155,25 @@ def test_the_end_of_the_table_is_the_end_of_script_data():
     # and script_data has to contain everything already measured inside it
     for address in (rom_map.G_SCRIPT_CMD_TABLE, rom_map.G_SPECIALS, rom_map.G_STD_SCRIPTS):
         assert rom_map.G_SCRIPT_CMD_TABLE <= address < rom_map.SCRIPT_DATA_END
+
+
+def test_the_vms_workers_were_read_by_position():
+    """bs111 dumped 16 of the 17 handlers and the bl targets name themselves against the decomp's
+    call order. Both dead opcodes - setrecordmixinggift and enableresetrtc - make exactly one call,
+    to the same address, which is SetIncompatible: that is what makes them dead
+    [decomp:src/mystery_event_script.c], and it is the shape the dump actually came back with."""
+    assert rom_map.ME_SET_INCOMPATIBLE == 0x080DE330
+    assert rom_map.ME_CHECK_COMPATIBILITY < rom_map.ME_SET_INCOMPATIBLE
+    # the two statics sit BELOW the handlers, which is where a C file's helpers go
+    assert rom_map.ME_SET_INCOMPATIBLE < min(
+        address & ~1 for _name, address in rom_map.MYSTERY_EVENT_HANDLERS)
+
+
+def test_memcpy_lands_inside_lib_text_and_checks_the_boundary():
+    """addtrainer is `ScriptReadWord; memcpy; ValidateEReaderTrainer; StringExpandPlaceholders`
+    [decomp:src/mystery_event_script.c], so its second call is memcpy - which comes from libgcc and
+    lives in lib_text. It has to be above the boundary bs110 found by reading a THUMB prologue, and
+    nothing about that reading knew anything about this handler."""
+    assert rom_map.MEMCPY > rom_map.LIB_TEXT_START
+    assert rom_map.STRING_EXPAND_PLACEHOLDERS < rom_map.G_SCRIPT_CMD_TABLE   # ordinary .text
+    assert rom_map.INIT_RAM_SCRIPT < rom_map.G_SCRIPT_CMD_TABLE

@@ -127,11 +127,39 @@ and every table this project has measured (`gScriptCmdTable`, `gSpecialVars`, `g
 
 ### What it opens
 
-bs84's method now applies unchanged: the 17 entries are handler addresses, a 1 KB dump of them
-reads the workers out by position the way `AddBagItem` and the flag helpers were read, and the
-Mystery Event VM becomes as callable through `call-chain` as the field-script engine already is.
-`MEScrCmd_givepokemon` at 0x080DE681 and `MEScrCmd_initramscript` at 0x080DE5B5 are the two this
-project already drives through the wire, and calling them directly would need no card at all.
+**bs111 spent one more run and read the workers.** A single 1 KB window at 0x080DE3F4 holds 16 of
+the 17 handlers (only `crc` falls past the end), and a handler reads its arguments and then calls,
+so the decomp's call ORDER names each `bl` by position [`src/mystery_event_script.c`]:
+
+| worker | address | how it names itself |
+|---|---|---|
+| `StringExpandPlaceholders` | 0x0800CADC | every handler that leaves a message ends on it |
+| `RunScriptImmediately` | 0x0806D438 | `runscript` is `ScriptReadWord` then this, and nothing else |
+| `InitRamScript` | 0x0806D5F0 | `initramscript`, the call this project already drives by wire |
+| `GiveGiftRibbonToParty` | 0x080A43B0 | `giveribbon`, first of two |
+| `EnableRareWord` | 0x080C1658 | `addrareword`, first of two |
+| `CheckCompatibility` | 0x080DE300 | `checkcompat`'s test, before the branch |
+| `SetIncompatible` | 0x080DE330 | `checkcompat`'s else - and the ONLY call either dead opcode makes |
+| `memcpy` | 0x081E44F4 | `addtrainer`'s second call |
+
+**The alignment check is that the already-measured targets land where they should**, and eight of
+them do: `ScriptReadWord`, `ScriptReadHalfword`, `ScriptContext_Stop`, `GetMonData`,
+`CalculatePlayerPartyCount`, and the specials `EnableNationalPokedex` (367), `IsEnigmaBerryValid`
+(50) and `ValidateEReaderTrainer` (246). A window decoded at the wrong offset does not do that.
+
+Two of those rows are worth reading twice. `setrecordmixinggift` and `enableresetrtc` each make
+**exactly one call, to the same address** - `SetIncompatible`. That is what
+`mystery_event.DEAD_OPCODES` has always said about them, arrived at from their behaviour on the
+console, and here it is in the code.
+
+And `memcpy` at 0x081E44F4 **checks the section boundary from a direction that knew nothing about
+it**: memcpy comes from libgcc, which is in `lib_text`, and 0x081E44F4 is above the 0x081DE188 that
+bs110 arrived at by reading a THUMB prologue.
+
+What is left open: `MEScrCmd_crc` at 0x080DE831 fell past the end of the window, and `givepokemon`
+and `setenigmaberry` make calls this project has not named yet (0x0809BB18, 0x0809B964, 0x080971FC,
+0x08046994, 0x0808C860, 0x080A01B0, 0x0800C8CC, 0x0800C938, 0x08071DF8). One more dump at
+0x080DE7F4 closes both.
 
 ## Why `checkcompat` is optional
 

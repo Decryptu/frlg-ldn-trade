@@ -136,6 +136,28 @@ MYSTERY_EVENT_HANDLERS = (
 )
 
 
+# --- the Mystery Event VM's workers, bs111 -------------------------------------------------------
+# bs84's method on the VM's own table: a handler reads its arguments and then calls, and the decomp
+# gives the call ORDER, so the bl targets name themselves by position
+# [decomp:src/mystery_event_script.c]. The alignment check is that the targets this project had
+# already measured land where they should - ScriptReadWord, ScriptReadHalfword, ScriptContext_Stop,
+# GetMonData, CalculatePlayerPartyCount, and the specials EnableNationalPokedex (367),
+# IsEnigmaBerryValid (50) and ValidateEReaderTrainer (246).
+ME_CHECK_COMPATIBILITY = 0x080DE300     # checkcompat's test, before the branch
+ME_SET_INCOMPATIBLE = 0x080DE330        # checkcompat's else, and BOTH dead opcodes call only this
+STRING_EXPAND_PLACEHOLDERS = 0x0800CADC  # every handler that leaves a message ends on it
+RUN_SCRIPT_IMMEDIATELY = 0x0806D438     # runscript: ScriptReadWord then this, and nothing else
+INIT_RAM_SCRIPT = 0x0806D5F0            # initramscript, the call this project drives by wire
+GIVE_GIFT_RIBBON_TO_PARTY = 0x080A43B0  # giveribbon
+ENABLE_RARE_WORD = 0x080C1658           # addrareword
+
+# AND A CHECK ON THE SECTION BOUNDARY, from a direction that knew nothing about it. addtrainer is
+# `ScriptReadWord; memcpy; ValidateEReaderTrainer; StringExpandPlaceholders`, and its second bl is
+# 0x081E44F4 - so that is memcpy, which comes from libgcc and therefore lives in `lib_text`. It is
+# ABOVE 0x081DE188, which bs110 put the section boundary at by reading a THUMB prologue there.
+MEMCPY = 0x081E44F4
+
+
 # --- src/pokemon.c --------------------------------------------------------------------------------
 # gSpeciesInfo, found by a content fingerprint (bs38) and confirmed by reading it (bs39, 34/34
 # entries byte-identical to the decomp). The three all-100 species give a word at entry offset 0
