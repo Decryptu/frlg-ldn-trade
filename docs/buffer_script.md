@@ -899,6 +899,39 @@ That is the whole shape of the console's script layer now: 214 field commands (b
 behind two windows of them (bs84, bs89), and 444 specials (bs92-bs95) - with `call-chain` able to
 call any of them and check the answer in the same frame.
 
+### bs97, bs98: gStdScripts, and reading the console's scripts as scripts
+
+`gStdScripts` needed no run either: `data/event_scripts.s` puts it immediately after the
+`.include "data/specials.inc"` that ends `gSpecials`, under an `.align 2` that `gSpecialsEnd`
+already satisfies. So it is at **0x081640EC**, and bs97 dumped it: ten words, all pointing into
+0x081A76xx..0x081AB5xx - script data, well past every table - with the five msgbox scripts within
+forty bytes of each other, which is what five tiny scripts laid out in source order look like.
+
+**bs98 read them as scripts.** The operand widths come out of the decomp's own macros
+(`scripts/gen_scrcmd_args.py` -> `frlgsim/scrcmd_args.py`: each `.macro` emits its opcode as a
+`.byte` and then a `.byte`/`.2byte`/`.4byte` per argument), and with bs82's opcode table that is a
+disassembler. Pointed at 0x081A7624, the console's own bytes:
+
+    0x081A7624  6A  lock
+    0x081A7625  5A  faceplayer
+    0x081A7626  67  message 0x00000000
+    0x081A762B  66  waitmessage
+    0x081A762C  6D  waitbuttonpress
+    0x081A762D  6C  release
+    0x081A762E  03  return
+
+which is `Std_MsgboxNPC` [decomp:data/scripts/std_msgbox.inc], command for command.
+
+**What makes it proof is where each script STOPS.** `gStdScripts` gives five entry points;
+disassembling from each one has to end on `return` at the byte immediately before the next. All
+five do. An operand width wrong by one anywhere - and the widths were generated, not checked -
+would desynchronise the walk and land in the middle of an instruction. Those 42 bytes are the
+fixture in `tests/test_script_cmd_table.py` now, so the table and the widths are held to the
+console's own bytes offline from here on.
+
+Any script in the cartridge can be read this way: a `memory-dump` at its address, then
+`scrcmd.disassemble`.
+
 ## `table-scan`: finding a table by its shape
 
 Every address found by searching so far rested on a constant that only one place could hold:

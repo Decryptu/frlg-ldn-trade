@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import rom_map, scrcmd, scrcmd_names  # noqa: E402
+from frlgsim import rom_map, scrcmd, scrcmd_args, scrcmd_names  # noqa: E402
 
 
 def test_the_table_is_the_decomps_length():
@@ -102,3 +102,55 @@ def test_the_flag_helpers_are_three_consecutive_functions():
 def test_calling_add_bag_item_needs_the_thumb_bit():
     """--call-address takes the value a bx needs; every entry here is stored without it."""
     assert rom_map.thumb(rom_map.ADD_BAG_ITEM) == 0x0809DA71
+
+
+# --- reading a script the console holds, bs97/bs98 ------------------------------------------------
+# 42 bytes read off the console at 0x081A7624, where gStdScripts points: five standard scripts laid
+# out back to back. They are the fixture because they are the one place a script's boundaries are
+# known independently - data/scripts/std_msgbox.inc says what each one is, and gStdScripts says
+# where each one starts, so a wrong opcode table or a wrong operand width desynchronises visibly.
+STD_MSGBOX_BASE = 0x081A7624
+STD_MSGBOX_BYTES = bytes.fromhex(
+    "6a5a6700000000666d6c03"      # Std_MsgboxNPC     0x081A7624
+    "696700000000666d6b03"        # Std_MsgboxSign    0x081A762F
+    "6700000000666d03"            # Std_MsgboxDefault 0x081A7639
+    "6700000000666e140803"        # Std_MsgboxYesNo   0x081A7641
+    "c70321")                     # Std_ReceivedItem  0x081A764B, its first two commands
+
+
+def test_the_console_s_own_standard_script_disassembles_as_the_decomp_wrote_it():
+    lines = scrcmd.disassemble(STD_MSGBOX_BYTES, STD_MSGBOX_BASE, STD_MSGBOX_BASE)
+    got = [line.split(None, 2)[2].split()[0] for line in lines]
+
+    assert got == ["lock", "faceplayer", "message", "waitmessage", "waitbuttonpress",
+                   "release", "return"], "data/scripts/std_msgbox.inc, command for command"
+
+
+def test_each_standard_script_ends_exactly_where_the_next_one_begins():
+    """The real check on the operand widths. gStdScripts gives five entry points; the disassembly
+    of each one has to stop on `return` at the byte before the next. A width that is wrong by one
+    anywhere cannot land on all five."""
+    entries = (0x081A7624, 0x081A762F, 0x081A7639, 0x081A7641, 0x081A764B)
+    for start, next_start in zip(entries, entries[1:]):
+        lines = scrcmd.disassemble(STD_MSGBOX_BYTES, STD_MSGBOX_BASE, start)
+        assert lines[-1].split()[1] == "03", f"the script at 0x{start:08X} does not end on `return`"
+        last = int(lines[-1].split()[0], 16)
+        assert last + 1 == next_start, (
+            f"0x{start:08X} runs to 0x{last:08X}, but the next entry point is 0x{next_start:08X}")
+
+
+def test_a_pointer_that_is_not_a_script_is_not_mistaken_for_one():
+    assert scrcmd.looks_like_a_script(STD_MSGBOX_BYTES, STD_MSGBOX_BASE, STD_MSGBOX_BASE)
+    # THUMB function prologues (push {r4, lr}; adds r4, r0, #0) are what the OTHER tables hold.
+    assert not scrcmd.looks_like_a_script(
+        bytes.fromhex("10b5041c") * 4, STD_MSGBOX_BASE, STD_MSGBOX_BASE)
+
+
+def test_every_command_the_project_emits_has_a_shape():
+    """scrcmd.py's OP_* constants are the commands this host actually writes into a RAM script; a
+    command with no fixed shape cannot be disassembled, so it must not be one of ours."""
+    ours = [value for name, value in vars(scrcmd).items()
+            if name.startswith("OP_") and isinstance(value, int)]
+    assert ours
+    for opcode in ours:
+        assert opcode in scrcmd_args.ARGS, f"{scrcmd_names.COMMANDS[opcode]} has no operand shape"

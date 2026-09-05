@@ -62,3 +62,59 @@ STD_OBTAIN_ITEM = 0             # gStdScripts index [event_scripts.s:78]
 # A saved RAM script is copied to a fixed EWRAM address and run from there, but its vgoto/vmessage
 # operands are relocated against this base [setvaddress, src/scrcmd.c].
 RAM_SCRIPT_VIRTUAL_BASE = 0x08000000
+
+
+# --- reading a script the console holds -----------------------------------------------------------
+# The opcode table is bs82's (scrcmd_names.COMMANDS) and the operand widths are the decomp's own
+# macros (scrcmd_args.ARGS, generated). Together they turn a dump into the script it is - which is
+# the only way to check a pointer into script data is really a script. docs/buffer_script.md.
+
+def disassemble(data, base, start=None, limit=64):
+    """-> lines of `ADDRESS  opcode  name  operands` for the script at `start` in a dump loaded at
+    `base`. Stops at `end`/`return`, at an opcode with no fixed shape, or when the dump runs out."""
+    from . import scrcmd_args, scrcmd_names
+    data = bytes(data)
+    cursor = (base if start is None else start) - base
+    lines = []
+    for _ in range(limit):
+        if not 0 <= cursor < len(data):
+            lines.append(f"  0x{base + cursor:08X}  (past the end of the dump)")
+            break
+        opcode = data[cursor]
+        name = (scrcmd_names.COMMANDS[opcode] if opcode < scrcmd_names.SCRIPT_CMD_COUNT
+                else "?")
+        widths = scrcmd_args.ARGS.get(opcode)
+        if widths is None:
+            lines.append(f"  0x{base + cursor:08X}  {opcode:02X}  {name}: no fixed shape, stopping")
+            break
+        operands, at = [], cursor + 1
+        for width in widths:
+            chunk = data[at:at + width]
+            if len(chunk) < width:
+                operands.append("(truncated)")
+                break
+            operands.append(f"0x{int.from_bytes(chunk, 'little'):0{2 * width}X}")
+            at += width
+        lines.append(f"  0x{base + cursor:08X}  {opcode:02X}  {name} " + ", ".join(operands))
+        cursor = at
+        if opcode in (OP_END, 0x03):        # end, return
+            break
+    return lines
+
+
+def looks_like_a_script(data, base, start, steps=6):
+    """-> whether `steps` instructions decode with known shapes and stay inside the dump. A pointer
+    into script data answers True; a pointer into code or a table does not, which is what makes
+    this a check on gStdScripts rather than a rendering of it."""
+    from . import scrcmd_args
+    data, cursor = bytes(data), start - base
+    for _ in range(steps):
+        if not 0 <= cursor < len(data):
+            return False
+        widths = scrcmd_args.ARGS.get(data[cursor])
+        if widths is None:
+            return False
+        cursor += 1 + sum(widths)
+        if data[cursor - 1 - sum(widths)] in (OP_END, 0x03):
+            return True
+    return True
