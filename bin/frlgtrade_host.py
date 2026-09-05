@@ -39,12 +39,12 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser.add_argument("--trades", type=int, default=1, choices=range(1, 7), metavar="N")
     parser.add_argument(
         "--union-room", action="store_true",
-        help="host for the Union Room (the MIDDLE NPC on Pokemon Center 2F) instead of the trade "
-             "centre's THIRD NPC; use with --union-room-keepalive 120 and --board-type")
+        help="host for the Union Room (the middle NPC on Pokemon Center 2F) instead of the trade "
+             "centre's third NPC; use with --union-room-keepalive 120 and --board-type")
     parser.add_argument(
         "--union-room-activity", choices=sorted(configmod.UNION_ROOM_ACTIVITIES), default=None,
         help="which activity --union-room advertises; default 'in-room', the bare IN_UNION_ROOM a "
-             "console standing in the room connects to. 'search' is what the screen BEFORE the "
+             "console standing in the room connects to. 'search' is what the screen before the "
              "room looks for (untested)")
     parser.add_argument(
         "--union-room-keepalive", type=int, default=0, metavar="N",
@@ -61,7 +61,7 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser.add_argument(
         "--union-room-chat", action="store_true",
         help="Union Room: accept the console's 'Tchat' instead of declining it. Both sides send a "
-             "JOIN block, then the console's keyboard opens and every line it types is logged")
+             "join block, then the console's keyboard opens and every line it types is logged")
     parser.add_argument(
         "--union-room-battle", action="store_true",
         help="Union Room: accept the console's Combat instead of declining it. The console needs "
@@ -69,13 +69,13 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
              "master and runs the battle, we answer its controller commands")
     parser.add_argument(
         "--battle-fight", action="store_true",
-        help="Union Room battle: pick FIGHT with the first move instead of forfeiting at the first "
+        help="Union Room battle: pick fight with the first move instead of forfeiting at the first "
              "action prompt. Only the forfeit path has been proven on hardware")
     parser.add_argument(
         "--battle-move", type=int, default=0, metavar="N", choices=(0, 1, 2, 3),
         help="Union Room battle with --battle-fight: which of the active Pokemon's four move slots "
              "to use. The default 0 is whatever move slot one holds, which for the tracked party is "
-             "REFRESH and does no damage")
+             "refresh and does no damage")
     parser.add_argument(
         "--chat-file", default=None, metavar="PATH",
         help="Union Room chat: tail this file while the host runs and send every line appended to "

@@ -62,7 +62,7 @@ def add_host_config_arguments(parser, *, shared_path=None, local_path=None):
 
 def add_host_arguments(parser, *, option_defaults=None, ldn_defaults=None,
                        trust_pia_default=True, live_default=True,
-                       scene_help="LDN scene; default uses the configured FRLG scene"):
+                       scene_help="LDN scene; default uses the configured frlg scene"):
     option_defaults = option_defaults or config.HostOptions()
     ldn_defaults = ldn_defaults or config.LdnConfig(phy="auto")
     parser.epilog = "\n\n".join(
@@ -80,7 +80,7 @@ def add_host_arguments(parser, *, option_defaults=None, ldn_defaults=None,
         "--live", action=argparse.BooleanOptionalAction, default=live_default,
         help="host for a real Switch")
     parser.add_argument("--password", default="",
-                        help="LDN passphrase hex; default uses the FRLG emulator value")
+                        help="LDN passphrase hex; default uses the frlg emulator value")
     parser.add_argument("--phy", default=ldn_defaults.phy,
                         help="Wi-Fi phy; explicit phyN overrides --adapter")
     parser.add_argument(
@@ -114,7 +114,7 @@ def add_host_arguments(parser, *, option_defaults=None, ldn_defaults=None,
         action=argparse.BooleanOptionalAction,
         default=option_defaults.accept_decrypted_ccmp,
         help="accept hardware-decrypted RX frames that retain their CCMP "
-             "header and MIC (TP-Link Archer T3U/rtw88_8822bu profile)")
+             "header and mic (TP-Link Archer T3U/rtw88_8822bu profile)")
     parser.add_argument(
         "--native-nonce-sequence", "--native_nonce_sequence",
         action=argparse.BooleanOptionalAction,

@@ -1,51 +1,14 @@
-"""Addresses in the ROM the console actually runs, established by reading them off it.
+"""Addresses in the ROM the console actually runs, each read off it.
 
-The console runs the FRENCH FireRed Switch build - game code `BPRF`, software version 0x0A, read out
-of the cartridge header at 0x080000A0 in bs07. The pret decomp has a `firered_switch` target at
-GAME_REVISION=10, but it matches the ENGLISH rev-10 ROM, so its addresses cannot be assumed to be
-these. Everything here was measured on hardware or read out of code that was.
+The console runs the FRENCH FireRed Switch build, game code `BPRF`, software version 0x0A, read out
+of the cartridge header in bs07. The pret decomp's `firered_switch` target is GAME_REVISION=10 but
+matches the ENGLISH rev-10 ROM, so its addresses are never assumed here. A symbol that has not been
+read off the console does not belong in this file, and every entry carries the run that measured it.
 
-How each one was obtained, because that is what makes it trustworthy:
-
-- `anchors` (bs08) returned `lr`, which Client_RunBufferScript's own `bl` had set: the instruction
-  after the call, at 0x08148C74. One absolute ROM address, from the CPU.
-- A `memory-dump` around it (bs11) disassembles as Client_RunBufferScript exactly as
-  [decomp:src/mystery_gift_client.c:274] writes it - `adds r0,r4,#4` for &client->param, two
-  `ldr`s through pointers for the save blocks, `cmp r0,#1` at the anchor - and its THUMB literal
-  pool holds gDecompressionBuffer and the addresses of the two save-block pointers.
-- MysteryGiftClient_CallFunc, right after it, copies an eight-entry table onto the stack and indexes
-  it by `client->funcId`, which names sClientFuncs and where it is.
-- A `memory-dump` of that table (bs12) returned eight THUMB pointers, and every one of them lands on
-  a `push {r4, lr}` in bs11's disassembly. Entry 7 is 0x08148C61 - the function bs08 measured from
-  the other end. Three runs, three routes, one answer.
-- `memory-scan` (bs13) SEARCHED 4 MB of the cartridge for RAND_MULT, which no ARM or THUMB
-  instruction can encode, so every use of the game's LCG has it in a literal pool. Eleven hits; the
-  decomp's link order puts src/random.o (#86 in ld_script.ld) before every other user of the macro
-  (the next is src/title_screen.o at #123), so the LOWEST hit is Random's pool.
-- A `memory-dump` there (bs14) disassembles as Random and SeedRng exactly as [decomp:src/random.c]
-  writes them, and their pools name gRngValue - twice, from two independent functions.
-- `rng-trace` (bs15) then CALLED Random 96 times, one frame apart, reading gRngValue either side of
-  each call: `after == before * RAND_MULT + RAND_ADD` held 96 out of 96. That is the address, the
-  ROM call and the identity of the function, checked by the LCG's own arithmetic - and the first
-  time this project has called into the console's ROM at all.
-
-- `memory-scan` again (bs38) found gSpeciesInfo by a CONTENT fingerprint - three species whose
-  base stats are all 100, giving one word at two entry offsets so that it is visible whatever the
-  stride - and the gaps between the three hits MEASURED the entry stride at 28. bs39 dumped the
-  table: 34 of 34 entries byte-identical to the decomp's data. bs37, the run before, scanned the
-  whole 16 MB for a needle built on a 26-byte stride and found nothing, which is what put the
-  layout in question in the first place.
-- `memory-scan` on that address (bs40) found every function carrying &gSpeciesInfo in its literal
-  pool, and dumps at two of them (bs41, bs42) disassemble as src/battle_ai_switch_items.c and as
-  CreateMon/CreateBoxMon. bs41 REFUTED the first guess at the object boundary; bs42 confirmed the
-  second.
-
-Nothing here is inferred from the English build. A symbol that has not been read off the console does
-not belong in this file.
+How each address was obtained is in docs/buffer_script.md (the payloads and the runs),
+docs/species_table.md (gSpeciesInfo and CreateMon) and docs/leafgreen.md (the second cartridge).
 """
 
-# The build these belong to. A dump of the cartridge header that does not read this back is a
-# different console or a different game, and none of the addresses below apply to it.
 GAME_CODE = b"BPRF"          # B-PR-F: Pokemon FireRed, French
 SOFTWARE_VERSION = 0x0A      # the decomp's REVISION >= 0xA branches are the ones running
 GAME_TITLE = b"POKEMON FIRE"
@@ -54,7 +17,7 @@ ROM_HEADER_GAME_CODE = 0x080000AC
 ROM_HEADER_VERSION = 0x080000BC
 
 # --- src/mystery_gift_client.c ----------------------------------------------------------------
-# sClientFuncs, indexed by client->funcId [enum FUNC_INIT..FUNC_RUN_BUFFER]. Read out in bs12.
+# sClientFuncs, indexed by client->funcId, dumped whole in bs12.
 S_CLIENT_FUNCS = 0x0845DBD0
 CLIENT_FUNCS = (
     ("Client_Init", 0x081489D8),
@@ -67,18 +30,14 @@ CLIENT_FUNCS = (
     ("Client_RunBufferScript", 0x08148C60),
 )
 CLIENT_RUN_BUFFER_SCRIPT = 0x08148C60
-# The instruction after `bl _call_via_r3` in Client_RunBufferScript: where our payload's lr points,
-# and the first address this project ever had inside the ROM (bs08).
+# Where our payload's lr points: the instruction after `bl _call_via_r3` (bs08, bs11).
 CLIENT_RUN_BUFFER_SCRIPT_RETURN = 0x08148C74
 MYSTERY_GIFT_CLIENT_CALL_FUNC = 0x08148C94
 
 # --- src/mystery_gift_server.c ------------------------------------------------------------------
-# sFuncTable, indexed by svr->funcId [enum FUNC_INIT..FUNC_RUN, five entries]. It sits immediately
-# after sClientFuncs and bs12's dump caught it whole. The names are matched to the decomp by what the
-# code does, not by position alone: 0x08148DF0 is `movs r1,#4; str r1,[r0,#8]; movs r0,#0; bx lr`,
-# which is Server_Init's `svr->funcId = FUNC_RUN; return SVR_RET_INIT` with FUNC_RUN 4 and
-# SVR_RET_INIT 0, and 0x08148DF8 is `movs r0,#3; bx lr`, Server_Done returning SVR_RET_END = 3
-# [decomp:include/mystery_gift_server.h:10-13]. Both constants are what this repo already used.
+# sFuncTable, immediately after sClientFuncs in bs12's dump. Named by what each function does, not
+# by position: 0x08148DF0 is Server_Init's `funcId = FUNC_RUN; return SVR_RET_INIT` and 0x08148DF8
+# is Server_Done returning SVR_RET_END = 3.
 S_SERVER_FUNCS = 0x0845DBF0
 SERVER_FUNCS = (
     ("Server_Init", 0x08148DF0),
@@ -89,96 +48,44 @@ SERVER_FUNCS = (
 )
 
 # --- src/mystery_gift_link.c ------------------------------------------------------------------
-# `return link->recvFunc(link)` and `return link->sendFunc(link)`, twelve bytes apart, called by
-# Client_Recv and Client_Send respectively (bs11).
+# `return link->recvFunc(link)` and `return link->sendFunc(link)`, called by Client_Recv and
+# Client_Send (bs11).
 MYSTERY_GIFT_LINK_RECV = 0x081485E8
 MYSTERY_GIFT_LINK_SEND = 0x081485F4
 
 # --- src/random.c ---------------------------------------------------------------------------------
-# Found by SEARCH, not by luck: bs13 scanned for RAND_MULT, bs14 dumped the lowest hit. The
-# disassembly is byte for byte src/random.c:11 -
-#   4A04 ldr r2,[pc,#16] -> &gRngValue   6811 ldr r1,[r2]      4804 ldr r0,[pc,#16] -> RAND_MULT
-#   4348 mul r0,r1       4904 ldr r1,[pc,#16] -> 24691         1840 add r0,r0,r1
-#   6010 str r0,[r2]     0C00 lsr r0,r0,#16                    4770 bx lr
-# CALLED on hardware in bs15, 96 times, with the recurrence checked either side of every call.
+# bs13 scanned for RAND_MULT, bs14 disassembled the lowest hit, bs15 called it 96 times and checked
+# the LCG recurrence either side of every call.
 RANDOM = 0x080486B0                 # u16 Random(void)
 SEED_RNG = 0x080486D0               # void SeedRng(u16), whose pool names gRngValue a second time
 
 # --- src/event_data.c and data/event_scripts.s ----------------------------------------------------
-# The special script variables, found by SHAPE (bs57, first try after bs56 lost its answer to a
-# host-side wiring bug). gSpecialVars is a ROM table of POINTERS, so it holds no constant to search
-# for - its entries ARE the addresses being looked for. What it does have is a relation: entries
-# 0..11 point at gSpecialVar_0x8000..0x800B, twelve u16s declared consecutively
-# [decomp:src/event_data.c:16], so each word is exactly 2 above the last. `table-scan` searched
-# 0x08140000..0x08400000 (2.75 MB, 939 frames, ~23 s) for a twelve-word run rising by 2 and found
-# EXACTLY ONE, and the run's first value is the answer itself.
-#
-# Four independent checks, none of them a re-reading of the same measurement:
-#   1. gScriptCmdTable is 214 entries [decomp:data/script_cmd_table.inc] and opens `script_data`
-#      with gSpecialVars immediately after it, so the section starts at 0x081639A8 - 856 =
-#      0x08163650. script_data follows every .text object [ld_script_rev10.ld:318], and the
-#      highest ROM address read as code is 0x08148C74 (bs08's return address), leaving 106 KB for
-#      the ~25 objects linked after mystery_gift_client.o. Consistent.
-#   2. The pointer lands inside EWRAM, 0x02000000..0x02040000.
-#   3. It is ABOVE gPlayerParty (0x02024280, bs47), which is what the EWRAM link order requires:
-#      src/event_data.o comes after src/pokemon.o in sym_ewram_rev10.txt.
-#   4. It is u16-aligned.
-#
-# gSpecialVar_0x8000 may be hardcoded, and a save-block address may not: this is EWRAM_DATA, a
-# link-time global, where SetSaveBlocksPointers re-rolls a save block's base on every battle
-# [decomp:src/load_save.c:75, measured moving 76 bytes between bs45 and bs46].
+# Found by shape, not by value: gSpecialVars entries 0..11 point at twelve consecutive u16s, so each
+# word is +2 on the last. bs57 found exactly one such run in 2.75 MB, and its first value is the
+# answer. gSpecialVar_0x8000 may be hardcoded because it is EWRAM_DATA, a link-time global; a
+# save-block address may not (see SAVEBLOCK_MOVE_RANGE below).
 G_SPECIAL_VARS = 0x081639A8         # u16 *const gSpecialVars[21], by var id
 G_SPECIAL_VAR_0X8000 = 0x020370B4   # the first entry, read out of the table by the same run
-# The rest follow from the declaration order in event_data.c, which is NOT the table's order.
-# UNCONFIRMED - only entry 0 was read off the console; a dump of G_SPECIAL_VARS settles them.
+# UNCONFIRMED: only entry 0 was read. The rest follow from event_data.c's declaration order, which
+# is not the table's order; a dump of G_SPECIAL_VARS settles them.
 G_SPECIAL_VAR_0X8001 = G_SPECIAL_VAR_0X8000 + 2
 
 # --- src/pokemon.c --------------------------------------------------------------------------------
-# gSpeciesInfo, the species table, found by a CONTENT fingerprint rather than by any address
-# (bs38) and confirmed by reading it (bs39).
-#
-# bs37 looked for a word built from friendship/growthRate/eggGroups and found NOTHING in the whole
-# 16 MB - the first full-cartridge scan this project has run, and a clean negative. The needle was
-# not wrong about the DATA: recomputing bs06's five party mons' six stats each from the decomp's
-# base stats, IVs, EVs, level and nature reproduces what the console stored, 30 out of 30, so the
-# French cartridge holds the English decomp's species values exactly. It was wrong about the
-# LAYOUT. struct SpeciesInfo as the decomp declares it is 26 bytes by ISO alignment (its widest
-# member is u16), and at a 26-byte stride bs37's needle sat at entry offset 18, which with a
-# 4-aligned table is NEVER word-aligned - and `memory-scan` reads with `ldmia`, so it can only see
-# word-aligned matches. Zero hits was the only answer it could have given.
-#
-# bs38's needle is the one value that survives every hypothesis for the stride and the table's own
-# alignment: Mew, Celebi and Jirachi have all six base stats at 100, so bytes 0x00..0x05 of those
-# three entries are 0x64 and the word appears at entry offset 0 AND offset 2 - one of the two is
-# always aligned. Three hits, no false positives in 4 MB, gaps 2800 and 4424. Those gaps are 100
-# and 158 entries at 28 bytes, so the stride is 28: the decomp's 26 declared bytes plus two of
-# padding. bs39 then dumped the table and compared it to the decomp entry by entry - 34 of 34
-# byte-identical, and the padding is 00 00 on every one of them, so it is padding and not a field
-# the decomp is missing.
-#
-# The link order said where to look and was right a THIRD time (after src/random.o in bs13 and
-# src/easy_chat.o in bs16): src/pokemon.o is the 26th .rodata entry in ld_script.ld, so the table
-# had to sit early in rodata and below src/easy_chat.o's word data, which bs17 had already
-# measured at 0x083DE2C8.
+# gSpeciesInfo, found by a content fingerprint (bs38) and confirmed by reading it (bs39, 34/34
+# entries byte-identical to the decomp). The three all-100 species give a word at entry offset 0
+# AND 2, so one of the two is word-aligned whatever the stride - which matters because memory-scan
+# reads with `ldmia` and only sees word-aligned matches. The gaps between the hits measured the
+# stride at 28.
 GSPECIES_INFO = 0x0824CDFC
-SPECIES_INFO_STRIDE = 28            # sizeof is 26 in the decomp's struct; the ROM pads it to 28
+SPECIES_INFO_STRIDE = 28            # the decomp's struct is 26 bytes; the ROM pads it to 28
 SPECIES_INFO_SLOTS = 412            # NUM_SPECIES, SPECIES_EGG included
-# What bs38 actually returned, kept so the address above can be checked against its own evidence:
-# the three all-100 species, at GSPECIES_INFO + SPECIES_INFO_STRIDE * species.
 SPECIES_INFO_ALL_100 = (151, 251, 409)                       # Mew, Celebi, Jirachi
 BS38_SPECIES_INFO_HITS = (0x0824DE80, 0x0824E970, 0x0824FAB8)
 
-# The functions, found by scanning for GSPECIES_INFO itself (bs40) and disassembling where the hits
-# landed (bs41, bs42). 31 hits in 0x08028000..0x08048800; the block from 0x080413C0 up is
-# src/pokemon.o's, bounded above by src/trig.o and src/random.o - neither of which references the
-# table - and below by a 15.6 KB gap that is src/battle_controller_link_opponent.o, which does not
-# reference it either. bs41 checked the boundary the honest way and REFUTED a first guess: the
-# hits at 0x0803CC54 disassemble as src/battle_ai_switch_items.c:88, not as pokemon.o.
-#
-# CreateMon is identified instruction for instruction against [decomp:src/pokemon.c:1755], and by
-# two constants the decomp fixes independently: it calls SetMonData with field 56 (MON_DATA_LEVEL)
-# and then with field 64 (MON_DATA_MAIL) carrying 255 (MAIL_NONE), in that order, between
-# CreateBoxMon and CalculateMonStats.
+# Found by scanning for GSPECIES_INFO itself (bs40) and disassembling where the hits landed (bs41
+# refuted the first guess at the object boundary, bs42 confirmed the second). CreateMon is
+# identified instruction for instruction against [decomp:src/pokemon.c:1755], and by calling
+# SetMonData with MON_DATA_LEVEL then MON_DATA_MAIL carrying MAIL_NONE.
 CREATE_MON = 0x08041150             # void CreateMon(mon, species, level, fixedIV,
                                     #   hasFixedPersonality, fixedPersonality, otIdType, fixedOtId)
                                     # args 5..8 go on the stack; the first four are r0..r3
@@ -187,31 +94,21 @@ ZERO_MON_DATA = 0x08041090          # CreateMon's first call
 SET_MON_DATA = 0x08043A78           # SetMonData(mon, field, &value)
 CALCULATE_MON_STATS = 0x08041B78    # CreateMon's last call
 
-# CALLED ON HARDWARE, bs43 and bs44, both first try. The eight-argument call: four in r0..r3 and
-# four at sp+0..sp+12 at the moment of the call, which is where CreateMon's own prologue reads them
-# [bs42's disassembly]. bs43 used otIdType 0 (the OT is the player, so fixedOtId is ignored); bs44
-# changed only that, to otIdType 1 with the same value, so the fourth stack argument had to arrive
-# from the stack instead of from the save. Both answers are byte-identical and 13/13 predicted
-# fields hold [scratchpad/verify_create_mon.py], including the moves the ROM walked out of the
-# level-up learnset and the six stats CalculateMonStats derived from OUR personality's nature.
-
-# Read off the console for the first time in bs44, out of the mon CreateMon built - these are
-# globals no link message carries and no dump had been aimed at.
+# Read out of the mon CreateMon built in bs44: globals no link message carries.
 GGAME_LANGUAGE = 3                  # LANGUAGE_FRENCH [decomp:include/constants/global.h:22]
 GGAME_VERSION = 4                   # VERSION_FIRE_RED [:11]
-# gSpeciesNames is the FRENCH table, and CreateBoxMon copies from it into the nickname
-# [decomp:src/pokemon.c:1810], so one species a run is readable this way. bs44 read species 59 as
-# ARCANIN - which bs06's party dump had already read by a completely different route.
+# CreateBoxMon copies the nickname from the FRENCH gSpeciesNames [decomp:src/pokemon.c:1810], so one
+# species a run is readable this way. bs06's party dump had read the same name by another route.
 SPECIES_NAMES_READ = {59: "ARCANIN"}
 
-# --- read off the console but NOT yet confirmed by disassembling the function itself -------------
-# Named by call count and by the shape of the access, which is weaker evidence than the entries
-# above. Kept apart so nothing downstream mistakes them for measurements.
+# --- read off the console but NOT confirmed by disassembling the function itself -----------------
+# Named by call count and by the shape of the access, which is weaker than the entries above. Kept
+# apart so nothing downstream mistakes them for measurements.
 PROBABLE = (
     # CreateBoxMon calls one function 20 times, which is what SetBoxMonData does there.
     ("SetBoxMonData", 0x08043BCC),
-    # Indexed by a move id at a 12-byte stride with offset 1 compared against zero, which is
-    # struct BattleMove's `power` [decomp:include/pokemon.h]. Read in bs41.
+    # Indexed by move id at a 12-byte stride, offset 1 compared against zero: struct BattleMove's
+    # `power` [decomp:include/pokemon.h]. Read in bs41.
     ("gBattleMoves", 0x0824927C),
     # bs41: called with TRUE immediately before `Random() % 3` [battle_ai_switch_items.c:88].
     ("HasSuperEffectiveMoveAgainstOpponents", 0x0803CD94),
@@ -224,71 +121,35 @@ CALL_VIA_R1 = 0x081E2228
 CALL_VIA_R3 = 0x081E2230
 
 # --- variables ----------------------------------------------------------------------------------
-# gDecompressionBuffer, where CLI_RUN_BUFFER_SCRIPT copies our 1024 bytes and calls them. Deduced
-# from ld_script.ld, then MEASURED twice: `anchors` read it from pc (bs08), and it is the first word
-# of Client_RunBufferScript's literal pool (bs11).
+# Where CLI_RUN_BUFFER_SCRIPT copies our 1024 bytes and calls them. Deduced from ld_script.ld, then
+# measured twice: `anchors` read it from pc (bs08), and it is the first word of
+# Client_RunBufferScript's literal pool (bs11).
 GDECOMPRESSION_BUFFER = 0x0201C000
-# The pointer variables in IWRAM, not the blocks they point at. THEIR VALUES MOVE, and bs45/bs46
-# MEASURED it: six minutes apart, with no reboot, gSaveBlock1Ptr was 0x0202559C and then
-# 0x02025550 - a delta of 0x4C, 76 bytes, 4-aligned. SetSaveBlocksPointers [decomp:src/load_save.c:75]
-# is why:
+
+# The pointer variables in IWRAM, not the blocks they point at. SetSaveBlocksPointers re-rolls a
+# random 4-aligned offset in 0..124 on every battle and every load [decomp:src/load_save.c:75];
+# bs45 and bs46 measured the blocks moving 76 bytes six minutes apart with no reboot.
 #
-#     offset = (Random()) & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3);      // 128, so 0..124 by 4
-#     gSaveBlock2Ptr  = (void *)(&gSaveBlock2) + offset;
-#     gSaveBlock1Ptr  = (void *)(&gSaveBlock1) + offset;
-#
-# a RANDOM 4-aligned offset the game re-rolls in MoveSaveBlocks_ResetHeap, which CB2_InitBattle
-# calls - so every battle moves the save blocks, as does every load. 76 is in range and 4-aligned,
-# which is the measurement agreeing with the mechanism rather than merely not contradicting it.
-# The decomp's own name for it is QL_AddASLROffset [:82].
-#
-# THE RULE: an absolute address into a save block is valid only until the next battle or load.
-# Never carry one between runs. A payload that touches the save must compute from r1/r2, which the
-# console hands it every call - save-dump, save-write and --create-mon-append all do. bs45's dry
-# run reported the slot it WOULD write at 0x02025638; using that as bs46's --create-mon-destination
-# would have written 76 bytes too high, through the end of playerParty[1] and into playerParty[2].
+# THE RULE: an absolute address into a save block is valid only until the next battle or load. Never
+# carry one between runs - compute from the r1/r2 the console hands the payload every call, as
+# save-dump, save-write and --create-mon-append all do.
 SAVEBLOCK_MOVE_RANGE = 128          # [decomp:src/load_save.c:15]
 SAVEBLOCK_MOVE_MASK = (SAVEBLOCK_MOVE_RANGE - 1) & ~3        # 0x7C: 0..124 in steps of 4
-# What bs45 and bs46 read, minutes apart, on one boot.
 GSAVEBLOCK1_SEEN = (0x0202553C, 0x0202559C, 0x02025550)      # bs08, bs45, bs46
 GSAVEBLOCK2PTR = 0x0300422C
 GSAVEBLOCK1PTR = 0x03004228
-# THE PARTY THE GAME ACTUALLY USES, measured in bs47 by finding a Pokemon rather than by looking
-# where it was predicted. `gSaveBlock1Ptr->playerParty` is NOT this: it is only where the save path
-# copies to. SavePlayerParty [decomp:src/load_save.c:160] does
-#
-#     gSaveBlock1Ptr->playerPartyCount = gPlayerPartyCount;
-#     for (i = 0; i < PARTY_SIZE; i++) gSaveBlock1Ptr->playerParty[i] = gPlayerParty[i];
-#
-# and SaveSerializedGame [:196] is that call plus SaveObjectEvents - so anything written into the
-# save block's party is overwritten by the console's own save. bs46 learned this the expensive way:
-# it appended into gSaveBlock1Ptr->playerParty, the payload correctly reported APPENDED at slot 2
-# with the count raised, and the mon was gone because the save copied the live array back over it.
-# Write gPlayerParty and the same call CARRIES the write to flash instead of erasing it.
-#
-# bs47 dumped 1024 bytes at 0x02024000 and walked every 4-aligned window looking for a struct
-# Pokemon with a VALID CHECKSUM - the substruct region summed after decrypting with
-# personality ^ otId, which nothing passes by accident. Exactly one did, at +0x280: the player's
-# CHANSEY, Lv26, nicknamed 'Cheemsey', OT 'Tops' (traded to them, so the OT is not their own).
-# Species, level and nickname are things only their console knew.
-#
-# Two independent deductions had predicted it and both were right: bs42's dump holds 0x02024280 in
-# the literal pool of the first of two functions that zero six 100-byte structs (ZeroPlayerPartyMons
-# by source order) and 0x02024028 in the second's; and the decomp declares gEnemyParty[6]
-# immediately before gPlayerParty[6] [src/pokemon.c:61-62], so they are exactly 600 bytes apart -
-# 0x02024028 + 600 = 0x02024280.
-#
-# UNLIKE THE SAVE BLOCKS THESE DO NOT MOVE. They are ordinary EWRAM globals fixed at link time,
-# which is why bs42 could read one as a literal constant; the ASLR offset above applies only to
-# gSaveBlock1/gSaveBlock2/gPokemonStorage.
+
+# The party the game plays with. `gSaveBlock1Ptr->playerParty` is NOT this: SavePlayerParty copies
+# gPlayerParty into it when the console saves [decomp:src/load_save.c:160], so a write there is
+# erased by the console's own save (bs46). These are ordinary EWRAM globals fixed at link time, so
+# unlike the save blocks they do not move. bs47 found them by finding a Pokemon - the one 4-aligned
+# window of a dump that decoded with a valid checksum.
 GPLAYER_PARTY = 0x02024280          # struct Pokemon[6]
-GPLAYER_PARTY_COUNT = 0x02024025    # u8; bs47 read 1, matching the one mon on the player's screen
+GPLAYER_PARTY_COUNT = 0x02024025    # u8
 GENEMY_PARTY = 0x02024028           # struct Pokemon[6], 600 bytes below gPlayerParty
 
-# The seed EVERY random outcome in the game comes out of: encounters, shininess, damage rolls,
-# critical hits [Random, decomp:src/random.c:9]. Read out of Random's and SeedRng's literal pools
-# (bs14) and confirmed on hardware by its own recurrence (bs15). At the Mystery Gift link menu the
-# game itself turns it exactly TWICE a frame, measured over 95 consecutive frames.
+# The seed every random outcome in the game comes out of. Read out of Random's and SeedRng's literal
+# pools (bs14) and confirmed by its own recurrence (bs15). docs/rng.md.
 GRNG_VALUE = 0x03004220
 GAME_RANDOM_CALLS_PER_FRAME_AT_MG_MENU = 2
 
@@ -338,33 +199,14 @@ def read_client_funcs(dump):
     return out
 
 
-# --- LEAFGREEN, AND WHY IT IS A SEPARATE TABLE --------------------------------------------------
-# Every address above was read off FRENCH FIRERED, cartridge BPRF, software version 0x0A. The user's
-# second console is FRENCH LEAFGREEN, BPGF 0x0A (lg163 read the header: "POKEMON LEAF", BPGF, 0x0A -
-# and that run exists BECAUSE the first three agreed with FireRed so exactly that nothing in them
-# could rule out having addressed the wrong console).
+# --- LeafGreen: a separate table, measured separately ---------------------------------------------
+# The second console is FRENCH LEAFGREEN, BPGF 0x0A (lg163 read the header). Every RAM address
+# measured so far is the same as FireRed's and every ROM address above 0x080486C8 differs, because
+# two builds of the same game diverge where their data does and the divergence grows along the link
+# order. An address read low in the ROM therefore says nothing about one read high in it.
 #
-# WHAT WAS MEASURED, lg160-lg163, four runs, all first try:
-#
-#   lg160  anchors      gDecompressionBuffer 0x0201C000, the SAME as FireRed
-#                       the Mystery Gift call site 0x08148C50, which is FireRed's 0x08148C74 MINUS
-#                       0x24 - the ONE number that differs
-#   lg161  memory-scan  RAND_MULT, 11 matches in 0x08000000..0x09000000, the same COUNT as FireRed's
-#                       bs13, lowest at 0x080486C8
-#   lg162  memory-dump  Random at 0x080486B0 and SeedRng at 0x080486D0, byte-identical to FireRed's,
-#                       and gRngValue named TWICE from their two independent literal pools
-#   lg163  memory-dump  the cartridge header
-#
-# THE FINDING, AND IT IS NOT "THE ADDRESSES TRANSFER". random.o sits at the same place in both
-# builds and so does the RAM it names, but the Mystery Gift client does NOT - 0x24 of divergence has
-# accumulated by 0x08148C50. Two builds of the same game diverge where their DATA differs, and the
-# divergence grows along the link order, so an address read low in the ROM says nothing about one
-# read high in it. gRngValue agreeing is evidence about gRngValue and about nothing else.
-#
-# THE RULE: an address is LeafGreen's only when it was measured ON LEAFGREEN. Everything here has a
-# run tag; nothing is copied across because it "should" be the same. What is cheap is CHECKING - the
-# FireRed value is the first place to point a dump, and lg162 took one run to turn a guess into two
-# independent literal-pool readings.
+# THE RULE: an address is LeafGreen's only when it was measured ON LEAFGREEN. docs/leafgreen.md has
+# each run and what it read.
 LEAFGREEN_GAME_CODE = b"BPGF"       # lg163, off the cartridge; FireRed is BPRF
 LEAFGREEN_SOFTWARE_VERSION = 0x0A   # lg163; the same Switch revision as FireRed
 LEAFGREEN = {
@@ -373,103 +215,38 @@ LEAFGREEN = {
     "mystery_gift_call_site": (0x08148C50, "lg160"),   # FireRed 0x08148C74, so -0x24
     "Random": (0x080486B0, "lg162"),
     "SeedRng": (0x080486D0, "lg162"),
-    "gRngValue": (0x03004220, "lg162"),               # named twice, two independent pools
-    # lg164 found the party BY FINDING A POKEMON, the way bs47 did on FireRed: every 4-aligned
-    # window of a 1024-byte dump at 0x02024000 decoded as a struct Pokemon with a valid checksum.
-    # Four passed, and the user named their team back unprompted and IN ORDER - ALAKAZAM, RONFLEX,
-    # LIPOUTI (their nickname for a LIPOUTOU traded to an NPC, which is why its OT reads JOHAN and
-    # the others PAU), STAROSS - with KRABBY and FLORIZARRE in slots 5 and 6, past the window. That
-    # is why gPlayerPartyCount reads 6 while only four decoded. Nothing here was assumed from
-    # FireRed; the console named its own party.
-    "gPlayerParty": (0x02024280, "lg164"),
-    "gPlayerPartyCount": (0x02024025, "lg164"),        # read 6, matching a full party
+    "gRngValue": (0x03004220, "lg162"),                # named twice, two independent pools
+    "gPlayerParty": (0x02024280, "lg164"),             # found by finding a Pokemon, as bs47 did
+    "gPlayerPartyCount": (0x02024025, "lg164"),
     "gEnemyParty": (0x02024028, "lg164"),              # 600 bytes below [src/pokemon.c:61-62]
-    # lg165: the dump at FireRed's gSpeciesInfo decoded as species entries 20 bytes out of phase -
-    # Ivysaur 60/62/63/60/80/80 GRASS/POISON and Venusaur 80/82/83/80/100/100 at a stride of 28,
-    # which places entry 0 at 0x0824CDD8. Two base-stat rows agreeing with their types is not
-    # something a wrong address produces.
     "gSpeciesInfo": (0x0824CDD8, "lg165"),             # FireRed 0x0824CDFC, so -0x24
-    # lg166 was a PREDICTION MADE BEFORE THE RUN and it held: CreateMon's prologue, byte for byte
-    # (f0 b5 47 46 80 b4 87 b0, then the stack arguments at [sp,#52/56/60] that bs42 disassembled
-    # on FireRed), at exactly FireRed's address.
-    "CreateMon": (0x08041150, "lg166"),                # same as FireRed - BELOW the split
-    # lg167 PREDICTED sEasyChatGroups at 0x083E36DC by carrying -0x24 up from gSpeciesInfo, and the
-    # dump came back as nothing at all - the first prediction in this run of work to FAIL, and worth
-    # more than the ones that held. lg168 then found it the way bs16 found FireRed's: groups 8, 9
-    # and 10 each hold 69 words with 69 enabled, so 0x00450045 appears three times exactly 8 bytes
-    # apart. Three hits at 0x083E3580/3588/3590, which are the count fields of entries 8, 9 and 10,
-    # so the table starts 68 bytes below the first. lg169 read it: 22 entries, every pointer in ROM,
-    # every count equal to FireRed's.
+    "CreateMon": (0x08041150, "lg166"),                # same as FireRed: below the split
     "sEasyChatGroups": (0x083E353C, "lg168/lg169"),    # FireRed 0x083E3700, so -0x1C4
-    # lg171, bs57's method: gSpecialVars is a table of POINTERS, so it holds no constant to search
-    # for, but its first twelve entries point at twelve consecutive u16s - each word +2 on the last.
-    # Three such runs in the full 16 MB, and TWO of them start at 0x020370B4, which is FireRed's
-    # gSpecialVar_0x8000 exactly. Two independent tables naming the same EWRAM address is what makes
-    # it evidence rather than a coincidence of shape.
     "gSpecialVar_0x8000": (0x020370B4, "lg171"),       # same as FireRed
-    # Of the three runs this is the one at FireRed's 0x081639A8 minus 0x24, inside the segment where
-    # that delta is measured. The other -0x2C..-0x28 candidate at 0x08071FC8 sits in an unmeasured
-    # gap and is a different table; it is recorded here only so nobody re-derives it as a surprise.
     "gSpecialVars": (0x08163984, "lg171"),             # FireRed 0x081639A8, so -0x24
-    # lg175, and it verifies itself. The two words read 0x02025560 and 0x020245BC, while lg160's
-    # anchors had reported 0x02025554 and 0x020245B0 for the same two blocks - BOTH moved by exactly
-    # 12, one shared 4-aligned offset inside the 0..124 SetSaveBlocksPointers rolls
-    # [decomp:src/load_save.c:75]. Two pointers agreeing on the size of a re-roll they cannot both
-    # have faked is what makes these the save-block pointers and not two arbitrary words.
-    # The dump had to start at 0x03004224 rather than 0x03004220: see MOVING_REGIONS in
-    # buffer_script.py, which lg172 and lg173 paid for.
     "gSaveBlock1Ptr": (0x03004228, "lg175"),           # same as FireRed
     "gSaveBlock2Ptr": (0x0300422C, "lg175"),           # same as FireRed
 }
 
-# --- THE ROM DELTA, MEASURED IN FOUR SEGMENTS AND NOT ONE ---------------------------------------
-# THE FIRST VERSION OF THIS SECTION WAS WRONG AND IS KEPT DELETED ON PURPOSE. It read a constant
-# -0x24 off two points (the Mystery Gift call site, lg160, and gSpeciesInfo, lg165), called one
-# 36-byte insertion a hypothesis, and predicted a delta of zero at CreateMon - which lg166 then
-# confirmed byte for byte. The prediction was right and the model was not: BOTH -0x24 points sit
-# above EVERY difference, so they agreed with each other and said nothing about the range between.
-#
-# WHAT REFUTED IT COST NO HARDWARE RUN. lg161 scanned LeafGreen for RAND_MULT and bs13 had scanned
-# FireRed for the same constant. Eleven hits each, in the same order, at nearly the same addresses -
-# so they pair one to one, and the pairs give the delta at eleven points across 1.3 MB:
-#
-#     0x080486C8                    delta  0
-#     0x0807D238 .. 0x080AFC00      delta -0x2C     (4 hits)
-#     0x080F1EA0 .. 0x08122518      delta -0x28     (5 hits)
-#     0x0814CBFC                    delta -0x24
-#
-# So there are AT LEAST THREE differences, not one, and LeafGreen GAINS four bytes at each of the
-# upper two boundaries - a deficit of 44 bytes early, partly paid back twice. Nothing about this is
-# visible from two samples taken above all of it.
-#
-# THE LESSON, and it is the one this project keeps relearning: two agreeing measurements are one
-# measurement repeated when they share a blind spot. What made the difference here was a THIRD kind
-# of evidence - a scan already in the log, compared against a scan already in another log.
+# The ROM delta is a property of a REGION, not of the ROM. lg161 and bs13 each scanned their console
+# for RAND_MULT and got eleven hits in the same order, so the pairs give the delta at eleven points
+# across 1.3 MB for no hardware run at all. There are at least three boundaries; lg167 carried -0x24
+# upward on faith and found nothing, which is what exposed them.
 LEAFGREEN_DELTA_SEGMENTS = (
-    # (low, high, delta, evidence): the delta is MEASURED at both ends of each span
+    # (low, high, delta, evidence): the delta is measured at both ends of each span
     (0x08000000, 0x080486C8, 0x00, "lg162/lg166 and the lg161-vs-bs13 pairing"),
     (0x0807D238, 0x080AFC00, -0x2C, "lg161 vs bs13, 4 paired hits"),
     (0x080F1EA0, 0x08122518, -0x28, "lg161 vs bs13, 5 paired hits"),
-    # lg160 measured -0x24 at the Mystery Gift call site, which is BELOW the lowest paired hit in
-    # this segment - so the last boundary is under 0x08148C74, not under 0x0814CBFC. Combining the
-    # two kinds of evidence tightens the gap by 0x3F88 for free.
     (0x08148C74, 0x0824CDFC, -0x24, "lg160 at 0x08148C74, lg161-vs-bs13 at 0x0814CBFC, lg165"),
-    # THE EASY CHAT REGION, and it is the reason -0x24 must never be carried upward on faith.
-    # lg167 tried exactly that and found nothing. The real delta here is -0x1C4, SEVEN TIMES larger,
-    # and it is UNIFORM across the whole region: all 18 word-list pointers lg169 read are their
-    # FireRed addresses minus 0x1C4, and so is the group table itself.
     (0x083DE528, 0x083E3700, -0x1C4, "lg169: 18 word-list pointers and the table, all -0x1C4"),
 )
 
-
 def leafgreen_guess(firered_address):
-    """-> where `firered_address` PROBABLY is on LeafGreen. A place to point a dump, not an answer.
+    """-> where `firered_address` probably is on LeafGreen. A place to point a dump, not an answer.
 
-    Only the four MEASURED segments answer. Between them a boundary is known to exist and its
-    position is not, so the gaps refuse rather than interpolate - which is the whole correction the
-    RAND_MULT pairing forced. An address that comes back is still only a first place to look: the
-    delta says nothing about CONTENT, and a table can sit exactly where predicted and hold different
-    data (docs/easy_chat_french.md is the standing example).
+    Only the measured segments answer; the gaps refuse rather than interpolate, because a boundary is
+    known to be in there and its position is not. The delta says nothing about content either: a
+    table can sit exactly where predicted and hold different data.
     """
     address = int(firered_address)
     for low, high, delta, _evidence in LEAFGREEN_DELTA_SEGMENTS:
@@ -481,16 +258,11 @@ def leafgreen_guess(firered_address):
 
 
 def leafgreen(symbol):
-    """-> the LeafGreen address of `symbol`, or raise. Never falls back to the FireRed table.
-
-    Nothing here is copied across because it "should" be the same. Every entry in LEAFGREEN carries
-    the run that measured it on LEAFGREEN, and a symbol that has not been measured raises - use
-    `leafgreen_guess` to decide where to point a dump, then measure.
-    """
+    """-> the LeafGreen address of `symbol`, or raise. Never falls back to the FireRed table."""
     try:
         return LEAFGREEN[symbol][0]
     except KeyError:
         raise KeyError(
             f"{symbol!r} has not been measured on LeafGreen; have {sorted(LEAFGREEN)}. "
-            "Do not substitute the FireRed value - the two builds differ at three or more points "
+            "Do not substitute the FireRed value: the two builds differ at three or more points "
             "between 0x080486C8 and 0x0814CBFC (LEAFGREEN_DELTA_SEGMENTS).") from None

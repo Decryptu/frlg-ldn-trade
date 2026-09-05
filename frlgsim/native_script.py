@@ -549,39 +549,30 @@ def frames_for(instructions):
     return int(instructions) * CYCLES_PER_INSTRUCTION_FROM_EWRAM / CYCLES_PER_FRAME
 
 
-# --- THE PAYLOAD IN THE SCRIPT BODY: ONE BYTE EACH INSTEAD OF SIX -------------------------------
+# --- the payload in the script body: one byte each instead of six -------------------------------
 # Everything above stages code with `setptr`, six script bytes a payload byte, which caps a field
-# stub at ~163 bytes and is why mon-seek.s reuses every register it has. The cap comes off here.
+# stub at ~163 bytes. The cap comes off here because the field engine does not copy the body:
+# `GetRamScript` returns `scriptData->script` itself [decomp:src/script.c:514], a pointer into
+# gSaveBlock1Ptr->ramScript.data, and never reads past the last command. Bytes appended after it are
+# delivered storage at one script byte each.
 #
-# THE FIELD ENGINE DOES NOT COPY THE BODY. `GetRamScript` returns `scriptData->script` itself
-# [decomp:src/script.c:514], a pointer INTO gSaveBlock1Ptr->ramScript.data, so the whole 995-byte
-# body is already sitting in EWRAM while the script runs - and the bytes after the script's last
-# command are never read by the engine at all. They are delivered storage that cost one byte each.
+# Aiming at them is a run-time read, not a build-time constant: the save-block offset is re-rolled at
+# a battle or a load and then fixed for the frame our script runs in, and &gSaveBlock1Ptr is a
+# link-time IWRAM word that says what it currently is. A 36-byte trampoline reads it.
 #
-# THE ONLY REASON THAT WAS NOT USABLE BEFORE IS AIMING, and rng_script.py's header says so: the
-# save block "carries a random 4-aligned offset re-rolled on every battle and load"
-# [SetSaveBlocksPointers, decomp:src/load_save.c:75], measured 76 bytes apart in bs45 vs bs46. THAT
-# IS AN ARGUMENT ABOUT A BUILD-TIME CONSTANT. The offset is re-rolled at a battle or a load and is
-# fixed for the frame our script runs in, and &gSaveBlock1Ptr is a link-time IWRAM word that says
-# what it currently is. A 36-byte trampoline reads it and the target is exact - no sled, no search.
-#
-#     old:  163 bytes of code, 978 script bytes spent saying so
-#     new:  36 * 6 = 216 for the trampoline, and the payload costs its own length
-#
-# WHAT STILL BINDS. The body is 995 bytes [RamScriptData.script] and the whole Mystery Event script
-# carrying it is 1024 [mystery_event.MAX_SCRIPT_SIZE], of which the VM's own opcodes take 16 - so
-# 995 is the binding one, by 13 bytes. `body_capacity` states it.
+# The body is 995 bytes [RamScriptData.script] and the Mystery Event script carrying it is 1024
+# [mystery_event.MAX_SCRIPT_SIZE] less the VM's own 16, so 995 binds by 13 bytes. `body_capacity`
+# states it. docs/rng.md.
 
 RAMSCRIPT_IN_SAVEBLOCK1 = 0x361C        # SaveBlock1.ramScript [decomp:include/global.h]
 RAMSCRIPT_MAGIC_OFFSET = RAMSCRIPT_IN_SAVEBLOCK1 + 4        # past the u32 checksum
 RAMSCRIPT_BODY_OFFSET = RAMSCRIPT_MAGIC_OFFSET + 4          # past magic, mapGroup, mapNum, objectId
 RAM_SCRIPT_MAGIC = 51                   # [decomp:src/script.c:12], written by InitRamScript [:505]
 
-# WHERE A HUNT REPORTS WHAT IT DID: SaveBlock1.unused_348C[400] [decomp:include/global.h]. bs65 read
-# all 400 bytes off the console as zero before anything was ever written there, so the decomp's name
-# for it is true of the build this Switch runs and not only of the source. It is IN THE SAVE, so it
-# survives the battle (MoveSaveBlocks_ResetHeap copies the blocks) and reaches flash when the player
-# saves; it is NOT in ramScript, so the RAM script checksum is untouched and the binding survives.
+# Where a hunt reports what it did: SaveBlock1.unused_348C[400] [decomp:include/global.h]. bs65 read
+# all 400 bytes off the console as zero before anything was written there. It is in the save, so it
+# survives the battle and reaches flash when the player saves, and it is outside ramScript, so the
+# RAM script checksum is untouched and the binding survives.
 HUNT_LOG_OFFSET = 0x348C
 HUNT_LOG_MAGIC = 0x474F4C31             # so an untouched region is not read as a report
 HUNT_LOG_SIZE = 20
@@ -589,21 +580,17 @@ HUNT_LOG_FIELDS = ("magic", "start", "found", "iterations", "cap")
 
 TRAMPOLINE_STUB = "ram-jump"
 
-# THE TRAP, AND IT WOULD HAVE BEEN A HARDWARE RUN. The payload must start at a MULTIPLE OF FOUR,
-# not merely an even offset. A Thumb stub reaches its own literal pool with `ldr rN, [pc, #imm]`
-# and its own tail with `adr`, and BOTH use Align(PC, 4) - the assembler lays those immediates out
-# believing the code begins word-aligned. Place the same bytes two off and every pool word and
-# every `adr` reads TWO BYTES PAST what it means, which for mon-seek-far is a filler length of
-# 0x0433CF15 and a fault inside the checksum loop. Caught by emulate_body_script below, running the
-# real script bytes rather than the stub on its own, before anything went to a console.
+# THE PAYLOAD MUST START AT A MULTIPLE OF FOUR, not merely an even offset. A Thumb stub reaches its
+# literal pool with `ldr rN, [pc, #imm]` and its tail with `adr`, and both use Align(PC, 4). Place
+# the same bytes two off and the branch still lands and the code still runs, but every pool word is
+# read two bytes past where it lives - for mon-seek-far, a filler length of 0x0433CF15 and a fault
+# inside its own checksum loop. Caught by emulate_body_script below, which walks the real script
+# bytes rather than running a stub at an address a harness chose.
 #
-# An even offset is enough for the BRANCH (Thumb fetches halfwords) and that is what makes the bug
-# quiet: `bx` lands, the code runs, and it is the loads that are wrong.
-#
-# Four is also SUFFICIENT, and provably so, which is why nothing checks it at run time:
-#     offset = (Random()) & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3);   [decomp:src/load_save.c:75]
-# is `& 0x7C`, always a multiple of 4, and `gSaveBlock1` is an EWRAM struct of u32 fields, so the
-# base is word-aligned and RAMSCRIPT_BODY_OFFSET (0x3624) keeps it that way.
+# Four is also sufficient, provably, which is why nothing checks it at run time:
+# `offset = Random() & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3)` [decomp:src/load_save.c:75] is `& 0x7C`,
+# and gSaveBlock1 is an EWRAM struct of u32 fields, so RAMSCRIPT_BODY_OFFSET (0x3624) keeps the base
+# word-aligned.
 BODY_ALIGNMENT = 4
 
 

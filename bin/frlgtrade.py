@@ -383,14 +383,14 @@ def build_parser():
                          "documented default supplies 2: a kept mon (slot 0) and the trade mon "
                          "(slot 1).")
     ap.add_argument("-o", "--out", default="received.pk3",
-                    help="save the received mon here (trades=1); for trades>1 this is a BASE/prefix "
+                    help="save the received mon here (trades=1); for trades>1 this is a base/prefix "
                          "and each received mon is saved as <stem>_trade<k>_<species>.pk3")
     ap.add_argument("--out-size", type=int, choices=(80, 100), default=100,
                     help="received file size (100=party, 80=box)")
     ap.add_argument("--out-format", choices=("pk3", "ek3"), default="pk3",
                     help="received mon format: pk3=decrypted (opens in PKHeX), ek3=encrypted/raw")
     ap.add_argument("--slot", type=int, default=1,
-                    help="party slot to offer on the FIRST round (default 1); the per-round default "
+                    help="party slot to offer on the first round (default 1); the per-round default "
                          "list grows ascending from here (or [0..N-1] for a full-party swap)")
     ap.add_argument("--slots", default="",
                     help="explicit comma list of 0-based party slots to offer, one per trade "
@@ -399,7 +399,7 @@ def build_parser():
                     help="number of sequential trades to perform, 1..6 (default 1; 6 = swap both "
                          "entire parties). After the Nth trade the sim cancels-to-leave.")
     ap.add_argument("--self-id", type=int, default=1, choices=(1,),
-                    help="wire mpId / gLocalLinkPlayerId (joiner = 1 = RIGHT seat; the only valid "
+                    help="wire mpId / gLocalLinkPlayerId (joiner = 1 = right seat; the only valid "
                          "value - mpId 0 is the host/parent) [trade.c:1816; link_rfu_2.c:1633-1638]")
     configmod.add_identity_arguments(ap)
     ap.add_argument("--anim-delay", type=int, default=None,
@@ -414,13 +414,13 @@ def build_parser():
                          "(the host's illegitimate-legend gate; legitimacy is not offline-decodable)"
                          " [trade.c:1965-1968]")
     ap.add_argument("--trust-pia", action=argparse.BooleanOptionalAction, default=False,
-                    help="send each block fragment ONCE (fire-and-forget) instead of the console's "
-                         "re-send-until-confirmed loop. Default OFF (faithful re-send): against the real "
-                         "client, a block streams in 1-2s WITH aggressive re-sends (~1.5x) and completes; "
+                    help="send each block fragment once (fire-and-forget) instead of the console's "
+                         "re-send-until-confirmed loop. Default off (faithful re-send): against the real "
+                         "client, a block streams in 1-2s with aggressive re-sends (~1.5x) and completes; "
                          "trust_pia's send-once crawled (~0.1 frag/s) and never completed. trust_pia was a "
-                         "workaround for the 'flood', but that was the RTT deadlock (now fixed). "
+                         "workaround for the 'flood', but that was the rtt deadlock (now fixed). "
                          "--trust-pia re-enables send-once")
-    ap.add_argument("--compress", action="store_true", help="zstd-compress OUT payloads")
+    ap.add_argument("--compress", action="store_true", help="zstd-compress out payloads")
     ap.add_argument("--pace-ms", type=int, default=0,
                     help="live: minimum ms between two datagrams to the console, merging what is due "
                          "into one (0 = off). See sim.PACE_MIN_GAP_MS for the measurement.")
@@ -431,14 +431,14 @@ def build_parser():
     ap.add_argument("--verbose", action="store_true")
     mode = ap.add_mutually_exclusive_group(required=True)
     mode.add_argument("--live", action="store_true", help="join the real Switch")
-    mode.add_argument("--replay", metavar="CAPTURE", help="offline: replay a capture's host stream")
+    mode.add_argument("--replay", metavar="capture", help="offline: replay a capture's host stream")
     ap.add_argument("--password", default="", help="LDN passphrase as hex (live); default = "
-                    "the built-in 64-byte emulator passphrase (shared by FRLG/RSE)")
+                    "the built-in 64-byte emulator passphrase (shared by frlg/rse)")
     ap.add_argument("--phy", default="phy0", help="wifi phy for the LDN join (live)")
     ap.add_argument("--keys", default="~/.switch/prod.keys", help="Switch prod.keys (live)")
     ap.add_argument("--comm-id", help="LDN local_communication_id (hex) to join (live); "
                     "if omitted, joins the only available network (scan logs candidates)")
-    ap.add_argument("--capture", metavar="FILE", help="(live) record EVERY Pia datagram both "
+    ap.add_argument("--capture", metavar="FILE", help="(live) record every Pia datagram both "
                     "directions to a .jsonl (incl. the SSID), so a live attempt can be "
                     "decrypted/analysed offline")
     return ap

@@ -147,7 +147,7 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               "frames (default: what the range needs, plus two)"))
     parser.add_argument(
         "--gather-address", type=lambda v: int(v, 0), default=None, metavar="ADDR",
-        help=("with --buffer-script string-gather: the address of the FIRST POINTER in an array "
+        help=("with --buffer-script string-gather: the address of the first pointer in an array "
               "to follow. The answer is the strings themselves, back to back, so one run carries "
               "a whole table instead of a window of mostly-pointers. Accepts 0x hex"))
     parser.add_argument(
@@ -169,7 +169,7 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               "0x03004220 is gRngValue on this build [rom_map.py]. Accepts 0x hex"))
     parser.add_argument(
         "--trace-call", type=lambda v: int(v, 0), default=0, metavar="ADDR",
-        help=("with --buffer-script rng-trace: a ROM function to CALL between the two reads of "
+        help=("with --buffer-script rng-trace: a ROM function to call between the two reads of "
               "each sample, as a THUMB pointer (bit 0 set), or 0 for none. 0x080486B1 is Random; "
               "the recurrence between the two reads is then the proof that both addresses are "
               "what we say they are"))
@@ -190,13 +190,13 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
               "read CreateMon's own prologue taking them and what bs43/bs44 proved on hardware"))
     parser.add_argument(
         "--call-watch", type=lambda v: int(v, 0), default=0, metavar="ADDR",
-        help=("with --buffer-script call: one word read immediately BEFORE and immediately AFTER "
+        help=("with --buffer-script call: one word read immediately before and immediately after "
               "the call, both returned. 0x%08X is gRngValue. For a function that returns nothing, "
               "such as SeedRng, this is the only evidence the call did what it was called for"
               % rom_map.GRNG_VALUE))
     parser.add_argument(
         "--create-mon-call", type=lambda v: int(v, 0), default=None, metavar="ADDR",
-        help=("with --buffer-script create-mon: the ROM function to call with EIGHT arguments, a "
+        help=("with --buffer-script create-mon: the ROM function to call with eight arguments, a "
               "THUMB pointer. The default is CreateMon at 0x%08X, read off this console in bs42; "
               "0 calls nothing, which checks the send path with the ROM left out"
               % rom_map.thumb(rom_map.CREATE_MON)))
@@ -217,7 +217,7 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         "--create-mon-personality", type=lambda v: int(v, 0), default=None, metavar="VALUE",
         help=("with --buffer-script create-mon: the 32-bit personality value, which fixes the "
               "nature, the gender, the ability slot and - with the trainer ids bs01 read - "
-              "whether the mon is SHINY. Omitted, the console rolls one with Random32"))
+              "whether the mon is shiny. Omitted, the console rolls one with Random32"))
     parser.add_argument(
         "--create-mon-ot-id-type", type=int, default=buffer_script.OT_ID_PLAYER_ID,
         choices=buffer_script.OT_ID_TYPES,
@@ -229,34 +229,34 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help="with --buffer-script create-mon --create-mon-ot-id-type 1: the OT id to use")
     parser.add_argument(
         "--create-mon-append", action="store_true",
-        help=("with --buffer-script create-mon: APPEND the finished mon to the player's party. "
+        help=("with --buffer-script create-mon: append the finished mon to the player's party. "
               "The slot is computed from gSaveBlock1Ptr, never given, and it is always the first "
-              "FREE one - playerParty[playerPartyCount] - so an occupied slot is never touched and "
+              "free one - playerParty[playerPartyCount] - so an occupied slot is never touched and "
               "no Pokemon can be destroyed. A full party writes nothing and says so. This is the "
-              "player's LIVE SAVE and the console commits it to flash: needs --write-unsafe"))
+              "player's live SAVE and the console commits it to flash: needs --write-unsafe"))
     parser.add_argument(
         "--create-mon-append-dry-run", action="store_true",
-        help=("with --buffer-script create-mon: the SAME run as --create-mon-append - the same "
+        help=("with --buffer-script create-mon: the same run as --create-mon-append - the same "
               "call, the same arithmetic on the same gSaveBlock1Ptr - with the two stores that "
               "would change the save left out. It reports the party count and the address it "
-              "WOULD have written, and reads that slot's current 100 bytes back so the answer "
+              "would have written, and reads that slot's current 100 bytes back so the answer "
               "says what a real run would overwrite. Writes nothing, so it needs no override"))
     parser.add_argument(
         "--create-mon-destination", type=lambda v: int(v, 0), default=0, metavar="ADDR",
         help=("with --buffer-script create-mon: copy the finished 100 bytes to this address in "
-              "the console's memory. The mon is BUILT in our own image either way, so without "
+              "the console's memory. The mon is built in our own image either way, so without "
               "this nothing on the console is written at all. Needs --write-unsafe"))
     parser.add_argument(
         "--write-text", default=None, metavar="TEXT",
-        help=("with --buffer-script save-write: ASCII to write into the save block at "
+        help=("with --buffer-script save-write: ascii to write into the save block at "
               "--dump-offset. The same region is read back in the same run, so the answer is the "
               "proof. The console saves afterwards, so it reaches flash"))
     parser.add_argument(
-        "--write-hex", default=None, metavar="HEX",
+        "--write-hex", default=None, metavar="hex",
         help="with --buffer-script save-write: the bytes to write, as hex")
     parser.add_argument(
         "--write-unsafe", action="store_true",
-        help=("allow a save write OUTSIDE struct SaveBlock2's never-read filler regions. This is "
+        help=("allow a save write outside struct SaveBlock2's never-read filler regions. This is "
               "the player's live save and the console commits it to flash; without this the write "
               "is refused"))
     gift_registry.add_flag_id_argument(parser)
@@ -264,7 +264,7 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         "--questionnaire", default=None, metavar="W1,W2,W3,W4",
         help=("require the console to be holding this four-word Easy Chat phrase in its Poke Mart\n"
               "questionnaire before anything is sent [SVR_CHECK_QUESTIONNAIRE]. Each word is an\n"
-              "English word name, `species:N`, `move:N`, `GROUP/INDEX`, or a raw id. Word ids are\n"
+              "English word name, `species:N`, `move:N`, `group/index`, or a raw id. Word ids are\n"
               "per-language outside the species and move groups, so read the phrase off the target\n"
               "console first: every session logs the four ids it is holding."))
     parser.add_argument(
@@ -272,26 +272,26 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help=("what a console that does not know the phrase reads (max 63 characters); "
               "the default is 'That is not the phrase.'"))
     parser.add_argument(
-        "--hunt-nature", default=None, metavar="NAMES",
+        "--hunt-nature", default=None, metavar="names",
         help=("with --gift %s: which natures the search will accept, comma separated\n"
               "(%s), or plain ids. Without this it takes any."
               % (wonder_card_events.GIFT_RNG_MON_HUNT, ", ".join(native_script.NATURE_NAMES[:6])
                  + ", ...")))
     parser.add_argument(
-        "--hunt-iv", action="append", default=None, metavar="STAT=N",
+        "--hunt-iv", action="append", default=None, metavar="stat=N",
         help=("with --gift %s: a floor under one IV, repeatable (speed=31, attack=20). The stats\n"
-              "are %s, named in the order the ROM DRAWS them - which is not the order the summary\n"
+              "are %s, named in the order the ROM draws them - which is not the order the summary\n"
               "screen shows."
               % (wonder_card_events.GIFT_RNG_MON_HUNT, ", ".join(native_script.IV_FIELDS))))
     parser.add_argument(
         "--hunt-cap", type=lambda v: int(v, 0), default=None, metavar="N",
         help=("with --gift %s: how many states the stub may try before giving up and leaving the\n"
-              "RNG alone. The default is the smallest cap that finds one %d times in 100."
+              "rng alone. The default is the smallest cap that finds one %d times in 100."
               % (wonder_card_events.GIFT_RNG_MON_HUNT,
                  round(100 * native_script.SEARCH_CONFIDENCE))))
     parser.add_argument(
         "--hunt-freeze-frames", type=int, default=native_script.MAX_FREEZE_FRAMES, metavar="N",
-        help=("with --gift %s: how long the search may block the overworld in the WORST case,\n"
+        help=("with --gift %s: how long the search may block the overworld in the worst case,\n"
               "in frames (default %d, about %.0f s). The field engine has not returned while it\n"
               "searches, so the player sees a still frame with the music playing; criteria whose\n"
               "search could take longer than this are refused before the card is built."
@@ -326,12 +326,12 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help=("stop after the post-delivery RFU close sequence; used by the "
               "supervised run_mystery_gift.sh host"))
     parser.add_argument(
-        "--idle-timeout", type=_idle_timeout_seconds, metavar="SECONDS", default=None,
+        "--idle-timeout", type=_idle_timeout_seconds, metavar="seconds", default=None,
         help=("stop after this many seconds without meaningful Switch traffic "
               "(join or Pia/RFU datagram); default: disabled"))
     parser.add_argument(
         "--attempt-log-dir", metavar="DIR", default=None,
-        help=("append completed joined-attempt records to daily CSV files in DIR; "
+        help=("append completed joined-attempt records to daily csv files in DIR; "
               "default: disabled (the supervised shell host enables logs/)"))
     parser.add_argument(
         "--make-artifact", action=argparse.BooleanOptionalAction, default=False,

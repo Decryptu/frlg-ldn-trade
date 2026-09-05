@@ -606,13 +606,11 @@ PALLET_TOWN_OBJECT_FAT_MAN = 2
 
 MEVENT_NPC_STATUS = 55          # our marker; initramscript leaves the status untouched
 
-# WHERE TO BIND A SCRIPT THAT WILL BE TALKED TO ON A TIMER, and it is not where mev03 put one.
-# BOTH Pallet Town NPCs are MOVEMENT_TYPE_WANDER_AROUND [decomp:data/maps/PalletTown/map.json], so
-# the fat man walks off mid-countdown and the player has to chase him to press A - which ruins the
-# timing it was pressed for. The player's mother is MOVEMENT_TYPE_FACE_LEFT with flag 0: she never
-# moves, she is never hidden, and she is a step from where the player stands indoors.
-# Group and map numbers are indices into data/maps/map_groups.json; group 3 / num 0 for Pallet Town
-# is confirmed by mev03 and every run since, which is what makes group 4 / num 0 trustworthy.
+# Anything the player has to talk to at a chosen moment binds to the mother, not to Pallet Town.
+# Both Pallet Town object events are MOVEMENT_TYPE_WANDER_AROUND
+# [decomp:data/maps/PalletTown/map.json], so mev03's fat man walks off mid-countdown and has to be
+# chased. The mother is MOVEMENT_TYPE_FACE_LEFT with flag 0: she never moves, is never hidden, and
+# is a step from where the player stands indoors. Group and map are indices into map_groups.json.
 MAP_GROUP_PLAYERS_HOUSE = 4
 MAP_NUM_PLAYERS_HOUSE = 0
 PLAYERS_HOUSE_OBJECT_MOM = 1
@@ -913,32 +911,19 @@ RNG_RATE_PROBE_LONG_GIFT = WonderGift(
 GIFT_MEVENT_SWEEP = "mevent-opcode-sweep"
 MEVENT_SWEEP_FLAG_ID = 1005
 
-# THE THREE MYSTERY EVENT OPCODES NOBODY HAS RUN, IN ONE CARD. `setenigmaberry`, `addrareword` and
-# `addtrainer` are all that is left of the table (giveribbon runs but FRLG has no ribbon UI, and
-# setrecordmixinggift/enableresetrtc are the two that answer INCOMPATIBLE by design).
+# The last three Mystery Event opcodes in one card: setenigmaberry, addrareword and addtrainer.
+# Proven mev17, read back at bs61. One status comes back and every opcode writes the same field
+# (ctx->data[2]), so the ORDER is the experiment: markers after each opcode, setenigmaberry last
+# because its own status separates success from a berry that would not validate.
 #
-# ONE STATUS COMES BACK, so the order is the experiment. `setstatus` and every opcode write the SAME
-# field (ctx->data[2]) [decomp:src/mystery_event_script.c], so the LAST thing to run decides the
-# answer. Markers go AFTER each opcode, and setenigmaberry goes last because it is the one command
-# whose own status distinguishes success from failure:
-#
-#     status 2   all three ran and the berry VALIDATED
-#     status 1   all three ran and the berry did not validate [IsEnigmaBerryValid, src/berry.c:984]
+#     status 2   all three ran and the berry validated
+#     status 1   all three ran and the berry did not [IsEnigmaBerryValid, src/berry.c:984]
 #     status 42  addtrainer ran, setenigmaberry did not
 #     status 41  addrareword ran, addtrainer did not
-#     anything else - the chain died before the first opcode
 #
-# THE BERRY'S DESCRIPTION POINTERS ARE THE CONSOLE'S OWN, READ OFF IT (bs59: a save-dump of
-# gSaveBlock1Ptr->enigmaBerry at +0x30EC). struct Berry2 carries two ROM pointers that the Berry
-# Pouch dereferences to print the description, and they live in the SAVE for ever after - a pointer
-# we invented would render garbage on every future look at the berry, or worse. 0x083D5CE8 and
-# 0x083D5CF8 are what THIS cartridge already has in that field, so reusing them cannot be wrong.
-# Everything else in the 28 bytes is ours; the name is what makes the change visible.
-#
-# WHAT CANNOT BE SET FROM HERE, and it is not a bug in the builder: struct ReceivedEnigmaBerry puts
-# itemEffect/holdEffect/holdEffectParam at offset 0x516, past the end of the console's 1024-byte
-# buffer, so the console reads them out of whatever follows on its heap [mystery_event.
-# build_enigma_berry_blob]. The berry is safe to own and should NOT be given to a Pokemon to hold.
+# The two description pointers are the console's own, read off it at bs59: struct Berry2 keeps them
+# in the SAVE for ever and the Berry Pouch dereferences them, so an invented pointer would render
+# garbage on every future look at the berry. docs/mystery_gift_untried.md.
 MEVENT_SWEEP_BERRY_DESC1 = 0x083D5CE8       # bs59, off the cartridge
 MEVENT_SWEEP_BERRY_DESC2 = 0x083D5CF8
 MEVENT_SWEEP_RARE_WORD = 0
@@ -1005,16 +990,14 @@ MEVENT_SWEEP_GIFT = WonderGift(
 GIFT_RNG_SHINY_HUNT = "rng-shiny-hunt"
 RNG_SHINY_HUNT_FLAG_ID = 1012
 
-# THE HUNT ITSELF, and it needs no aim. Every earlier RNG card either wrote a seed we chose (mev07,
-# which the title screen's reseed makes useless outside a link) or read one back for a human to
-# count frames against (~1 press in 11, docs/rng.md). This one stages 80 bytes of THUMB into
-# gDecompressionBuffer with `setptr` and runs them with `callnative`, so the SEARCH happens on the
-# console, in the overworld, at the moment of the encounter - see frlgsim/native_script.py for why
-# that is not the thing docs/rng.md calls structurally closed, and REFERENCES.local.md
-# (notblisy/RUBYSAPPHIREDLC) for where the technique came from.
+# The hunt that needs no aim. Earlier RNG cards either wrote a seed we chose (useless outside a
+# link, because the title screen reseeds) or read one back for a human to count frames against.
+# This one stages 80 bytes of THUMB into gDecompressionBuffer with `setptr` and runs them with
+# `callnative`, so the search happens on the console, in the overworld, at the encounter itself.
+# docs/rng.md; REFERENCES.local.md has where the technique came from.
 #
-# Ditto at 50 again, so the drill is the one mev07 and the draw-count card already used. Nothing
-# needs catching: shininess shows the instant the battle starts.
+# Ditto at 50, the drill mev07 already used. Nothing needs catching: shininess shows the instant
+# the battle starts.
 RNG_SHINY_HUNT_SPECIES = 132
 RNG_SHINY_HUNT_LEVEL = 50
 
@@ -1059,25 +1042,16 @@ RNG_SHINY_HUNT_GIFT = WonderGift(
 GIFT_RNG_MON_HUNT = "rng-mon-hunt"
 RNG_MON_HUNT_FLAG_ID = 1019
 
-# THE WHOLE MON, NOT JUST THE SHINE. rng-shiny-hunt above stays exactly as it is - it is the card
-# that ran on hardware three times - and this one is the same delivery with asm/field/mon-seek.s
-# in place of shiny-seek: the search tests all four draws, so a nature and a floor under any of
-# the six IVs cost no new mechanism, only search. `native_script.MonCriteria` is what is asked
-# for and `native_script.search_cost` what it costs; the host refuses a combination whose search
-# could block the overworld for longer than it allows, before the card exists.
+# The same delivery as rng-shiny-hunt with asm/field/mon-seek.s in place of shiny-seek: the search
+# tests all four draws, so a nature and a floor under any IV cost only search. `MonCriteria` is what
+# is asked for and `search_cost` what it costs; the host refuses a combination whose search could
+# block the overworld longer than --hunt-freeze-frames allows.
 #
-# THE DEFAULTS ARE CHOSEN AS AN EXPERIMENT, and each one answers something the shiny alone cannot:
-# JOLLY exercises the division by 25 and the mask shift (nature 13, so a broken shift lands
-# somewhere visible rather than on 0), and SPEED is IV index 3 - the first field of the SECOND
-# draw word, which is exactly the seam where the two halves are packed together. A shiny with the
-# wrong nature or a low speed is a failed test that still looks like a success on screen, which is
-# why the check is a party dump (save-dump) and not the battle.
-# MAGIKARP AT 5, NOT DITTO AT 50, AND THE REASON IS THE CHECK. The nature and the IVs are
-# invisible on screen - the only way to read them is to dump the mon out of the party - so the
-# player has to CATCH it, and a catch that fails wastes the whole run. Magikarp's catch rate is
-# 255, the highest in the game, and level 5 keeps its HP low, so one Ultra Ball is enough
-# [decomp:src/data/pokemon/species_info.h]. The species and the level are not drawn from the RNG,
-# so nothing about the search changes.
+# The defaults are an experiment. Jolly exercises the division by 25 and the mask shift, and SPEED
+# is IV index 3, the seam where the two draw words are packed together. A shiny with the wrong
+# nature still looks like a success on screen, so the check is a party dump rather than the battle -
+# which is why the species is a level 5 Magikarp: catch rate 255 and low HP, one Ultra Ball. Neither
+# the species nor the level is drawn from the RNG. docs/rng.md.
 RNG_MON_HUNT_SPECIES = 129              # SPECIES_MAGIKARP
 RNG_MON_HUNT_LEVEL = 5
 RNG_MON_HUNT_NATURE = 13                # NATURE_JOLLY [rng_countdown.NATURE_NAMES]
@@ -1144,25 +1118,15 @@ RNG_MON_HUNT_GIFT = WonderGift(
 GIFT_RNG_MON_HUNT_FAR = "rng-mon-hunt-far"
 RNG_MON_HUNT_FAR_FLAG_ID = 1000
 
-# THE SAME HUNT, RUN OUT OF THE SCRIPT BODY. One variable changes against rng-mon-hunt: WHERE THE
-# CODE LIVES. rng-mon-hunt stages 160 bytes with `setptr` at six script bytes each and is the
-# control, proven on hardware at mev19 + bs62; this card stages a 36-byte trampoline and puts the
-# search itself in the body behind the script, at ONE byte each, because the field engine runs a
-# RAM script IN PLACE out of gSaveBlock1Ptr->ramScript.data.script [GetRamScript,
-# decomp:src/script.c:514] and never reads past the last command. asm/field/ram-jump.s has the
-# mechanism and native_script.build_body_script the layout.
+# The same hunt with one variable changed: where the code lives. rng-mon-hunt stages 160 bytes at
+# six script bytes each and stays the control (mev19 + bs62); this card stages a 36-byte trampoline
+# and puts the search in the body behind the script at one byte each, because the field engine runs
+# a RAM script in place and never reads past the last command [GetRamScript, decomp:src/script.c:514].
 #
-# 755 PAYLOAD BYTES INSTEAD OF 162, and the card is built to use every one of them: the 196-byte
-# stub and 559 bytes of non-zero filler, whose sum the stub checks BEFORE it will search. That is
-# what makes this a measurement rather than a demonstration. The screen then reads three ways:
-#
-#     a shiny JOLLY MAGIKARP with SPEED >= 20   995 bytes arrived, and ran from the body
-#     an ordinary MAGIKARP                      the tail is short, or the magic guard bailed
-#     the same battle rng-mon-hunt gives        (impossible: the criteria are identical, so this
-#                                                is the control's result and tells us nothing new)
-#
-# The mon still has to be CAUGHT for the nature and the IVs to be read - they are invisible on
-# screen - and Magikarp at 5 is one Ultra Ball, exactly as for the control.
+# 755 payload bytes instead of 162, and the card uses every one: a 196-byte stub plus 559 bytes of
+# non-zero filler whose sum the stub checks before it will search. That is what makes it a
+# measurement - a short delivery sums low and the stub leaves gRngValue alone, so an ordinary
+# Magikarp means the tail did not arrive. docs/rng.md.
 RNG_MON_HUNT_FAR_FILLER = "the far end of the body, summed before the search will run"
 
 
@@ -1226,21 +1190,16 @@ RNG_MON_HUNT_FAR_GIFT = WonderGift(
 GIFT_RNG_MON_HUNT_BOTH = "rng-mon-hunt-both"
 RNG_MON_HUNT_BOTH_FLAG_ID = 1001
 
-# THE SAME HUNT AGAIN, HELD AGAINST THE STRAY DRAW. mev20 proved the body-hosted payload and, in
-# the same run, caught the thing that defeats a one-placement search: one extra Random() between
-# the personality and the IV draws, so the mon was shiny and JOLLY as asked and its SPEED was 10
-# against a floor of 20. asm/field/mon-seek-both.s tests the floors at both placements and its
-# header has the proof that two words cover all three methods docs/rng.md records.
+# The same hunt held against the stray draw. mev20 caught the thing that defeats a one-placement
+# search: one extra Random() between the personality and the IV draws, so the mon was shiny and
+# Jolly as asked with SPEED 10 against a floor of 20. asm/field/mon-seek-both.s tests the floors at
+# both placements, which covers all three methods.
 #
-# ONE VARIABLE against rng-mon-hunt-far: the stub. Same species, same level, same criteria, same
-# delivery, same 995-byte body. What changes is the cost - the IV term is squared, so this is 1
-# state in 1,456,000 rather than 546,000, about 4 s of frozen overworld typically and 11.7 s at
-# the cap. The cap is set at 95% rather than 99% deliberately [native_script.BOTH_CONFIDENCE]:
-# the script ends in `end`, so a miss costs one more A press and a longer cap costs the stare.
-#
-# 232 BYTES OF STUB. rng-mon-hunt could stage 162. This card is the first thing in the project
-# that could not have existed before the payload moved into the body.
-
+# One variable against rng-mon-hunt-far: the stub. What changes is the cost - the IV term is
+# squared, so 1 state in 1,456,000 rather than 546,000, about 4 s of frozen overworld typically. The
+# cap is 95% rather than 99% deliberately [native_script.BOTH_CONFIDENCE]: the script ends in `end`,
+# so a miss costs one more A press while a longer cap costs the stare. 232 bytes of stub, against
+# the 162 `setptr` could stage. docs/rng.md.
 
 def build_rng_mon_hunt_both_script(criteria=None, *, cap=None,
                                    max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
@@ -1298,19 +1257,14 @@ RNG_MON_HUNT_BOTH_GIFT = WonderGift(
 GIFT_RNG_MON_HUNT_LOG = "rng-mon-hunt-log"
 RNG_MON_HUNT_LOG_FLAG_ID = 1002
 
-# THE SAME SEARCH, REPORTING. Everything mev19-mev21 established about a hunt was reconstructed
-# afterwards from the mon the player caught, and bs64 came back with TWO candidate states that only
-# the IVs told apart. The stub knows all of it while it runs, so it writes it down:
-# {marker, start, found, iterations, cap} at SaveBlock1 + 0x348C, `unused_348C[400]`, which bs65
-# read off THIS console as 400 zero bytes before anything was ever written there.
+# The same search, reporting. Everything mev19-mev21 established about a hunt was reconstructed
+# afterwards from the mon the player caught, and bs64 came back with two candidate states that only
+# the IVs told apart. The stub knows all of it while it runs, so it writes {marker, start, found,
+# iterations, cap} to SaveBlock1 + 0x348C. Read it back with
 #
-# It is in the save, so it survives the battle and reaches flash when the player saves; it is not in
-# ramScript, so the binding survives and the player can talk to their MOM again.
-#
-# Read it back with the dump we already do:
 #     --buffer-script save-dump --dump-block sav1 --dump-offset 0x348C --dump-size 32
-# and `native_script.decode_hunt_log`. ONE VARIABLE against rng-mon-hunt-both: the stub logs.
-
+#
+# and `native_script.decode_hunt_log`. One variable against rng-mon-hunt-both: the stub logs.
 
 def build_rng_mon_hunt_log_script(criteria=None, *, cap=None,
                                   max_freeze_frames=native_script.MAX_FREEZE_FRAMES,

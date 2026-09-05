@@ -119,34 +119,16 @@ def describe_seed_script(script):
     return lines
 
 
-# --- the RNG owned: seed it and generate the mon in the SAME frame -------------------------------
-# Seeding alone still leaves the player walking, and the RNG never idles, so no human and no network
-# can aim at a particular draw by timing. (The overworld RATE is NOT established - the numbers this
-# comment used to quote were derived from a hand-timed elapsed, and one of them was circular; see
-# docs/rng.md. Nothing here depends on the rate.) The fix is not better timing - it is to remove the
-# interval entirely.
+# --- seed the RNG and generate the mon in the SAME frame -----------------------------------------
+# `setwildbattle` (0xB6) calls CreateScriptedWildMon -> CreateMon(&gEnemyParty[0], species, level,
+# 32, 0, 0, OT_ID_PLAYER_ID, 0) [decomp:src/scrcmd.c:1935, src/script_pokemon_util.c:128]: fixedIV
+# 32 is USE_RANDOM_IVS and hasFixedPersonality 0, so the PID and the IVs are rolled right there in
+# four draws with no nature rejection loop.
 #
-#   bool8 ScrCmd_setwildbattle(struct ScriptContext * ctx)      // opcode 0xB6
-#   {
-#       u16 species = ScriptReadHalfword(ctx);
-#       u8 level = ScriptReadByte(ctx);
-#       u16 item = ScriptReadHalfword(ctx);
-#       CreateScriptedWildMon(species, level, item);
-#   }
-# [decomp:src/scrcmd.c:1935], and CreateScriptedWildMon is
-#   CreateMon(&gEnemyParty[0], species, level, 32, 0, 0, OT_ID_PLAYER_ID, 0);
-# [decomp:src/script_pokemon_util.c:128] - fixedIV 32 is USE_RANDOM_IVS and hasFixedPersonality 0,
-# so the PID and the IVs are rolled RIGHT THERE, in four draws, with NO nature rejection loop (that
-# lives in CreateMonWithNature, which only the real encounter path uses). Species and level are
-# operands we write.
-#
-# WHY THERE IS NO DRIFT, AND IT IS THE WHOLE POINT: `setptr` and `setwildbattle` both return FALSE,
-# and the field engine runs commands in a loop until one returns TRUE. So all four setptrs and the
-# generation happen BACK TO BACK IN ONE FRAME with nothing in between - not a frame boundary, not
-# the per-frame consumer, nothing. The four draws are a pure function of the seed we just wrote.
-#
-# So NOTHING may be put between them that yields. `playse`/`waitse` would; the battle starting is
-# the feedback instead.
+# `setptr` and `setwildbattle` both return FALSE and the field engine runs commands until one
+# returns TRUE, so the seed writes and the generation happen back to back in one frame and the four
+# draws are a pure function of the seed just written. Nothing that yields may go between them - a
+# `playse` would break it silently. docs/rng.md.
 
 SCR_SETWILDBATTLE = 0xB6
 SCR_DOWILDBATTLE = 0xB7
@@ -156,53 +138,25 @@ SCR_GOTO = 0x05
 SCR_SETVAR = 0x16
 VAR_0x8000 = 0x8000
 
-# THE SCRIPT DOES NOT END AT `dowildbattle`, AND WHERE IT RESUMES IS NOT WHERE IT LEFT OFF.
-# mev18 HUNG THE OVERWORLD DEAD - no A, no B, no START, the app had to be killed - and the reason
-# is in the decomp, not in the tail we wrote:
+# A RAM SCRIPT MAY NOT COME BACK FROM A BATTLE, and nothing placed after `dowildbattle` can be
+# relied on. CB2_InitBattle and InitOverworldBgs both call MoveSaveBlocks_ResetHeap
+# [decomp:src/battle_main.c:614, src/overworld.c:1337], which re-rolls gSaveBlock1's address by a
+# multiple of 4 in 0..124 [src/load_save.c:75]; the engine keeps its pointer INTO that block
+# [GetRamScript, src/script.c:514] and so resumes where the script no longer is. One mechanism,
+# three symptoms: mev11's stray second battle, mev15/mev16 walking away clean, and mev18 freezing
+# the overworld dead. `releaseall` + `end` was never a fix - those bytes are simply not at the
+# address the engine returns to.
 #
-#     void CB2_InitBattle(void) { MoveSaveBlocks_ResetHeap(); ... }   [decomp:src/battle_main.c:614]
-#     static void InitOverworldBgs(void) { MoveSaveBlocks_ResetHeap_(); ... }  [src/overworld.c:1337]
-#     offset = Random() & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3);          [src/load_save.c:75]
-#
-# SAVEBLOCK_MOVE_RANGE is 128, so every battle RELOCATES gSaveBlock1 twice, each time by a fresh
-# multiple of 4 in 0..124. A RAM script lives in gSaveBlock1->ramScript.data.script and the engine
-# runs it THROUGH A POINTER INTO THAT BLOCK [GetRamScript, decomp:src/script.c:514], which it keeps
-# across the battle in sGlobalScriptContext. So when the battle ends the field engine resumes at
-# an address the script no longer occupies: somewhere within +/-124 bytes of where it was, holding
-# whatever field of SaveBlock1 the move slid into that spot.
-#
-# That is one mechanism for three things this project wrote down separately: mev11's "second wild
-# battle out of nowhere" (the landing hit a stray 0xB6/0xB7), mev15 and mev16 walking away clean
-# (the landing hit the zero fill, which is `nop`), and mev18 freezing solid (the landing hit the
-# middle of a `setptr` run and decoded a command that waits for ever). `releaseall` + `end` after
-# dowildbattle was never a fix - those two bytes are simply not at the address the engine returns
-# to. NOTHING PLACED AFTER dowildbattle IN A RAM SCRIPT CAN BE RELIED ON.
-#
-# THE FIX IS TO LEAVE THE SAVE BLOCK BEFORE THE BATTLE STARTS. `goto` (0x05) takes an absolute
-# address, and gSpecialVar_0x8000 is a fixed EWRAM u16 at 0x020370B4 [rom_map, bs57] that
-# `setvar` (0x16) can write in five script bytes. Two bytes are all the tail needs:
+# The fix is to start the battle from outside the save block. `goto` (0x05) takes an absolute
+# address and gSpecialVar_0x8000 is a fixed EWRAM u16 [rom_map, bs57] that `setvar` (0x16) writes:
 #
 #     setvar 0x8000, 0x02B7      ->  0x020370B4: B7 02   =   dowildbattle ; end
 #     goto   0x020370B4
 #
-# The battle therefore starts from an address that does not move, and the engine returns to
-# 0x020370B5 - the `end` - whatever the save blocks did in between. `ScriptContext_RunScript`
-# calls `UnlockPlayerFieldControls()` the moment a script stops [decomp:src/script.c:335], so
-# `end` alone gives the player back. gSpecialVar_0x8000 survives the battle because NOTHING in
-# the battle or overworld code writes it: `gSpecialVar_0x8000` appears only in event_data.c (the
-# table itself) and scrcmd.c (the var commands), and no field script runs during a battle.
-#
-# WHAT IS LEFT OF THE OLD COMMENT, because it is still true about the forward pass:
-# `StartScriptedWildBattle` sets `gMain.savedCallback = CB2_EndScriptedWildBattle`
-# [decomp:src/battle_setup.c], and that callback ends with
-# `SetMainCallback2(CB2_ReturnToFieldContinueScriptPlayMapMusic)` [src/overworld.c:1670] - CONTINUE
-# SCRIPT. So when the battle is over the field engine RESUMES THIS SCRIPT at the byte after
-# dowildbattle. If nothing is there, opcode 0x00 is `ScrCmd_nop` [data/script_cmd_table.inc], so it
-# runs the zero fill InitRamScript left in the rest of the 995-byte body and then WALKS OFF THE END
-# INTO THE REST OF SaveBlock1, executing the player's save data as bytecode. mev11's unexplained
-# "a second wild battle re-triggered after dowildbattle" is exactly that: 0xB6/0xB7 occur in save
-# data like any other bytes. `releaseall` + `end` is the fix, and it is two bytes.
-BATTLE_TAIL = bytes([SCR_RELEASEALL, SCR_END])      # kept for the disassemblers; see above
+# ScriptContext_RunScript calls UnlockPlayerFieldControls() the moment a script stops
+# [decomp:src/script.c:335], so the `end` alone gives the player back. Nothing in the battle or
+# overworld code writes gSpecialVar_0x8000. docs/rng.md.
+BATTLE_TAIL = bytes([SCR_RELEASEALL, SCR_END])      # kept for the disassemblers only
 
 # The two bytes the trampoline holds, as the u16 `setvar` writes: dowildbattle, then end.
 TRAMPOLINE_ADDRESS = rom_map.G_SPECIAL_VAR_0X8000

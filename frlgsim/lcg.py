@@ -159,29 +159,20 @@ def seconds(turns, per_frame=2, fps=59.7275):
 
 
 # --- the four draws a wild Pokemon is made of ----------------------------------------------------
-# GenerateWildMon calls CreateMonWithNature(&gEnemyParty[0], species, level, USE_RANDOM_IVS,
-# Random() % NUM_NATURES) [decomp:src/wild_encounter.c:233], and CreateMonWithNature ROLLS THE
-# PERSONALITY UNTIL IT MATCHES that nature [decomp:src/pokemon.c]:
-#
-#     do { personality = Random32(); } while (nature != GetNatureFromPersonality(personality));
-#     CreateMon(mon, species, level, fixedIV, TRUE, personality, OT_ID_PLAYER_ID, 0);
-#
-# so the accepted personality is TWO CONSECUTIVE draws, and because hasFixedPersonality is TRUE and
-# the OT is the player, CreateBoxMon [decomp:src/pokemon.c] draws nothing more until the IVs, which
-# are the very next two [MAX_IV_MASK, five bits each, three per draw]. Four consecutive draws:
+# GenerateWildMon calls CreateMonWithNature(..., USE_RANDOM_IVS, Random() % NUM_NATURES)
+# [decomp:src/wild_encounter.c:233], which rolls the personality until it matches that nature, and
+# because hasFixedPersonality is then TRUE and the OT is the player, CreateBoxMon draws nothing more
+# until the IVs:
 #
 #     d1, d2  the personality      d3  HP / ATK / DEF        d4  SPEED / SPATK / SPDEF
 #
-# THAT IS WHY A CAUGHT POKEMON IS A READING OF gRngValue. The 32 bits of the personality alone
-# would leave 2**16 candidate states (only the top half of each state is ever returned, so the low
-# half of the first is unconstrained); the IVs are 30 more bits over the two draws that FOLLOW, and
-# checking them against each candidate leaves one. Nothing in the payload is involved - the console
-# built this on its own, in the grass, long after our code stopped running.
+# That is why a caught Pokemon is a reading of gRngValue: the personality alone leaves 2**16
+# candidate states (only the top half of each state is returned), and the IVs are 30 more bits over
+# the two draws that follow, which leaves one.
 #
-# THE ORDER OF THE PERSONALITY'S TWO HALVES IS NOT ASSUMED. Random32() is
+# The order of the personality's two halves is not assumed. Random32() is
 # `(Random() | (Random() << 16))` [decomp:include/random.h:15] and C does not order the operands of
-# `|`, so which half is drawn first is the COMPILER's choice in the French build - unknown until a
-# console answers. Both are tried and the IVs decide, so the answer reports which one held.
+# `|`, so both are tried and the IVs decide. docs/rng.md.
 
 MAX_IV_MASK = 31                        # [decomp:include/constants/pokemon.h]
 NUM_NATURES = 25

@@ -314,19 +314,12 @@ def describe_scan(dump, needle=None, start=None, end=None):
     return lines
 
 
-# --- table-scan: finding a table by its SHAPE ----------------------------------------------------
-# memory-scan answers "where is this word", which needs the word first, and every address found
-# that way rested on a constant only one function could hold: RAND_MULT in Random's literal pool
-# [bs13], 0x00450045 in sEasyChatGroups [bs16], 0x64646464 in gSpeciesInfo [bs38]. A table of
-# POINTERS carries no such constant. gSpecialVars is 21 words holding the addresses of the special
-# script variables [decomp:data/event_scripts.s:51], and what makes it recognisable is not any
-# value in it but the RELATION between its entries: gSpecialVar_0x8000 .. gSpecialVar_0x800B are
-# consecutive u16s declared in that order [decomp:src/event_data.c:16], so the first twelve words
-# each sit exactly 2 above the one before. That is a shape, and a shape can be searched for
-# without knowing a single one of the values.
-#
-# The answer carries the run's FIRST VALUE beside its address, which for a pointer table is the
-# pointer itself - so this does not merely locate gSpecialVars, it reads gSpecialVar_0x8000 out.
+# --- table-scan: finding a table by its shape ----------------------------------------------------
+# memory-scan answers "where is this word", which needs the word first. A table of pointers carries
+# no such constant - its entries ARE the addresses being looked for - so this searches for a
+# RELATION instead: a run of N words each exactly D above the one before. gSpecialVars' first twelve
+# entries point at twelve consecutive u16s, so D is 2. The answer carries the run's first value
+# beside its address, so locating and reading are one run. docs/buffer_script.md.
 TABLE_CURSOR_OFFSET = 0x04       # patched to the start address; the payload advances it
 TABLE_END_OFFSET = 0x08
 TABLE_DELTA_OFFSET = 0x0C        # what each word must exceed its predecessor by
@@ -463,18 +456,15 @@ def describe_table_scan(dump, delta=None, runlen=None, start=None, end=None):
 
 
 # --- string-gather: following a pointer array instead of reading a window ------------------------
-# A dump reads a window, so a table of pointers costs one run for the pointers and another for
-# every kilobyte they point at, most of it padding around the bytes actually wanted. bs17 read
-# sEasyChatGroups and its 22 word arrays span 21560 bytes of cartridge, of which only about a
-# third is the words: struct EasyChatWordInfo carries `alphabeticalOrder` and `enabled` beside
-# every `text` [decomp:include/easy_chat.h:11], and neither says anything about what the console
-# PRINTS. This payload dereferences instead: it walks the array and sends back the STRINGS, back
-# to back, so a run carries a whole group rather than a kilobyte of mostly-pointers.
+# A dump reads a window, so a table of pointers costs one run for the pointers and another for every
+# kilobyte they point at, two thirds of it struct EasyChatWordInfo's alphabeticalOrder and enabled
+# [decomp:include/easy_chat.h:11]. This payload dereferences and sends back the strings themselves,
+# a whole Easy Chat group a run.
 #
-# It never truncates. A string that does not fit in what is left of the budget ends the run before
-# it and `next` names where to resume - a half-copied word would be indistinguishable from a
-# French word that really is that short. `maxlen` bounds the walk so that a pointer which is not a
-# string stops the run and says so instead of copying memory until it meets an 0xFF.
+# It never truncates: a string that does not fit ends the run before it and `next` names where to
+# resume, because a half-copied word would be indistinguishable from a French word that short.
+# `maxlen` bounds the walk so a pointer that is not a string stops the run instead of copying until
+# it meets an 0xFF. docs/buffer_script.md.
 STRING_GATHER = "string-gather"
 GATHER_SRC_OFFSET = 0x04        # the address of the first pointer; the payload advances it
 GATHER_STRIDE_OFFSET = 0x08     # 12 for struct EasyChatWordInfo, whose `text` is at offset 0
@@ -700,17 +690,15 @@ def describe_rng_trace(dump):
 
 
 # --- call: any function in the ROM, with arguments we choose --------------------------------------
-# rng-trace calls a function with whatever is already in the registers; create-mon calls the one
-# function whose signature it was written around. This is the general form: an address, up to eight
-# argument words, and the r0 that comes back, plus one address watched either side of the call.
+# The general form of what rng-trace and create-mon each do specially: an address, up to eight
+# argument words, the r0 that comes back, and one address watched either side of the call.
 #
-# The convention is bs42's disassembly of CreateMon's prologue, proven on hardware by bs43 and
-# bs44: r0..r3, then [sp+0], [sp+4], [sp+8], [sp+12] at the moment of the call, and the callee does
-# not pop them. asm/call.s pushes the sixteen bytes for every call - a function taking fewer simply
-# never reads them.
+# The convention is bs42's disassembly of CreateMon's prologue, proven on hardware by bs43/bs44:
+# r0..r3 then [sp+0..12] at the moment of the call, and the callee does not pop them. asm/call.s
+# pushes the sixteen bytes for every call; a function taking fewer never reads them.
 #
 # `watch` is what makes an answer evidence: SeedRng returns nothing at all [decomp:src/random.c:15],
-# so only reading gRngValue before and after says whether the seed took.
+# so only reading gRngValue before and after says whether the seed took. docs/buffer_script.md.
 
 CALL = "call"
 CALL_FUNCTION_OFFSET = 0x04
@@ -800,20 +788,17 @@ def describe_call(dump, expected=None):
     return lines
 
 
-# --- create-mon: a ROM call that takes EIGHT arguments -------------------------------------------
-# bs15 called Random: no arguments, a u16 back. CreateMon [0x08041150, bs42] is the other end of the
-# range - four arguments in r0..r3 and four on the stack, in whole words, at the moment of the call:
-#
+# --- create-mon: a ROM call that takes eight arguments -------------------------------------------
 #   void CreateMon(struct Pokemon *mon, u16 species, u8 level, u8 fixedIV,
 #                  u8 hasFixedPersonality, u32 fixedPersonality, u8 otIdType, u32 fixedOtId)
 #
-# The console's own prologue is the evidence for where they go: it pushes five registers, then r8,
-# then subtracts 28, and reads its stack arguments at [sp,#52], [sp,#56], [sp,#60] and [sp,#64],
-# which are entry sp + 0, 4, 8 and 12 [bs42's dump, disassembled].
+# Four in r0..r3 and four at entry sp + 0, 4, 8 and 12, which is where the console's own prologue
+# reads them [bs42's dump: push of five registers, then r8, then `sub sp,#28`, then [sp,#52..64]].
 #
-# THE MON IS ALWAYS BUILT INSIDE OUR OWN 1024 BYTES, where nothing but the payload can be hurt, and
-# read back from there. `destination` copies the finished 100 bytes on afterwards; it is a live-save
-# write when it names the party, so it is guarded the way build_save_write's offsets are.
+# The mon is always built inside our own 1024 bytes, where nothing but the payload can be hurt, and
+# read back from there. `destination` copies the finished 100 bytes on afterwards and is a live-save
+# write when it names the party, so it is guarded like build_save_write's offsets.
+# docs/buffer_script.md.
 CREATE_MON = "create-mon"
 CREATE_MON_FUNCTION_OFFSET = 0x04
 CREATE_MON_DESTINATION_OFFSET = 0x08
@@ -1191,52 +1176,52 @@ SCRIPT_REGISTRY = {
         None),
     SAVE_WRITE: BufferScriptSpec(
         SAVE_WRITE,
-        "WRITE bytes into a save block and read the same region back in the same run (the console "
-        "saves afterwards, so the write reaches flash; --write-hex, --dump-block, --dump-offset)",
+        "write bytes into a save block and read the same region back in the same run; the console "
+        "saves afterwards, so the write reaches flash (--write-hex, --dump-block, --dump-offset)",
         None),
     RNG_TRACE: BufferScriptSpec(
         RNG_TRACE,
-        "sample one word of memory ONCE A FRAME, optionally calling a ROM function between the "
-        "two halves of each sample, and check the LCG recurrence on what comes back (--trace-"
-        "address, --trace-call, --trace-samples; reads only, plus whatever the callee does)",
+        "sample one word of memory once a frame, optionally calling a ROM function between the two "
+        "halves of each sample, and check the LCG recurrence on what comes back (--trace-address, "
+        "--trace-call, --trace-samples; reads only, plus whatever the callee does)",
         None),
     MEMORY_SCAN: BufferScriptSpec(
         MEMORY_SCAN,
-        "SEARCH memory for a 32-bit value and send back where it is. Returns 0 to be called again "
+        "search memory for a 32-bit value and send back where it is; it returns 0 to be called again "
         "next frame, so one run covers a range no dump could (--scan-word, --scan-start, "
         "--scan-end, --scan-blocks; reads only, writes nothing)",
         None),
     TABLE_SCAN: BufferScriptSpec(
         TABLE_SCAN,
-        "SEARCH memory for a TABLE BY ITS SHAPE - a run of N words each exactly D above the one "
-        "before it - and send back where each run starts and what value it starts with. It is how "
-        "a table of pointers is found when no constant in it is known (--table-delta, "
-        "--table-runlen, --table-start, --table-end, --table-blocks; reads only, writes nothing)",
+        "search memory for a table by its shape, a run of N words each exactly D above the one before "
+        "it, and send back where each run starts and what value it starts with; this is how a table "
+        "of pointers is found when no constant in it is known (--table-delta, --table-runlen, "
+        "--table-start, --table-end, --table-blocks; reads only, writes nothing)",
         None),
     ANCHORS: BufferScriptSpec(
         ANCHORS,
-        "ask the machine where it is: our own load address, the RETURN ADDRESS INTO ROM, the stack "
+        "ask the machine where it is: our own load address, the return address into ROM, the stack "
         "and the client's five buffers (writes only its own outgoing buffer)",
         None),
     CREATE_MON: BufferScriptSpec(
         CREATE_MON,
-        "CALL A ROM FUNCTION THAT TAKES EIGHT ARGUMENTS - CreateMon - and send back the 100-byte "
-        "struct Pokemon it built. The mon is built inside our own image, so nothing on the console "
-        "is written unless --create-mon-append or --create-mon-destination asks for it "
+        "call CreateMon, a ROM function taking eight arguments, and send back the 100-byte struct "
+        "Pokemon it built; the mon is built inside our own image, so nothing on the console is "
+        "written unless --create-mon-append or --create-mon-destination asks for it "
         "(--create-mon-call, --create-mon-species, --create-mon-level, --create-mon-personality)",
         None),
     STRING_GATHER: BufferScriptSpec(
         STRING_GATHER,
-        "FOLLOW AN ARRAY OF POINTERS and send back the strings themselves, back to back, instead "
-        "of a window of mostly-pointers - a whole Easy Chat group in one run (--gather-address, "
+        "follow an array of pointers and send back the strings themselves, back to back, instead of "
+        "a window of mostly-pointers: a whole Easy Chat group in one run (--gather-address, "
         "--gather-count, --gather-stride; reads only, writes nothing)",
         None),
     CALL: BufferScriptSpec(
         CALL,
-        "CALL ANY ROM FUNCTION with arguments we choose - up to eight words, r0..r3 then the "
-        "stack - and send back its r0 with one address read either side of the call "
-        "(--call-address, --call-arg, --call-watch). The payload itself writes nothing; what the "
-        "CALLEE writes is the whole risk, so the address has to have been read as code first",
+        "call any ROM function with arguments we choose, up to eight words in r0..r3 then the stack, "
+        "and send back its r0 with one address read either side of the call (--call-address, "
+        "--call-arg, --call-watch); the payload writes nothing itself, but the callee may, so the "
+        "address has to have been read as code first",
         None),
 }
 
@@ -1307,23 +1292,14 @@ def build_save_write(data, block=SAVE_BLOCK_2, offset=0xB20, *, unsafe=False):
     return bytes(code)
 
 
-# A DUMPED REGION MUST NOT CHANGE WHILE THE BLOCK IS BEING SENT, AND lg172/lg173 PAID FOR THIS.
-# MGL_Send takes the header CRC in one frame, sends the payload in the next and RE-CHECKS the CRC in
-# the one after [decomp:src/mystery_gift_link.c:155]:
+# A DUMPED REGION MUST NOT CHANGE WHILE THE BLOCK IS BEING SENT, and lg172/lg173 paid for it.
+# MGL_Send takes the header CRC in one frame, sends the payload in the next and re-checks the CRC in
+# the one after [decomp:src/mystery_gift_link.c:155], so a region that changes in between produces a
+# header CRC the payload cannot match and the console calls LinkRfu_FatalError - which the player
+# reads as "erreur de connexion" mid transmission.
 #
-#     case 0:  header.crc = CalcCRC16WithTable(link->sendBuffer, link->sendSize);
-#     case 1:  SendBlock(0, link->sendBuffer + blocksize, ...);
-#     case 2:  if (CalcCRC16WithTable(...) != link->sendCRC) LinkRfu_FatalError();
-#
-# So a region that changes between those frames produces a header CRC the payload cannot match, and
-# the console calls LinkRfu_FatalError - which the player reads as "erreur de connexion" mid
-# transmission. lg172 pointed a dump at gRngValue, which advances exactly two turns EVERY FRAME, and
-# it failed; lg173 repeated it unchanged and failed identically with a different CRC pair, which is
-# the signature of a moving region rather than a corrupted one. lg174 then dumped the same 32 bytes
-# from ROM and got them back byte-identical to lg166, which exonerated the size.
-#
-# gRngValue is the only address in the game GUARANTEED to move every frame, so it is the only one
-# named here. Anything else volatile has to be found the way this was.
+# gRngValue is the only address guaranteed to move every frame, so it is the only one named here.
+# Anything else volatile has to be found the way this was. docs/leafgreen.md.
 MOVING_REGIONS = (
     (rom_map.GRNG_VALUE, 4, "gRngValue, which advances two turns every frame"),
 )
@@ -1556,30 +1532,25 @@ _DEFAULT_ROM_HEADER = (b"\x00" * 0xA0
 
 
 # --- models of CreateMon, for running a calling payload offline ----------------------------------
-# The emulated cartridge is a header and zeros, so a payload that CALLS a ROM function has nothing
-# to land on: it would execute the zeros. These two THUMB stubs stand in for CreateMon at whatever
-# address the payload was built to call, placed with `memory={address: stub}`. They are MODELS of
-# the callee - what it does with its arguments - in the same spirit as _DEFAULT_ROM_HEADER above,
-# and each answers a different question.
+# The emulated cartridge is a header and zeros, so a payload that calls a ROM function would execute
+# the zeros. These two THUMB stubs stand in for CreateMon at whatever address the payload was built
+# to call, placed with `memory={address: stub}`.
 #
-# CREATE_MON_ARG_MODEL answers "did eight arguments arrive, and in the order the console's own
-# prologue reads them?". It writes r0..r3 and the four stack arguments into the destination as
-# eight words, so the answer names each one. Assembled from:
+# CREATE_MON_ARG_MODEL answers "did eight arguments arrive, in the order the console's own prologue
+# reads them?" by writing r0..r3 and the four stack arguments into the destination as eight words.
+# It pushes nothing, so [sp,#0] IS the caller's first stack argument. Assembled from:
 #
 #     str r1,[r0,#4]   str r2,[r0,#8]   str r3,[r0,#12]
 #     ldr r1,[sp,#0]   str r1,[r0,#16]  ldr r1,[sp,#4]   str r1,[r0,#20]
 #     ldr r1,[sp,#8]   str r1,[r0,#24]  ldr r1,[sp,#12]  str r1,[r0,#28]
 #     str r0,[r0,#0]   bx lr
-#
-# It pushes nothing, so [sp,#0] IS the caller's first stack argument - which is the whole point.
 CREATE_MON_ARG_MODEL = bytes.fromhex(
     "41608260c3600099016101994161029981610399c16100607047")
 CREATE_MON_ARG_FIELDS = ("mon", "species", "level", "fixedIV", "hasFixedPersonality",
                          "fixedPersonality", "otIdType", "fixedOtId")
 
-# create_mon_copy_model answers the other question - "does the answer decode as a struct Pokemon
-# all the way through?" - by copying 100 bytes a caller prepared over the destination, so that a
-# mon built in Python travels the whole path a real one would. Assembled from:
+# create_mon_copy_model answers the other question - does the answer decode as a struct Pokemon all
+# the way through? - by copying 100 bytes a caller prepared over the destination. Assembled from:
 #
 #     push {r4, lr}    ldr r1,.Lsource   movs r2,#100
 #   1: ldrb r4,[r1]    strb r4,[r0]      adds r1,#1   adds r0,#1   subs r2,#1   bne 1b

@@ -1293,20 +1293,10 @@ def build_seed_read_script(*, address=None, var_address=None, lines=SEED_READ_DE
 
 
 # --- the self-timing rate probe -------------------------------------------------------------------
-# The overworld consumption rate has been open since bs15, and every attempt to pin it down used a
-# hand-timed elapsed - one of which turned out to be circular (docs/rng.md). The fix is not a better
-# stopwatch. It is to take the clock out: `delay` waits an EXACT number of frames.
-#
-#   bool8 ScrCmd_delay(struct ScriptContext * ctx)
-#   {
-#       sPauseCounter = ScriptReadHalfword(ctx);
-#       SetupNativeScript(ctx, RunPauseTimer);
-#       return TRUE;
-#   }
-# [decomp:src/scrcmd.c:651] - it yields, which is the whole point, and resumes after exactly that
-# many frames. So a script that reads gRngValue, delays N frames and reads it again measures
-# turns-per-frame with no human anywhere in the loop: `lcg.distance` gives the numerator exactly
-# and N is the denominator exactly.
+# `ScrCmd_delay` yields and resumes after an exact number of frames [decomp:src/scrcmd.c:651], so a
+# script that reads gRngValue, delays N frames and reads it again measures turns-per-frame with no
+# clock in it: lcg.distance gives the numerator exactly and N is the denominator exactly. Every
+# earlier attempt divided by a hand-timed elapsed, and one of them was circular. docs/rng.md.
 _OP_DELAY = 0x28
 RATE_PROBE_DEFAULT_FRAMES = 600         # ~10 s at 59.7275 Hz; the seconds are commentary, not data
 
@@ -1365,22 +1355,15 @@ def build_seed_rate_script(*, address=None, var_address=None, frames=RATE_PROBE_
 
 
 # --- the draw counter: how many turns the generation itself costs ---------------------------------
-# `setwildbattle` returns FALSE [decomp:src/scrcmd.c:1935] and so does `copybyte`, so a read, the
-# generation, and a second read all run back to back inside ONE frame. No frame boundary means none
-# of the 2-per-frame overworld consumption falls between them, so `distance(before, after)` is
-# EXACTLY the number of draws CreateScriptedWildMon took, and nothing else.
+# `setwildbattle` and `copybyte` both return FALSE, so a read, the generation and a second read run
+# back to back inside one frame and none of the 2-per-frame overworld consumption falls between them.
+# `distance(before, after)` is therefore exactly what CreateScriptedWildMon took, which measures two
+# things: that the offset between a reading and the generation is zero by construction, and the draw
+# count itself (Method 1 says four; a stray draw shows up here as a 5 or a 6).
 #
-# That measures two things no other arrangement can:
-#   1. The offset between a reading and the generation is ZERO by construction - the four draws
-#      start from the state that was just read - so a predicted mon needs no fudge constant.
-#   2. The DRAW COUNT itself. Method 1 says four. docs/rng.md records a stray draw on this
-#      cartridge that appears in no line of CreateBoxMon and is "measured and unexplained"; if it is
-#      here, this run prints it as a 5 or a 6 instead of a 4.
-#
-# It needs no Pokemon caught and no Poke Ball: the answer is two numbers on screen, before the
-# battle even starts. `dowildbattle` calls ScriptContext_Stop [decomp:src/scrcmd.c:1945], so the
-# script cannot print anything after the battle - which is why both readings and both messages come
-# first, and why the human's button press sits AFTER the measured interval where it cannot reach it.
+# It needs no Pokemon caught. `dowildbattle` calls ScriptContext_Stop [decomp:src/scrcmd.c:1945], so
+# nothing can be printed after the battle - which is why both readings and both messages come first,
+# and why the player's button press sits after the measured interval where it cannot reach it.
 DRAW_COUNT_DEFAULT_LINES = ("BEFORE HI {STR_VAR_2}\n"
                             "BEFORE LO {STR_VAR_1}",
                             "AFTER HI {STR_VAR_2}\n"
