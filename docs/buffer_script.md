@@ -932,6 +932,36 @@ console's own bytes offline from here on.
 Any script in the cartridge can be read this way: a `memory-dump` at its address, then
 `scrcmd.disassemble`.
 
+### bs99-bs103: the rest of the handlers, read by tool
+
+`scratchpad/handler_workers.py` does bs84's reading automatically: for every handler inside a dump
+it walks the THUMB `bl` pairs and prints their absolute targets in order, naming any target this
+project has already measured. A 1 KB window is now a table rather than an afternoon, and the naming
+is the alignment check - a window decoded at the wrong offset does not land on `ScriptReadHalfword`
+or `VarGet`.
+
+Five more windows finished the sweep. What came out, beyond the obvious:
+
+- **The script engine itself**: `ScriptContext_Stop` 0x0806D0EC, `ScriptJump` 0x0806D1C0,
+  `ScriptCall` 0x0806D1C4, `ScriptReturn` 0x0806D1D8, and the native-pointer setter 0x0806D0E4 that
+  `delay`, `waitmessage` and `gotonative` all hand a function to. `ScrCmd_callnative` calls through
+  0x081E2224, the same `_call_via_r0` veneer `ScrCmd_special` uses - which is the mechanism this
+  project's own field stubs ride on.
+- **The warp family** [decomp:src/scrcmd.c:719], every one of them
+  `SetWarpDestination(...)`, `Do<kind>Warp()`, `ResetInitialPlayerAvatarState()`:
+  0x08058CA0, then 0x08081C90 / 0x08081CC8 / 0x08081D34 / 0x08081DA0, then 0x080592F8.
+  **Two of those name themselves**: the specials table calls 0x08081CC8 `DoDiveWarp` and 0x08081DA0
+  `DoFallWarp`, so the two tables confirm each other with nothing assumed. The same happens for
+  `CalculatePlayerPartyCount` (special 131, `ScrCmd_getpartysize`'s one call) and
+  `GetPlayerFacingDirection` (special 287, `ScrCmd_faceplayer`'s first).
+- **`ShowFieldMessage` 0x0806CD2C**, `ScrCmd_message`'s one call: a text box from a pointer.
+- `ScriptGiveMon` 0x080A3B28, `ScriptGiveEgg` 0x080A3BB8, `GetMonData` 0x080432E4.
+- `ScrCmd_setmonmodernfatefulencounter` calls `SetMonData` 0x08043A78 with nothing between it and
+  the slot, which is exactly the missing bounds check mev24/bs73 ran into.
+
+**None of the warp or message workers may be called from a buffer script**: they run inside the
+Mystery Gift menu, where there is no overworld. They belong to a field stub.
+
 ## `table-scan`: finding a table by its shape
 
 Every address found by searching so far rested on a constant that only one place could hold:

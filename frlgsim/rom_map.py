@@ -224,6 +224,39 @@ def callable_function(name):
                    + ", ".join(sorted(CALLABLE)))
 
 
+# --- more workers, bs92/bs99, extracted with scratchpad/handler_workers.py ----------------------
+# The same method as bs84, but read out by tool rather than by eye: every `bl` a handler makes, in
+# order, against the decomp's body for that command. Two of the warp workers name THEMSELVES - the
+# specials table bs93/bs95 dumped calls 0x08081CC8 DoDiveWarp and 0x08081DA0 DoFallWarp - so the
+# two tables confirm each other here without either being assumed.
+SCRIPT_CONTEXT_STOP = 0x0806D0EC      # ScrCmd_end's one call
+SCRIPT_CONTEXT_SET_NATIVE = 0x0806D0E4  # what gotonative/delay/fadescreen hand their function to
+SCRIPT_JUMP = 0x0806D1C0              # goto, goto_if, vgoto
+SCRIPT_CALL = 0x0806D1C4              # call, call_if, vcall
+SCRIPT_RETURN = 0x0806D1D8
+GET_MON_DATA = 0x080432E4             # ScrCmd_checkpartymove's reader, and HealPlayerParty's
+SCRIPT_GIVE_MON = 0x080A3B28          # ScrCmd_givemon's one call, after four operand reads
+SCRIPT_GIVE_EGG = 0x080A3BB8
+SCRIPT_SET_MON_MOVE_SLOT = 0x080A3D08
+
+# The warp family [decomp:src/scrcmd.c:719]: every one of them is
+# SetWarpDestination(...); Do<kind>Warp(); ResetInitialPlayerAvatarState().
+SET_WARP_DESTINATION = 0x08058CA0
+RESET_INITIAL_PLAYER_AVATAR_STATE = 0x080592F8
+DO_WARP = 0x08081C90
+DO_DIVE_WARP = 0x08081CC8             # = special 318, which is how it is named
+DO_DOOR_WARP = 0x08081D34
+DO_FALL_WARP = 0x08081DA0             # = special 319
+SHOW_FIELD_MESSAGE = 0x0806CD2C        # ScrCmd_message's one call: the text box, given a pointer
+SHOW_FIELD_AUTOSCROLL_MESSAGE = 0x0806CD54
+CALCULATE_PLAYER_PARTY_COUNT = 0x08044338   # = special 131, which is how it is named
+GET_PLAYER_FACING_DIRECTION = 0x0805FFC4    # = special 287
+SET_RESPAWN = 0x08058DE0               # ScrCmd_setrespawn: where a white-out returns the player
+
+# NOT CALLABLE FROM A BUFFER SCRIPT. These run inside the Mystery Gift menu, where there is no
+# overworld to warp: they belong to a FIELD stub, which runs from the field engine. docs/rng.md
+# has how a stub is staged.
+
 # --- gcc's THUMB-to-ARM call veneers ------------------------------------------------------------
 # Client_RunBufferScript reaches our ARM payload through one of these, which is why lr comes back
 # pointing into the caller rather than into the veneer.
