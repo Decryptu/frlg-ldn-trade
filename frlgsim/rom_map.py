@@ -395,56 +395,70 @@ LEAFGREEN = {
     "CreateMon": (0x08041150, "lg166"),                # same as FireRed - BELOW the split
 }
 
-# --- THE SPLIT, and it is a HYPOTHESIS with four measurements under it --------------------------
-# FOUR POINTS, TWO EITHER SIDE:
+# --- THE ROM DELTA, MEASURED IN FOUR SEGMENTS AND NOT ONE ---------------------------------------
+# THE FIRST VERSION OF THIS SECTION WAS WRONG AND IS KEPT DELETED ON PURPOSE. It read a constant
+# -0x24 off two points (the Mystery Gift call site, lg160, and gSpeciesInfo, lg165), called one
+# 36-byte insertion a hypothesis, and predicted a delta of zero at CreateMon - which lg166 then
+# confirmed byte for byte. The prediction was right and the model was not: BOTH -0x24 points sit
+# above EVERY difference, so they agreed with each other and said nothing about the range between.
 #
-#     CreateMon      0x08041150   same as FireRed        delta 0        lg166
-#     Random         0x080486B0   same as FireRed        delta 0        lg162
-#     MG call site   0x08148C74   -> 0x08148C50          delta -0x24    lg160
-#     gSpeciesInfo   0x0824CDFC   -> 0x0824CDD8          delta -0x24    lg165
+# WHAT REFUTED IT COST NO HARDWARE RUN. lg161 scanned LeafGreen for RAND_MULT and bs13 had scanned
+# FireRed for the same constant. Eleven hits each, in the same order, at nearly the same addresses -
+# so they pair one to one, and the pairs give the delta at eleven points across 1.3 MB:
 #
-# HYPOTHESIS: ONE difference of 36 bytes lies between 0x080486D0 and 0x08148C50, and everything
-# above it is FireRed's address minus 0x24. lg166 is the reason this is worth writing down rather
-# than a coincidence noticed afterwards - the delta was predicted to be ZERO there before the run,
-# because 0x08041150 is below the split, and the bytes came back identical.
+#     0x080486C8                    delta  0
+#     0x0807D238 .. 0x080AFC00      delta -0x2C     (4 hits)
+#     0x080F1EA0 .. 0x08122518      delta -0x28     (5 hits)
+#     0x0814CBFC                    delta -0x24
 #
-# WHY IT IS STILL A HYPOTHESIS. Two points above the split both reading -0x24 is CONSISTENT with a
-# single insertion and does not prove one: several differences that happen to cancel would look the
-# same, and nothing here has bracketed the split itself. It is also silent about CONTENT - a table
-# can sit at the predicted address and hold different data, which is exactly what the French Easy
-# Chat vocabulary turned out to be against the English decomp (docs/easy_chat_french.md).
+# So there are AT LEAST THREE differences, not one, and LeafGreen GAINS four bytes at each of the
+# upper two boundaries - a deficit of 44 bytes early, partly paid back twice. Nothing about this is
+# visible from two samples taken above all of it.
 #
-# HOW TO USE IT: as the first place to point a dump, never as an answer. `leafgreen()` still raises
-# for anything unmeasured, and every entry above carries the run that measured it.
-LEAFGREEN_HIGH_ROM_DELTA = -0x24    # HYPOTHESIS: applies above the split, not below it
-LEAFGREEN_SPLIT_BRACKET = (0x080486D0, 0x08148C50)   # measured 0 below, -0x24 above; not narrowed
+# THE LESSON, and it is the one this project keeps relearning: two agreeing measurements are one
+# measurement repeated when they share a blind spot. What made the difference here was a THIRD kind
+# of evidence - a scan already in the log, compared against a scan already in another log.
+LEAFGREEN_DELTA_SEGMENTS = (
+    # (low, high, delta, evidence): the delta is MEASURED at both ends of each span
+    (0x08000000, 0x080486C8, 0x00, "lg162/lg166 and the lg161-vs-bs13 pairing"),
+    (0x0807D238, 0x080AFC00, -0x2C, "lg161 vs bs13, 4 paired hits"),
+    (0x080F1EA0, 0x08122518, -0x28, "lg161 vs bs13, 5 paired hits"),
+    # lg160 measured -0x24 at the Mystery Gift call site, which is BELOW the lowest paired hit in
+    # this segment - so the last boundary is under 0x08148C74, not under 0x0814CBFC. Combining the
+    # two kinds of evidence tightens the gap by 0x3F88 for free.
+    (0x08148C74, 0x09000000, -0x24, "lg160 at 0x08148C74, lg161-vs-bs13 at 0x0814CBFC, lg165"),
+)
 
 
 def leafgreen_guess(firered_address):
     """-> where `firered_address` PROBABLY is on LeafGreen. A place to point a dump, not an answer.
 
-    Below the bracket the delta is measured to be 0; above it, -0x24 at two independent points.
-    Inside the bracket nothing is known, so it refuses rather than splitting the difference.
+    Only the four MEASURED segments answer. Between them a boundary is known to exist and its
+    position is not, so the gaps refuse rather than interpolate - which is the whole correction the
+    RAND_MULT pairing forced. An address that comes back is still only a first place to look: the
+    delta says nothing about CONTENT, and a table can sit exactly where predicted and hold different
+    data (docs/easy_chat_french.md is the standing example).
     """
-    low, high = LEAFGREEN_SPLIT_BRACKET
     address = int(firered_address)
-    if address <= low:
-        return address
-    if address >= high:
-        return address + LEAFGREEN_HIGH_ROM_DELTA
+    for low, high, delta, _evidence in LEAFGREEN_DELTA_SEGMENTS:
+        if low <= address <= high:
+            return address + delta
     raise ValueError(
-        f"0x{address:X} is inside the unbracketed split 0x{low:X}..0x{high:X}; "
-        "the delta there has never been measured")
-# The only measured divergence so far, kept as a number rather than a story.
-LEAFGREEN_CALL_SITE_DELTA = LEAFGREEN["mystery_gift_call_site"][0] - 0x08148C74
+        f"0x{address:X} falls in a gap between measured segments, where a boundary is known to "
+        "exist and its position is not. Point a dump at it and measure.")
 
 
 def leafgreen(symbol):
-    """-> the LeafGreen address of `symbol`, or raise. Never falls back to the FireRed table."""
+    """-> the LeafGreen address of `symbol`, or raise. Never falls back to the FireRed table.
+
+    Nothing here is copied across because it "should" be the same. Every entry in LEAFGREEN carries
+    the run that measured it on LEAFGREEN, and a symbol that has not been measured raises - use
+    `leafgreen_guess` to decide where to point a dump, then measure.
+    """
     try:
         return LEAFGREEN[symbol][0]
     except KeyError:
         raise KeyError(
             f"{symbol!r} has not been measured on LeafGreen; have {sorted(LEAFGREEN)}. "
-            "Do not substitute the FireRed value - the two builds diverge along the link order "
-            "and lg160 measured 0x24 of it at the Mystery Gift client.") from None
+            "Do not substitute the FireRed value - the two builds differ at three or more points "
+            "between 0x080486C8 and 0x0814CBFC (LEAFGREEN_DELTA_SEGMENTS).") from None

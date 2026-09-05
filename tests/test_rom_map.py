@@ -178,7 +178,6 @@ def test_leafgreen_is_its_own_table_and_never_falls_back_to_firered():
     assert rom_map.leafgreen("gRngValue") == rom_map.GRNG_VALUE == 0x03004220
     assert rom_map.leafgreen("Random") == rom_map.RANDOM
     assert rom_map.leafgreen("mystery_gift_call_site") != 0x08148C74
-    assert rom_map.LEAFGREEN_CALL_SITE_DELTA == -0x24
     with pytest.raises(KeyError, match="not been measured on LeafGreen"):
         rom_map.leafgreen("SeedRngButNotMeasured")
 
@@ -201,12 +200,20 @@ def test_the_leafgreen_cartridge_is_identified_off_the_cartridge():
     assert rom_map.LEAFGREEN_SOFTWARE_VERSION == 0x0A
 
 
-def test_the_leafgreen_split_is_a_guess_that_refuses_where_nothing_is_known():
-    """Four measurements: delta 0 at CreateMon and Random, -0x24 at the Mystery Gift call site and
-    gSpeciesInfo. lg166 predicted the zero before the run. The split itself is NOT bracketed, so
-    inside it the helper must refuse rather than interpolate."""
+def test_the_leafgreen_delta_is_four_measured_segments_and_refuses_the_gaps():
+    """The eleven RAND_MULT hits lg161 found on LeafGreen pair one to one with the eleven bs13
+    found on FireRed, and the pairs give the delta at eleven points: 0, then -0x2C, then -0x28,
+    then -0x24. At least three differences, not the one a two-point reading suggested."""
     assert rom_map.leafgreen_guess(rom_map.CREATE_MON) == rom_map.leafgreen("CreateMon")
     assert rom_map.leafgreen_guess(rom_map.RANDOM) == rom_map.leafgreen("Random")
     assert rom_map.leafgreen_guess(rom_map.GSPECIES_INFO) == rom_map.leafgreen("gSpeciesInfo")
-    with pytest.raises(ValueError, match="unbracketed split"):
-        rom_map.leafgreen_guess(0x08100000)
+    assert rom_map.leafgreen_guess(0x08148C74) == rom_map.leafgreen("mystery_gift_call_site")
+    # The paired hits themselves, which is the evidence the segments are built from.
+    for firered, leafgreen in ((0x080486C8, 0x080486C8), (0x0807D238, 0x0807D20C),
+                               (0x080AFC00, 0x080AFBD4), (0x080F1EA0, 0x080F1E78),
+                               (0x08122518, 0x081224F0), (0x0814CBFC, 0x0814CBD8)):
+        assert rom_map.leafgreen_guess(firered) == leafgreen
+    # A boundary is known to be in here and its position is not.
+    for gap in (0x080C0000, 0x08130000, 0x08060000):
+        with pytest.raises(ValueError, match="gap between measured segments"):
+            rom_map.leafgreen_guess(gap)
