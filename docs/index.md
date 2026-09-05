@@ -53,6 +53,8 @@ blaming the adapter.
 - [Native code on the console](buffer_script.md) — `CLI_RUN_BUFFER_SCRIPT`: how 1024 bytes of ARM
   get called on a retail Switch with no glitch and no prepared save, and the eleven payloads built
   on it.
+- [The random number generator](rng.md) — reading the console's seed in the overworld, predicting
+  what it will build, and the staged stub that makes a wild Pokemon shiny for one A press.
 - [What the gift link can still carry](mystery_gift_untried.md) — the capability surface: what has
   been sent, what is closed with evidence, what is left.
 

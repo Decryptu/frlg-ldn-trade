@@ -256,18 +256,27 @@ ordinary overworld play with the player standing in a room - not just to a scrip
 A fifth trial, discarded, read +39.2 frames: it was taken against the wandering Pallet Town NPC and
 most of the error was the player chasing him. That is why the scripts bind to the mother now.
 
-**What that makes the hunt.** A shiny frame arrives every ~8192 frames (~137 s), and a press with a
-4.5-frame spread lands on one chosen frame about 9% of the time - roughly 1 attempt in 11. So a
-shiny costs on the order of 25 minutes of waiting, against about 23 hours of random encounters for
-the same odds. A miss costs one A press and is measured exactly, because the script prints the state
-it generated from.
+**What that makes the hand-aimed hunt.** A shiny frame arrives every ~8192 frames (~137 s), and a
+press with a 4.5-frame spread lands on one chosen frame about 9% of the time - roughly 1 attempt in
+11. So a shiny costs on the order of 25 minutes of waiting, against about 23 hours of random
+encounters for the same odds. A miss costs one A press and is measured exactly, because the script
+prints the state it generated from.
+
+This is no longer how a shiny is obtained - *The stub that does the search* below removes the aim
+entirely - but it remains the route when the RAM script slot is holding a Wonder Card, and the
+press-spread numbers are the measurement of the player, not of the method.
 
 ## What cannot be done, and what is still open
 
 **Closed, and DONE: read-only prediction.** A live seed is readable in the overworld, the rate is
 exact, the offset from a reading to the generation is zero, and mev11/bs58 predicted seven fields of
-a mon the console built from a state it chose for itself. What is left is aiming, and aiming is a
-human pressing A with a measured 4.5-frame spread - about 1 attempt in 11, ~26 minutes a shiny.
+a mon the console built from a state it chose for itself.
+
+**And aiming is closed too, which this section used to say it was not.** The sentence here read
+"what is left is aiming, and aiming is a human pressing A". That was true of everything the field
+bytecode could do and false of what the field engine can RUN: a staged native stub does the search
+itself at the moment of the encounter. mev15 proved it on hardware, twice, and mev16 again. See
+*The stub that does the search*.
 
 **Closed: aiming with no live seed at all.** The state advances 2 turns every frame with no idle
 state, ~1 frame in 8192 produces a shiny, and without a reading nothing signals which. That was the
