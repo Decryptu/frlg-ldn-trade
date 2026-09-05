@@ -480,11 +480,15 @@ class HostTradeEngine:
     def _begin_colosseum_battle(self):
         """Task_StartWirelessCableClubBattle case 2: each side SendBlocks its bare 28-byte
         `struct LinkPlayer`. There is no block request - the console sends unprompted and then
-        parks in case 3 until ours lands, so ours goes out on receipt, as at the entry."""
+        parks in case 3 until ours lands, so ours goes out on receipt, as at the entry.
+
+        Armed from the trainer-card standby, not from a finished seat: the colosseum has no
+        post-seat standby rounds of its own (cc1). The READY key still goes out from the spot
+        route, and GetCableClubPartnersReady reads nothing else [overworld.c:2989]."""
         self._set_state(H_CC_BATTLE_ENTRY)
         self._expected = "cc_link_player"
-        self.info("Colosseum: both trainers are on their spots; waiting for the console's "
-                  "LinkPlayer record, then the battle.")
+        self.info("Colosseum: sending READY for the spot; the console's LinkPlayer record is "
+                  "what starts the battle.")
 
     def _begin_party_exchange(self):
         self._set_state(H_PARTY)
@@ -882,6 +886,15 @@ class HostTradeEngine:
         if self.state == H_LINK_PLAYER and self._expected == "warp0":
             self._begin_card_exchange()
         elif self.state == H_ENTRY_CARD and self._expected == "warp1":
+            if self.colosseum:
+                # cc1: the colosseum does NOT produce the trade centre's post-seat standby rounds,
+                # so the entry can only be finished by the console's own next block. It fades to
+                # black on its spot and parks in Task_StartWirelessCableClubBattle case 3
+                # [cable_club.c:706] waiting for our record, which is why gating on standbys here
+                # deadlocked both sides. Arm for the block and let its arrival be the transition.
+                self._begin_colosseum_battle()
+                self._start_entry_route()
+                return
             self._set_state(H_ENTRY_SEAT)
             self._expected = "warp2"
             self._start_entry_route()

@@ -102,6 +102,28 @@ def test_the_colosseum_cannot_be_hosted_from_the_union_room():
         HostTradeEngine([_mon()], trade_slot=0, colosseum=True, union_room=True)
 
 
+def test_the_card_standby_arms_the_battle_entry_without_waiting_for_a_seat():
+    """cc1: the console fades to black on its spot and parks in Task_StartWirelessCableClubBattle
+    case 3 waiting for our record. The trade centre's post-seat standby rounds never come, so
+    gating on them deadlocked both sides."""
+    from frlgsim.host_trade import H_ENTRY_CARD
+    h = _engine()
+    h._set_state(H_ENTRY_CARD)
+    h._expected = "warp1"
+    h._on_child_standby(1)
+    assert h.state == H_CC_BATTLE_ENTRY and h._expected == "cc_link_player"
+    assert h._held_label == "COLOSSEUM_SPOT"
+
+
+def test_the_trade_host_still_takes_its_seat_at_that_standby():
+    from frlgsim.host_trade import H_ENTRY_CARD, H_ENTRY_SEAT
+    h = _engine(colosseum=False)
+    h._set_state(H_ENTRY_CARD)
+    h._expected = "warp1"
+    h._on_child_standby(1)
+    assert h.state == H_ENTRY_SEAT and h._expected == "warp2"
+
+
 def test_the_seat_opens_the_battle_entry_instead_of_the_trade_menu():
     h = _engine()
     h._begin_seated_activity()
