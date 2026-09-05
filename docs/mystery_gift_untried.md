@@ -60,26 +60,51 @@ them execute something on the console, and we use one:
 
 ## Open, roughly in order of value
 
-### 1. The Mystery Event VM — the VM works on hardware; the opcodes are next
+### 1. The Mystery Event VM — CLOSED. Every opcode has now run on hardware (mev17)
 
 Full write-up in [The Mystery Event VM](mystery_event.md). `frlgsim/mystery_event.py` assembles all
 17 commands, `mg_script`/`mg_server` carry them, and `--gift mystery-event-probe` proved the path on
 retail hardware (`mev01`, first try): the console ran a script with no `checkcompat`, chained past
 the first command, resolved pointer operands as offsets into its own receive buffer, and reported a
-status of our choosing back to us. What is still open is what each opcode does on the console:
+status of our choosing back to us. **mev17 then ran the last three in one card and read all three
+effects back off the console (bs61), so nothing in the table is untried any more:**
+
+    addrareword 0; setstatus 41; addtrainer <188 bytes>; setstatus 42; setenigmaberry <28 bytes>; end
+
+One status comes back and `setstatus` writes the same field every opcode writes (`ctx->data[2]`), so
+the ORDER is the experiment: markers after each opcode, and `setenigmaberry` last because its own
+status separates success (2) from a berry that would not validate (1). The console answered **2**.
+The three effects, each read back rather than assumed:
+
+- **`addtrainer`** — RED was waiting in the house on SEVEN ISLAND. Visible in-game, no dump needed.
+- **`addrareword`** — `gSaveBlock1Ptr->additionalPhrases` (SaveBlock1 + 0x2F10) read back `01`, bit 0
+  set, which is the id the card sent. Nothing changes on screen: the bit makes one more word
+  SELECTABLE in the Easy Chat editor, it does not rewrite a phrase the player already set.
+- **`setenigmaberry`** — `gSaveBlock1Ptr->enigmaBerry` (+0x30EC) read back the name `GURVAN` where it
+  had held `ENIGMA`, with maxYield 2 and stageDuration 24, and a checksum of 0x9DB where it had been
+  0x9B9 — recomputed by `SetEnigmaBerry` itself, which is why a valid checksum never has to be
+  produced by us. **There is nothing to see in the Berry Pouch**: the record defines what the Enigma
+  Berry IS, and the player still has no such item. `VAR_ENIGMA_BERRY_AVAILABLE`, which the opcode
+  sets, is read NOWHERE else in FRLG; the record is only consulted in battle and by `GetBerryInfo`.
+
+The two ROM description pointers in `struct Berry2` were **read off the cartridge first** (bs59) and
+sent back unchanged. They live in the save for ever and the Berry Pouch dereferences them to print
+the description, so an invented pointer would render garbage on every future look at the berry.
+
+What each opcode does, for reference:
 
 - `setenigmaberry` — the 28-byte `Berry2` (name, description pointers, size, firmness, flavours,
   growth data) lands; the `itemEffect`/`holdEffect` tail sits at offset 0x516 of
   `struct ReceivedEnigmaBerry`, past the console's 1024-byte buffer, so it cannot be set from this
-  link. Note the player still needs the item itself.
+  link. Note the player still needs the item itself. **Proven mev17/bs61.**
 - `givenationaldex` — `EnableNationalPokedex()`. In the probe script.
 - `giveribbon` — a gift ribbon onto every non-egg party mon. FRLG has no ribbon UI, so it is
   invisible on this console; the effect only appears after a transfer.
-- `addrareword` — unlocks an Easy Chat rare word.
+- `addrareword` — unlocks an Easy Chat rare word. **Proven mev17/bs61.**
 - `givepokemon` — the MEvent version: a whole `struct Pokemon` **plus attached Mail**, and it sets
   the seen and caught dex flags itself [`mystery_event_script.c:234`]. Status 3 back means the party
   was full; status 2 means it landed.
-- `addtrainer` — the same visiting trainer we now send, by another route.
+- `addtrainer` — the same visiting trainer we now send, by another route. **Proven mev17.**
 - `initramscript` — a delivery script bound to **any** map group, map and object, not just the
   Mystery Gift delivery man. Not yet built into the composer.
 
