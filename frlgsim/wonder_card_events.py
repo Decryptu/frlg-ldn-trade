@@ -32,7 +32,7 @@ import dataclasses
 
 from . import native_script
 from . import rng_script
-from . import ereader_trainer, mevent_pokemon, mystery_event, stamp_rally, wonder_card
+from . import charmap, ereader_trainer, mevent_pokemon, mystery_event, stamp_rally, wonder_card
 
 
 # pokefirered/include/constants/{items,species,event_objects}.h
@@ -907,6 +907,98 @@ RNG_RATE_PROBE_LONG_GIFT = WonderGift(
     )),
     completed_message="Talk to your MOM at home.",
     mevent=build_rng_rate_probe_script(frames=RNG_RATE_PROBE_LONG_FRAMES),
+)
+
+
+GIFT_MEVENT_SWEEP = "mevent-opcode-sweep"
+MEVENT_SWEEP_FLAG_ID = 1005
+
+# THE THREE MYSTERY EVENT OPCODES NOBODY HAS RUN, IN ONE CARD. `setenigmaberry`, `addrareword` and
+# `addtrainer` are all that is left of the table (giveribbon runs but FRLG has no ribbon UI, and
+# setrecordmixinggift/enableresetrtc are the two that answer INCOMPATIBLE by design).
+#
+# ONE STATUS COMES BACK, so the order is the experiment. `setstatus` and every opcode write the SAME
+# field (ctx->data[2]) [decomp:src/mystery_event_script.c], so the LAST thing to run decides the
+# answer. Markers go AFTER each opcode, and setenigmaberry goes last because it is the one command
+# whose own status distinguishes success from failure:
+#
+#     status 2   all three ran and the berry VALIDATED
+#     status 1   all three ran and the berry did not validate [IsEnigmaBerryValid, src/berry.c:984]
+#     status 42  addtrainer ran, setenigmaberry did not
+#     status 41  addrareword ran, addtrainer did not
+#     anything else - the chain died before the first opcode
+#
+# THE BERRY'S DESCRIPTION POINTERS ARE THE CONSOLE'S OWN, READ OFF IT (bs59: a save-dump of
+# gSaveBlock1Ptr->enigmaBerry at +0x30EC). struct Berry2 carries two ROM pointers that the Berry
+# Pouch dereferences to print the description, and they live in the SAVE for ever after - a pointer
+# we invented would render garbage on every future look at the berry, or worse. 0x083D5CE8 and
+# 0x083D5CF8 are what THIS cartridge already has in that field, so reusing them cannot be wrong.
+# Everything else in the 28 bytes is ours; the name is what makes the change visible.
+#
+# WHAT CANNOT BE SET FROM HERE, and it is not a bug in the builder: struct ReceivedEnigmaBerry puts
+# itemEffect/holdEffect/holdEffectParam at offset 0x516, past the end of the console's 1024-byte
+# buffer, so the console reads them out of whatever follows on its heap [mystery_event.
+# build_enigma_berry_blob]. The berry is safe to own and should NOT be given to a Pokemon to hold.
+MEVENT_SWEEP_BERRY_DESC1 = 0x083D5CE8       # bs59, off the cartridge
+MEVENT_SWEEP_BERRY_DESC2 = 0x083D5CF8
+MEVENT_SWEEP_RARE_WORD = 0
+MEVENT_SWEEP_MARK_RAREWORD = 41
+MEVENT_SWEEP_MARK_TRAINER = 42
+
+
+def build_sweep_berry(name="GURVAN"):
+    """struct Berry2, 28 bytes: the console's own growth data with a name that is unmistakably ours."""
+    encoded = charmap.encode(name).ljust(6, b"\x00")[:6] + b"\xFF"
+    return (encoded
+            + bytes([0])                                    # firmness
+            + (0).to_bytes(2, "little")                     # size
+            + bytes([2, 1])                                 # maxYield, minYield - both nonzero
+            + MEVENT_SWEEP_BERRY_DESC1.to_bytes(4, "little")
+            + MEVENT_SWEEP_BERRY_DESC2.to_bytes(4, "little")
+            + bytes([24])                                   # stageDuration - nonzero, so it VALIDATES
+            + bytes([40, 40, 40, 40, 40, 40])               # spicy dry sweet bitter sour smoothness
+            + bytes([0]))                                   # pad to 28
+
+
+def build_mevent_sweep_script():
+    script = mystery_event.MysteryEventScript()
+    script.addrareword(MEVENT_SWEEP_RARE_WORD)
+    script.setstatus(MEVENT_SWEEP_MARK_RAREWORD)
+    script.addtrainer(script.blob(ereader_trainer.build("red")))
+    script.setstatus(MEVENT_SWEEP_MARK_TRAINER)
+    script.setenigmaberry(script.blob(build_sweep_berry()))
+    script.end()
+    return script.assemble()
+
+
+MEVENT_SWEEP_GIFT = WonderGift(
+    slug=GIFT_MEVENT_SWEEP,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="Three things at once",
+        body=(
+            "A BERRY, a word for the",
+            "questionnaire, and a TRAINER",
+            "waiting on SEVEN ISLAND.",
+            "Check all three.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=MEVENT_SWEEP_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "Three gifts arrived together\n"
+                "from far away."),
+        ),
+    )),
+    completed_message="Look in your BERRY POUCH.",
+    mevent=build_mevent_sweep_script(),
 )
 
 

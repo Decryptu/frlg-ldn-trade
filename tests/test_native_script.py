@@ -251,3 +251,31 @@ def test_the_script_does_not_fall_off_the_end_after_the_battle():
                    rng_script.build_wild_battle_script(0xC0DE, 132, 50)):
         assert script[-3:] == bytes([native_script.SCR_DOWILDBATTLE,
                                      native_script.SCR_RELEASEALL, rng_script.SCR_END])
+
+
+# --- the three untried Mystery Event opcodes, in one card ----------------------------------------
+
+def test_the_opcode_sweep_runs_all_three_and_the_order_is_the_experiment():
+    """ONE status comes back and `setstatus` writes the same field every opcode writes
+    (ctx->data[2]) [decomp:src/mystery_event_script.c], so the last thing to run decides the answer.
+    Markers go AFTER each opcode; setenigmaberry goes last because its own status tells success
+    (2) from failure (1)."""
+    from frlgsim import mystery_event, wonder_card_events as w
+    script = w.MEVENT_SWEEP_GIFT.mevent
+    result = mystery_event.run(script)
+    assert result.status == mystery_event.STATUS_SUCCESS
+    kinds = [effect[0] for effect in result.effects]
+    assert kinds.index("addrareword") < kinds.index("addtrainer") < kinds.index("setenigmaberry")
+
+
+def test_the_sweep_berry_validates_and_keeps_the_cartridge_own_description_pointers():
+    """IsEnigmaBerryValid needs stageDuration and maxYield nonzero [decomp:src/berry.c:984]; the
+    checksum is recomputed by SetEnigmaBerry, so we do not have to produce one. The two ROM pointers
+    are NOT invented - bs59 read them out of gSaveBlock1Ptr->enigmaBerry. They live in the save for
+    ever and the Berry Pouch dereferences them to print the description."""
+    from frlgsim import wonder_card_events as w
+    berry = w.build_sweep_berry()
+    assert len(berry) == 28
+    assert berry[10] != 0 and berry[20] != 0, "maxYield and stageDuration decide validity"
+    assert int.from_bytes(berry[12:16], "little") == w.MEVENT_SWEEP_BERRY_DESC1
+    assert int.from_bytes(berry[16:20], "little") == w.MEVENT_SWEEP_BERRY_DESC2
