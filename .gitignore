@@ -1,11 +1,9 @@
-# Published surface: the frlgsim/ simulator package plus the root entry script
-# bin/frlgtrade.py. Everything else is local to this setup.
-
-# Ignore every top-level folder except the frlgsim package and tests.
-# This covers utils/, notes/, captures/, .backups/, and venv/.
+# Ignore every top-level folder, then allow back the published ones. This keeps
+# scratchpad/, .venv/, captures and notes out of the repository by default.
 /*/
 !/frlgsim/
 !/tests/
+!/tools/
 !/docs/
 !/scripts/
 # ARM sources for CLI_RUN_BUFFER_SCRIPT payloads; the assembled bytes are committed in
@@ -47,8 +45,7 @@ __pycache__/
 *.pcapng
 host-tap-*.txt
 logs/
-# Nested standalone clone (kinnay/LDN) — reference source for the LDN hosting
-# stack (@ 39d0b20 = v0.0.17, identical to the installed venv package).
+# Nested standalone clone (kinnay/LDN), a reference copy of the vendored package.
 LDN/
 
 # Saves and ROM for testing wonder cards on emulation.
@@ -56,11 +53,7 @@ frlgsim/POKEMON_FIRE_BPRE01.gba
 frlgsim/POKEMON_FIRE_BPRE01.sav.gift.sav
 frlgsim/POKEMON_FIRE_BPRE01.sav
 
-
-# built injector tool (comradesean pokemon-gen3-mysterygift-tool clone)
-tools/
-
-# md files
+# Untracked working notes.
 CLAUDE.md
 NOTES.history.local.md
 NOTES.local.md
