@@ -63,8 +63,9 @@ from .field_stubs import STUBS
 from .rng_countdown import NATURE_NAMES, NUM_NATURES
 # ONE encoder for `setptr`, not two. bs56 was lost to the same shape of duplication in config.py.
 from .rng_script import (MAX_RAM_SCRIPT_SIZE, SCR_END, SCR_SETPTR, RngScriptError,  # noqa: F401
-                         SCR_DOWILDBATTLE, SCR_SETWILDBATTLE, SCR_RELEASEALL, BATTLE_TAIL,
-                         MAX_LEVEL, MAX_SPECIES, setptr)
+                         SCR_DOWILDBATTLE, SCR_SETWILDBATTLE, SCR_RELEASEALL, SCR_GOTO,
+                         SCR_SETVAR, BATTLE_TAIL, TRAMPOLINE_ADDRESS, TRAMPOLINE_WORD,
+                         MAX_LEVEL, MAX_SPECIES, battle_and_exit, setptr)
 
 SCR_CALLNATIVE = 0x23
 
@@ -167,19 +168,15 @@ def build_shiny_hunt_script(species, level, *, item=0, cap=1 << 18, scratch=SCRA
 def _stage_and_battle(code, species, level, *, item=0, scratch=SCRATCH):
     """-> the staged stub, the call, and the encounter. ONE of these, for every hunt stub.
 
-    The tail is the whole reason the builders share a path: `releaseall` + `end` after
-    dowildbattle, because the battle RESUMES the script [rng_script.BATTLE_TAIL].
+    The tail is the whole reason the builders share a path, and mev18 is why it is what it is: a
+    battle MOVES the save block the RAM script lives in, so the engine comes back from the battle
+    to an address the script no longer occupies. `battle_and_exit` starts the battle from
+    gSpecialVar_0x8000 instead, which does not move [rng_script, and the block above it].
     """
-    species, level, item = int(species), int(level), int(item)
-    if not 1 <= species <= MAX_SPECIES:
-        raise NativeScriptError(f"species is 1..{MAX_SPECIES}, got {species}")
-    if not 1 <= level <= MAX_LEVEL:
-        raise NativeScriptError(f"level is 1..{MAX_LEVEL}, got {level}")
-    if not 0 <= item <= 0xFFFF:
-        raise NativeScriptError(f"item is a u16, got {item}")
-    battle = (bytes([SCR_SETWILDBATTLE]) + species.to_bytes(2, "little")
-              + bytes([level]) + item.to_bytes(2, "little") + bytes([SCR_DOWILDBATTLE])
-              + BATTLE_TAIL)      # the battle RESUMES the script; see rng_script.BATTLE_TAIL
+    try:
+        battle = battle_and_exit(species, level, item)
+    except RngScriptError as error:
+        raise NativeScriptError(str(error)) from None
     body = stage(code, scratch) + callnative_at(scratch) + battle
     plan = budget(len(code), other=len(battle))
     if not plan["fits"]:
@@ -437,6 +434,19 @@ def describe(script):
             lines.append(f"  setwildbattle species {species} Lv{script[i + 3]} "
                          f"item {int.from_bytes(script[i + 4:i + 6], 'little')}")
             i += 6
+        elif op == SCR_SETVAR:
+            var = int.from_bytes(script[i + 1:i + 3], "little")
+            value = int.from_bytes(script[i + 3:i + 5], "little")
+            note = ""
+            if var == 0x8000 and value == TRAMPOLINE_WORD:
+                note = "  (dowildbattle; end, at gSpecialVar_0x8000 - out of the save block)"
+            lines.append(f"  setvar 0x{var:04X} = 0x{value:04X}{note}")
+            i += 5
+        elif op == SCR_GOTO:
+            target = int.from_bytes(script[i + 1:i + 5], "little")
+            where = " (the trampoline)" if target == TRAMPOLINE_ADDRESS else ""
+            lines.append(f"  goto 0x{target:08X}{where}")
+            i += 5
         elif op == SCR_DOWILDBATTLE:
             lines.append("  dowildbattle (yields; the battle RESUMES the script after it)")
             i += 1

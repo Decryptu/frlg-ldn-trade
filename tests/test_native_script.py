@@ -139,7 +139,8 @@ def test_the_hunt_script_stages_calls_and_then_battles_in_that_order():
     assert lines[0].startswith("  setptr x80")
     assert lines[1] == "  callnative 0x0201C001 (THUMB)"
     assert lines[2].startswith("  setwildbattle species 132 Lv50")
-    assert lines[3].startswith("  dowildbattle")
+    assert lines[3].startswith("  setvar 0x8000")
+    assert lines[4].startswith("  goto 0x020370B4")
     assert len(script) <= rng_script.MAX_RAM_SCRIPT_SIZE
 
 
@@ -155,9 +156,7 @@ def test_nothing_between_the_call_and_the_generation_can_yield():
     assert script[call] == native_script.SCR_CALLNATIVE
     # Everything from the call to the generation, byte for byte. No room for anything that yields.
     assert script[call:] == (native_script.callnative_at(native_script.SCRATCH)
-                             + bytes([native_script.SCR_SETWILDBATTLE]) + (132).to_bytes(2, "little")
-                             + bytes([50]) + (0).to_bytes(2, "little")
-                             + bytes([native_script.SCR_DOWILDBATTLE]) + rng_script.BATTLE_TAIL)
+                             + rng_script.battle_and_exit(132, 50))
 
 
 def test_the_species_and_level_are_checked_before_a_console_ever_sees_them():
@@ -240,17 +239,37 @@ def test_a_stub_that_never_returns_is_refused_rather_than_run():
         native_script.emulate(forever, instruction_limit=1000)
 
 
-def test_the_script_does_not_fall_off_the_end_after_the_battle():
-    """mev11's unexplained second wild battle. `StartScriptedWildBattle` sets savedCallback to
-    CB2_EndScriptedWildBattle, which ends in CB2_ReturnToFieldContinueScriptPlayMapMusic
-    [decomp:src/overworld.c:1670] - CONTINUE SCRIPT - so the field engine RESUMES at the byte after
-    dowildbattle. Nothing there means opcode 0x00 (nop) through the rest of the 995-byte body and
-    then off the end into SaveBlock1, executing the player's save as bytecode. 0xB6/0xB7 occur in
-    save data like any other bytes, which is a second wild battle out of nowhere."""
-    for script in (native_script.build_shiny_hunt_script(132, 50),
-                   rng_script.build_wild_battle_script(0xC0DE, 132, 50)):
-        assert script[-3:] == bytes([native_script.SCR_DOWILDBATTLE,
-                                     native_script.SCR_RELEASEALL, rng_script.SCR_END])
+def test_the_battle_never_starts_from_inside_the_save_block():
+    """mev18, and it is the sharpest rule this project has about RAM scripts.
+
+    `CB2_InitBattle` and `InitOverworldBgs` both call `MoveSaveBlocks_ResetHeap`
+    [decomp:src/battle_main.c:614, src/overworld.c:1337], which re-rolls gSaveBlock1's address by
+    a multiple of 4 in 0..124 [SAVEBLOCK_MOVE_RANGE, src/load_save.c:75]. The engine holds the RAM
+    script by a POINTER INTO THAT BLOCK, so after a battle it resumes at an address the script no
+    longer occupies - `releaseall` + `end` written after dowildbattle are simply not there. mev11's
+    stray second battle, mev15/mev16 walking away clean and mev18 freezing the overworld dead are
+    all the same mechanism landing in different places.
+
+    So no builder may leave `dowildbattle` in the body: the battle is started from
+    gSpecialVar_0x8000, which does not move, and the `end` the engine returns to sits beside it."""
+    cases = ((native_script.build_shiny_hunt_script(132, 50), 132, 50),
+             (native_script.build_mon_hunt_script(129, 5), 129, 5),
+             (rng_script.build_wild_battle_script(0xC0DE, 132, 50), 132, 50))
+    for script, species, level in cases:
+        # The tail, byte for byte: setwildbattle, the two bytes of the trampoline, and the jump
+        # out of the save block. 0xB7 still occurs in the body as DATA - it is half of the word
+        # setvar writes - so the check is on the command stream and not on the bytes.
+        assert script.endswith(rng_script.battle_and_exit(species, level))
+        assert script.endswith(bytes([rng_script.SCR_GOTO])
+                               + rng_script.TRAMPOLINE_ADDRESS.to_bytes(4, "little"))
+    assert rng_script.TRAMPOLINE_WORD == (native_script.SCR_DOWILDBATTLE
+                                          | (rng_script.SCR_END << 8))
+    # Read back as commands rather than as bytes: nothing in a body IS a dowildbattle.
+    for script, _species, _level in cases[:2]:
+        lines = native_script.describe(script)
+        # The only mention left is inside the setvar's annotation, which is the trampoline itself.
+        assert not any(line.strip().startswith("dowildbattle") for line in lines), lines
+        assert "UNKNOWN" not in "".join(lines)
 
 
 # --- the three untried Mystery Event opcodes, in one card ----------------------------------------
@@ -380,8 +399,7 @@ def test_the_mon_hunt_script_stages_calls_and_then_battles_like_the_shiny_one():
     assert lines[0].startswith("  setptr x160")
     assert lines[1] == "  callnative 0x0201C001 (THUMB)"
     assert lines[2].startswith("  setwildbattle species 132 Lv50")
-    assert script[-3:] == bytes([native_script.SCR_DOWILDBATTLE,
-                                 native_script.SCR_RELEASEALL, rng_script.SCR_END])
+    assert lines[-1].startswith("  goto 0x020370B4")
     assert len(script) <= rng_script.MAX_RAM_SCRIPT_SIZE
 
 

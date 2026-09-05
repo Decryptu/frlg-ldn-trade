@@ -152,7 +152,47 @@ SCR_SETWILDBATTLE = 0xB6
 SCR_DOWILDBATTLE = 0xB7
 SCR_RELEASEALL = 0x6B
 
-# THE SCRIPT DOES NOT END AT `dowildbattle`, AND mev11 SAW WHAT THAT COSTS.
+SCR_GOTO = 0x05
+SCR_SETVAR = 0x16
+VAR_0x8000 = 0x8000
+
+# THE SCRIPT DOES NOT END AT `dowildbattle`, AND WHERE IT RESUMES IS NOT WHERE IT LEFT OFF.
+# mev18 HUNG THE OVERWORLD DEAD - no A, no B, no START, the app had to be killed - and the reason
+# is in the decomp, not in the tail we wrote:
+#
+#     void CB2_InitBattle(void) { MoveSaveBlocks_ResetHeap(); ... }   [decomp:src/battle_main.c:614]
+#     static void InitOverworldBgs(void) { MoveSaveBlocks_ResetHeap_(); ... }  [src/overworld.c:1337]
+#     offset = Random() & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3);          [src/load_save.c:75]
+#
+# SAVEBLOCK_MOVE_RANGE is 128, so every battle RELOCATES gSaveBlock1 twice, each time by a fresh
+# multiple of 4 in 0..124. A RAM script lives in gSaveBlock1->ramScript.data.script and the engine
+# runs it THROUGH A POINTER INTO THAT BLOCK [GetRamScript, decomp:src/script.c:514], which it keeps
+# across the battle in sGlobalScriptContext. So when the battle ends the field engine resumes at
+# an address the script no longer occupies: somewhere within +/-124 bytes of where it was, holding
+# whatever field of SaveBlock1 the move slid into that spot.
+#
+# That is one mechanism for three things this project wrote down separately: mev11's "second wild
+# battle out of nowhere" (the landing hit a stray 0xB6/0xB7), mev15 and mev16 walking away clean
+# (the landing hit the zero fill, which is `nop`), and mev18 freezing solid (the landing hit the
+# middle of a `setptr` run and decoded a command that waits for ever). `releaseall` + `end` after
+# dowildbattle was never a fix - those two bytes are simply not at the address the engine returns
+# to. NOTHING PLACED AFTER dowildbattle IN A RAM SCRIPT CAN BE RELIED ON.
+#
+# THE FIX IS TO LEAVE THE SAVE BLOCK BEFORE THE BATTLE STARTS. `goto` (0x05) takes an absolute
+# address, and gSpecialVar_0x8000 is a fixed EWRAM u16 at 0x020370B4 [rom_map, bs57] that
+# `setvar` (0x16) can write in five script bytes. Two bytes are all the tail needs:
+#
+#     setvar 0x8000, 0x02B7      ->  0x020370B4: B7 02   =   dowildbattle ; end
+#     goto   0x020370B4
+#
+# The battle therefore starts from an address that does not move, and the engine returns to
+# 0x020370B5 - the `end` - whatever the save blocks did in between. `ScriptContext_RunScript`
+# calls `UnlockPlayerFieldControls()` the moment a script stops [decomp:src/script.c:335], so
+# `end` alone gives the player back. gSpecialVar_0x8000 survives the battle because NOTHING in
+# the battle or overworld code writes it: `gSpecialVar_0x8000` appears only in event_data.c (the
+# table itself) and scrcmd.c (the var commands), and no field script runs during a battle.
+#
+# WHAT IS LEFT OF THE OLD COMMENT, because it is still true about the forward pass:
 # `StartScriptedWildBattle` sets `gMain.savedCallback = CB2_EndScriptedWildBattle`
 # [decomp:src/battle_setup.c], and that callback ends with
 # `SetMainCallback2(CB2_ReturnToFieldContinueScriptPlayMapMusic)` [src/overworld.c:1670] - CONTINUE
@@ -162,7 +202,34 @@ SCR_RELEASEALL = 0x6B
 # INTO THE REST OF SaveBlock1, executing the player's save data as bytecode. mev11's unexplained
 # "a second wild battle re-triggered after dowildbattle" is exactly that: 0xB6/0xB7 occur in save
 # data like any other bytes. `releaseall` + `end` is the fix, and it is two bytes.
-BATTLE_TAIL = bytes([SCR_RELEASEALL, SCR_END])
+BATTLE_TAIL = bytes([SCR_RELEASEALL, SCR_END])      # kept for the disassemblers; see above
+
+# The two bytes the trampoline holds, as the u16 `setvar` writes: dowildbattle, then end.
+TRAMPOLINE_ADDRESS = rom_map.G_SPECIAL_VAR_0X8000
+TRAMPOLINE_WORD = SCR_DOWILDBATTLE | (SCR_END << 8)
+
+
+def battle_and_exit(species, level, item=0, *, trampoline=None):
+    """-> setwildbattle, then the battle itself from an address the save block cannot move.
+
+    Every builder that starts a wild battle from a RAM script ends this way, and the reason is
+    the block above: bytes written after `dowildbattle` are not where the engine comes back to.
+    """
+    species, level, item = int(species), int(level), int(item)
+    if not 1 <= species <= MAX_SPECIES:
+        raise RngScriptError(f"species is 1..{MAX_SPECIES}, got {species}")
+    if not 1 <= level <= MAX_LEVEL:
+        raise RngScriptError(f"level is 1..{MAX_LEVEL}, got {level}")
+    if not 0 <= item <= 0xFFFF:
+        raise RngScriptError(f"item is a u16, got {item}")
+    address = TRAMPOLINE_ADDRESS if trampoline is None else int(trampoline)
+    if address % 2:
+        raise RngScriptError(f"0x{address:X} is not a u16 a var command can write")
+    return (bytes([SCR_SETWILDBATTLE]) + species.to_bytes(2, "little")
+            + bytes([level]) + item.to_bytes(2, "little")
+            + bytes([SCR_SETVAR]) + VAR_0x8000.to_bytes(2, "little")
+            + TRAMPOLINE_WORD.to_bytes(2, "little")
+            + bytes([SCR_GOTO]) + address.to_bytes(4, "little"))
 
 MAX_SPECIES = 411           # the internal table's last entry
 MAX_LEVEL = 100
@@ -187,10 +254,7 @@ def build_wild_battle_script(seed, species, level, item=0, address=None):
     if body[-1] != SCR_END:
         raise RngScriptError("the seed script must end with end (0x02)")
     body = body[:-1]                                    # the battle replaces the end
-    body += (bytes([SCR_SETWILDBATTLE]) + species.to_bytes(2, "little")
-             + bytes([level]) + item.to_bytes(2, "little"))
-    body += bytes([SCR_DOWILDBATTLE])                   # this one yields, and stops the script
-    body += BATTLE_TAIL                                 # ...and the battle RESUMES it; see above
+    body += battle_and_exit(species, level, item)       # ...and it ends OUT of the save block
     if len(body) > MAX_RAM_SCRIPT_SIZE:
         raise RngScriptError(f"{len(body)} bytes will not fit in {MAX_RAM_SCRIPT_SIZE}")
     return body

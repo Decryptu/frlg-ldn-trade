@@ -1072,8 +1072,14 @@ RNG_MON_HUNT_FLAG_ID = 1019
 # draw word, which is exactly the seam where the two halves are packed together. A shiny with the
 # wrong nature or a low speed is a failed test that still looks like a success on screen, which is
 # why the check is a party dump (save-dump) and not the battle.
-RNG_MON_HUNT_SPECIES = 132
-RNG_MON_HUNT_LEVEL = 50
+# MAGIKARP AT 5, NOT DITTO AT 50, AND THE REASON IS THE CHECK. The nature and the IVs are
+# invisible on screen - the only way to read them is to dump the mon out of the party - so the
+# player has to CATCH it, and a catch that fails wastes the whole run. Magikarp's catch rate is
+# 255, the highest in the game, and level 5 keeps its HP low, so one Ultra Ball is enough
+# [decomp:src/data/pokemon/species_info.h]. The species and the level are not drawn from the RNG,
+# so nothing about the search changes.
+RNG_MON_HUNT_SPECIES = 129              # SPECIES_MAGIKARP
+RNG_MON_HUNT_LEVEL = 5
 RNG_MON_HUNT_NATURE = 13                # NATURE_JOLLY [rng_countdown.NATURE_NAMES]
 RNG_MON_HUNT_SPEED_FLOOR = 20
 RNG_MON_HUNT_CRITERIA = native_script.MonCriteria(
@@ -1113,8 +1119,8 @@ RNG_MON_HUNT_GIFT = WonderGift(
         body=(
             "Your MOM knows of a POKEMON",
             "that shines and is quick with",
-            "it. Talk to her, then fight",
-            "what turns up. CATCH IT.",
+            "it. Talk to her, then CATCH",
+            "what turns up.",
         ),
         footer1="frlg-ldn-trade",
         default_flag_id=RNG_MON_HUNT_FLAG_ID,

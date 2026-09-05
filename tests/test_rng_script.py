@@ -63,15 +63,23 @@ def test_it_fits_the_ram_script_the_save_actually_has_room_for():
 
 # --- the RNG owned: seed and generate in the same frame -------------------------------------------
 
-def test_the_wild_battle_script_is_the_seed_then_the_two_battle_commands():
+def test_the_wild_battle_script_is_the_seed_then_the_battle_out_of_the_save_block():
     script = rng_script.build_wild_battle_script(0x81F6816D, 132, 50)
-    assert len(script) == 33      # + releaseall, end: the battle RESUMES the script
     assert script[:24] == rng_script.build_seed_script(0x81F6816D, sound=None)[:24]
     assert script[24] == rng_script.SCR_SETWILDBATTLE == 0xB6
     assert int.from_bytes(script[25:27], "little") == 132       # DITTO
     assert script[27] == 50                                     # level
     assert int.from_bytes(script[28:30], "little") == 0         # no held item
-    assert script[30] == rng_script.SCR_DOWILDBATTLE == 0xB7
+    # NO `dowildbattle` IN THE SAVE BLOCK. A battle relocates gSaveBlock1 twice
+    # [decomp:src/battle_main.c:614, src/overworld.c:1337, SAVEBLOCK_MOVE_RANGE 128], so the
+    # engine returns from the battle to an address this script no longer occupies - mev18 froze
+    # the overworld solid that way. The battle is started from gSpecialVar_0x8000 instead.
+    assert script[30:] == (bytes([rng_script.SCR_SETVAR]) + b"\x00\x80"
+                           + rng_script.TRAMPOLINE_WORD.to_bytes(2, "little")
+                           + bytes([rng_script.SCR_GOTO])
+                           + rng_script.TRAMPOLINE_ADDRESS.to_bytes(4, "little"))
+    assert rng_script.TRAMPOLINE_WORD.to_bytes(2, "little") == bytes(
+        [rng_script.SCR_DOWILDBATTLE, rng_script.SCR_END])
 
 
 def test_nothing_that_yields_sits_between_the_seed_and_the_generation():
