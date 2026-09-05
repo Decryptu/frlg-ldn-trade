@@ -148,7 +148,7 @@ def build_host_config(parser, args):
     try:
         profile = config.profile_from_overrides(
             ot=args.ot, version=args.version, language=args.language,
-            trainer_id=args.id)
+            trainer_id=args.id, card_flag_id=getattr(args, "card_flag_id", None))
         ldn = config.LdnConfig(
             password=parse_hex_bytes(parser, "--password", args.password),
             phy=args.phy,

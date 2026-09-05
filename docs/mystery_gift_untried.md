@@ -172,10 +172,42 @@ been observed changing yet.
 
 Verbatim in `data/mystery_event_msg.s`, one recreated (Altering Cave, below):
 
-- **Battle Count Card** - a card that tracks wins, losses and trades against other holders of the
-  same card, with a prize at three wins. Needs `MysteryGift_TryEnableStatsByFlagId`, which only arms
-  the counters while the console holds exactly that flag id [`mystery_gift.c`]. The counters it
-  would be built on are the ones the ledger above now watches.
+- **Battle Count Card** - built, see below.
+
+### Battle Count Card - built, and OUR trainer card is what arms it
+
+`--gift battle-count-card` (flag id 1005) is `MysteryEventScript_BattleCard`
+[`data/mystery_event_msg.s:162`]: set `gSpecialVar_Result` to `GET_CARD_BATTLES_WON`, read the
+counter back through `GetMysteryGiftCardStat` (special 390), and hand over a POTION at exactly
+three. Ported with one deliberate change: the official gates the prize on FLAG_MYSTERY_GIFT_DONE,
+which the composer sets when a non-repeatable gift finishes, so the card would stop talking before
+the count ever reached three. Ours is repeatable with a prize marker var of its own, which is the
+same behaviour and re-readable.
+
+**The card does not arm the counters. We do.** `Task_ExchangeCards` hands
+`MysteryGift_TryEnableStatsByFlagId` the u16 that follows the 96-byte trainer card in the
+BLOCK_REQ_SIZE_100 buffer - **the flag id the PARTNER sent** - and arms only if it equals the card
+the console is holding [`src/union_room.c:1777`]. That exchange runs on the way into the trade
+centre and the battle colosseum [`CB2_TransitionToCableClub`], both of which our host drives, and
+that u16 has always been zero in our block. `frlgtrade_host.py --card-flag-id N` sets it.
+
+Once armed:
+
+| what increments | where | the rule |
+|---|---|---|
+| `numTrades` | a completed trade [`src/trade_scene.c:2609`] | a trainer id the card has not counted |
+| `battlesWon` / `battlesLost` | the end of a CABLE CLUB battle [`src/cable_club.c:792`] | the same, 5 ids remembered per stat |
+
+`IncrementCardStatForNewTrainer` [`src/mystery_gift.c:630`] counts a trainer id once, so three
+wins means three different host trainer ids - `--id` is per run. The in-room Union Room battle
+returns through `CB2_ReturnToField` and increments NOTHING; only the colosseum path does, which we
+do not host yet.
+
+The counters live at `SaveBlock1 + 0x3434` (`buffer_script.SAV1_CARD_METADATA`), read with no CRC
+check [`src/mystery_gift.c:490`], so a save-dump reads them and a save-write sets them.
+
+UNKNOWN until a run: whether our flag id arms a retail console, and whether a trade with us moves
+its counter.
 
 ### Altering Cave - sent and proven, bs74/fr42/bs75
 

@@ -35,6 +35,10 @@ class TrainerProfile:
     language: str = "english"
     has_national_dex: bool = True
     has_completed_game: bool = True
+    # The Wonder Card flag id our trainer card claims, at offset 96 of the BLOCK_REQ_SIZE_100
+    # exchange buffer. The console arms ITS OWN card counters when this equals the card it holds
+    # [MysteryGift_TryEnableStatsByFlagId, decomp:src/union_room.c:1777]; 0 arms nothing.
+    card_flag_id: int = 0
 
     def __post_init__(self):
         if not isinstance(self.name, str):
@@ -57,6 +61,8 @@ class TrainerProfile:
             raise ValueError("has_national_dex must be a bool")
         if type(self.has_completed_game) is not bool:
             raise ValueError("has_completed_game must be a bool")
+        if type(self.card_flag_id) is not int or not 0 <= self.card_flag_id <= 0xFFFF:
+            raise ValueError("card_flag_id must fit in 16 bits")
 
     @property
     def trainer_id(self):
@@ -96,7 +102,8 @@ class TrainerProfile:
 
     def build_trainer_card(self, mon_species=None, *, name_pad=0x00):
         return linkplayer.build_trainer_card(
-            self.to_link_player(), mon_species=mon_species, name_pad=name_pad)
+            self.to_link_player(), wonder_card_id=self.card_flag_id,
+            mon_species=mon_species, name_pad=name_pad)
 
     def build_rfu_game_data(self, activity, *, started=True):
         return ni.build_game_data(
@@ -885,11 +892,18 @@ def add_identity_arguments(parser):
                         help="trainer language; defaults to DEFAULT_TRAINER")
     parser.add_argument("--id", type=trainer_id_argument, metavar="TID[:SID]", default=None,
                         help="decimal trainer ID, optionally followed by decimal secret ID")
+    parser.add_argument("--card-flag-id", type=lambda v: int(v, 0), metavar="N", default=None,
+                        help="the Wonder Card flag id our trainer card claims in the Union Room "
+                             "card exchange. A console holding the card with that id arms its own "
+                             "card counters, so a trade or cable-club battle with us increments "
+                             "them [union_room.c:1777]; default 0, which arms nothing")
 
 
 def profile_from_overrides(*, ot=None, version=None, language=None, trainer_id=None,
-                           base=DEFAULT_TRAINER):
+                           card_flag_id=None, base=DEFAULT_TRAINER):
     changes = {}
+    if card_flag_id is not None:
+        changes["card_flag_id"] = card_flag_id
     if ot is not None:
         changes["name"] = ot
     if version is not None:

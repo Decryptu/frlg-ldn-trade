@@ -1,5 +1,10 @@
 from .gift_composer import (
     AddVar,
+    AllOf,
+    GET_CARD_BATTLES_WON,
+    ReadSpecial,
+    SPECIAL_GET_MYSTERY_GIFT_CARD_STAT,
+    VAR_MYSTERY_GIFT_2,
     AnyOf,
     BattleLegendary,
     DeliveryPlan,
@@ -34,6 +39,7 @@ import dataclasses
 from . import native_script
 from . import rng_script
 from . import charmap, ereader_trainer, mevent_pokemon, mystery_event, stamp_rally, wonder_card
+from .scrcmd import VAR_0x8008, VAR_RESULT
 
 
 # pokefirered/include/constants/{items,species,event_objects}.h
@@ -1389,6 +1395,73 @@ RNG_DRAW_COUNT_GIFT = WonderGift(
 )
 
 
+GIFT_BATTLE_COUNT = "battle-count-card"
+BATTLE_COUNT_FLAG_ID = 1005
+ITEM_POTION = 13
+BATTLE_COUNT_PRIZE_WINS = 3
+# The prize marker. The official script uses FLAG_MYSTERY_GIFT_DONE, which the composer sets when a
+# non-repeatable gift finishes - and this card must stay talkable while the count is still under
+# three, so the prize is gated on a var of its own instead and the card stays repeatable.
+BATTLE_COUNT_PRIZE_TAKEN = VAR_MYSTERY_GIFT_2
+
+# MysteryEventScript_BattleCard [decomp:data/mystery_event_msg.s:162], which is a counter READER:
+# the console keeps battlesWon/battlesLost/numTrades in WonderCardMetadata itself, and this card
+# reads one of them back through GetMysteryGiftCardStat and pays out at three wins.
+#
+# THE COUNTERS ARE NOT ARMED BY THE CARD. `MysteryGift_TryEnableStatsByFlagId` runs in the Union
+# Room card exchange, on the flag id THE PARTNER SENT - the u16 immediately after the trainer card
+# in the BLOCK_REQ_SIZE_100 buffer [decomp:src/union_room.c:1777] - and only arms if it equals the
+# card the console holds. So it is OUR trainer card that switches the console's counters on:
+# `frlgtrade_host.py --card-flag-id`. Then a completed trade increments numTrades
+# [decomp:src/trade_scene.c:2609] and a finished CABLE CLUB battle increments won/lost
+# [decomp:src/cable_club.c:792], each only for a trainer id the card has not counted before
+# [IncrementCardStatForNewTrainer, decomp:src/mystery_gift.c:630].
+BATTLE_COUNT_GIFT = WonderGift(
+    slug=GIFT_BATTLE_COUNT,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="BATTLE COUNT CARD",
+        subtitle="Your record against holders",
+        body=(
+            "This CARD keeps track of your",
+            "battles against TRAINERS who",
+            "hold the same CARD.",
+            "Win three for a prize!",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=BATTLE_COUNT_FLAG_ID,
+    ),
+    intro_message="Thank you for using the MYSTERY\nGIFT System.",
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            # gSpecialVar_Result is the selector GetMysteryGiftCardStat reads
+            # [decomp:src/field_specials.c:1957], so it is set before the special runs.
+            SetVar(VAR_RESULT, GET_CARD_BATTLES_WON),
+            ReadSpecial(VAR_0x8008, SPECIAL_GET_MYSTERY_GIFT_CARD_STAT),
+        ),
+        DeliveryStage(
+            Message(
+                "Congratulations!\n"
+                "You have won a prize for winning\n"
+                "three battles!"),
+            GiveItem(ITEM_POTION),
+            SetVar(BATTLE_COUNT_PRIZE_TAKEN, 1),
+            condition=AllOf((
+                VarEquals(VAR_0x8008, BATTLE_COUNT_PRIZE_WINS),
+                Not(VarEquals(BATTLE_COUNT_PRIZE_TAKEN, 1)),
+            )),
+        ),
+        DeliveryStage(
+            Message(
+                "Look for and battle TRAINERS who\n"
+                "have the same CARD as you."),
+        ),
+    )),
+    completed_message="Look for and battle TRAINERS who\nhave the same CARD as you.",
+)
+
+
 GIFT_ALTERING_CAVE = "altering-cave"
 ALTERING_CAVE_FLAG_ID = 1004
 
@@ -1482,6 +1555,8 @@ __all__ = [
     "GIFT_MEVENT_NPC", "MEVENT_NPC_GIFT", "MEVENT_NPC_FLAG_ID",
     "GIFT_MASTER_BALL", "MASTER_BALL_GIFT", "MASTER_BALL_FLAG_ID",
     "GIFT_ALTERING_CAVE", "ALTERING_CAVE_GIFT", "ALTERING_CAVE_FLAG_ID",
+    "GIFT_BATTLE_COUNT", "BATTLE_COUNT_GIFT", "BATTLE_COUNT_FLAG_ID",
+    "BATTLE_COUNT_PRIZE_WINS", "BATTLE_COUNT_PRIZE_TAKEN", "ITEM_POTION",
     "VAR_ALTERING_CAVE_WILD_SET", "NUM_ALTERING_CAVE_TABLES", "ALTERING_CAVE_WRAP",
     "GIFT_RNG_SHINY_DITTO", "RNG_SHINY_DITTO_GIFT", "RNG_SHINY_DITTO_FLAG_ID",
     "RNG_DITTO_SEED", "SPECIES_DITTO", "build_rng_shiny_ditto_script",

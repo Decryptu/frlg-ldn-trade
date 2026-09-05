@@ -79,6 +79,16 @@ SHARE_ONCE = "once"
 SHARE_ALWAYS = "always"
 SPECIAL_HAS_ALL_KANTO_MONS = 335
 SPECIAL_START_LEGENDARY_BATTLE = 312
+# GetMysteryGiftCardStat: reads gSpecialVar_Result as the selector (GET_CARD_* [decomp:
+# include/constants/mystery_gift.h:4]) and returns that counter for the card the console holds
+# [decomp:src/field_specials.c:1955]. Index counted in data/specials.inc, the same count that
+# gives HasAllKantoMons 335.
+SPECIAL_GET_MYSTERY_GIFT_CARD_STAT = 390
+GET_NUM_STAMPS = 0
+GET_MAX_STAMPS = 1
+GET_CARD_BATTLES_WON = 2
+GET_CARD_BATTLES_LOST = 3
+GET_CARD_NUM_TRADES = 4
 SHAREABLE_STATES = (SHARE_NEVER, SHARE_ONCE, SHARE_ALWAYS)
 _SHAREABLE_SEND_TYPES = {
     SHARE_NEVER: SEND_TYPE_DISALLOWED,
@@ -218,6 +228,15 @@ class AddVar:
 
 
 @dataclass(frozen=True)
+class ReadSpecial:
+    """`specialvar` (0x26): run a special and put its return in a var, which is how a script reads
+    anything the engine knows. `RequireSpecialResult` is the same command wired to a refusal;
+    this one just reads, so a stage `condition` can branch on the answer."""
+    variable: int
+    special_id: int
+
+
+@dataclass(frozen=True)
 class Exit:
     pass
 
@@ -257,7 +276,8 @@ class AnyOf:
 Condition: TypeAlias = VarEquals | FlagSet | Not | AllOf | AnyOf
 GiftAction: TypeAlias = (
     Message | GiveItem | GivePokemon | GiveEgg | ShowSprite
-    | BattlePokemon | BattleLegendary | RequireSpecialResult | SetVar | AddVar | Exit)
+    | BattlePokemon | BattleLegendary | RequireSpecialResult | SetVar | AddVar
+    | ReadSpecial | Exit)
 _FALLIBLE_REWARD_TYPES = (GiveItem, GivePokemon, GiveEgg)
 _BATTLE_TYPES = (BattlePokemon, BattleLegendary)
 
@@ -469,6 +489,9 @@ def _validate_action(action, path):
     elif isinstance(action, (SetVar, AddVar)):
         _validate_variable_id(action.variable, f"{path}.variable")
         _validate_int(action.value, 0, 0xFFFF, f"{path}.value", "value")
+    elif isinstance(action, ReadSpecial):
+        _validate_variable_id(action.variable, f"{path}.variable")
+        _validate_int(action.special_id, 0, 0xFFFF, f"{path}.special_id", "special ID")
     elif isinstance(action, Exit):
         return
     else:
@@ -960,6 +983,8 @@ def _emit_action(builder, action, *, sprite_id, failure_label, completed_label):
         builder.emit(_setvar(action.variable, action.value))
     elif isinstance(action, AddVar):
         builder.emit(bytes([_OP_ADDVAR]) + _u16(action.variable) + _u16(action.value))
+    elif isinstance(action, ReadSpecial):
+        builder.emit(_specialvar(action.variable, action.special_id))
     elif isinstance(action, Exit):
         builder.vgoto(completed_label)
     else:  # pragma: no cover - validation prevents this path.
@@ -1486,10 +1511,13 @@ __all__ = [
     "AllOf", "AnyOf", "BattleLegendary", "BattlePokemon", "DeliveryPlan",
     "DeliveryStage",
     "Exit", "FlagSet", "GiftSpec", "GiftValidationError", "GiveEgg", "GiveItem",
-    "GivePokemon", "MapPosition", "Message", "RelativeToPlayer", "SetVar", "AddVar",
+    "GivePokemon", "MapPosition", "Message", "ReadSpecial", "RelativeToPlayer",
+    "SetVar", "AddVar",
     "ShowSprite",
     "Not", "RequireSpecialResult", "SHARE_ALWAYS", "SHARE_NEVER", "SHARE_ONCE",
     "SPECIAL_HAS_ALL_KANTO_MONS", "SPECIAL_START_LEGENDARY_BATTLE",
+    "SPECIAL_GET_MYSTERY_GIFT_CARD_STAT", "GET_NUM_STAMPS", "GET_MAX_STAMPS",
+    "GET_CARD_BATTLES_WON", "GET_CARD_BATTLES_LOST", "GET_CARD_NUM_TRADES",
     "SHAREABLE_STATES", "StampRallySpec", "StampSlot", "VarEquals",
     "WonderCardSpec", "WonderGift",
     "FLAG_MYSTERY_GIFT_DONE", "MAX_RAM_SCRIPT_SIZE", "MAX_STAMP_SLOTS",

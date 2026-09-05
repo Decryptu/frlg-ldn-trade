@@ -830,6 +830,17 @@ SAV1_PARTY_COUNT = 0x34
 SAV1_PARTY = 0x38
 SAV1_VARS = 0x1000                  # u16 vars[VARS_COUNT], indexed by (id - VARS_START)
 
+# struct MysteryGiftSave [decomp:include/global.h:681], at SaveBlock1 + 0x3120: newsCrc, 444 B of
+# WonderNews, cardCrc, 332 B of WonderCard, cardMetadataCrc, then the metadata. The counters a
+# Battle Count Card reads live here, and MysteryGift_GetCardStat reads them with no CRC check
+# [decomp:src/mystery_gift.c:490] - only the CARD is CRC-guarded.
+SAV1_MYSTERY_GIFT = 0x3120
+SAV1_CARD_METADATA = SAV1_MYSTERY_GIFT + 0x314
+SAV1_CARD_BATTLES_WON = SAV1_CARD_METADATA + 0
+SAV1_CARD_BATTLES_LOST = SAV1_CARD_METADATA + 2
+SAV1_CARD_NUM_TRADES = SAV1_CARD_METADATA + 4
+SAV1_CARD_ICON_SPECIES = SAV1_CARD_METADATA + 6
+
 
 def sav1_var_offset(var_id):
     """-> where a saved var sits in SaveBlock1, for `save-dump --dump-block sav1 --dump-offset`.

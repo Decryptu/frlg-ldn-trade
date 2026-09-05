@@ -132,7 +132,7 @@ class HostTradeEngine:
                  link_player=None, profile=None, anim_delay=1935, trust_pia=True, timing=None,
                  union_room=False, union_room_chat=False, chat_messages=None,
                  union_room_battle=False, battle_forfeit=True, battle_move_slot=0,
-                 log=lambda *a: None):
+                 card_flag_id=0, log=lambda *a: None):
         self.party = list(party)
         if not 1 <= len(self.party) <= 6:
             raise ValueError("party must contain 1..6 Pokémon")
@@ -147,8 +147,12 @@ class HostTradeEngine:
             raise ValueError("supply link_player or profile, not both")
         self.lp = (profile.to_link_player() if profile is not None else link_player) \
             or linkplayer.LinkPlayer(name="EMU", version=linkplayer.VERSION_FIRE_RED)
+        # The console reads this u16 back as the partner's Wonder Card flag id and arms its own
+        # card counters when it matches the card it holds [decomp:src/union_room.c:1777].
+        self.card_flag_id = (profile.card_flag_id if profile is not None else int(card_flag_id))
         self.trainer_card = linkplayer.build_trainer_card(
-            self.lp, mon_species=[m.species for m in self.party],
+            self.lp, wonder_card_id=self.card_flag_id,
+            mon_species=[m.species for m in self.party],
             name_pad=HOST_NAME_PAD)
         self.anim_delay = anim_delay
         self.trust_pia = trust_pia
