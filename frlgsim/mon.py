@@ -75,7 +75,15 @@ def decode_mon(mon):
     order = SUBSTRUCT_ORDER[pid % 24]
     growth = sec[order.index("G") * 12:][:12]
     attacks = sec[order.index("A") * 12:][:12]
+    misc = sec[order.index("M") * 12:][:12]
     species = int.from_bytes(growth[0:2], "little")
+    # struct PokemonSubstruct3 [decomp:include/pokemon.h:40]. The ribbons fill the u32 at 0x08 and
+    # modernFatefulEncounter is the bit above them - bit 31, not a byte of its own. In FRLG it
+    # controls Mew and Deoxys obedience and whether they can be traded, and it makes a HATCHED mon
+    # read as a fateful encounter on the summary screen; a met location of METLOC_FATEFUL_ENCOUNTER
+    # (0xFF) is what makes an unhatched one read that way, which is why the official scripts set
+    # both [`:78-82`, src/pokemon_summary_screen.c:2665].
+    ribbon_word = int.from_bytes(misc[8:12], "little")
     return {
         "pid": pid, "otid": otid,
         "nickname": gba_str(mon[8:18]),
@@ -88,6 +96,13 @@ def decode_mon(mon):
         "exp": int.from_bytes(growth[4:8], "little"),
         "moves": [int.from_bytes(attacks[i * 2:i * 2 + 2], "little") for i in range(4)],
         "level": mon[84] if len(mon) >= 100 else None,
+        "pokerus": misc[0],
+        "metLocation": misc[1],
+        "metLevel": int.from_bytes(misc[2:4], "little") & 0x7F,
+        "metGame": (int.from_bytes(misc[2:4], "little") >> 7) & 0xF,
+        "pokeball": (int.from_bytes(misc[2:4], "little") >> 11) & 0xF,
+        "otGender": (int.from_bytes(misc[2:4], "little") >> 15) & 1,
+        "modernFatefulEncounter": (ribbon_word >> 31) & 1,
     }
 
 BOX_SIZE = 80

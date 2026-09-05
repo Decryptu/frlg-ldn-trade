@@ -38,6 +38,36 @@ them execute something on the console, and all three are now proven on retail ha
 - **The questionnaire as a password gate** (`--questionnaire`, mev04 refused and mev06 delivered).
   [The Mystery Event VM](mystery_event.md).
 
+### Event mons that look like event mons - mev24, bs73
+
+`GivePokemon(..., fateful_encounter=True)` and the same on `GiveEgg` emit the pair the official Surf
+Pichu script emits: `setmonmodernfatefulencounter` (`0xCD`) and `setmonmetlocation` (`0xD2`,
+`METLOC_FATEFUL_ENCOUNTER` = 0xFF) [decomp:data/mystery_event_msg.s:71]. Opt-in, so every card built
+before it is byte-identical.
+
+**The slot is the whole difficulty.** `ScrCmd_setmonmodernfatefulencounter` does NOT bounds-check its
+index - a plain `SetMonData(&gPlayerParty[VarGet(...)], ...)` [decomp:src/scrcmd.c:2239] - unlike
+`setmonmove`, whose helper clamps anything above PARTY_SIZE to the last mon
+[ScriptSetMonMoveSlot, src/script_pokemon_util.c:144]. So the composer's `LAST_PARTY_MON_INDEX` of 7
+must not reach it. The real index is the party count read BEFORE the give, which is what the official
+script reads with `specialvar ... CalculatePlayerPartyCount`, and the full-party guard is what holds
+it inside 0..5: a party of 6 jumps to the failure label, so a mon sent to the PC is never marked.
+
+mev24 sent the Celebi card to a party of three. The summary screen read *"Rencontré dans un
+evenement special au N.50"* - but that string is driven by the met LOCATION alone
+[src/pokemon_summary_screen.c:2665], and the two conditions are ORed at `:2799`, so the screen cannot
+tell the bit from the location. bs73 dumped all 600 bytes of `gPlayerParty` and decoded them:
+
+    slot 0: DRAGONITE lv77  metLocation=0x5E  modernFatefulEncounter=0
+    slot 1: CHANSEY   lv26  metLocation=0x88  modernFatefulEncounter=0
+    slot 2: CHANSEY   lv26  metLocation=0x88  modernFatefulEncounter=0
+    slot 3: CELEBI    lv50  metLocation=0xFF  modernFatefulEncounter=1
+
+Slot 3 is exactly the party count before the give, the three mons the script never touched carry the
+bit clear, and `0xCD` is confirmed on its own rather than through the screen. `mon.decode_mon` grew
+the Misc substruct to read it: `modernFatefulEncounter` is BIT 31 of the ribbon word at Misc+0x08,
+not a byte of its own [decomp:include/pokemon.h:40-82].
+
 ## Closed - do not re-open
 
 - **Mystery Gift → Wonder Cards → Wireless Communication.** Blocked at the serial-number gate: the
@@ -92,14 +122,6 @@ Two limits worth recording:
   appears after a transfer.
 
 ## Open
-
-### Event mons that look like event mons
-
-The official Surf Pichu script pairs `giveegg` with `setmonmodernfatefulencounter` (opcode `0xCD`),
-`setmonmetlocation` (`0xD2`, with the fateful-encounter constant from the generated
-`region_map_sections.h`) and `setmonmove` [`data/mystery_event_msg.s:69`]. Our composer emits
-`giveegg` and `setmonmove` but neither of the first two, so nothing we have sent is flagged as a
-fateful encounter. Two opcodes and a composer action.
 
 ### `initramscript` in the composer
 
