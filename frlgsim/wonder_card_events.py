@@ -30,6 +30,7 @@ from .gift_composer import (
 )
 import dataclasses
 
+from . import native_script
 from . import rng_script
 from . import ereader_trainer, mevent_pokemon, mystery_event, stamp_rally, wonder_card
 
@@ -906,6 +907,60 @@ RNG_RATE_PROBE_LONG_GIFT = WonderGift(
     )),
     completed_message="Talk to your MOM at home.",
     mevent=build_rng_rate_probe_script(frames=RNG_RATE_PROBE_LONG_FRAMES),
+)
+
+
+GIFT_RNG_SHINY_HUNT = "rng-shiny-hunt"
+RNG_SHINY_HUNT_FLAG_ID = 1012
+
+# THE HUNT ITSELF, and it needs no aim. Every earlier RNG card either wrote a seed we chose (mev07,
+# which the title screen's reseed makes useless outside a link) or read one back for a human to
+# count frames against (~1 press in 11, docs/rng.md). This one stages 80 bytes of THUMB into
+# gDecompressionBuffer with `setptr` and runs them with `callnative`, so the SEARCH happens on the
+# console, in the overworld, at the moment of the encounter - see frlgsim/native_script.py for why
+# that is not the thing docs/rng.md calls structurally closed, and REFERENCES.local.md
+# (notblisy/RUBYSAPPHIREDLC) for where the technique came from.
+#
+# Ditto at 50 again, so the drill is the one mev07 and the draw-count card already used. Nothing
+# needs catching: shininess shows the instant the battle starts.
+RNG_SHINY_HUNT_SPECIES = 132
+RNG_SHINY_HUNT_LEVEL = 50
+
+
+def build_rng_shiny_hunt_script(**kwargs):
+    return build_mevent_npc_script(
+        field_script=native_script.build_shiny_hunt_script(
+            RNG_SHINY_HUNT_SPECIES, RNG_SHINY_HUNT_LEVEL), **_at_mom(kwargs))
+
+
+RNG_SHINY_HUNT_GIFT = WonderGift(
+    slug=GIFT_RNG_SHINY_HUNT,
+    card=WonderCardSpec(
+        icon_species=SPECIES_CLEFAIRY_MEVENT,
+        title="MYSTERY EVENT",
+        subtitle="A POKEMON that shines",
+        body=(
+            "Your MOM knows where a rare",
+            "POKEMON is. Talk to her and",
+            "fight what turns up. Talk",
+            "again for another.",
+        ),
+        footer1="frlg-ldn-trade",
+        default_flag_id=RNG_SHINY_HUNT_FLAG_ID,
+    ),
+    intro_message=(
+        "Thank you for using the MYSTERY\n"
+        "GIFT System."),
+    event=GiftSpec(repeatable=True),
+    delivery=DeliveryPlan(delivery=(
+        DeliveryStage(
+            Message(
+                "Someone in PALLET TOWN has\n"
+                "found something that shines."),
+        ),
+    )),
+    completed_message="Talk to your MOM at home.",
+    mevent=build_rng_shiny_hunt_script(),
 )
 
 

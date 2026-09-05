@@ -273,13 +273,14 @@ human pressing A with a measured 4.5-frame spread - about 1 attempt in 11, ~26 m
 state, ~1 frame in 8192 produces a shiny, and without a reading nothing signals which. That was the
 original wall, and reading the seed is what went through it.
 
-**STRUCTURALLY CLOSED, and this is the honest limit: the script cannot be told where to aim.** The
-target has to be computed from a seed read at runtime, but installing a script that knows the target
-needs a Mystery Gift session, which leaves through the title screen and **reseeds** - so a target
-computed before the trip is stale by the time the player is back in the overworld. Field bytecode
-cannot do the shiny search itself (it has `compare` and `goto_if`, not an LCG walk and a shiny
-test). So the human presses A, and the tooling's job is to make the miss free and measurable rather
-than to remove it. `frlgsim/rng_countdown.py`.
+**CLOSED FOR FIELD BYTECODE, AND THAT TURNED OUT NOT TO BE THE LAST WORD.** The paragraph this
+replaces said the script cannot be told where to aim, and every clause of it is still true: the
+target has to be computed from a seed read at runtime, installing a script that knows the target
+needs a Mystery Gift session, that session leaves through the title screen and **reseeds**, and
+field bytecode has `compare` and `goto_if`, not an LCG walk and a shiny test. What it missed is
+that the field engine can run something that is not bytecode. See *The stub that does the search*
+below; `frlgsim/rng_countdown.py` and the hand-aimed countdown remain what you use when the RAM
+script slot is holding a Wonder Card instead.
 
 **Closed: hitting a chosen seed by timing the START press.** Timer 1 runs at F/1 and a frame is
 280,896 cycles, so if the read were frame-aligned every seed would be a multiple of
@@ -440,3 +441,70 @@ most precise input the game offers.
 
 What remains a judgement call, not a technical question: installing that script is a write to the
 save, though never to the RNG.
+
+
+## The stub that does the search
+
+`--gift rng-shiny-hunt`, `frlgsim/native_script.py`, `asm/field/shiny-seek.s`. **Offline only at
+the time of writing: 60/60 emulated states land shiny, and no console has run it.**
+
+The two commands that matter are in the field script table beside the ones this document already
+uses:
+
+```c
+bool8 ScrCmd_setptr(struct ScriptContext * ctx)          // 0x11
+{ u8 value = ScriptReadByte(ctx); *(u8 *)ScriptReadWord(ctx) = value; }
+bool8 ScrCmd_callnative(struct ScriptContext * ctx)      // 0x23
+{ void (*func)(void) = ((void (*)(void))ScriptReadWord(ctx)); func(); return FALSE; }
+```
+[decomp:src/scrcmd.c:300, :120]
+
+`setptr` writes one arbitrary byte to one arbitrary address, and this document already used four of
+them to set gRngValue. The bytes it writes can be **code**, and `callnative` runs them. So a RAM
+script can stage a payload into EWRAM and execute it - in the overworld, which is the one place
+`CLI_RUN_BUFFER_SCRIPT` could never reach.
+
+**This came from outside the project.** notblisy/RUBYSAPPHIREDLC does exactly this on
+Ruby/Sapphire: `SOURCE/*/eonticket.asm` stages sixteen bytes with sixteen `writebytetoaddr` and
+`callasm`s them, and `SOURCE/*/celebirng.txt` is an LCG loop that runs until the PID would be
+shiny. Different game, different delivery (dot codes over the e-Reader's link cable, which the
+Switch release does not expose at all), not one usable address. The technique transfers.
+REFERENCES.local.md has the reading.
+
+**Why there is no aiming left.** `CreateScriptedWildMon` is
+`CreateMon(&gEnemyParty[0], species, level, 32, 0, 0, OT_ID_PLAYER_ID, 0)`
+[decomp:src/script_pokemon_util.c:128], so `hasFixedPersonality` is 0 and the personality is
+`Random32()` - two draws - while `OT_ID_PLAYER_ID` reads the save and draws nothing. Shininess is
+decided by the **first two draws after the state at that instant**, and nothing else. `setptr`,
+`callnative` and `setwildbattle` all return FALSE, so the field engine runs the whole script in one
+pass without yielding a frame: the state the stub leaves in gRngValue is the state
+`CreateScriptedWildMon` consumes two commands later. No press, no spread, no ~26 minutes.
+
+**The budget, which is the only thing that binds.** A RAM script body is 995 bytes
+[`struct RamScriptData.script`, decomp:include/global.h:439] and a staged byte costs six of them,
+so at most ~163 bytes of code. That is why the stub is THUMB rather than ARM - `callnative` calls
+through a function pointer, so bit 0 of the staged address selects the instruction set.
+`shiny-seek` is 80 bytes; the whole hunt script is 492 of 995.
+
+    setptr x80 -> 0x0201C000..0x0201C04F      gDecompressionBuffer [rom_map, bs08/bs11]
+    callnative 0x0201C001 (THUMB)
+    setwildbattle species 132 Lv50 item 0
+    dowildbattle
+
+**The stub reads the trainer id off the console** rather than being handed one: gSaveBlock2Ptr is a
+pointer at a fixed IWRAM address even though the block it points at moves, and playerTrainerId is
+at +0x0A. The same 80 bytes are therefore correct on FireRed and on LeafGreen, and no id has to be
+known or kept in step. It writes exactly one word, gRngValue, and reads nothing else.
+
+**It cannot hang, and that matters more here than in a buffer script.** A buffer script that loops
+for ever freezes the Mystery Gift menu; a field stub that loops for ever freezes the overworld
+inside a script, with no menu at all. The search is bounded, and on exhaustion gRngValue is left
+untouched and the player gets an ordinary encounter. Every stub is run under unicorn before it can
+be staged (`tests/test_native_script.py`), and the answer is checked against `rng_countdown` - the
+model that predicted seven fields of a mon the console built for itself in mev11/bs58 - so the
+search and the check are written from different directions.
+
+**Estimated cost on the console: about one frame.** 15 instructions an iteration, ~8192 iterations
+on average, ~3 cycles an instruction out of 16-bit EWRAM, against 280,896 cycles a frame. The worst
+of 40 emulated runs was 5.2 frames. That is a hitch, not a hang; interrupts stay enabled throughout.
+NOT MEASURED ON HARDWARE - it is arithmetic from the clock, and the first run is what settles it.

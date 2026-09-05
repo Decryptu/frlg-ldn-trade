@@ -172,6 +172,7 @@ def build_default_registry():
     registry.register_definition(wonder_card_events.RNG_RATE_PROBE_GIFT)
     registry.register_definition(wonder_card_events.RNG_RATE_PROBE_LONG_GIFT)
     registry.register_definition(wonder_card_events.RNG_DRAW_COUNT_GIFT)
+    registry.register_definition(wonder_card_events.RNG_SHINY_HUNT_GIFT)
     registry.register_definition(wonder_card_events.MASTER_BALL_GIFT)
     return registry
 
