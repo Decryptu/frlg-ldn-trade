@@ -154,6 +154,52 @@ def entry_name(label):
     return label.split(" [")[0].split(" x")[0]
 
 
+def anchor_pairs(measured_names, source):
+    """-> [(i, j)] where a measured target this project already names meets its own name in source.
+
+    Longest common subsequence over the names, so a function called twice cannot pull the alignment
+    sideways: the pairs come back in order and each one is a place both sides agree about."""
+    n, m = len(measured_names), len(source)
+    best = [[0] * (m + 1) for _ in range(n + 1)]
+    for i in range(n - 1, -1, -1):
+        for j in range(m - 1, -1, -1):
+            if measured_names[i] is not None and measured_names[i] == source[j]:
+                best[i][j] = best[i + 1][j + 1] + 1
+            else:
+                best[i][j] = max(best[i + 1][j], best[i][j + 1])
+    out, i, j = [], 0, 0
+    while i < n and j < m:
+        if measured_names[i] is not None and measured_names[i] == source[j]:
+            out.append((i, j))
+            i, j = i + 1, j + 1
+        elif best[i + 1][j] >= best[i][j + 1]:
+            i += 1
+        else:
+            j += 1
+    return out
+
+
+def closed_gaps(measured, source, names, source_names):
+    """-> [(address, name)] forced by an anchor on BOTH sides, for a body whose counts differ.
+
+    The length rule drops a body where agbcc inlined something or emitted `__umodsi3`, which is
+    right - but a gap BETWEEN two anchors holding exactly one unnamed target and exactly one source
+    call is not a guess whatever happened elsewhere in the body: there is one way to fill it. Three
+    names in the whole table come from here, which is a measure of how little the strict rule was
+    costing rather than a reason to relax it further. An OPEN gap - before the first anchor or after
+    the last - is not forced and is not used."""
+    measured_names = [decomp_name(names[target], source_names) if target in names else None
+                      for target in measured]
+    pairs, out = anchor_pairs(measured_names, source), []
+    for (first_measured, first_source), (next_measured, next_source) in zip(pairs, pairs[1:]):
+        gap_measured = measured[first_measured + 1:next_measured]
+        gap_source = source[first_source + 1:next_source]
+        if len(gap_measured) == len(gap_source) == 1 and gap_source[0] != decomp_source.INDIRECT \
+                and gap_measured[0] not in names:
+            out.append((gap_measured[0], gap_source[0]))
+    return out
+
+
 def align(decomp_calls, memory, names, source_names):
     """-> (proposals, corrections, dropped) from every body the dumps hold.
 
@@ -170,7 +216,11 @@ def align(decomp_calls, memory, names, source_names):
                 continue
             source = decomp_calls[name]
             if len(measured) != len(source):
-                dropped["call count differs"] += 1
+                forced = closed_gaps(measured, source, names, source_names)
+                dropped["call count differs, an anchored gap named one" if forced
+                        else "call count differs"] += 1
+                for target, called in forced:
+                    proposals[target][called].append((name, len(measured)))
                 continue
             pairs, anchors, bad = [], 0, False
             for target, called in zip(measured, source):

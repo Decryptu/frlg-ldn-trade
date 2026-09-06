@@ -246,3 +246,33 @@ def test_the_shipped_table_is_what_this_decomp_and_these_dumps_still_say():
                                                    gen_worker_names.link_order(decomp))
     for address, name in worker_names.WORKERS.items():
         assert accepted.get(address) == name, f"0x{address:08X} no longer comes back as {name}"
+
+
+def test_a_gap_between_two_anchors_is_forced_even_when_the_counts_differ():
+    """The length rule drops a body where agbcc inlined something or emitted `__umodsi3`. A gap
+    BETWEEN two anchors holding exactly one unnamed target and exactly one source call is still
+    forced: there is one way to fill it, whatever happened elsewhere in the body."""
+    names = {0x08000100: "FlagSet", 0x08000200: "FlagGet"}
+    measured = [0x08000100, 0x08000300, 0x08000200, 0x08000400]
+    source = ["FlagSet", "TheOneInTheGap", "FlagGet", "AfterTheLastAnchor", "AndAnother"]
+    assert gen_worker_names.closed_gaps(measured, source, names,
+                                        {"FlagSet", "FlagGet", "TheOneInTheGap",
+                                         "AfterTheLastAnchor", "AndAnother"}) == [
+        (0x08000300, "TheOneInTheGap")]
+
+
+def test_an_open_gap_names_nothing():
+    # Before the first anchor and after the last, nothing bounds the gap, so nothing is forced.
+    names = {0x08000200: "FlagGet"}
+    measured = [0x08000100, 0x08000200, 0x08000400]
+    source = ["Something", "FlagGet", "Another", "AndMore"]
+    assert gen_worker_names.closed_gaps(measured, source, names,
+                                        {"FlagGet", "Something", "Another", "AndMore"}) == []
+
+
+def test_a_repeated_call_cannot_pull_the_alignment_sideways():
+    # The anchors come from a longest common subsequence, so a name that appears twice matches in
+    # order rather than at the first place it fits.
+    measured_names = ["GetMonData3", None, "GetMonData3"]
+    source = ["GetMonData3", "GetMonGender", "GetMonData3"]
+    assert gen_worker_names.anchor_pairs(measured_names, source) == [(0, 0), (2, 2)]

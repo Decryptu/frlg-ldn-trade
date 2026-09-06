@@ -31,6 +31,7 @@ WORKERS = {
     0x0800C838: 'StringGet_Nickname',                       # BufferMonNickname +1
     0x0800C988: 'ConvertIntToDecimalStringN',               # ScrCmd_buffernumberstring
     0x080414FC: 'CreateMonWithGenderNatureLetter',          # StartMarowakBattle
+    0x08042E1C: 'GetMonGender',                             # ChangePokemonNickname
     0x08046D78: 'GetTrainerEncounterMusicId',               # PlayTrainerEncounterMusic
     0x08046DF4: 'AdjustFriendship',                         # DaisyMassageServices
     0x0804713C: 'GetMonEVCount',                            # AreLeadMonEVsMaxedOut
@@ -167,6 +168,8 @@ WORKERS = {
     0x080A3CA8: 'CreateScriptedWildMon',                    # ScrCmd_setwildbattle
     0x080C3A38: 'InitRegionMapWithExitCB',                  # ShowTownMap
     0x080CDF40: 'GetProfOaksRatingMessageByCount',          # GetProfOaksRatingMessage
+    0x080CEC40: 'SampleResortGorgeousMon',                  # SampleResortGorgeousMonAndReward
+    0x080CECB4: 'SampleResortGorgeousReward',               # SampleResortGorgeousMonAndReward
     0x080CF174: 'AnimateElevatorWindowView',                # AnimateElevator
     0x080CF8B0: 'GetStarterSpeciesById',                    # GetStarterSpecies +1
     0x080CF96C: 'HasMonBeenRenamed',                        # HasLeadMonBeenRenamed
@@ -216,6 +219,7 @@ SOURCES = {
     'StringGet_Nickname': ('string_util.c', 1, 2),
     'ConvertIntToDecimalStringN': ('string_util.c', 10, 1),
     'CreateMonWithGenderNatureLetter': ('pokemon.c', 7, 1),
+    'GetMonGender': ('pokemon.c', 33, 1),
     'GetTrainerEncounterMusicId': ('pokemon.c', 87, 1),
     'AdjustFriendship': ('pokemon.c', 89, 1),
     'GetMonEVCount': ('pokemon.c', 91, 1),
@@ -352,6 +356,8 @@ SOURCES = {
     'CreateScriptedWildMon': ('script_pokemon_util.c', 6, 1),
     'InitRegionMapWithExitCB': ('region_map.c', 3, 1),
     'GetProfOaksRatingMessageByCount': ('prof_pc.c', 1, 1),
+    'SampleResortGorgeousMon': ('field_specials.c', 39, 1),
+    'SampleResortGorgeousReward': ('field_specials.c', 40, 1),
     'AnimateElevatorWindowView': ('field_specials.c', 48, 1),
     'GetStarterSpeciesById': ('field_specials.c', 62, 2),
     'HasMonBeenRenamed': ('field_specials.c', 67, 1),

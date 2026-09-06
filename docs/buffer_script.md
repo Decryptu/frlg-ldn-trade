@@ -1372,14 +1372,14 @@ bs84's method has a shape that does not need a console: **a body's `bl` targets,
 are the decomp's calls for that same function, in source order.** Every worker this project has
 named since session 39 came out of that - by eye, one body at a time, a handful a session.
 `scripts/gen_worker_names.py` does it over every body the dumps hold, all four tables at once, and
-writes `frlgsim/worker_names.py`. **180 addresses named, no run spent.** The field table now has
-three call targets left with no name and the specials 25, where between them they had 244.
+writes `frlgsim/worker_names.py`. **183 addresses named, no run spent.** The field table now has three call
+targets left with no name and the specials 22, where they had 127 and 117.
 
 The zip is only evidence if it is checked, and four checks decide:
 
 | check | what it rules out | what it cost |
 |---|---|---|
-| **length** | inlining, `__umodsi3`, a macro read as a call | 24 bodies dropped |
+| **length** | inlining, `__umodsi3`, a macro read as a call | 22 bodies dropped |
 | **anchor** | a misaligned body: every address already measured must land back on its own name | 1 body dropped |
 | **agreement** | a target named differently by two of its callers | 0 |
 | **link order** | a name in the wrong place in the ROM entirely | 1 address dropped |
@@ -1390,6 +1390,13 @@ every anchor beside them form ONE ascending sequence, and a name out of place is
 `GetMonData3` proposed at 0x08129844 - a megabyte above the rest of pokemon.c - is what that caught.
 The check takes the LONGEST ascending chain rather than the first break, or one misplaced name
 throws out the four correct ones behind it.
+
+**One relaxation of the length rule is safe, and it is worth exactly three names.** A gap BETWEEN
+two anchors holding exactly one unnamed target and exactly one source call is forced whatever agbcc
+did elsewhere in the body: there is one way to fill it. `GetMonGender`, `SampleResortGorgeousMon`
+and `SampleResortGorgeousReward` come from there. Three, out of 24 bodies the length rule drops -
+which measures how little that rule was costing rather than arguing for relaxing it further. An OPEN
+gap, before the first anchor or after the last, is not forced and names nothing.
 
 Reading the source needs the same care as reading the code. `firered_switch` is
 `GAME_VERSION=FIRERED GAME_REVISION=10 MODERN=0` [decomp:Makefile:227], so the 203
