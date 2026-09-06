@@ -1220,6 +1220,81 @@ with `DECODED <= DUMP <= SCRIPT_REGISTRY` asserted at import, and a test walks `
 building each payload's real distribution. Same family as the `run_mg_fast.sh --dump-file` trap.
 **When adding a payload, grep for its siblings by name.**
 
+## bs113/bs114: the specials' bodies, and a table that confirms its own names
+
+bs93 and bs95 read the 444 ADDRESSES of `gSpecials`. Their NAMES came from the decomp's table
+order, with one argument for the alignment: 171 indices call `NullFieldSpecial` and all 171 came
+back with the same address, which a misread dump could not produce. That is a strong argument about
+the dump. It is not a measurement of the mapping.
+
+`tools/rom_functions.py` makes it one, and it is bs84's method with the table taken out of it. A
+table entry is an address; the code at that address makes `bl` calls in the decomp's own call order
+and keeps the globals it touches in its literal pool. So the tool takes any of the four function
+tables this project has read off a cartridge, finds the entries a dump holds, bounds each body by
+the next entry AND by its own epilogue (`frlgsim/thumb.py`, and the agbcc trap below), and prints
+every call and pool word with a name beside the ones already measured. What it prints last is the
+plan: the entries NOT held, clustered into `--dump-address` windows and ranked by how many one run
+would catch - the same idea as `tools/script_read.py`'s, because a run should be spent where the
+table is densest rather than on a guess.
+
+The plan named 0x080CE040 and 0x080CE550 as the two densest kilobytes in the ROM: 31 distinct
+bodies between them, out of 272. Two runs spent there, and the mapping stopped being an assumption:
+
+| special | what its body calls | where that address came from |
+|---|---|---|
+| `SetHiddenItemFlag` [150] | FlagSet | bs84, a ScrCmd worker |
+| `GiveLeadMonEffortRibbon` [293] | IncrementGameStat, FlagSet, SetMonData | bs84 |
+| `GetRandomSlotMachineId` [286] | Random | bs13, the RNG work |
+| `IsStarterFirstStageInParty` [302] | VarGet, CalculatePlayerPartyCount | bs84, and special 131 |
+| `PlayerHasGrassPokemonInParty` [299] | gSpeciesInfo | the LeafGreen delta runs |
+| `GetLeadMonFriendship` [230] | GetMonData, six times | bs84 |
+| `ShowDiploma` [264], `ShowTownMap` [251] | QuestLog_CutRecording | **special 392** |
+
+The last row is the table naming its own entry, which is what the script-command and Mystery Event
+tables already did for each other (DoDiveWarp is special 318). None of these could come out right if
+the index-to-name mapping were off by even one.
+
+Three things fell out that no run was aimed at:
+
+- **`NullFieldSpecial` is two bytes.** `bx lr`, at 0x080CE8DC. The function 171 indices point at
+  does nothing at all, read off the console rather than argued from repetition.
+- **The special-var sequence is settled.** `G_SPECIAL_VAR_0X8000` was measured at bs57 and the rest
+  was left UNCONFIRMED in `rom_map`, because `event_data.c`'s declaration order is not the table's.
+  `ShakeScreen` [310] takes four arguments and loads 0x020370BC, BE, C0 and C2 - four consecutive
+  halfwords in ONE body - and the decomp's ShakeScreen reads `gSpecialVar_0x8004..0x8007`.
+  `GetPlayerXY` [143] writes the first two and `GetPartyMonSpecies` [327] reads the first. The vars
+  are in id order, two bytes each.
+- **`GetLeadMonIndex` at 0x080CE818**, which is not in the table at all. Four lead-mon specials call
+  it, and CalculatePlayerPartyCount then GetMonData twice is the decomp's body command for command.
+
+**A special whose body is one load names a global for free.** `GetBattleOutcome` [180] is
+`ldr; ldrb; bx lr` and a pool word, so that word is `gBattleOutcome` and nothing else. The same
+reading gave `gStringVar1` and `gStringVar4` - and `ShowFieldMessageStringVar4` [141] is the neatest
+case in the ROM, a special that names in its own symbol the global its pool holds.
+
+255 bodies are still unread and the plan lists them, nine more windows at six entries or better. But
+the question those runs were spent on is answered: the names are the cartridge's, not the decomp's.
+
+## The last three strings, and reading text at all
+
+`script_read.py` had been reporting what the scripts REACH FOR and the dumps do not hold, because
+that is what a run is spent on. It said nothing about what they reach for and the dumps DO hold -
+so a message string already sitting in a dump was silently dropped. `scrcmd.data_pointers` is the
+other half of `follow`'s answer and `scrcmd.read_string` decodes one.
+
+Decoding it needed `charmap.decode_message`. `charmap.decode` is for a NAME - fixed width, no
+control codes, unknown bytes become `.` - and run over dialogue it turned the first string this
+project ever read off the cartridge into `'Obtenu: .A!'`. A message's placeholders and line breaks
+are most of its meaning. bs115 and bs116 then closed the list gStdScripts had left:
+
+    0x081A79F0  'Obtenu: {STR_VAR_2}!'
+    0x081A7A21  '{PLAYER} trouve {STR_VAR_2}!'
+    0x081A7AE5  'Obtenu: {STR_VAR_2}!'
+    0x081A8B9C  '{PLAYER} obtient {STR_VAR_2}!\nElle contient {STR_VAR_1}!'
+
+`0 addresses wanted and not held`. Every one of the ten standard scripts is now read off the console
+end to end, code and text, with nothing outstanding.
+
 ## What is left
 
 1. **Which function to call next.** Answered at bs82/bs84/bs85: `frlgsim/scrcmd_names.HANDLERS`

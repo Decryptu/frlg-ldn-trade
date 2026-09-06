@@ -49,6 +49,56 @@ def decode(b, stop_at_eos=True):
     return "".join(out)
 
 
+# The text control codes [decomp:include/characters.h:177]. A NAME field never holds one, so they
+# are decoded only by `decode_message`: a message string is the one place they appear, and rendering
+# them as "." is what made the first script string read off the console come back as 'Obtenu: .A!'.
+CHAR_PROMPT_SCROLL = 0xFA       # wait for a press, then scroll
+CHAR_PROMPT_CLEAR = 0xFB        # wait for a press, then clear
+EXT_CTRL_CODE_BEGIN = 0xFC      # one argument byte follows, sometimes more
+PLACEHOLDER_BEGIN = 0xFD        # one id byte follows
+CHAR_NEWLINE = 0xFE
+
+# What `StringExpandPlaceholders` substitutes for each id [decomp:include/characters.h:267].
+PLACEHOLDERS = {0x0: "UNKNOWN", 0x1: "PLAYER", 0x2: "STR_VAR_1", 0x3: "STR_VAR_2",
+                0x4: "STR_VAR_3", 0x5: "KUN", 0x6: "RIVAL", 0x7: "VERSION", 0x8: "MAGMA",
+                0x9: "AQUA", 0xA: "MAXIE", 0xB: "ARCHIE", 0xC: "GROUDON", 0xD: "KYOGRE"}
+
+# How many bytes follow EXT_CTRL_CODE_BEGIN's selector [decomp:src/text.c, GetExtCtrlCodeLength].
+_EXT_CTRL_ARGS = {0x01: 1, 0x02: 1, 0x03: 1, 0x04: 3, 0x05: 1, 0x06: 1, 0x07: 0, 0x08: 1,
+                  0x09: 0, 0x0A: 0, 0x0B: 2, 0x0C: 1, 0x0D: 1, 0x0E: 1, 0x0F: 0, 0x10: 0,
+                  0x11: 0, 0x12: 1, 0x13: 1, 0x14: 1, 0x15: 0, 0x16: 0, 0x17: 0, 0x18: 0}
+
+
+def decode_message(b):
+    """-> a message string with its control codes rendered, not swallowed.
+
+    `decode` is for a NAME: fixed width, no control codes, unknown bytes become '.'. A string a
+    script points at is dialogue, and its placeholders and line breaks are most of its meaning -
+    "{PLAYER} a obtenu\n{STR_VAR_2}!" says what the box will read; "..a obtenu..!" says nothing."""
+    out, index = [], 0
+    while index < len(b):
+        byte = b[index]
+        index += 1
+        if byte == EOS:
+            break
+        if byte == PLACEHOLDER_BEGIN and index < len(b):
+            out.append("{%s}" % PLACEHOLDERS.get(b[index], f"PLACEHOLDER_{b[index]:02X}"))
+            index += 1
+        elif byte == EXT_CTRL_CODE_BEGIN and index < len(b):
+            selector = b[index]
+            index += 1 + _EXT_CTRL_ARGS.get(b[index], 0)
+            out.append("{EXT_%02X}" % selector)
+        elif byte == CHAR_NEWLINE:
+            out.append("\n")
+        elif byte == CHAR_PROMPT_SCROLL:
+            out.append("{SCROLL}")
+        elif byte == CHAR_PROMPT_CLEAR:
+            out.append("{CLEAR}")
+        else:
+            out.append(_DEC.get(byte, "."))
+    return "".join(out)
+
+
 def encode(s, width=None, pad=PAD):
     """With `width`: truncate, append 0xFF, pad to `width`. Mon name fields pad with 0xFF; struct LinkPlayer.name
     pads with 0x00 (InitLocalLinkPlayer over a zeroed struct). Unknown chars are dropped."""

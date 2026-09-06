@@ -668,6 +668,49 @@ SPECIAL_ADDRESSES = (
 )
 
 
+# --- the specials' BODIES, bs113 + bs114 --------------------------------------------------------
+# bs93/bs95 read the 444 ADDRESSES; these two runs read the CODE at the densest 2 KB of them (31
+# distinct bodies, `tools/rom_functions.py --table specials`) and that is what turns the decomp's
+# table order from an assumption into a measurement. A body is named by what it CALLS, not by where
+# it sits, and each of these lands on a function measured in some earlier and unrelated run:
+#
+#   SetHiddenItemFlag [150]           -> FlagSet (bs84)
+#   GiveLeadMonEffortRibbon [293]     -> IncrementGameStat, FlagSet, SetMonData
+#   GetRandomSlotMachineId [286]      -> Random (bs13, the RNG work)
+#   IsStarterFirstStageInParty [302]  -> VarGet, and special 131 CalculatePlayerPartyCount
+#   PlayerHasGrassPokemonInParty[299] -> gSpeciesInfo (the LeafGreen delta work)
+#   ShowDiploma [264], ShowTownMap    -> special 392 QuestLog_CutRecording
+#
+# The last two are the specials table naming its OWN entries, which is the same self-confirmation
+# the script-command and Mystery Event tables gave each other (DoDiveWarp is special 318).
+NULL_FIELD_SPECIAL = 0x080CE8DC     # `bx lr`, TWO bytes, and 171 of the 444 indices point at it.
+                                    # bs93's alignment argument was that those indices must all
+                                    # come back with one address; bs113 read the function itself.
+GET_LEAD_MON_INDEX = 0x080CE818     # CalculatePlayerPartyCount, then GetMonData twice - command
+                                    # for command the decomp's body [src/field_specials.c]. Four
+                                    # lead-mon specials (230, 292, 293, 294) call it.
+
+# The EWRAM a special reaches for, read out of the literal pools rather than searched for.
+GSTRING_VAR1 = 0x02021CD0           # BufferBigGuyOrBigGirlString and BufferSonOrDaughterString
+                                    # StringCopy into it [field_specials.c:140]; the Mystery Event
+                                    # VM's setenigmaberry loads the same address (bs112)
+GSTRING_VAR4 = 0x02021D18           # ShowFieldMessageStringVar4 [141] passes it to ShowFieldMessage
+                                    # - the special NAMES the global it loads, so this one proves
+                                    # itself [field_specials.c:122]
+GBATTLE_OUTCOME = 0x02023E86        # GetBattleOutcome [180] is `ldr; ldrb; bx lr` and nothing else
+
+# G_SPECIAL_VAR_0X8000 was measured at bs57 and the REST of the sequence was left UNCONFIRMED,
+# because event_data.c's declaration order is not the table's. These bodies settle it: ShakeScreen
+# [310] takes four arguments and loads 0x020370BC, BE, C0 and C2 - four consecutive halfwords in
+# one body - and the decomp's ShakeScreen reads gSpecialVar_0x8004..0x8007. GetPlayerXY [143]
+# writes the first two, GetPartyMonSpecies [327] and SetHiddenItemFlag [150] read the first. So the
+# vars are laid out in id order at 2 bytes each, and 0x8004 is 8 bytes past 0x8000.
+G_SPECIAL_VAR_0X8004 = G_SPECIAL_VAR_0X8000 + 8     # 0x020370BC, four bodies agreeing
+G_SPECIAL_VAR_0X8005 = G_SPECIAL_VAR_0X8000 + 10    # 0x020370BE
+G_SPECIAL_VAR_0X8006 = G_SPECIAL_VAR_0X8000 + 12    # 0x020370C0
+G_SPECIAL_VAR_0X8007 = G_SPECIAL_VAR_0X8000 + 14    # 0x020370C2
+
+
 def special_function(name, addresses=None):
     """-> the THUMB pointer for a special by the decomp's name, from what bs93 measured."""
     from . import special_names

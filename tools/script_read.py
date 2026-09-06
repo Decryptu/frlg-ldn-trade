@@ -120,9 +120,20 @@ def main():
                 print(line)
             print()
 
+    strings = scrcmd.data_pointers(memory, reached)
+    if strings and not args.quiet:
+        print("the data these scripts point at, as the dumps hold it:")
+        for address in sorted(strings):
+            why = ", ".join(sorted({kind for kind, _source in strings[address]}))
+            text = scrcmd.read_string(memory, address)
+            shown = repr(text) if text is not None else "<runs off the end of the dump>"
+            print(f"  0x{address:08X}  {why:10s} {shown}")
+        print()
+
     print(f"{len(memory)} bytes in {len(memory.segments)} region"
           f"{'s' if len(memory.segments) != 1 else ''}: {len(starts)} entry points, "
-          f"{len(reached)} blocks read, {len(referenced)} addresses wanted and not held")
+          f"{len(reached)} blocks read, {len(strings)} data addresses held, "
+          f"{len(referenced)} wanted and not held")
     if referenced:
         print("\nreached for, and not in this dump:")
         for address in sorted(referenced):

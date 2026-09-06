@@ -309,27 +309,73 @@ def follow(data, base, starts=None, limit=64, blocks=256):
             continue
         segment_base, segment = found
         reached[address] = disassemble(segment, segment_base, address, limit=limit, symbols=True)
-        cursor = address - segment_base
-        for _ in range(limit):
-            measured = shape(segment, segment_base, cursor)
-            if measured is None:
-                break
-            opcode, (_name, operands, length) = segment[cursor], measured
-            params = scrcmd_args.PARAMS.get(opcode) or ()
-            for index, (width, value) in enumerate(operands):
-                param = params[index] if index < len(params) else None
-                kind = (JUMPS.get(opcode) if param == "destination" and opcode in JUMPS
-                        else param if param in DATA_PARAMS else None)
-                if kind is None or not ROM_START <= value < ROM_END:
-                    continue
-                if opcode in JUMPS and value in memory:
-                    queue.append(value)
-                elif value not in memory:
-                    referenced.setdefault(value, set()).add((kind, segment_base + cursor))
-            cursor += length
-            if opcode in TERMINATORS:
-                break
+        for kind, value, site, is_jump in references(memory, address, limit=limit):
+            if is_jump and value in memory:
+                queue.append(value)
+            elif value not in memory:
+                referenced.setdefault(value, set()).add((kind, site))
     return reached, referenced
+
+
+def references(memory, address, limit=64):
+    """-> (kind, value, the command that named it, whether it transfers control) for one block.
+
+    The operand walk that `follow` and `data_pointers` both need. A `destination` in a JUMPS command
+    is control; anything in DATA_PARAMS is data the script points at but never executes."""
+    found = memory.segment(address)
+    if found is None:
+        return
+    from . import scrcmd_args
+    segment_base, segment = found
+    cursor = address - segment_base
+    for _ in range(limit):
+        measured = shape(segment, segment_base, cursor)
+        if measured is None:
+            break
+        opcode, (_name, operands, length) = segment[cursor], measured
+        params = scrcmd_args.PARAMS.get(opcode) or ()
+        for index, (_width, value) in enumerate(operands):
+            param = params[index] if index < len(params) else None
+            is_jump = param == "destination" and opcode in JUMPS
+            kind = (JUMPS.get(opcode) if is_jump
+                    else param if param in DATA_PARAMS else None)
+            if kind is not None and ROM_START <= value < ROM_END:
+                yield kind, value, segment_base + cursor, is_jump
+        cursor += length
+        if opcode in TERMINATORS:
+            break
+
+
+def data_pointers(memory, blocks, limit=64):
+    """-> {address: {(kind, the command that named it)}} for the data those blocks point at and the
+    memory DOES hold - the other half of `follow`'s answer.
+
+    `follow` reports what is missing, because that is what a run is spent on. This reports what has
+    already arrived: a `msgbox` operand inside a dump is a string that can be read out and printed
+    rather than an address to want. `charmap.decode` turns one into the words on the screen."""
+    out = {}
+    for block in blocks:
+        for kind, value, site, is_jump in references(memory, block, limit=limit):
+            if not is_jump and value in memory:
+                out.setdefault(value, set()).add((kind, site))
+    return out
+
+
+def read_string(memory, address, limit=1024):
+    """-> the game string at `address`, decoded, or None if the memory does not hold its end.
+
+    Terminator 0xFF [frlgsim/charmap.py]. A string that runs off the end of the dump is NOT
+    returned: the tail that is missing is exactly the part worth reading."""
+    from . import charmap
+    found = memory.segment(address)
+    if found is None:
+        return None
+    base, data = found
+    start = address - base
+    end = data.find(b"\xff", start, start + limit)
+    if end < 0:
+        return None
+    return charmap.decode_message(data[start:end])
 
 
 def dump_plan(referenced, window=1024):
