@@ -17,8 +17,8 @@ them is called, that call is the measurement.
 
 
 WORKERS = {
-    0x0800053C: 'SetMainCallback2',                         # ShowBattleRecords +1
-    0x080006EC: 'SetVBlankCallback',                        # ShowBattleRecords
+    0x0800053C: 'SetMainCallback2',                         # DoSeagallopFerryScene +4
+    0x080006EC: 'SetVBlankCallback',                        # DoSeagallopFerryScene +1
     0x08002BB0: 'AddTextPrinterParameterized',              # DoPicboxCancel +3
     0x08003C4C: 'AddWindow',                                # DisplayBerryPowderVendorMenu +2
     0x08003DA4: 'RemoveWindow',                             # CloseElevatorCurrentFloorWindow +1
@@ -33,7 +33,7 @@ WORKERS = {
     0x0800C0A0: 'LoadSpriteSheets',                         # OpenMuseumFossilPic
     0x0800C7E0: 'svc_SetStarter',                           # ScrCmd_givemon
     0x0800C838: 'StringGet_Nickname',                       # BufferMonNickname +1
-    0x0800C988: 'ConvertIntToDecimalStringN',               # ScrCmd_buffernumberstring
+    0x0800C988: 'ConvertIntToDecimalStringN',               # OverworldWhiteOutGetMoneyLoss +1
     0x080414FC: 'CreateMonWithGenderNatureLetter',          # StartMarowakBattle
     0x08042060: 'SetMonMoveSlot',                           # MoveDeleterForgetMove
     0x08042E1C: 'GetMonGender',                             # ChangePokemonNickname
@@ -58,9 +58,11 @@ WORKERS = {
     0x08049BE4: 'IsEggPending',                             # GetDaycareState
     0x08049BF4: '_GetDaycareMonNicknames',                  # GetDaycareMonNicknames
     0x0804A548: 'AddHatchedMonToParty',                     # ScriptHatchMon
+    0x0804FAB4: 'SetContinueGameWarpStatus',                # EnterHallOfFame
     0x0804FD48: 'SavePlayerBag',                            # CleanupLinkRoomState
-    0x080587D8: 'GetGameStat',                              # ScrCmd_comparestat +2
-    0x08058814: 'SetGameStat',                              # BattleTowerUtil
+    0x08058518: 'ComputeWhiteOutMoneyLoss',                 # OverworldWhiteOutGetMoneyLoss
+    0x080587D8: 'GetGameStat',                              # EnterHallOfFame +3
+    0x08058814: 'SetGameStat',                              # BattleTowerUtil +1
     0x080589EC: 'SetObjEventTemplateCoords',                # ScrCmd_setobjectxyperm
     0x08058A28: 'SetObjEventTemplateMovementType',          # ScrCmd_setobjectmovementtype
     0x08058D30: 'SetDynamicWarpWithCoords',                 # ScrCmd_setdynamicwarp
@@ -69,6 +71,7 @@ WORKERS = {
     0x08058F0C: 'SetFixedDiveWarp',                         # ScrCmd_setdivewarp
     0x08058F60: 'SetFixedHoleWarp',                         # ScrCmd_setholewarp
     0x08058F9C: 'SetWarpDestinationToFixedHoleWarp',        # ScrCmd_warphole
+    0x0805904C: 'SetContinueGameWarpToHealLocation',        # EnterHallOfFame
     0x0805961C: 'SetFlashLevel',                            # ScrCmd_setflashlevel
     0x08059654: 'SetCurrentMapLayout',                      # ScrCmd_setmaplayoutindex
     0x0805978C: 'Overworld_SetSavedMusic',                  # ForcePlayerOntoBike +2
@@ -88,7 +91,7 @@ WORKERS = {
     0x0805EC10: 'FieldAnimateDoorOpen',                     # ScrCmd_opendoor
     0x0805EC64: 'GetDoorSoundEffect',                       # ScrCmd_opendoor
     0x0805F6EC: 'SetPlayerAvatarTransitionFlags',           # ForcePlayerOntoBike +1
-    0x0805FE38: 'PlayerGetDestCoords',                      # ScrCmd_warphole
+    0x0805FE38: 'PlayerGetDestCoords',                      # AnimateTeleporterCable +2
     0x0805FFE4: 'GetPlayerMovementDirection',               # SetCableClubWarp
     0x0806004C: 'TestPlayerAvatarFlags',                    # GetPlayerAvatarBike +1
     0x08060068: 'GetPlayerAvatarObjectId',                  # RemoveCameraObject
@@ -114,15 +117,20 @@ WORKERS = {
     0x0806C960: 'TurnVirtualObject',                        # ScrCmd_turnvobject
     0x0806CEA4: 'FreezeObjects_WaitForPlayer',              # ScrCmd_lock +1
     0x0806CF5C: 'FreezeObjects_WaitForPlayerAndSelected',   # ScrCmd_lock
+    0x0806D09C: 'InitScriptContext',                        # RunScriptImmediately
+    0x0806D0D8: 'SetupBytecodeScript',                      # RunScriptImmediately
+    0x0806D0F4: 'RunScriptCommand',                         # RunScriptImmediately
     0x0806D230: 'LockPlayerFieldControls',                  # ChoosePartyMon +6
     0x0806D310: 'MsgSetSignpost',                           # ScrCmd_signmsg
     0x0806D31C: 'MsgSetNotSignpost',                        # ScrCmd_normalmsg
     0x0806D424: 'ScriptContext_Enable',                     # ReturnToListMenu
-    0x0806D5C4: 'ClearRamScript',                           # ScrCmd_endram
+    0x0806D5A0: 'CalculateRamScriptChecksum',               # InitRamScript
+    0x0806D5C4: 'ClearRamScript',                           # InitRamScript +1
     0x0806D738: 'GetSavedRamScriptIfValid',                 # ScrCmd_trywondercardscript
     0x08070694: 'GetPlayerPosition',                        # SetCableClubWarp
     0x080714A4: 'GetWarpEventAtMapPosition',                # SetCableClubWarp
     0x080714C8: 'SetupWarp',                                # SetCableClubWarp
+    0x08071B30: 'IsMysteryGiftEnabled',                     # WonderNews_GetRewardInfo
     0x08071D9C: 'IsFlagOrVarStoredInQuestLog',              # GetVarPointer
     0x08071E34: 'GetFlagAddr',                              # FlagClear +2
     0x08072144: 'ActivatePerStepCallback',                  # ScrCmd_setstepcallback
@@ -134,9 +142,9 @@ WORKERS = {
     0x0807561C: 'FadeInBGM',                                # ScrCmd_fadeinbgm
     0x0807579C: 'PlayCry_Script',                           # ScrCmd_playmoncry +1
     0x08075B44: 'PlaySE',                                   # AnimateElevator +4
-    0x0807AC94: 'CreateTask',                               # AnimateElevator +12
+    0x0807AC94: 'CreateTask',                               # AnimateElevator +16
     0x0807AD80: 'DestroyTask',                              # ListMenu
-    0x0807AECC: 'FuncIsActiveTask',                         # AnimatePcTurnOn
+    0x0807AECC: 'FuncIsActiveTask',                         # AnimatePcTurnOn +1
     0x0807AF04: 'FindTaskIdByFunc',                         # CloseMuseumFossilPic +2
     0x0807E068: 'FadeScreen',                               # ScrCmd_fadescreen +1
     0x0807E950: 'SetSavedWeather',                          # ScrCmd_setweather
@@ -165,10 +173,13 @@ WORKERS = {
     0x08085210: 'CreateTask_StartWiredTrade',               # StartWiredCableClubTrade
     0x08086CB0: 'FieldEffectStart',                         # ScrCmd_dofieldeffect
     0x08086E04: 'ApplyGlobalFieldPaletteTint',              # SetDeoxysTrianglePalette
+    0x0808C878: 'GetNationalPokedexCount',                  # GetPokedexCount
+    0x0808C8C8: 'GetKantoPokedexCount',                     # GetPokedexCount
     0x0808F10C: 'ShowTrainerCardInLink',                    # Script_ShowLinkTrainerCard
     0x0808F400: 'StorageGetCurrentBox',                     # ShouldShowBoxWasFullMessage
     0x0808F424: 'GetBoxMonDataAt',                          # IsThereRoomInAnyBoxForMorePokemon
     0x0808F778: 'GetBoxNamePtr',                            # ScrCmd_bufferboxname
+    0x0808FB90: 'CountPartyAliveNonEggMonsExcept',          # CountPartyAliveNonEggMons_IgnoreVar0x8004Slot
     0x0809AEF8: 'ScriptMovement_UnfreezeObjectEvents',      # ScrCmd_release +1
     0x0809B920: 'SpeciesToMailSpecies',                     # UpdateTrainerCardPhotoIcons
     0x0809D7AC: 'GetBagItemQuantity',                       # CheckBagHasItem +2
@@ -181,6 +192,7 @@ WORKERS = {
     0x0809FB50: 'CreatePokemartMenu',                       # ScrCmd_pokemart
     0x0809FB8C: 'CreateDecorationShop1Menu',                # ScrCmd_pokemartdecoration
     0x0809FBA8: 'CreateDecorationShop2Menu',                # ScrCmd_pokemartdecoration2
+    0x080A0224: 'GetEnigmaBerryChecksum',                   # IsEnigmaBerryValid
     0x080A02D0: 'ItemIdToBerryType',                        # DoesPartyHaveEnigmaBerry
     0x080A0320: 'GetBerryNameByBerryType',                  # DoesPartyHaveEnigmaBerry
     0x080A03A0: 'ScriptMenu_Multichoice',                   # ScrCmd_multichoice
@@ -188,15 +200,21 @@ WORKERS = {
     0x080A0604: 'CreateMCMenuInputHandlerTask',             # DrawSeagallopDestinationMenu
     0x080A07D8: 'ScriptMenu_YesNo',                         # ScrCmd_yesnobox
     0x080A08B4: 'ScriptMenu_MultichoiceGrid',               # ScrCmd_multichoicegrid
+    0x080A0A5C: 'CreatePCMenuWindow',                       # CreatePCMenu
     0x080A0CDC: 'ScriptMenu_ShowPokemonPic',                # ScrCmd_showmonpic
     0x080A0E10: 'PicboxCancel',                             # DoPicboxCancel
     0x080A1040: 'CreateWindowFromRect',                     # DrawSeagallopDestinationMenu +1
+    0x080A377C: 'SetMoney',                                 # AddMoney +1
     0x080A39C4: 'DrawMoneyBox',                             # ScrCmd_showmoneybox
     0x080A3A40: 'HideMoneyBox',                             # ScrCmd_hidemoneybox
     0x080A3C28: 'CheckPartyMonHasHeldItem',                 # DoesPartyHaveEnigmaBerry
     0x080A3CA8: 'CreateScriptedWildMon',                    # ScrCmd_setwildbattle
     0x080A42D0: 'GetMonSizeRecordInfo',                     # GetHeracrossSizeRecordInfo +1
     0x080A48A8: 'SetSafariZoneFlag',                        # EnterSafariMode
+    0x080C1254: 'CopyEasyChatWord',                         # BufferRandomHobbyOrLifestyleString
+    0x080C12A0: 'ConvertEasyChatWordsToString',             # ShowEasyChatMessage
+    0x080C145C: 'EC_DoesEasyChatStringFitOnLine',           # ShowEasyChatMessage
+    0x080C1528: 'GetRandomWordFromAnyGroup',                # BufferRandomHobbyOrLifestyleString
     0x080C3590: 'ShiftMoveSlot',                            # MoveDeleterForgetMove
     0x080C3A38: 'InitRegionMapWithExitCB',                  # ShowTownMap
     0x080CDF40: 'GetProfOaksRatingMessageByCount',          # GetProfOaksRatingMessage
@@ -205,7 +223,7 @@ WORKERS = {
     0x080CF174: 'AnimateElevatorWindowView',                # AnimateElevator
     0x080CF8B0: 'GetStarterSpeciesById',                    # GetStarterSpecies +1
     0x080CF96C: 'HasMonBeenRenamed',                        # HasLeadMonBeenRenamed
-    0x080CFA20: 'CountDigits',                              # ScrCmd_buffernumberstring
+    0x080CFA20: 'CountDigits',                              # OverworldWhiteOutGetMoneyLoss +1
     0x080CFD00: 'GetPlayerTrainerId',                       # IsMonOTIDNotPlayers +1
     0x080D4060: 'GetCoins',                                 # ScrCmd_checkcoins +2
     0x080D40B0: 'AddCoins',                                 # ScrCmd_addcoins
@@ -215,7 +233,7 @@ WORKERS = {
     0x080D42D4: 'HideCoinsWindow',                          # ScrCmd_hidecoinsbox
     0x080DDE3C: 'TrySavingData',                            # SaveBattleTowerProgress
     0x080DE3E8: 'SetMysteryEventScriptStatus',              # ScrCmd_setmysteryeventstatus
-    0x080E9538: 'ResetBattleTowerStreak',                   # BattleTowerUtil
+    0x080E9538: 'ResetBattleTowerStreak',                   # BattleTowerMapScript2 +1
     0x080EA28C: 'BufferBattleTowerTrainerMessage',          # BufferEReaderTrainerGreeting +1
     0x080EA9E0: 'SetPlayerBattleTowerRecord',               # SaveBattleTowerProgress
     0x080EAC2C: 'PopulateBravoTrainerBattleTowerLostData',  # SaveBattleTowerProgress
@@ -227,14 +245,19 @@ WORKERS = {
     0x080FAA48: 'DrawDialogueFrame',                        # ScrCmd_braillemessage
     0x080FAA80: 'DrawStdWindowFrame',                       # ShowDaycareLevelMenu
     0x080FB2B4: 'SetStdWindowBorderStyle',                  # DrawSeagallopDestinationMenu +1
+    0x080FB36C: 'DisplayItemMessageOnField',                # BedroomPC
     0x080FB4A0: 'GetStartMenuWindowId',                     # ScrCmd_loadhelp
     0x080FB4D8: 'DrawHelpMessageWindowWithText',            # ScrCmd_loadhelp
     0x080FB4FC: 'DestroyHelpMessageWindow_',                # ScrCmd_unloadhelp
     0x080FB53C: 'GetFontAttribute',                         # DrawSeagallopDestinationMenu
     0x080FB624: 'GetMenuCursorDimensionByFont',             # DrawSeagallopDestinationMenu
     0x080FC120: 'MapPreview_SetFlag',                       # ScrCmd_setworldmapflag
+    0x08108784: 'DexScreen_GetSetPokedexFlag',              # GetSetPokedexFlag
     0x0810AA9C: 'ListMenuInit',                             # ShowDaycareLevelMenu
     0x0810F1E4: 'IsCurMapPokeCenter',                       # SetHelpContextForMap
+    0x08110828: 'ShouldTryRematchBattleInternal',           # ShouldTryRematchBattle
+    0x0811085C: 'HasRematchTrainerAlreadyBeenFought',       # ShouldTryRematchBattle
+    0x08110978: 'IsTrainerReadyForRematchInternal',         # IsTrainerReadyForRematch
     0x08112D94: 'DrawStdFrameWithCustomTileAndPalette',     # DrawElevatorCurrentFloorWindow
     0x08112F84: 'ClearStdWindowAndFrameToTransparent',      # CloseElevatorCurrentFloorWindow +1
     0x081132B0: 'Menu_InitCursor',                          # DrawSeagallopDestinationMenu
@@ -245,6 +268,7 @@ WORKERS = {
     0x081168A4: 'QuestLogSetFlagOrVar',                     # GetVarPointer
     0x08117044: 'SetQuestLogEvent',                         # SetUsedPkmnCenterQuestLogEvent
     0x0811923C: 'QuestLog_RecordEnteredMap',                # ScrCmd_setworldmapflag
+    0x081227B0: 'InitPartyMenu',                            # ChooseMonForMoveTutor +1
     0x08123878: 'GetCursorSelectionMonId',                  # GetSelectedMonNicknameAndSpecies +2
     0x0812404C: 'GetMonNickname',                           # BufferMoveDeleterNicknameAndMove
     0x0812C0F4: 'ChooseMonForDaycare',                      # ChooseSendDaycareMon
@@ -256,6 +280,12 @@ WORKERS = {
     0x08138524: 'ShowSelectMovePokemonSummaryScreen',       # SelectMoveDeleterMove
     0x0813C924: 'SetPokemonSummaryScreenMode',              # SelectMoveDeleterMove
     0x08143604: 'PlaySlotMachine',                          # ScrCmd_playslotmachine
+    0x08147B94: 'GetSavedWonderNewsMetadata',               # WonderNews_GetRewardInfo
+    0x08147C1C: 'ValidateSavedWonderNews',                  # WonderNews_GetRewardInfo
+    0x0814A7DC: 'GetRewardItem',                            # WonderNews_GetRewardInfo
+    0x0814A7FC: 'ResetSentRewardCounter',                   # WonderNews_GetRewardInfo
+    0x0814A808: 'IncrementSentRewardCounter',               # WonderNews_GetRewardInfo
+    0x0814A874: 'GetRewardType',                            # WonderNews_GetRewardInfo
     0x0815392C: 'LoadStdWindowGfx',                         # DisplayBerryPowderVendorMenu +1
     0x081627D4: 'DecryptBerryPowder',                       # Script_HasEnoughBerryPowder +1
     0x081627EC: 'SetBerryPowder',                           # Script_TakeBerryPowder
@@ -268,8 +298,8 @@ WORKERS = {
 # Where the decomp defines each one, and how many of the table's bodies reached
 # it. A worker with several callers is one several bodies agreed about.
 SOURCES = {
-    'SetMainCallback2': ('main.c', 4, 2),
-    'SetVBlankCallback': ('main.c', 12, 1),
+    'SetMainCallback2': ('main.c', 4, 5),
+    'SetVBlankCallback': ('main.c', 12, 2),
     'AddTextPrinterParameterized': ('text_printer.c', 2, 4),
     'AddWindow': ('window.c', 2, 3),
     'RemoveWindow': ('window.c', 3, 2),
@@ -284,7 +314,7 @@ SOURCES = {
     'LoadSpriteSheets': ('sprite.c', 85, 1),
     'svc_SetStarter': ('sloopsvc.c', 22, 1),
     'StringGet_Nickname': ('string_util.c', 1, 2),
-    'ConvertIntToDecimalStringN': ('string_util.c', 10, 1),
+    'ConvertIntToDecimalStringN': ('string_util.c', 10, 2),
     'CreateMonWithGenderNatureLetter': ('pokemon.c', 7, 1),
     'SetMonMoveSlot': ('pokemon.c', 23, 1),
     'GetMonGender': ('pokemon.c', 33, 1),
@@ -309,9 +339,11 @@ SOURCES = {
     'IsEggPending': ('daycare.c', 43, 1),
     '_GetDaycareMonNicknames': ('daycare.c', 44, 1),
     'AddHatchedMonToParty': ('daycare.c', 71, 1),
+    'SetContinueGameWarpStatus': ('load_save.c', 7, 1),
     'SavePlayerBag': ('load_save.c', 17, 1),
-    'GetGameStat': ('overworld.c', 11, 3),
-    'SetGameStat': ('overworld.c', 12, 1),
+    'ComputeWhiteOutMoneyLoss': ('overworld.c', 1, 1),
+    'GetGameStat': ('overworld.c', 11, 4),
+    'SetGameStat': ('overworld.c', 12, 2),
     'SetObjEventTemplateCoords': ('overworld.c', 16, 1),
     'SetObjEventTemplateMovementType': ('overworld.c', 17, 1),
     'SetDynamicWarpWithCoords': ('overworld.c', 32, 1),
@@ -320,6 +352,7 @@ SOURCES = {
     'SetFixedDiveWarp': ('overworld.c', 41, 1),
     'SetFixedHoleWarp': ('overworld.c', 43, 1),
     'SetWarpDestinationToFixedHoleWarp': ('overworld.c', 44, 1),
+    'SetContinueGameWarpToHealLocation': ('overworld.c', 47, 1),
     'SetFlashLevel': ('overworld.c', 66, 1),
     'SetCurrentMapLayout': ('overworld.c', 68, 1),
     'Overworld_SetSavedMusic': ('overworld.c', 75, 3),
@@ -339,7 +372,7 @@ SOURCES = {
     'FieldAnimateDoorOpen': ('field_door.c', 17, 1),
     'GetDoorSoundEffect': ('field_door.c', 19, 1),
     'SetPlayerAvatarTransitionFlags': ('field_player_avatar.c', 45, 2),
-    'PlayerGetDestCoords': ('field_player_avatar.c', 95, 1),
+    'PlayerGetDestCoords': ('field_player_avatar.c', 95, 3),
     'GetPlayerMovementDirection': ('field_player_avatar.c', 98, 1),
     'TestPlayerAvatarFlags': ('field_player_avatar.c', 101, 2),
     'GetPlayerAvatarObjectId': ('field_player_avatar.c', 103, 1),
@@ -365,15 +398,20 @@ SOURCES = {
     'TurnVirtualObject': ('event_object_movement.c', 746, 1),
     'FreezeObjects_WaitForPlayer': ('event_object_lock.c', 3, 2),
     'FreezeObjects_WaitForPlayerAndSelected': ('event_object_lock.c', 6, 1),
+    'InitScriptContext': ('script.c', 0, 1),
+    'SetupBytecodeScript': ('script.c', 1, 1),
+    'RunScriptCommand': ('script.c', 4, 1),
     'LockPlayerFieldControls': ('script.c', 12, 7),
     'MsgSetSignpost': ('script.c', 27, 1),
     'MsgSetNotSignpost': ('script.c', 28, 1),
     'ScriptContext_Enable': ('script.c', 36, 1),
-    'ClearRamScript': ('script.c', 49, 1),
+    'CalculateRamScriptChecksum': ('script.c', 48, 1),
+    'ClearRamScript': ('script.c', 49, 2),
     'GetSavedRamScriptIfValid': ('script.c', 53, 1),
     'GetPlayerPosition': ('field_control_avatar.c', 6, 1),
     'GetWarpEventAtMapPosition': ('field_control_avatar.c', 35, 1),
     'SetupWarp': ('field_control_avatar.c', 36, 1),
+    'IsMysteryGiftEnabled': ('event_data.c', 10, 1),
     'IsFlagOrVarStoredInQuestLog': ('event_data.c', 17, 1),
     'GetFlagAddr': ('event_data.c', 21, 3),
     'ActivatePerStepCallback': ('field_tasks.c', 3, 1),
@@ -385,9 +423,9 @@ SOURCES = {
     'FadeInBGM': ('sound.c', 21, 1),
     'PlayCry_Script': ('sound.c', 28, 2),
     'PlaySE': ('sound.c', 38, 5),
-    'CreateTask': ('task.c', 1, 13),
+    'CreateTask': ('task.c', 1, 17),
     'DestroyTask': ('task.c', 3, 1),
-    'FuncIsActiveTask': ('task.c', 9, 1),
+    'FuncIsActiveTask': ('task.c', 9, 2),
     'FindTaskIdByFunc': ('task.c', 10, 3),
     'FadeScreen': ('field_weather.c', 24, 2),
     'SetSavedWeather': ('field_weather_util.c', 0, 1),
@@ -416,10 +454,13 @@ SOURCES = {
     'CreateTask_StartWiredTrade': ('cable_club.c', 45, 1),
     'FieldEffectStart': ('field_effect.c', 0, 1),
     'ApplyGlobalFieldPaletteTint': ('field_effect.c', 11, 1),
+    'GetNationalPokedexCount': ('pokedex.c', 3, 1),
+    'GetKantoPokedexCount': ('pokedex.c', 4, 1),
     'ShowTrainerCardInLink': ('trainer_card.c', 66, 1),
     'StorageGetCurrentBox': ('pokemon_storage_system.c', 2, 1),
     'GetBoxMonDataAt': ('pokemon_storage_system.c', 4, 1),
     'GetBoxNamePtr': ('pokemon_storage_system.c', 17, 1),
+    'CountPartyAliveNonEggMonsExcept': ('pokemon_storage_system_menu.c', 5, 1),
     'ScriptMovement_UnfreezeObjectEvents': ('script_movement.c', 2, 2),
     'SpeciesToMailSpecies': ('mail_data.c', 4, 1),
     'GetBagItemQuantity': ('item.c', 0, 3),
@@ -432,6 +473,7 @@ SOURCES = {
     'CreatePokemartMenu': ('shop.c', 57, 1),
     'CreateDecorationShop1Menu': ('shop.c', 58, 1),
     'CreateDecorationShop2Menu': ('shop.c', 59, 1),
+    'GetEnigmaBerryChecksum': ('berry.c', 3, 1),
     'ItemIdToBerryType': ('berry.c', 6, 1),
     'GetBerryNameByBerryType': ('berry.c', 8, 1),
     'ScriptMenu_Multichoice': ('script_menu.c', 2, 1),
@@ -439,15 +481,21 @@ SOURCES = {
     'CreateMCMenuInputHandlerTask': ('script_menu.c', 6, 1),
     'ScriptMenu_YesNo': ('script_menu.c', 9, 1),
     'ScriptMenu_MultichoiceGrid': ('script_menu.c', 12, 1),
+    'CreatePCMenuWindow': ('script_menu.c', 15, 1),
     'ScriptMenu_ShowPokemonPic': ('script_menu.c', 18, 1),
     'PicboxCancel': ('script_menu.c', 21, 1),
     'CreateWindowFromRect': ('script_menu.c', 25, 2),
+    'SetMoney': ('money.c', 1, 2),
     'DrawMoneyBox': ('money.c', 11, 1),
     'HideMoneyBox': ('money.c', 12, 1),
     'CheckPartyMonHasHeldItem': ('script_pokemon_util.c', 4, 1),
     'CreateScriptedWildMon': ('script_pokemon_util.c', 6, 1),
     'GetMonSizeRecordInfo': ('pokemon_size_record.c', 5, 2),
     'SetSafariZoneFlag': ('safari_zone.c', 1, 1),
+    'CopyEasyChatWord': ('easy_chat.c', 4, 1),
+    'ConvertEasyChatWordsToString': ('easy_chat.c', 5, 1),
+    'EC_DoesEasyChatStringFitOnLine': ('easy_chat.c', 7, 1),
+    'GetRandomWordFromAnyGroup': ('easy_chat.c', 9, 1),
     'ShiftMoveSlot': ('party_menu_specials.c', 6, 1),
     'InitRegionMapWithExitCB': ('region_map.c', 3, 1),
     'GetProfOaksRatingMessageByCount': ('prof_pc.c', 1, 1),
@@ -456,7 +504,7 @@ SOURCES = {
     'AnimateElevatorWindowView': ('field_specials.c', 48, 1),
     'GetStarterSpeciesById': ('field_specials.c', 62, 2),
     'HasMonBeenRenamed': ('field_specials.c', 67, 1),
-    'CountDigits': ('field_specials.c', 70, 1),
+    'CountDigits': ('field_specials.c', 70, 2),
     'GetPlayerTrainerId': ('field_specials.c', 78, 2),
     'GetCoins': ('coins.c', 0, 3),
     'AddCoins': ('coins.c', 2, 1),
@@ -466,7 +514,7 @@ SOURCES = {
     'HideCoinsWindow': ('coins.c', 8, 1),
     'TrySavingData': ('save.c', 22, 1),
     'SetMysteryEventScriptStatus': ('mystery_event_script.c', 7, 1),
-    'ResetBattleTowerStreak': ('battle_tower.c', 1, 1),
+    'ResetBattleTowerStreak': ('battle_tower.c', 1, 2),
     'BufferBattleTowerTrainerMessage': ('battle_tower.c', 15, 2),
     'SetPlayerBattleTowerRecord': ('battle_tower.c', 24, 1),
     'PopulateBravoTrainerBattleTowerLostData': ('battle_tower.c', 30, 1),
@@ -478,14 +526,19 @@ SOURCES = {
     'DrawDialogueFrame': ('new_menu_helpers.c', 24, 1),
     'DrawStdWindowFrame': ('new_menu_helpers.c', 25, 1),
     'SetStdWindowBorderStyle': ('new_menu_helpers.c', 33, 2),
+    'DisplayItemMessageOnField': ('new_menu_helpers.c', 39, 1),
     'GetStartMenuWindowId': ('new_menu_helpers.c', 44, 1),
     'DrawHelpMessageWindowWithText': ('new_menu_helpers.c', 48, 1),
     'DestroyHelpMessageWindow_': ('new_menu_helpers.c', 49, 1),
     'GetFontAttribute': ('new_menu_helpers.c', 52, 1),
     'GetMenuCursorDimensionByFont': ('new_menu_helpers.c', 53, 1),
     'MapPreview_SetFlag': ('map_preview_screen.c', 13, 1),
+    'DexScreen_GetSetPokedexFlag': ('pokedex_screen.c', 31, 1),
     'ListMenuInit': ('list_menu.c', 2, 1),
     'IsCurMapPokeCenter': ('save_location.c', 1, 1),
+    'ShouldTryRematchBattleInternal': ('vs_seeker.c', 21, 1),
+    'HasRematchTrainerAlreadyBeenFought': ('vs_seeker.c', 22, 1),
+    'IsTrainerReadyForRematchInternal': ('vs_seeker.c', 27, 1),
     'DrawStdFrameWithCustomTileAndPalette': ('menu.c', 5, 1),
     'ClearStdWindowAndFrameToTransparent': ('menu.c', 8, 2),
     'Menu_InitCursor': ('menu.c', 17, 1),
@@ -496,6 +549,7 @@ SOURCES = {
     'QuestLogSetFlagOrVar': ('quest_log.c', 86, 1),
     'SetQuestLogEvent': ('quest_log_events.c', 0, 1),
     'QuestLog_RecordEnteredMap': ('quest_log_events.c', 113, 1),
+    'InitPartyMenu': ('party_menu.c', 0, 2),
     'GetCursorSelectionMonId': ('party_menu.c', 33, 3),
     'GetMonNickname': ('party_menu.c', 48, 1),
     'ChooseMonForDaycare': ('party_menu.c', 353, 1),
@@ -507,6 +561,12 @@ SOURCES = {
     'ShowSelectMovePokemonSummaryScreen': ('pokemon_summary_screen.c', 1, 1),
     'SetPokemonSummaryScreenMode': ('pokemon_summary_screen.c', 69, 1),
     'PlaySlotMachine': ('slot_machine.c', 0, 1),
+    'GetSavedWonderNewsMetadata': ('mystery_gift.c', 4, 1),
+    'ValidateSavedWonderNews': ('mystery_gift.c', 8, 1),
+    'GetRewardItem': ('wonder_news.c', 4, 1),
+    'ResetSentRewardCounter': ('wonder_news.c', 5, 1),
+    'IncrementSentRewardCounter': ('wonder_news.c', 6, 1),
+    'GetRewardType': ('wonder_news.c', 8, 1),
     'LoadStdWindowGfx': ('text_window.c', 10, 2),
     'DecryptBerryPowder': ('berry_powder.c', 0, 2),
     'SetBerryPowder': ('berry_powder.c', 1, 1),
