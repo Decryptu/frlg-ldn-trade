@@ -43,21 +43,13 @@ if os.path.isdir(BUNDLED):
     sys.path.insert(0, BUNDLED)
 
 import trio, ldn
+from pokeldn.bdsp import COMM_ID, PASSPHRASE, PIA_PORT, session_keys
 from pokeldn.ldn import local_protocol as lp
-from pokeldn.ldn.pia5 import (PiaHeader5, is_pia5, ciphertext, gcm_iv, ldn_game_key,
-                              ldn_nonce_crc, ldn_session_key, build_message, pad_payload,
-                              parse_messages, encrypt_payload, decrypt_payload)
+from pokeldn.ldn.pia5 import (PiaHeader5, is_pia5, ciphertext, gcm_iv, ldn_nonce_crc,
+                              build_message, pad_payload, parse_messages, encrypt_payload,
+                              decrypt_payload)
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.host_support import resolve_keys
-
-BDSP_PASSPHRASE = b"WirelessStrongCryptoKey2021"      # raw, 27 bytes, unpadded (session 43)
-PIA_PORT = 12345
-
-# BDSP's own cryptoKeyDataSeed, out of global-metadata.dat (sp18). The GAME KEY is this with four
-# bytes replaced by the local communication version, which is `app_version` in the advertisement -
-# so the seed is the constant and a published per-game key is a derived value (sp20).
-CRYPTO_KEY_DATA_SEED = bytes.fromhex("9918bd0fdcfa65779918bd0fdcfa6577")
-
 
 def cleanup():
     import subprocess
@@ -79,21 +71,6 @@ def make_socket(ifname):
     return s
 
 
-def session_keys(net):
-    """-> (session_key, network_id_le). Everything comes off the advertisement we already scanned.
-
-    The application data opens with the Pia network id and carries the session parameter twelve
-    bytes in; `app_version` is the local communication version the game key is derived with.
-    """
-    app = bytes(getattr(net, "application_data", b"") or b"")
-    if len(app) < 16:
-        raise ValueError(f"application data is {len(app)} bytes, need at least 16")
-    network_id_le = app[0:4]
-    session_param = struct.unpack_from("<I", app, 12)[0]
-    game_key = ldn_game_key(CRYPTO_KEY_DATA_SEED, net.app_version)
-    return ldn_session_key(game_key, session_param), network_id_le, session_param, game_key
-
-
 def ack_packet(session_key, network_id_le, our_mac, src_var, dst_var, nonce8, sequence_id,
                destination):
     """The whole datagram: Local ack -> Pia message -> padded -> AES-GCM -> Pia 5.x header."""
@@ -112,19 +89,21 @@ async def main_async(args):
     cleanup()
     nets = await ldn.scan(keys, phyname=phy, channels=[int(c) for c in args.channels.split(",")],
                           dwell_time=0.8)
-    want = int(args.comm_id, 16)
+    want = int(args.comm_id, 16) if args.comm_id else COMM_ID
     net = next((n for n in nets if n.local_communication_id == want), None)
     if net is None:
         print("[ack] target network not seen - is the console sitting in the room right now?")
         return 3
-    session_key, network_id_le, session_param, game_key = session_keys(net)
+    k = session_keys(net)
+    session_key, network_id_le = k.session_key, k.network_id_le
+    session_param, game_key = k.session_param, k.game_key
     print(f"[ack] target ssid={net.ssid.hex()} ch={net.channel} app_version={net.app_version}")
     print(f"[ack] network id (LE) {network_id_le.hex()}  session param {session_param:#010x}")
     print(f"[ack] game key {game_key.hex()}")
     print(f"[ack] session key {session_key.hex()}")
 
     param = ldn.ConnectNetworkParam()
-    param.keys, param.network, param.password = keys, net, BDSP_PASSPHRASE
+    param.keys, param.network, param.password = keys, net, PASSPHRASE
     param.name, param.app_version = args.name.encode(), net.app_version
     param.phyname, param.ifname = phy, args.ifname
 
@@ -288,7 +267,7 @@ async def main_async(args):
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--comm-id", default="0100000011d90000")
+    ap.add_argument("--comm-id", default=None)
     ap.add_argument("--keys", default="~/.switch/prod.keys")
     ap.add_argument("--phy", default="auto")
     ap.add_argument("--ifname", default="ldnclient")

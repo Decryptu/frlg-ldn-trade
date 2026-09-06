@@ -204,6 +204,57 @@ protocol's destination object lives at `LocalProtocol+0x130` and its initialiser
 found. `bin/bdsp_ack.py` sends the phases in order and the rebroadcast either stops during one of
 them or it does not.
 
+## The ack, on hardware
+
+Session 46 sent it. The console accepted the **first** framing tried - a broadcast to the network's
+broadcast address with packet `dst_var` 0 and message destination 0, which is exactly what the host
+itself sends - and stopped rebroadcasting on the spot:
+
+    42 update sessions, ~100 ms apart, the last at t=5.969
+    first ack at t=6.003
+    zero packets from the console for the remaining 78 s of the capture
+
+So a client's Local Protocol broadcasts its ack the way the host broadcasts the question; the three
+unicast framings the run had queued behind it never ran. Nothing appeared on the console's screen,
+and nothing should have - this is below the game.
+
+The larger result was not the ack. That session was a **fresh** one - a different SSID, network id,
+session parameter, host variable id and sequence id from the capture everything had been derived
+against - and every key was built live from the advertisement. **None of the 42 packets failed to
+authenticate.** The derivation is general.
+
+## The mesh station protocol
+
+Answering the update session is bookkeeping, and the game sees none of it. The layer a station
+joins on is the **Mesh Station Protocol, 0x14**. Its receive dispatcher is `0x0154e848` - payload
+byte 0, minus one, bounded at 6, through a seven-entry jump table at `0x3e6b38f` - and a connection
+request lands in the deserializer at **`0x0154ebd0`**, which is worth reading in the order it
+checks, because the order is what a probe can exploit:
+
+| offset | field | what a failure does |
+|---|---|---|
+| | size 15..949 | drop |
+| 0x0 | message type, connection result, platform id | drop |
+| 0x3 | target constant id, **big-endian** u64 | compared with the console's own; **silence** |
+| 0xB | target variable id, **big-endian** u32 | compared with the console's own; **silence** |
+| 0xF | number of protocols | compared with the console's **own count**; error 0x11c26, **silence** |
+| 0x10 | that many (id, version) pairs | version low -> result 2, high -> result 3, **both reply** |
+| | station location size, big-endian u16, 0x20..0x40 | drop |
+| | the location, a 32-byte ASCII token, network id, three counts, player infos, ack id | drop |
+
+`0x0159b850` looks a protocol version up by id by walking the registered list, and **returns 0 when
+it finds nothing**. So an id the console does not register has an expected version of 0, and a
+version of 1 against it is always "too high" - a reply, not a drop. That makes the protocol count
+measurable without knowing any of the protocols: send N pairs of `(0xFF, 1)` for each N in turn, and
+the N that draws a denial is the console's own count.
+
+The same reading confirmed three more structures in passing, each against the wiki: the station
+protocol's ack is 8 bytes (`0x0154fa2c`), its denial 15 (`0x015501ec`), its disconnection response
+1 (`0x0154ea60`).
+
+`pokeldn/ldn/station_protocol.py` builds and parses these; `bin/bdsp_connect.py` runs the sweep,
+acking first so that the console's silence makes any later packet unambiguously an answer.
+
 ## The GCM nonce
 
 The IV is built by the **stream** object, one per family, and it is the reason naming it took so
