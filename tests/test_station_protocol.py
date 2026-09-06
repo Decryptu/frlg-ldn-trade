@@ -45,7 +45,10 @@ def test_a_station_location_is_forty_bytes_and_inside_the_accepted_range():
     loc = stp.station_location("169.254.49.2", 12345, 0x1122334455667788, 0xAABBCCDD, 0x12345678)
     assert len(loc) == 40
     assert stp.STATION_LOCATION_MIN <= len(loc) <= stp.STATION_LOCATION_MAX
-    assert loc[0] == 4 and loc[1] == 4                       # both addresses are IPv4
+    # THE SIZE INCLUDES THE PORT. 4 is what sp25-sp32 sent and the console rejects it outright:
+    # its parser builds 1 << size and tests against 0x00040044, so only 2, 6 and 18 pass.
+    assert loc[0] == 6 and loc[1] == 6
+    assert loc[0] in stp.INET_SIZES and stp.INET_IPV4 == 6
     assert loc[2:8] == bytes([169, 254, 49, 2]) + struct.pack(">H", 12345)
     assert loc[14:20] == b"\0" * 6                           # no relay on a local network
     assert struct.unpack_from(">Q", loc, 20)[0] == 0x1122334455667788
@@ -214,3 +217,20 @@ def test_a_non_direction_is_refused_rather_than_treated_as_a_miss():
     s = stp.VersionSearch()
     with pytest.raises(ValueError):
         s.feed("denied")
+
+
+def test_the_location_lands_the_variable_id_where_the_console_reads_it():
+    """main.bin 0x015a3aac reads everything after the two addresses at a fixed offset from them.
+
+    This is the field the second stage tests, and a location whose size bytes are illegal never
+    deserialises at all - the connection-request parser throws that error away, so the field stays
+    0 and every request looks identical no matter what was put in it. That is what sp25-sp32 sent.
+    """
+    loc = stp.station_location("169.254.14.2", 12345, 0x1249A221D8580000, 0x2B7F4C11, 0x32669AEA)
+    rest = 2 + loc[0] + loc[1]
+    assert struct.unpack_from(">I", loc, rest + 0x00)[0] == 0            # relay address
+    assert struct.unpack_from(">H", loc, rest + 0x04)[0] == 0            # relay port
+    assert struct.unpack_from(">Q", loc, rest + 0x06)[0] == 0x1249A221D8580000
+    assert struct.unpack_from(">I", loc, rest + 0x0E)[0] == 0x2B7F4C11   # the one that matters
+    assert struct.unpack_from(">I", loc, rest + 0x12)[0] == 0x32669AEA
+    assert len(loc) == rest + 0x1A == 40

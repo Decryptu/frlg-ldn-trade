@@ -100,9 +100,15 @@ def ldn_service_variable_id(mac):
     return zlib.crc32(m) & 0xFFFFFFFF
 
 
+# What the console's InetAddress parser (main.bin 0x0153ac10) will accept as a size: it builds
+# `1 << size` and tests it against 0x00040044, so the ONLY legal values are 2, 6 and 18. The size
+# therefore counts the PORT as well as the address - 2 is a bare port, 6 is IPv4, 18 is IPv6.
+INET_SIZES = (2, 6, 18)
+INET_IPV4 = 6
+
+
 def inet_address(ip, port):
-    """The 4-byte IPv4 form. A station location says how long each address is, so this is a choice
-    the sender makes, not a fixed layout."""
+    """The IPv4 form: four address bytes then a big-endian port, six bytes, which is size 6."""
     octets = bytes(int(p) for p in ip.split("."))
     if len(octets) != 4:
         raise ValueError(f"not an IPv4 address: {ip}")
@@ -113,12 +119,27 @@ def station_location(ip, port, constant_id, variable_id, service_variable_id,
                      nat_flags=0x05, nat_location=1, probeinit=0, private_available=1):
     """A Pia 5.11-5.45 station location with IPv4 public and private addresses: 40 bytes.
 
-    40 is inside the 0x20..0x40 the console's parser accepts. The relay address is always IPv4 and
-    always zero here - there is no relay on a local network.
+    Read off the console's own deserializer, `nn::pia::transport::StationLocation` vfunc3 at
+    main.bin 0x015a3aac. Two size bytes, then the public and private addresses at those sizes, and
+    then everything else at a fixed offset from wherever those two ended:
+
+        +0x00  u32be  relay address        -> this+0x48
+        +0x04  u16be  relay port           -> this+0x60
+        +0x06  u64be  constant id          -> this+0x68
+        +0x0E  u32be  variable id          -> this+0x70   the field the second stage reads
+        +0x12  u32be  service variable id  -> this+0x74
+        +0x16  u8     nat flags, nat location, probeinit, is-private-available
+
+    40 bytes total, inside the 0x20..0x40 the connection-request parser accepts.
     """
     public = inet_address(ip, port)
     private = inet_address(ip, port)
-    out = (bytes([len(public) - 2, len(private) - 2]) + public + private
+    # The size byte INCLUDES the port. Writing len-2 here is what sp25-sp32 sent, and the console's
+    # parser rejects 4 outright (only 2, 6, 18 pass) - so the location never deserialised, its
+    # variable id stayed 0, and every request came back with the same refusal no matter what we
+    # varied. The connection-request parser THROWS AWAY the location's error, which is why a
+    # malformed location looks like a working request that the game refuses.
+    out = (bytes([len(public), len(private)]) + public + private
            + inet_address("0.0.0.0", 0)
            + struct.pack(">Q", constant_id)
            + struct.pack(">I", variable_id)
