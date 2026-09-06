@@ -255,6 +255,68 @@ protocol's ack is 8 bytes (`0x0154fa2c`), its denial 15 (`0x015501ec`), its disc
 `pokeldn/ldn/station_protocol.py` builds and parses these; `bin/bdsp_connect.py` runs the sweep,
 acking first so that the console's silence makes any later packet unambiguously an answer.
 
+## What the console answers
+
+Four runs took this from "the console has never spoken to us" to "the console parses everything we
+send and refuses one thing".
+
+**The protocol count is 9, and the sweep measured it without knowing a protocol.** The count sweep
+drew a connection response at N=9 and at no other N - 52 ms after the N=9 request, 1.25 s after
+N=8, silence for every N below. The reply is fifteen bytes,
+`020300000000000000000000000000`, with the constant-id and variable-id fields zeroed.
+
+**The result enum is wider than the wiki's, and result 7 is the useful one.** Reading the caller of
+the deserializer (`0x0154f5e8`) maps internal errors to the result byte:
+
+| error | result | meaning |
+|---|---|---|
+| 0x646f | 2 | our version too low |
+| 0x6470 | 3 | our version too high |
+| 0xc24 | 4 | |
+| 0xc25 | 1 | |
+| 0x11c0f | **7** | the request parsed and every version matched; the SECOND stage refused it |
+| 0x11c26 | *(none)* | the protocol count mismatch - which is why that one is silence |
+
+So **the equality signal is a reply, not silence**. A matching version gets past the deserializer
+entirely, and the refusal that follows confirms the match. Reading silence as equality would invent
+a version out of a lost packet; every probe now has a definite answer and silence is retried.
+
+**The versions, each confirmed against both neighbours** (v-1 must answer "higher" and v+1
+"lower"), from a sweep of all 256 ids with nothing unanswered:
+
+    0x14  Station      version 2      - and the wiki gives exactly 2 for 5.27-5.45
+    0x18  Mesh         version 3
+    0x58  RTT          version 3
+    0x68  Unreliable   version 1
+    0x7c  Reliable     version 3
+    0x94  Session      version 1
+
+Five of nine answer, and the other four are not missing: they are registered at **version 0**, which
+this probe cannot tell from unregistered because both expect 0. The wiki gives the Local Protocol
+version 0 for 5.19-5.45, so that is where they are.
+
+**None of which is needed to build a valid request.** The parser checks that our count equals the
+console's and that each of *our* entries carries the right version; it never checks that our ids are
+its ids. Nine entries of `(0xFF, 0)` therefore pass the whole negotiation.
+
+## The one thing left
+
+A minimal well-formed request, sent four times into a freshly re-entered Union Room as the first
+station-protocol packet that session had ever seen, comes back **result 7** every time. The request
+is parsed end to end and accepted at the protocol level.
+
+Result 7 is produced at exactly one instruction, `0x0154fd98`, reached when the second stage
+`0x0154fcfc` has already found a station for our location and a call to `0x1548bbc` - in
+`nn::pia::mesh::MeshProtocol` code - returns true for our station location's variable id. That
+function reads an array of `u32` at `mesh+0x3b8` with a count at `mesh+0x98`, wants the count to be
+at least 2, and returns 1 on the first entry equal to its argument.
+
+**That reading is wrong and is recorded as wrong.** Varying the station location's variable id
+across five values, including the host's own and `0x7fffffff`, returns 7 for all of them, and a
+list-membership test cannot match five arbitrary values. Either those fields are not a count and an
+array, or the argument is not the variable id that `0x15a3728` appears to fetch. It is also not a
+station left behind by an earlier run - the fresh-session test settled that.
+
 ## The GCM nonce
 
 The IV is built by the **stream** object, one per family, and it is the reason naming it took so

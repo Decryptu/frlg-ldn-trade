@@ -125,7 +125,8 @@ async def main_async(args):
         sock = make_socket(args.ifname)
         t0 = time.monotonic()
         st = {"seq": None, "host_var": None, "host_constant_seen": None, "last_update": None,
-              "updates": 0, "phase": "listen", "replies": [], "quiet_since": None}
+              "updates": 0, "phase": "listen", "replies": [], "waiter": None, "reply": None,
+              "result": None}
 
         def decode(data, addr, now):
             h = PiaHeader5.parse(data)
@@ -172,6 +173,12 @@ async def main_async(args):
                     elif m.protocol == stp.PROTOCOL:
                         kind, rest = stp.parse_message(m.payload)
                         st["replies"].append((now, st["phase"], m.payload.hex()))
+                        # only a connection response carries a result; an ack's byte 1 is padding
+                        result = (m.payload[1] if kind == stp.CONNECTION_RESPONSE
+                                  and len(m.payload) > 1 else None)
+                        st["reply"] = (kind, result)
+                        if st["waiter"] is not None:
+                            st["waiter"].set()
                         print(f"\n[rx] t={now:6.2f} *** STATION PROTOCOL, type {kind} "
                               f"({len(m.payload)} B), phase {st['phase']} ***")
                         if kind == stp.CONNECTION_RESPONSE:
@@ -191,13 +198,37 @@ async def main_async(args):
                 nonce = (nonce + 1) & ((1 << 64) - 1)
                 return nonce.to_bytes(8, "big")
 
+            async def ask(payload, protocol, label, timeout=None, src_var=None):
+                """Send one station-protocol message and wait for a reply. -> the result code, or
+                None for silence. Silence is a real answer here, so it costs the full timeout."""
+                st["phase"] = label
+                st["reply"] = None
+                st["waiter"] = trio.Event()
+                pkt = wrap(keys, our_mac, src_var if src_var is not None else args.src_var,
+                           dst_var, next_nonce(), payload, protocol, port=stp.PORT_UNRELIABLE)
+                sock.sendto(pkt, (dst_ip, PIA_PORT))
+                record(rec="tx_request", t=time.monotonic() - t0, label=label, dst=dst_ip,
+                       size=len(payload), request=payload.hex())
+                with trio.move_on_after(timeout or args.gap):
+                    await st["waiter"].wait()
+                st["waiter"] = None
+                got = st["reply"]
+                if got is None:
+                    return None                    # silence, which is itself an answer
+                kind, result = got
+                if kind != stp.CONNECTION_RESPONSE:
+                    return ("other", kind)         # something we did not ask for; never a version
+                return result
+
+            def request(protocols, ack_id=1):
+                return stp.build_connection_request(
+                    target_constant, target_var, protocols, location, network_id=0,
+                    player_infos=infos, ack_id=ack_id)
+
             await trio.sleep(args.listen_first)
             if st["seq"] is None:
                 print("[cx] no update session seen - the console is not hosting a Pia network")
                 return
-            if st["host_constant_seen"] != host_constant:
-                print(f"[cx] NOTE: the update session says {st['host_constant_seen']:#018x} and "
-                      f"the MAC rule says {host_constant:#018x} - using the message's")
             target_constant = st["host_constant_seen"] or host_constant
             target_var = st["host_var"]
 
@@ -205,52 +236,146 @@ async def main_async(args):
             print(f"\n[tx] acking seq={st['seq']} until the rebroadcast stops")
             deadline = time.monotonic() + args.ack_seconds
             while time.monotonic() < deadline:
-                pkt = wrap(keys, our_mac, args.src_var, 0, next_nonce(),
-                           lp.build_ack(st["seq"]), lp.PROTOCOL)
-                sock.sendto(pkt, (bcast, PIA_PORT))
+                sock.sendto(wrap(keys, our_mac, args.src_var, 0, next_nonce(),
+                                 lp.build_ack(st["seq"]), lp.PROTOCOL), (bcast, PIA_PORT))
                 record(rec="tx_ack", t=time.monotonic() - t0, seq=st["seq"])
                 await trio.sleep(0.1)
                 quiet = time.monotonic() - t0 - (st["last_update"] or 0)
                 if st["updates"] > 3 and quiet > args.quiet_for:
-                    print(f"[tx] the rebroadcast stopped ({quiet:.2f}s quiet) - sweeping now")
+                    print(f"[tx] the rebroadcast stopped ({quiet:.2f}s quiet)")
                     break
             else:
-                print("[tx] the rebroadcast did NOT stop; sweeping anyway")
+                print("[tx] the rebroadcast did NOT stop; carrying on anyway")
 
+            dst_ip = bcast if not args.unicast else host_ip
+            dst_var = 0 if not args.unicast else target_var
             location = stp.station_location(our_ip, PIA_PORT, our_constant, args.src_var,
                                             our_service)
             infos = [stp.player_info(args.name)]
-            # The ack proved BROADCAST framing, so that pass goes first. A silent sweep there is
-            # not yet an answer: the station protocol may want the host's own address, and that is
-            # one more variable, so it gets its own pass rather than being mixed into the first.
-            modes = ["broadcast", "unicast"]
-            if args.unicast:
-                modes = ["unicast"]
-            elif args.broadcast_only:
-                modes = ["broadcast"]
-            for mode in modes:
-                dst_ip = bcast if mode == "broadcast" else host_ip
-                dst_var = 0 if mode == "broadcast" else target_var
-                print(f"\n[tx] --- sweep pass: {mode} -> {dst_ip} dst_var={dst_var:#010x}")
+
+            count = args.count
+            if count is None:
+                print(f"\n[tx] --- sweeping for the console's protocol count, {dst_ip}")
                 for n in range(args.min_protocols, args.max_protocols + 1):
-                    st["phase"] = f"{mode}/protocols={n}"
-                    req = stp.build_connection_request(
-                        target_constant, target_var, [(args.probe_id, args.probe_version)] * n,
-                        location, network_id=0, player_infos=infos, ack_id=n + 1)
-                    pkt = wrap(keys, our_mac, args.src_var, dst_var, next_nonce(), req,
-                               stp.PROTOCOL, port=stp.PORT_UNRELIABLE)
-                    sock.sendto(pkt, (dst_ip, PIA_PORT))
-                    record(rec="tx_request", t=time.monotonic() - t0, n=n, mode=mode, dst=dst_ip,
-                           size=len(req), request=req.hex())
-                    print(f"[tx] {mode:9s} protocols={n:2d}  request {len(req)} B"
-                          f"{'   REPLY SEEN' if st['replies'] else ''}")
-                    await trio.sleep(args.gap)
-                    if st["replies"] and args.stop_on_reply:
+                    got = await ask(request([(args.probe_id, args.probe_version)] * n, n + 1),
+                                    stp.PROTOCOL, f"count={n}")
+                    print(f"[tx] count={n:2d}  "
+                          f"{'REPLY ' + str(got) if got is not None else 'silence'}")
+                    if got is not None:
+                        count = n
                         break
-                if st["replies"] and args.stop_on_reply:
-                    break
+                if count is None:
+                    print("[cx] the whole count sweep was silent - the target ids are wrong, "
+                          "not the count (see the harness)")
+                    return
+            print(f"\n[cx] the console registers {count} protocols")
+            record(rec="protocol_count", count=count)
+            if args.connect:
+                # THE MINIMAL VALID REQUEST, and it needs no knowledge of the console's protocols:
+                # an id it does not register expects version 0, so `count` entries of (0xFF, 0)
+                # pass the whole version loop. sp29 proved the pass; what refuses it afterwards is
+                # the second stage, 0x0154fcfc.
+                print(f"\n[tx] --- one well-formed connection request, {count} x (0xff, 0)")
+                for attempt in range(args.connect):
+                    payload = stp.build_connection_request(
+                        target_constant, target_var, [stp.FILLER] * count, location,
+                        network_id=0, player_infos=infos, ack_id=attempt + 1)
+                    got = await ask(payload, stp.PROTOCOL, f"connect#{attempt}", timeout=2.0)
+                    name = ("silence" if got is None
+                            else stp.RESULT_NAMES.get(got, f"result {got}"))
+                    print(f"[tx]   attempt {attempt}: {name}")
+                    record(rec="connect", attempt=attempt, result=got)
+                    if got == stp.RESULT_ACCEPTED:
+                        print("[cx] *** ACCEPTED INTO THE MESH ***")
+                        break
+                    await trio.sleep(args.connect_gap)
+                st["phase"] = "after"
+                return
+
+            if not args.identify:
+                return
+
+            async def probe(pid, version, var_id=None, src_var=None, tries=3):
+                """One version probe. A reply is guaranteed now, so silence is a lost packet and
+                gets retried rather than read as a match (sp28)."""
+                loc = location
+                if var_id is not None:
+                    loc = stp.station_location(our_ip, PIA_PORT, our_constant, var_id, our_service)
+                for _ in range(tries):
+                    st["phase"] = f"id={pid:#04x} v={version}"
+                    payload = stp.build_connection_request(
+                        target_constant, target_var, stp.version_probe(pid, version, count), loc,
+                        network_id=0, player_infos=infos, ack_id=1)
+                    got = await ask(payload, stp.PROTOCOL, st["phase"], src_var=src_var)
+                    if got is None:
+                        continue                       # a lost packet, not an answer
+                    if isinstance(got, tuple):
+                        record(rec="odd_reply", pid=pid, version=version, reply=repr(got))
+                        return None, got
+                    return stp.read_version(got), got
+                return None, None
+
+            ids = ([int(x, 0) for x in args.ids.split(",")] if args.ids
+                   else list(range(256)) if args.sweep_ids else list(stp.KNOWN_PROTOCOL_IDS))
+            print(f"\n[tx] --- probing {len(ids)} protocol id(s) at version 1")
+            registered, unregistered, unknown = {}, [], []
+            for pid in ids:
+                d, raw = await probe(pid, 1)
+                if d is None:
+                    unknown.append(pid)
+                    print(f"[tx]   {pid:#04x}  NO ANSWER after retries")
+                    continue
+                if d == "lower":                       # expected < 1, so it is 0: not registered
+                    unregistered.append(pid)
+                    continue
+                if d == "equal":
+                    registered[pid] = 1
+                    print(f"[tx]   {pid:#04x}  version 1")
+                    continue
+                search = stp.VersionSearch(lo=2, first=2)   # expected > 1, bisect the rest
+                while not search.done:
+                    dd, _ = await probe(pid, search.next_version())
+                    if dd is None:
+                        break
+                    search.feed(dd)
+                registered[pid] = search.found
+                print(f"[tx]   {pid:#04x}  version {search.found} ({search.probes} probes)")
+            st["result"] = {"count": count, "registered": registered,
+                            "unregistered": len(unregistered), "unknown": unknown}
+            record(rec="protocols", count=count, registered=registered,
+                   unregistered=unregistered, unknown=unknown)
+            print(f"[cx] {len(registered)} registered, {len(unregistered)} not, "
+                  f"{len(unknown)} unanswered - the console said {count}")
+
+            print("\n[cx] --- confirming each version against both neighbours")
+            for pid, v in sorted(registered.items()):
+                if v is None:
+                    continue
+                below, _ = await probe(pid, max(0, v - 1))
+                above, _ = await probe(pid, min(255, v + 1))
+                ok = below == "higher" and above == "lower"
+                print(f"[cx]   {pid:#04x} v{v}: v-1 {below}, v+1 {above}"
+                      f"  {'CONFIRMED' if ok else 'NOT CONFIRMED'}")
+                record(rec="confirm", pid=pid, version=v, below=below, above=above, ok=ok)
+
+            if args.vary_var and registered:
+                # result 7 is the SECOND stage refusing (0x0154fcfc -> 0x11c0f), and what it tests
+                # is whether our variable id is already in an array at session+0x3b8. So vary it.
+                pid, v = sorted((k, x) for k, x in registered.items() if x)[0]
+                print(f"\n[cx] --- what the second stage refuses: {pid:#04x} v{v}, "
+                      f"varying the variable id")
+                for label, var_id, src in (("as sent", args.src_var, None),
+                                           ("location id + 1", args.src_var + 1, None),
+                                           ("location id = 2", 2, None),
+                                           ("location id = host's", target_var, None),
+                                           ("location id = 0x7fffffff", 0x7FFFFFFF, None),
+                                           ("packet src_var differs", args.src_var, 0x5150A001)):
+                    _, raw = await probe(pid, v, var_id=var_id, src_var=src)
+                    name = stp.RESULT_NAMES.get(raw, raw)
+                    print(f"[cx]   {label:26s} var={var_id:#010x} -> {name}")
+                    record(rec="vary_var", label=label, var_id=var_id, src_var=src, result=raw)
+
             st["phase"] = "after"
-            print("[tx] sweep done")
 
         with trio.move_on_after(args.hold):
             async with trio.open_nursery() as nursery:
@@ -259,13 +384,19 @@ async def main_async(args):
 
         print(f"\n[cx] {st['updates']} update session(s), {len(st['replies'])} station-protocol "
               f"reply/replies")
-        for t, phase, payload in st["replies"]:
-            print(f"[cx]   t={t:.2f} phase {phase}: {payload}")
-        if st["replies"]:
+        if st["result"]:
+            reg = st["result"]["registered"]
+            print(f"[cx] the console said it registers {st['result']['count']} protocols, "
+                  f"and {len(reg)} answered:")
+            for pid, v in sorted(reg.items()):
+                print(f"[cx]   {pid:#04x}  version {v}")
+            if st["result"]["unknown"]:
+                print(f"[cx] unanswered: {[hex(x) for x in st['result']['unknown']]}")
+        elif st["replies"]:
             print("[cx] PASS: the console answered on the mesh station protocol")
         else:
-            print("[cx] silence across the whole sweep")
-        record(rec="end", updates=st["updates"], replies=len(st["replies"]))
+            print("[cx] silence throughout")
+        record(rec="end", updates=st["updates"], replies=len(st["replies"]), result=st["result"])
     if cap:
         cap.close()
     return 0
@@ -284,9 +415,22 @@ def main():
     ap.add_argument("--listen-first", type=float, default=5.0)
     ap.add_argument("--ack-seconds", type=float, default=6.0)
     ap.add_argument("--quiet-for", type=float, default=1.0)
+    ap.add_argument("--count", type=int, default=None,
+                    help="the console's protocol count, if already measured; skips the sweep")
+    ap.add_argument("--identify", action="store_true",
+                    help="after the count, read each candidate protocol's registered version")
+    ap.add_argument("--connect", type=int, default=0, metavar="N",
+                    help="send N well-formed connection requests and report what comes back")
+    ap.add_argument("--connect-gap", type=float, default=2.0)
+    ap.add_argument("--sweep-ids", action="store_true",
+                    help="probe all 256 protocol ids, not only the ones the wiki names")
+    ap.add_argument("--ids", default=None, help="a comma-separated list of ids to probe instead")
+    ap.add_argument("--vary-var", action="store_true",
+                    help="after identifying, vary the variable id to find what result 7 tests")
     ap.add_argument("--min-protocols", type=int, default=0)
     ap.add_argument("--max-protocols", type=int, default=40)
-    ap.add_argument("--gap", type=float, default=1.2, help="seconds to wait for a reply per N")
+    ap.add_argument("--gap", type=float, default=0.4,
+                    help="seconds to wait for a reply; every probe gets one, so this is short")
     ap.add_argument("--probe-id", type=lambda s: int(s, 0), default=0xFF,
                     help="a protocol id the console does not register, so its version is 0")
     ap.add_argument("--probe-version", type=int, default=1,

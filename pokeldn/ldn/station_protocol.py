@@ -58,7 +58,21 @@ RESULT_DENIED = 1
 RESULT_VERSION_TOO_LOW = 2
 RESULT_VERSION_TOO_HIGH = 3
 
-RESULT_NAMES = {0: "accepted", 1: "denied", 2: "version too low", 3: "version too high"}
+# The console's own enum is wider than the wiki's four values. These were read off the caller of
+# the deserializer, main.bin 0x0154f5e8, which maps an internal error code to the result byte it
+# answers with: 0x6470 -> 3, 0x646f -> 2, 0xc24 -> 4, 0xc25 -> 1, 0x11c0f -> 7. The count mismatch
+# (0x11c26) is in none of those branches, which is why a wrong protocol count is silence.
+RESULT_VERSIONS_MATCHED = 7
+
+RESULT_NAMES = {
+    0: "accepted",
+    1: "denied",
+    2: "version too low",
+    3: "version too high",
+    4: "refused after parsing (0xc24)",
+    5: "refused before the station lookup",
+    7: "parsed and versions matched, refused by the second stage (0x11c0f)",
+}
 
 STATION_LOCATION_MIN = 0x20       # `sub w10, w25, #0x20; cmp w10, #0x21; b.hs`
 STATION_LOCATION_MAX = 0x40
@@ -156,6 +170,119 @@ def build_connection_request(target_constant_id, target_variable_id, protocols, 
         raise ValueError(f"a connection request must be {MIN_SIZE}..{MAX_SIZE} bytes, "
                          f"this is {len(out)}")
     return bytes(out)
+
+
+# The protocol ids Pia 5.29-5.45 defines, from the NintendoClients wiki's "Pia Protocols". A game
+# registers a SUBSET, and BDSP registers exactly nine of them (sp27, measured on hardware). These
+# are the candidates a version probe walks; an id outside this list is a fine filler.
+KNOWN_PROTOCOL_IDS = (
+    0x08,   # Keep Alive
+    0x14,   # Station (MeshStationProtocol)
+    0x18,   # Mesh
+    0x1C,   # Sync Clock
+    0x24,   # Local
+    0x34,   # NAT
+    0x44,   # LAN
+    0x58,   # RTT
+    0x65,   # Sync
+    0x68,   # Unreliable
+    0x73,   # Clone
+    0x74,   # Clone (atomic)
+    0x75,   # Clone (event)
+    0x76,   # Clone (broadcast event)
+    0x77,   # Clone (clock)
+    0x7B,   # Voice
+    0x7C,   # Reliable
+    0x80,   # Broadcast Reliable
+    0x81,   # Stream Broadcast Reliable
+    0x94,   # Session
+    0xA4,   # Monitoring Data
+    0xB0,   # Reckoning 1D
+    0xB4,   # Reckoning 3D
+)
+
+# An id the console does not register looks up as version 0 (0x0159b850 falls off its walk into
+# `mov w0, wzr`), so this pair always matches and is what pads a probe out to the required count.
+# sp27 proved it on hardware: nine entries of (0xFF, 1) drew "version too high", which is only
+# possible if the expected version for 0xFF is 0.
+FILLER = (0xFF, 0)
+
+
+def version_probe(protocol_id, version, count):
+    """The protocol list for a probe: the candidate FIRST, then filler to the console's own count.
+
+    The console's loop reports the FIRST entry that disagrees, so putting the candidate first makes
+    the reply describe that candidate and nothing else. -> a list of (id, version) pairs.
+    """
+    if count < 1:
+        raise ValueError("a version probe needs at least one entry")
+    return [(protocol_id, version)] + [FILLER] * (count - 1)
+
+
+def read_version(result):
+    """What a probe's outcome says about the registered version, given the version we sent.
+
+    -> "higher", "lower" or "equal", and it raises on anything that says neither.
+
+    THE EQUALITY SIGNAL IS A REPLY, NOT SILENCE, and sp28 is what corrected that. A request whose
+    versions all match gets past the deserializer entirely, and the SECOND stage (0x0154fcfc) then
+    refuses it with 0x11c0f - which comes back as connection result 7. Every probe therefore has a
+    definite answer, and silence means a lost packet rather than a match. Before sp28 this module
+    read silence as equality, which is the same shape of mistake as reading a wrong protocol count
+    as a wrong identity.
+    """
+    if result == RESULT_VERSION_TOO_LOW:
+        return "higher"                # ours was too low, so the console's is higher
+    if result == RESULT_VERSION_TOO_HIGH:
+        return "lower"
+    if result is not None and result != RESULT_VERSION_TOO_LOW:
+        return "equal"                 # it got past the version loop, whatever refused it after
+    raise ValueError("silence says nothing about a version - the equality signal is a reply")
+
+
+class VersionSearch:
+    """Find a protocol's registered version from probes that only say higher, lower or equal.
+
+    Driven rather than driving, so the search itself is testable without a radio: read
+    `next_version()`, send a probe with it, and `feed()` back what came out of `read_version`.
+    It opens at 1 because Pia's protocol versions are small, and falls back to bisection.
+
+    `found` is None when the answers contradict each other, which is what a lost packet looks like
+    - silence is the equality signal here, so a dropped reply reads as an equality that is not one.
+    That is why `bin/bdsp_connect.py` re-probes both neighbours before believing a version.
+    """
+
+    def __init__(self, lo=0, hi=255, first=1):
+        self.lo, self.hi = lo, hi
+        self.pending = max(lo, min(hi, first))
+        self.found = None
+        self.done = False
+        self.probes = 0
+
+    def next_version(self):
+        if self.done:
+            return None
+        return self.pending
+
+    def feed(self, direction):
+        """`direction` is what read_version() returned for the version next_version() gave."""
+        if self.done:
+            raise ValueError("this search has already finished")
+        v = self.pending
+        self.probes += 1
+        if direction == "equal":
+            self.found, self.done = v, True
+            return
+        if direction == "higher":
+            self.lo = v + 1
+        elif direction == "lower":
+            self.hi = v - 1
+        else:
+            raise ValueError(f"a probe answered {direction!r}, which is not a direction")
+        if self.lo > self.hi:
+            self.done = True                # the answers contradict each other
+            return
+        self.pending = (self.lo + self.hi) // 2
 
 
 def parse_connection_response(data):

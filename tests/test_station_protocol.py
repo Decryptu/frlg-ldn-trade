@@ -132,3 +132,85 @@ def test_the_message_type_comes_off_the_front():
     assert stp.parse_message(bytes([stp.ACK, 0, 0, 0, 1, 2, 3, 4]))[0] == stp.ACK
     with pytest.raises(ValueError):
         stp.parse_message(b"")
+
+
+def test_a_version_probe_puts_the_candidate_first_and_pads_with_filler():
+    """The console's loop reports the FIRST disagreement, so the candidate has to lead."""
+    probe = stp.version_probe(0x14, 3, 9)
+    assert len(probe) == 9
+    assert probe[0] == (0x14, 3)
+    assert probe[1:] == [stp.FILLER] * 8
+    assert stp.FILLER == (0xFF, 0)
+
+
+def test_a_probe_needs_at_least_one_entry():
+    with pytest.raises(ValueError):
+        stp.version_probe(0x14, 1, 0)
+
+
+def test_a_probe_result_reads_as_a_direction():
+    assert stp.read_version(stp.RESULT_VERSION_TOO_LOW) == "higher"
+    assert stp.read_version(stp.RESULT_VERSION_TOO_HIGH) == "lower"
+    # the equality signal is a REPLY: the request got past the version loop and something later
+    # refused it, which on hardware is result 7 (sp28)
+    assert stp.read_version(stp.RESULT_VERSIONS_MATCHED) == "equal"
+    assert stp.read_version(stp.RESULT_ACCEPTED) == "equal"
+    assert stp.read_version(stp.RESULT_DENIED) == "equal"
+
+
+def test_silence_is_no_longer_read_as_a_match():
+    """The mistake sp28 corrected. Silence means a lost packet, and inventing a version from it is
+    exactly the class of error rule 4 is about."""
+    with pytest.raises(ValueError):
+        stp.read_version(None)
+
+
+def test_the_known_ids_are_the_5_29_list_and_hold_the_ones_already_measured():
+    assert 0x14 in stp.KNOWN_PROTOCOL_IDS      # the station protocol carrying the probe itself
+    assert 0x24 in stp.KNOWN_PROTOCOL_IDS      # the local protocol, whose ack the console accepted
+    assert 0xFF not in stp.KNOWN_PROTOCOL_IDS  # the filler must not collide with a candidate
+    assert len(set(stp.KNOWN_PROTOCOL_IDS)) == len(stp.KNOWN_PROTOCOL_IDS)
+
+
+def _search_against(actual, **kw):
+    """Drive a VersionSearch against a console that really registers `actual`."""
+    s = stp.VersionSearch(**kw)
+    while not s.done:
+        v = s.next_version()
+        s.feed("equal" if v == actual else ("higher" if actual > v else "lower"))
+    return s
+
+
+def test_the_version_search_finds_every_version_it_could_be_asked_for():
+    for actual in range(0, 256):
+        s = _search_against(actual)
+        assert s.found == actual, f"{actual} came back as {s.found}"
+        assert s.probes <= 9
+
+
+def test_the_common_case_costs_one_probe():
+    assert _search_against(1).probes == 1          # it opens at 1, where Pia versions live
+
+
+def test_a_bounded_search_still_closes():
+    for actual in range(2, 20):
+        assert _search_against(actual, lo=2, first=2).found == actual
+
+
+def test_contradictory_answers_end_the_search_without_inventing_a_version():
+    s = stp.VersionSearch(lo=5, hi=5, first=5)
+    s.feed("higher")                                # 5 is both the only candidate and too low
+    assert s.done and s.found is None
+
+
+def test_a_finished_search_refuses_to_be_fed_again():
+    s = _search_against(3)
+    with pytest.raises(ValueError):
+        s.feed("equal")
+    assert s.next_version() is None
+
+
+def test_a_non_direction_is_refused_rather_than_treated_as_a_miss():
+    s = stp.VersionSearch()
+    with pytest.raises(ValueError):
+        s.feed("denied")
