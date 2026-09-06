@@ -160,3 +160,95 @@ def test_ldn_session_key_is_aes_ecb_over_sixteen_sead_bytes():
 def test_ldn_session_key_refuses_a_key_that_is_not_sixteen_bytes():
     with pytest.raises(ValueError):
         ldn_session_key(b"\x00" * 15, 1)
+
+
+def test_gcm_iv_is_three_crc_bytes_then_the_source_id_then_the_nonce():
+    """The fourth byte is the source variable id, not the CRC's - the game overwrites it."""
+    from pokeldn.ldn.pia5 import gcm_iv
+    nonce8 = bytes.fromhex("f5a83bd383ce712d")
+    iv = gcm_iv(0xAABBCCDD, 0x11BAC90D, nonce8)
+    assert len(iv) == 12
+    assert iv[:3] == bytes.fromhex("aabbcc")
+    assert iv[3] == 0x0D
+    assert iv[4:] == nonce8
+
+
+def test_gcm_iv_refuses_a_nonce_that_is_not_eight_bytes():
+    from pokeldn.ldn.pia5 import gcm_iv
+    with pytest.raises(ValueError):
+        gcm_iv(0, 0, b"\x00" * 7)
+
+
+# --- The BDSP session, end to end. These pin the values a real capture authenticates with.
+
+BDSP_SEED = bytes.fromhex("9918bd0fdcfa65779918bd0fdcfa6577")   # cryptoKeyDataSeed, from metadata
+BDSP_KEY = bytes.fromhex("9900bd0cdcfa65639918bd0fc7fa6577")    # what Pia is handed, version 199
+SP4_NETID_LE = bytes.fromhex("b4c85cf8")                        # advertisement +0x00
+SP4_MAC = bytes.fromhex("48f1eb209b22")                         # the console's MAC
+SP4_SESSPARAM = 0x36DEE059                                      # advertisement +0x0c, LE
+SP4_SESSION_KEY = bytes.fromhex("7b182cb087eeabd228a2efd91a8be147")
+
+
+def test_the_published_game_key_is_the_seed_derived_with_the_version():
+    """Not a corrupted transcription - the four differing bytes are the four the game overwrites."""
+    from pokeldn.ldn.pia5 import ldn_game_key
+    assert ldn_game_key(BDSP_SEED, 199) == BDSP_KEY
+    differing = [i for i in range(16) if BDSP_SEED[i] != BDSP_KEY[i]]
+    assert differing == [1, 3, 7, 12]
+
+
+def test_a_different_version_moves_only_those_four_bytes():
+    from pokeldn.ldn.pia5 import ldn_game_key
+    other = ldn_game_key(BDSP_SEED, 200)
+    assert [i for i in range(16) if other[i] != BDSP_SEED[i]] == [1, 3, 7, 12]
+    assert other != BDSP_KEY
+
+
+def test_game_key_refuses_a_seed_that_is_not_sixteen_bytes():
+    from pokeldn.ldn.pia5 import ldn_game_key
+    with pytest.raises(ValueError):
+        ldn_game_key(b"\x00" * 15, 199)
+
+
+def test_the_nonce_crc_is_over_the_network_id_then_the_mac():
+    from pokeldn.ldn.pia5 import ldn_nonce_crc
+    assert ldn_nonce_crc(SP4_NETID_LE, SP4_MAC) == 0xDA291352
+
+
+def test_the_nonce_crc_rejects_the_wrong_field_sizes():
+    from pokeldn.ldn.pia5 import ldn_nonce_crc
+    with pytest.raises(ValueError):
+        ldn_nonce_crc(SP4_NETID_LE, b"\x00" * 4)
+    with pytest.raises(ValueError):
+        ldn_nonce_crc(b"\x00" * 6, SP4_MAC)
+
+
+def test_the_session_key_of_the_captured_bdsp_session():
+    from pokeldn.ldn.pia5 import ldn_session_key
+    assert ldn_session_key(BDSP_KEY, SP4_SESSPARAM) == SP4_SESSION_KEY
+
+
+def test_the_whole_chain_reproduces_the_iv_of_a_captured_packet():
+    """seed -> key -> session key, and network id + MAC -> CRC -> IV, as sp4 authenticates."""
+    from pokeldn.ldn.pia5 import gcm_iv, ldn_game_key, ldn_nonce_crc
+    key = ldn_game_key(BDSP_SEED, 199)
+    crc = ldn_nonce_crc(SP4_NETID_LE, SP4_MAC)
+    iv = gcm_iv(crc, 0x11BAC90D, bytes.fromhex("f5a83bd383ce712d"))
+    assert iv == bytes.fromhex("da29130df5a83bd383ce712d")
+    assert key == BDSP_KEY
+
+
+def test_a_captured_packet_actually_decrypts_and_authenticates():
+    """The GCM tag is the oracle: a wrong key, session key, IV or layout cannot pass this."""
+    from Crypto.Cipher import AES
+    from pokeldn.ldn.pia5 import gcm_iv, ldn_nonce_crc, ldn_session_key
+    nonce8 = bytes.fromhex("f5a83bd383ce712d")          # the first sp4 packet's header nonce
+    sk = ldn_session_key(BDSP_KEY, SP4_SESSPARAM)
+    assert sk == SP4_SESSION_KEY
+    iv = gcm_iv(ldn_nonce_crc(SP4_NETID_LE, SP4_MAC), 0x11BAC90D, nonce8)
+    plaintext = b"\x11" * 32
+    ct, tag = AES.new(sk, AES.MODE_GCM, nonce=iv, mac_len=8).encrypt_and_digest(plaintext)
+    assert len(tag) == 8                                 # Pia keeps only the first eight
+    assert AES.new(sk, AES.MODE_GCM, nonce=iv, mac_len=8).decrypt_and_verify(ct, tag) == plaintext
+    with pytest.raises(ValueError):                      # and a wrong IV must not pass
+        AES.new(sk, AES.MODE_GCM, nonce=bytes(12), mac_len=8).decrypt_and_verify(ct, tag)

@@ -9,6 +9,40 @@ How to read a retail Switch game's own code, on a machine far too small to hold 
 Unity/IL2CPP title; the worked example is Brilliant Diamond / Shining Pearl, whose two NSPs are
 7.3 GB against 3.5 GB of free disk.
 
+## Bringing up a new title: do these in order
+
+Written after BDSP, where steps 1 and 2 were skipped and cost two sessions of brute force that
+steps 1 and 2 would have answered in minutes.
+
+1. **Search the published sources for a constant you already have.** The NintendoClients wiki is a
+   repository, so code search reaches inside it, and it carries per-game pages that its own summary
+   tables never link to.
+
+       gh search code "<a constant, a field name, a class name>" --limit 20
+       gh api repos/kinnay/NintendoClientsWiki/contents --jq '.[].name'
+       gh api repos/kinnay/NintendoClientsWiki/contents/<Page>.md --jq .content | base64 -d
+
+   Read the *per-game* page, the protocol page for the right **Pia version band**, and the
+   application-data page. A summary table gives one derived value; the pages give the rule.
+
+2. **Look for the game's own code already dumped.** A decompiled C# dump of a Unity title may be on
+   GitHub (`TeamLumi/opendpr` for BDSP) and is faster to read than IL2CPP output.
+
+3. **Get the executable and the metadata**, matching builds - see below. Then name everything before
+   reading anything: IL2CPP metadata for the C# surface, C++ RTTI for the native one.
+
+4. **Read the binary to verify, and to get what nobody wrote down.** For BDSP that was the
+   `cryptoKeyDataSeed` constant and the rule that turns it into the published key. Published values
+   are transcriptions: they can be stale, wrong, or correct in a way that looks wrong.
+
+5. **Only then search a key space.** A sweep is the last resort, not the first, and a sweep with one
+   input silently pinned wrong produces a confident negative over the wrong slice.
+
+What a Pia LDN title needs, end to end: the **LDN passphrase** (to associate at all), the game's
+**cryptoKeyDataSeed** and **local communication version** (which give the Pia game key), the
+**session param** and **network id** from the advertisement, and the **source MAC** of each sender.
+`docs/pia.md` has the derivations.
+
 ## Do not unpack the NSP
 
 An NSP is a PFS0 archive of NCA files. The executable is a section near the *end* of a multi-GB NCA,

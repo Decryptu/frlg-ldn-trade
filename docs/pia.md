@@ -59,8 +59,71 @@ A Union Room or any local-wireless session is **LDN**, so it is the first row th
 the wiki's prose instead of the class names is what sent this project down the LAN branch for
 several sessions.
 
+## The LDN session key and nonce, in full
+
+Everything below is confirmed twice: read out of a retail title's ARM64, and matching the
+NintendoClients wiki. Both matter - the binary is what makes it verified, the wiki is what makes it
+quick.
+
+**The game key is not a constant of the game. It is a constant plus the version.**
+
+    key = cryptoKeyDataSeed                     the game's own 16-byte constant
+    key[1]  = (version >> 8) & 0xFF
+    key[3]  = (version >> 4) & 0xFF             version = the LOCAL COMMUNICATION VERSION,
+    key[7]  = (version >> 1) & 0xFF                       which the advertisement carries
+    key[12] = (version >> 0) & 0xFF
+
+So **a published per-game key is a derived value for one game version**, and the seed is the part
+that does not move. A published key and a measured seed differ in exactly bytes 1, 3, 7 and 12, and
+that is indistinguishable from a corrupt transcription unless you know this rule. `ldn_game_key()`.
+
+**The session key**, Pia 5.9 - 5.45:
+
+    rnd = four SEAD draws, seeded with the SESSION PARAM from the advertisement (+0x0c),
+          packed little-endian into 16 bytes
+    session key = AES-128-ECB(game key).encrypt(rnd)
+
+`pokeldn.ldn.sead.Sead` is the generator and `ldn_session_key()` the derivation. For Pia 6.16+ the
+session key is instead AES of the network SSID under the game key, which is what FireRed uses.
+
+**The 12-byte AES-GCM IV**, Pia 5.27 - 5.45:
+
+    IV[0..2]  = first three bytes of crc32( network id (LITTLE-endian) || SOURCE MAC ADDRESS )
+    IV[3]     = source variable id & 0xFF        both from the packet header
+    IV[4..11] = the packet's 8-byte header nonce
+
+`ldn_nonce_crc()` and `gcm_iv()`. The source MAC is the field worth remembering: everything else
+here can be read off the capture or the advertisement, and a search that has the key, the session
+key and the IV layout all correct still fails on that one input alone.
+
+The plaintext is padded with `0xFF` to a multiple of 16 before encryption, and only the **first
+eight bytes** of the GCM tag go on the wire. The 0xFF padding is useful beyond parsing: it is free
+known-plaintext, so a candidate key can be tested with one AES block instead of a whole GHASH.
+
+## Before reverse-engineering any of this again
+
+The reference material is searchable, and searching it is minutes against days.
+
+    gh search code "<a constant you have>" --limit 20
+    gh api repos/kinnay/NintendoClientsWiki/contents --jq '.[].name'
+    gh api repos/kinnay/NintendoClientsWiki/contents/<Page>.md --jq .content | base64 -d
+
+The wiki is a *repository*, so code search reaches inside it, and it holds per-game pages that the
+summary tables do not link - `Pokemon-Brilliant-Diamond.md` states the key derivation above, while
+the `Pia-Game-Keys` table lists only the derived result. Searching a 16-byte constant found the
+right page in one query, after the whole scheme had been rebuilt from the binary instead.
+
+Do the same for the game's own code: a decompiled C# dump of a Unity title may already be on GitHub
+(`TeamLumi/opendpr` for BDSP), which is faster to read than IL2CPP output.
+
+**This does not replace reading the binary.** Published values are transcriptions and can be wrong,
+stale, or - as above - correct in a way that looks wrong. Read the binary to *verify* and to get
+what nobody wrote down; search first so you know what you are verifying.
+
 ## Credits
 
-The packet-header version table comes from the
-[NintendoClients wiki](https://github.com/kinnay/NintendoClients/wiki/Pia-Protocol); everything
-about which derivation belongs to which network type was read out of a retail title's own code.
+The packet-header version table, the session-key derivations and the nonce layouts come from the
+[NintendoClients wiki](https://github.com/kinnay/NintendoClients/wiki/Pia-Protocol). Which
+derivation belongs to which network type, the `cryptoKeyDataSeed` value, and the version rule that
+turns it into the published key were read out of a retail title's own code, and each of the wiki's
+statements above was checked against it.

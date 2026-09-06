@@ -67,14 +67,33 @@ This is why five sessions of searching missed it. An `InitializeArray` blob live
 `global-metadata.dat`'s field-default-value section, not in code and not in an asset, so neither a
 scan of the executables nor a scan of the 4.2 GB RomFS could find it.
 
-### The NintendoClients wiki row is wrong for this game
+### The published key is this seed, derived
 
-    measured   9918bd0f dcfa6577 9918bd0f dcfa6577
-    wiki       9900bd0c dcfa6563 9918bd0f c7fa6577
+    seed (metadata)   9918bd0f dcfa6577 9918bd0f dcfa6577
+    published key     9900bd0c dcfa6563 9918bd0f c7fa6577
+                        ^^   ^^         ^^         ^^        bytes 1, 3, 7, 12
 
-Four bytes differ. The wiki value is a garbled transcription of the same underlying pattern, not a
-different key and not a different version: its sixteen bytes appear **nowhere** in the game's
-executables or in any of the 16,630 files of its RomFS. Treat that row as unverified.
+Those are exactly the four bytes the game overwrites from the **local communication version**, which
+for 1.3.0 is **199** - the same `app_version: 199` the advertisement carries. So the published row is
+correct, and it is a *derived* value for one game version; the seed is the part that does not move.
+`ldn_game_key(seed, 199)` reproduces it byte for byte.
+
+This is worth stating plainly because it is a trap: a published key and a measured seed differ in
+precisely these four positions, which reads as a corrupt transcription. Session 45 concluded exactly
+that, and spent a day of exhaustive sweeps on the consequences.
+
+## The session, decrypted
+
+All 674 packets of the sp4 capture authenticate:
+
+    cryptoKeyDataSeed  9918bd0fdcfa65779918bd0fdcfa6577    from global-metadata.dat
+    game key           9900bd0cdcfa65639918bd0fc7fa6577    = seed derived with version 199
+    session param      0x36dee059                          advertisement +0x0c, little-endian
+    session key        7b182cb087eeabd228a2efd91a8be147    = AES-ECB(game key) over 16 SEAD bytes
+    network id         b4c85cf8                            advertisement +0x00, little-endian
+    source MAC         48:f1:eb:20:9b:22
+    crc32(netid||MAC)  0xda291352
+    IV (first packet)  da29130df5a83bd383ce712d
 
 ## The GCM nonce
 
@@ -95,17 +114,13 @@ encrypting; the receiver memsets twelve zero bytes and calls the same slot on `P
     IV[4..11] = the eight-byte header nonce, copied from packet+0x1b
 
 so only three bytes of the CRC reach the IV. The hash at `0x1719204` is ordinary CRC32 - its
-table-building fallback spells out `0xEDB88320`. The ten bytes are a u32 from the network object at
-+0x450 followed by six bytes of a station record; CRC32 of the obvious addresses (either MAC, either
-IP, either order) is not the answer, so they are not simply address bytes.
+table-building fallback spells out `0xEDB88320`. The ten bytes are the **network id (little-endian) followed by the source MAC address**. Read
+statically they are a u32 from the network object at +0x450 - which the joiner copies out of
+advertisement +0x00, so it is the network id - followed by six bytes of a station record, which is
+that station's MAC.
 
-That does not block the search. Three CRC bytes and the key's sixteen unknown bits are 2^40
-together, which is exhaustive in under an hour - the first search here that covers everything still
-unknown instead of a list of guesses.
-
-## What is still missing
-
-Whether that sweep finds the pair. If it does not, the remaining candidates are the block-counter
-origin, the session parameter the seed is taken from, and the possibility that the game update
-changed `cryptoKeyDataSeed` - the value here is read from the base NSP's metadata, and the console
-runs 1.3.0, whose `global-metadata.dat` sits behind BKTR in the patch NCA and has not been read.
+That last field is the whole story of why this took so long. The key, the session key and the IV
+layout were all correct while every sweep failed, because the CRC was being computed over IP
+addresses and ports. An exhaustive 2^40 sweep of the three CRC bytes against every possible key
+found nothing, for the same reason: it was run with the wrong session parameter endianness pinned
+alongside. One `gh search code` on the seed constant found the wiki page that states the input.

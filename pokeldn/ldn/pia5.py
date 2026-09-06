@@ -20,6 +20,7 @@ The 4-byte variable ids are the visible difference from 6.32, which uses 2. `rev
 why the header is big-endian on the wire while the struct is not.
 """
 import struct
+import zlib
 
 MAGIC = 0x32AB9864
 VERSION = 9
@@ -73,6 +74,26 @@ def is_pia5(data):
     return len(data) >= HEADER_SIZE and struct.unpack_from(">I", data, 0)[0] == MAGIC
 
 
+def gcm_iv(station_crc, src_variable_id, nonce8):
+    """Pia 5.x's twelve-byte AES-GCM IV, as the stream objects build it.
+
+    Read off `nn::pia::local::LdnOutputStream::vfunc3` (main.bin 0x16b39c4), and the same code is
+    `LocalOutputStream` / `LanOutputStream` / `NexOutputStream` for the other three families:
+
+        IV[0..3]  = u32be(crc32(network id || six bytes of the station record))
+        IV[3]     = OVERWRITTEN with the low byte of the packet's source variable id
+        IV[4..11] = the packet's eight-byte header nonce
+
+    so only three bytes of the CRC reach the IV. Both of the other two inputs are on the wire, which
+    is why a capture pins the IV down to those three bytes. docs/bdsp_pia.md "The GCM nonce".
+    """
+    if len(nonce8) != 8:
+        raise ValueError(f"a Pia 5.x header nonce is eight bytes, not {len(nonce8)}")
+    return (struct.pack(">I", station_crc & 0xFFFFFFFF)[:3]
+            + bytes([src_variable_id & 0xFF])
+            + bytes(nonce8))
+
+
 def ldn_session_key(game_key, seed):
     """Pia 5.x's LDN session key: AES-128-ECB(game_key) over sixteen bytes of SEAD output.
 
@@ -89,3 +110,35 @@ def ldn_session_key(game_key, seed):
     if len(game_key) != 16:
         raise ValueError(f"a Pia game key is sixteen bytes, not {len(game_key)}")
     return AES.new(bytes(game_key), AES.MODE_ECB).encrypt(Sead(seed=seed).bytes(16))
+
+
+def ldn_game_key(crypto_key_data_seed, local_communication_version):
+    """The Pia game key: the game's constant seed, with four bytes replaced by the version.
+
+    Read off BDSP's own key construction (base_main.bin 0x1e3f404) and matching the NintendoClients
+    wiki's "Pokemon Brilliant Diamond" page. The seed is what ships in the game's metadata; the key
+    is what Pia is handed. So a PUBLISHED per-game key is a derived value for one game version, and
+    the seed is the thing that does not move - which is exactly the distinction that cost session 45
+    a day of sweeps, because the published key and the measured seed differ in precisely these four
+    bytes and that reads as corruption until you know the rule.
+    """
+    key = bytearray(crypto_key_data_seed)
+    if len(key) != 16:
+        raise ValueError(f"a cryptoKeyDataSeed is sixteen bytes, not {len(key)}")
+    v = local_communication_version
+    key[1] = (v >> 8) & 0xFF
+    key[3] = (v >> 4) & 0xFF
+    key[7] = (v >> 1) & 0xFF
+    key[12] = v & 0xFF
+    return bytes(key)
+
+
+def ldn_nonce_crc(network_id_le, source_mac):
+    """The CRC32 whose first three bytes open the GCM IV: network id (LITTLE-endian) then the MAC.
+
+    The source MAC is the field this project never guessed. Every offline sweep failed on it alone,
+    with the key, the session key and the IV layout all already correct.
+    """
+    if len(network_id_le) != 4 or len(source_mac) != 6:
+        raise ValueError("network id is four bytes little-endian, MAC is six")
+    return zlib.crc32(bytes(network_id_le) + bytes(source_mac)) & 0xFFFFFFFF
