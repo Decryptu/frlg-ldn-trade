@@ -19,26 +19,48 @@ them is called, that call is the measurement.
 WORKERS = {
     0x0800053C: 'SetMainCallback2',                         # ShowBattleRecords +1
     0x080006EC: 'SetVBlankCallback',                        # ShowBattleRecords
-    0x08002BB0: 'AddTextPrinterParameterized',              # DoPicboxCancel +2
-    0x08003C4C: 'AddWindow',                                # DrawElevatorCurrentFloorWindow
-    0x08003DA4: 'RemoveWindow',                             # CloseElevatorCurrentFloorWindow
-    0x08003E88: 'CopyWindowToVram',                         # DrawElevatorCurrentFloorWindow +1
-    0x08003F08: 'PutWindowTilemap',                         # DrawElevatorCurrentFloorWindow
+    0x08002BB0: 'AddTextPrinterParameterized',              # DoPicboxCancel +3
+    0x08003C4C: 'AddWindow',                                # DisplayBerryPowderVendorMenu +2
+    0x08003DA4: 'RemoveWindow',                             # CloseElevatorCurrentFloorWindow +1
+    0x08003E88: 'CopyWindowToVram',                         # DrawElevatorCurrentFloorWindow +2
+    0x08003F08: 'PutWindowTilemap',                         # DisplayBerryPowderVendorMenu +1
+    0x08004020: 'ClearWindowTilemap',                       # RemoveBerryPowderVendorMenu
+    0x080043C4: 'FillWindowPixelBuffer',                    # DisplayBerryPowderVendorMenu
     0x08009854: 'GetStringWidth',                           # DrawElevatorCurrentFloorWindow +1
     0x08009C80: 'CreateTextCursorSprite',                   # BrailleCursorToggle
     0x08009D18: 'DestroyTextCursorSprite',                  # BrailleCursorToggle
+    0x0800A90C: 'CreateSprite',                             # OpenMuseumFossilPic
+    0x0800C0A0: 'LoadSpriteSheets',                         # OpenMuseumFossilPic
     0x0800C7E0: 'svc_SetStarter',                           # ScrCmd_givemon
     0x0800C838: 'StringGet_Nickname',                       # BufferMonNickname +1
     0x0800C988: 'ConvertIntToDecimalStringN',               # ScrCmd_buffernumberstring
     0x080414FC: 'CreateMonWithGenderNatureLetter',          # StartMarowakBattle
+    0x08042060: 'SetMonMoveSlot',                           # MoveDeleterForgetMove
     0x08042E1C: 'GetMonGender',                             # ChangePokemonNickname
+    0x08043440: 'GetBoxMonData3',                           # GetNumLevelsGainedFromDaycare +2
+    0x080443C0: 'GetMonsStateToDoubles',                    # HasEnoughMonsForDoubleBattle
+    0x08044718: 'CalculatePPWithBonus',                     # HealPlayerParty
+    0x08044760: 'RemoveMonPPBonus',                         # MoveDeleterForgetMove
     0x08046D78: 'GetTrainerEncounterMusicId',               # PlayTrainerEncounterMusic
     0x08046DF4: 'AdjustFriendship',                         # DaisyMassageServices
     0x0804713C: 'GetMonEVCount',                            # AreLeadMonEVsMaxedOut
     0x0804716C: 'CheckPartyPokerus',                        # IsPokerusInParty
     0x08048A3C: 'CalcByteArraySum',                         # MEScrCmd_checksum
+    0x08048BC8: 'DayCare_GetBoxMonNickname',                # GetSelectedMonNicknameAndSpecies
+    0x08048BE8: 'CountPokemonInDaycare',                    # GetDaycarePokemonCount +1
+    0x08048CB4: 'StorePokemonInDaycare',                    # PutMonInRoute5Daycare
+    0x08048D44: 'StorePokemonInEmptyDaycareSlot',           # StoreSelectedPokemonInDaycare
+    0x08048EE8: 'TakeSelectedPokemonMonFromDaycareShiftSlots',# TakePokemonFromDaycare
+    0x08048F9C: 'GetNumLevelsGainedForDaycareMon',          # GetNumLevelsGainedForRoute5DaycareMon +1
+    0x08048FD0: 'GetDaycareCostForSelectedMon',             # GetCostToWithdrawRoute5DaycareMon
+    0x08049008: 'GetDaycareCostForMon',                     # GetDaycareCost
+    0x080498BC: '_GiveEggFromDaycare',                      # GiveEggFromDaycare
+    0x08049BE4: 'IsEggPending',                             # GetDaycareState
+    0x08049BF4: '_GetDaycareMonNicknames',                  # GetDaycareMonNicknames
+    0x0804A548: 'AddHatchedMonToParty',                     # ScriptHatchMon
     0x0804FD48: 'SavePlayerBag',                            # CleanupLinkRoomState
     0x080587D8: 'GetGameStat',                              # ScrCmd_comparestat +2
+    0x08058814: 'SetGameStat',                              # BattleTowerUtil
     0x080589EC: 'SetObjEventTemplateCoords',                # ScrCmd_setobjectxyperm
     0x08058A28: 'SetObjEventTemplateMovementType',          # ScrCmd_setobjectmovementtype
     0x08058D30: 'SetDynamicWarpWithCoords',                 # ScrCmd_setdynamicwarp
@@ -54,6 +76,7 @@ WORKERS = {
     0x0805985C: 'Overworld_ChangeMusicTo',                  # ForcePlayerOntoBike +1
     0x0805989C: 'TryFadeOutOldMapMusic',                    # DoCableClubWarp
     0x080598E8: 'Overworld_FadeOutMapMusic',                # Script_FadeOutMapMusic
+    0x08059B30: 'IsMapTypeIndoors',                         # SetHelpContextForMap
     0x08059D40: 'IsUpdateLinkStateCBActive',                # ScrCmd_lock +1
     0x0805B87C: 'QueueExitLinkRoomKey',                     # ExitLinkRoom
     0x0805C878: 'MapGridGetMetatileBehaviorAt',             # SetCableClubWarp
@@ -67,7 +90,7 @@ WORKERS = {
     0x0805F6EC: 'SetPlayerAvatarTransitionFlags',           # ForcePlayerOntoBike +1
     0x0805FE38: 'PlayerGetDestCoords',                      # ScrCmd_warphole
     0x0805FFE4: 'GetPlayerMovementDirection',               # SetCableClubWarp
-    0x0806004C: 'TestPlayerAvatarFlags',                    # GetPlayerAvatarBike
+    0x0806004C: 'TestPlayerAvatarFlags',                    # GetPlayerAvatarBike +1
     0x08060068: 'GetPlayerAvatarObjectId',                  # RemoveCameraObject
     0x080613E4: 'SavePlayerFacingDirectionForTeleport',     # ScrCmd_warpspinenter
     0x08061860: 'GetObjectEventIdByLocalIdAndMap',          # ScrCmd_release +1
@@ -84,13 +107,14 @@ WORKERS = {
     0x08063794: 'TryOverrideObjectEventTemplateCoords',     # ScrCmd_copyobjectxytoperm
     0x08066F10: 'SetTrainerMovementType',                   # SetUpTrainerMovement
     0x08066F5C: 'GetTrainerFacingDirectionMovementType',    # SetUpTrainerMovement
+    0x0806761C: 'ObjectEventClearHeldMovementIfActive',     # Script_ClearHeldMovement
     0x0806767C: 'ObjectEventClearHeldMovementIfFinished',   # ScrCmd_release +1
-    0x08067BC8: 'ObjectEventFaceOppositeDirection',         # ScrCmd_faceplayer
+    0x08067BC8: 'ObjectEventFaceOppositeDirection',         # ScrCmd_faceplayer +1
     0x0806C364: 'UnfreezeObjectEvents',                     # ScrCmd_release +1
     0x0806C960: 'TurnVirtualObject',                        # ScrCmd_turnvobject
     0x0806CEA4: 'FreezeObjects_WaitForPlayer',              # ScrCmd_lock +1
     0x0806CF5C: 'FreezeObjects_WaitForPlayerAndSelected',   # ScrCmd_lock
-    0x0806D230: 'LockPlayerFieldControls',                  # DoCableClubWarp +5
+    0x0806D230: 'LockPlayerFieldControls',                  # ChoosePartyMon +6
     0x0806D310: 'MsgSetSignpost',                           # ScrCmd_signmsg
     0x0806D31C: 'MsgSetNotSignpost',                        # ScrCmd_normalmsg
     0x0806D424: 'ScriptContext_Enable',                     # ReturnToListMenu
@@ -102,18 +126,18 @@ WORKERS = {
     0x08071D9C: 'IsFlagOrVarStoredInQuestLog',              # GetVarPointer
     0x08071E34: 'GetFlagAddr',                              # FlagClear +2
     0x08072144: 'ActivatePerStepCallback',                  # ScrCmd_setstepcallback
-    0x08073C64: 'LoadPalette',                              # SetDeoxysTrianglePalette
-    0x08073E00: 'BeginNormalPaletteFade',                   # HallOfFamePCBeginFade
+    0x08073C64: 'LoadPalette',                              # OpenMuseumFossilPic +1
+    0x08073E00: 'BeginNormalPaletteFade',                   # ChoosePartyMon +1
     0x080752EC: 'PlayNewMapMusic',                          # PlayTrainerEncounterMusic +1
     0x080754D8: 'PlayFanfare',                              # ScrCmd_playfanfare
     0x080755DC: 'FadeOutBGMTemporarily',                    # ScrCmd_fadeoutbgm
     0x0807561C: 'FadeInBGM',                                # ScrCmd_fadeinbgm
     0x0807579C: 'PlayCry_Script',                           # ScrCmd_playmoncry +1
     0x08075B44: 'PlaySE',                                   # AnimateElevator +4
-    0x0807AC94: 'CreateTask',                               # AnimateElevator +8
+    0x0807AC94: 'CreateTask',                               # AnimateElevator +12
     0x0807AD80: 'DestroyTask',                              # ListMenu
     0x0807AECC: 'FuncIsActiveTask',                         # AnimatePcTurnOn
-    0x0807AF04: 'FindTaskIdByFunc',                         # ReturnToListMenu
+    0x0807AF04: 'FindTaskIdByFunc',                         # CloseMuseumFossilPic +2
     0x0807E068: 'FadeScreen',                               # ScrCmd_fadescreen +1
     0x0807E950: 'SetSavedWeather',                          # ScrCmd_setweather
     0x0807E990: 'SetSavedWeatherFromCurrMapHeader',         # ScrCmd_resetweather
@@ -149,7 +173,7 @@ WORKERS = {
     0x0809B920: 'SpeciesToMailSpecies',                     # UpdateTrainerCardPhotoIcons
     0x0809D7AC: 'GetBagItemQuantity',                       # CheckBagHasItem +2
     0x0809D7C8: 'SetBagItemQuantity',                       # RemoveBagItem
-    0x0809D89C: 'CopyItemName',                             # ScrCmd_bufferitemname
+    0x0809D89C: 'CopyItemName',                             # GiveBattleTowerPrize +1
     0x0809D8B8: 'BagPocketGetFirstEmptySlot',               # CheckBagHasSpace
     0x0809DC4C: 'GetPocketByItemId',                        # ScrCmd_checkitemtype
     0x0809DD60: 'CheckPCHasItem',                           # ScrCmd_checkpcitem
@@ -157,15 +181,23 @@ WORKERS = {
     0x0809FB50: 'CreatePokemartMenu',                       # ScrCmd_pokemart
     0x0809FB8C: 'CreateDecorationShop1Menu',                # ScrCmd_pokemartdecoration
     0x0809FBA8: 'CreateDecorationShop2Menu',                # ScrCmd_pokemartdecoration2
+    0x080A02D0: 'ItemIdToBerryType',                        # DoesPartyHaveEnigmaBerry
+    0x080A0320: 'GetBerryNameByBerryType',                  # DoesPartyHaveEnigmaBerry
     0x080A03A0: 'ScriptMenu_Multichoice',                   # ScrCmd_multichoice
     0x080A03F0: 'ScriptMenu_MultichoiceWithDefault',        # ScrCmd_multichoicedefault
+    0x080A0604: 'CreateMCMenuInputHandlerTask',             # DrawSeagallopDestinationMenu
     0x080A07D8: 'ScriptMenu_YesNo',                         # ScrCmd_yesnobox
     0x080A08B4: 'ScriptMenu_MultichoiceGrid',               # ScrCmd_multichoicegrid
     0x080A0CDC: 'ScriptMenu_ShowPokemonPic',                # ScrCmd_showmonpic
     0x080A0E10: 'PicboxCancel',                             # DoPicboxCancel
+    0x080A1040: 'CreateWindowFromRect',                     # DrawSeagallopDestinationMenu +1
     0x080A39C4: 'DrawMoneyBox',                             # ScrCmd_showmoneybox
     0x080A3A40: 'HideMoneyBox',                             # ScrCmd_hidemoneybox
+    0x080A3C28: 'CheckPartyMonHasHeldItem',                 # DoesPartyHaveEnigmaBerry
     0x080A3CA8: 'CreateScriptedWildMon',                    # ScrCmd_setwildbattle
+    0x080A42D0: 'GetMonSizeRecordInfo',                     # GetHeracrossSizeRecordInfo +1
+    0x080A48A8: 'SetSafariZoneFlag',                        # EnterSafariMode
+    0x080C3590: 'ShiftMoveSlot',                            # MoveDeleterForgetMove
     0x080C3A38: 'InitRegionMapWithExitCB',                  # ShowTownMap
     0x080CDF40: 'GetProfOaksRatingMessageByCount',          # GetProfOaksRatingMessage
     0x080CEC40: 'SampleResortGorgeousMon',                  # SampleResortGorgeousMonAndReward
@@ -181,25 +213,56 @@ WORKERS = {
     0x080D41DC: 'PrintCoinsString',                         # ScrCmd_updatecoinsbox
     0x080D4238: 'ShowCoinsWindow',                          # ScrCmd_showcoinsbox
     0x080D42D4: 'HideCoinsWindow',                          # ScrCmd_hidecoinsbox
+    0x080DDE3C: 'TrySavingData',                            # SaveBattleTowerProgress
     0x080DE3E8: 'SetMysteryEventScriptStatus',              # ScrCmd_setmysteryeventstatus
+    0x080E9538: 'ResetBattleTowerStreak',                   # BattleTowerUtil
+    0x080EA28C: 'BufferBattleTowerTrainerMessage',          # BufferEReaderTrainerGreeting +1
+    0x080EA9E0: 'SetPlayerBattleTowerRecord',               # SaveBattleTowerProgress
+    0x080EAC2C: 'PopulateBravoTrainerBattleTowerLostData',  # SaveBattleTowerProgress
+    0x080EAC88: 'GetCurrentBattleTowerWinStreak',           # BattleTowerUtil
     0x080EAF60: 'CopyEReaderTrainerName5',                  # BufferEReaderTrainerName
+    0x080EB024: 'ClearEReaderTrainer',                      # ValidateEReaderTrainer
+    0x080FA308: 'ScheduleBgCopyTilemapToVram',              # DrawSeagallopDestinationMenu +1
     0x080FAA00: 'LoadStdWindowFrameGfx',                    # ScrCmd_braillemessage
     0x080FAA48: 'DrawDialogueFrame',                        # ScrCmd_braillemessage
+    0x080FAA80: 'DrawStdWindowFrame',                       # ShowDaycareLevelMenu
+    0x080FB2B4: 'SetStdWindowBorderStyle',                  # DrawSeagallopDestinationMenu +1
     0x080FB4A0: 'GetStartMenuWindowId',                     # ScrCmd_loadhelp
     0x080FB4D8: 'DrawHelpMessageWindowWithText',            # ScrCmd_loadhelp
     0x080FB4FC: 'DestroyHelpMessageWindow_',                # ScrCmd_unloadhelp
+    0x080FB53C: 'GetFontAttribute',                         # DrawSeagallopDestinationMenu
+    0x080FB624: 'GetMenuCursorDimensionByFont',             # DrawSeagallopDestinationMenu
     0x080FC120: 'MapPreview_SetFlag',                       # ScrCmd_setworldmapflag
+    0x0810AA9C: 'ListMenuInit',                             # ShowDaycareLevelMenu
+    0x0810F1E4: 'IsCurMapPokeCenter',                       # SetHelpContextForMap
     0x08112D94: 'DrawStdFrameWithCustomTileAndPalette',     # DrawElevatorCurrentFloorWindow
-    0x08112F84: 'ClearStdWindowAndFrameToTransparent',      # CloseElevatorCurrentFloorWindow
-    0x081154B4: 'QL_AvoidDisplay',                          # DrawElevatorCurrentFloorWindow +3
+    0x08112F84: 'ClearStdWindowAndFrameToTransparent',      # CloseElevatorCurrentFloorWindow +1
+    0x081132B0: 'Menu_InitCursor',                          # DrawSeagallopDestinationMenu
+    0x08113928: 'SetWindowTemplateFields',                  # DisplayBerryPowderVendorMenu
+    0x081154B4: 'QL_AvoidDisplay',                          # DisplayBerryPowderVendorMenu +6
     0x081167A0: 'QL_GetPlaybackState',                      # ScrCmd_waitbuttonpress
     0x08116834: 'QuestLogGetFlagOrVarPtr',                  # GetVarPointer
     0x081168A4: 'QuestLogSetFlagOrVar',                     # GetVarPointer
     0x08117044: 'SetQuestLogEvent',                         # SetUsedPkmnCenterQuestLogEvent
     0x0811923C: 'QuestLog_RecordEnteredMap',                # ScrCmd_setworldmapflag
-    0x0812EF90: 'SetHelpContext',                           # ForcePlayerToStartSurfing
+    0x08123878: 'GetCursorSelectionMonId',                  # GetSelectedMonNicknameAndSpecies +2
+    0x0812404C: 'GetMonNickname',                           # BufferMoveDeleterNicknameAndMove
+    0x0812C0F4: 'ChooseMonForDaycare',                      # ChooseSendDaycareMon
+    0x0812EF90: 'SetHelpContext',                           # ForcePlayerToStartSurfing +1
+    0x0812EFFC: 'IsInMartMap',                              # SetHelpContextForMap
+    0x0812F00C: 'IsInGymMap',                               # SetHelpContextForMap
+    0x0812F064: 'IsInDungeonMap',                           # SetHelpContextForMap
+    0x0812F258: 'HelpSystem_EnableToggleWithRButton',       # HelpSystem_Enable +1
+    0x08138524: 'ShowSelectMovePokemonSummaryScreen',       # SelectMoveDeleterMove
+    0x0813C924: 'SetPokemonSummaryScreenMode',              # SelectMoveDeleterMove
     0x08143604: 'PlaySlotMachine',                          # ScrCmd_playslotmachine
-    0x0815392C: 'LoadStdWindowGfx',                         # DrawElevatorCurrentFloorWindow
+    0x0815392C: 'LoadStdWindowGfx',                         # DisplayBerryPowderVendorMenu +1
+    0x081627D4: 'DecryptBerryPowder',                       # Script_HasEnoughBerryPowder +1
+    0x081627EC: 'SetBerryPowder',                           # Script_TakeBerryPowder
+    0x08162820: 'HasEnoughBerryPowder',                     # Script_TakeBerryPowder
+    0x08162938: 'GetBerryPowder',                           # DisplayBerryPowderVendorMenu +1
+    0x08162954: 'PrintBerryPowderAmount',                   # PrintPlayerBerryPowderAmount
+    0x081629AC: 'DrawPlayerPowderAmount',                   # DisplayBerryPowderVendorMenu
 }
 
 # Where the decomp defines each one, and how many of the table's bodies reached
@@ -207,26 +270,48 @@ WORKERS = {
 SOURCES = {
     'SetMainCallback2': ('main.c', 4, 2),
     'SetVBlankCallback': ('main.c', 12, 1),
-    'AddTextPrinterParameterized': ('text_printer.c', 2, 3),
-    'AddWindow': ('window.c', 2, 1),
-    'RemoveWindow': ('window.c', 3, 1),
-    'CopyWindowToVram': ('window.c', 5, 2),
-    'PutWindowTilemap': ('window.c', 6, 1),
+    'AddTextPrinterParameterized': ('text_printer.c', 2, 4),
+    'AddWindow': ('window.c', 2, 3),
+    'RemoveWindow': ('window.c', 3, 2),
+    'CopyWindowToVram': ('window.c', 5, 3),
+    'PutWindowTilemap': ('window.c', 6, 2),
+    'ClearWindowTilemap': ('window.c', 8, 1),
+    'FillWindowPixelBuffer': ('window.c', 15, 1),
     'GetStringWidth': ('text.c', 15, 2),
     'CreateTextCursorSprite': ('text.c', 18, 1),
     'DestroyTextCursorSprite': ('text.c', 19, 1),
+    'CreateSprite': ('sprite.c', 8, 1),
+    'LoadSpriteSheets': ('sprite.c', 85, 1),
     'svc_SetStarter': ('sloopsvc.c', 22, 1),
     'StringGet_Nickname': ('string_util.c', 1, 2),
     'ConvertIntToDecimalStringN': ('string_util.c', 10, 1),
     'CreateMonWithGenderNatureLetter': ('pokemon.c', 7, 1),
+    'SetMonMoveSlot': ('pokemon.c', 23, 1),
     'GetMonGender': ('pokemon.c', 33, 1),
+    'GetBoxMonData3': ('pokemon.c', 42, 3),
+    'GetMonsStateToDoubles': ('pokemon.c', 50, 1),
+    'CalculatePPWithBonus': ('pokemon.c', 59, 1),
+    'RemoveMonPPBonus': ('pokemon.c', 60, 1),
     'GetTrainerEncounterMusicId': ('pokemon.c', 87, 1),
     'AdjustFriendship': ('pokemon.c', 89, 1),
     'GetMonEVCount': ('pokemon.c', 91, 1),
     'CheckPartyPokerus': ('pokemon.c', 93, 1),
     'CalcByteArraySum': ('util.c', 9, 1),
+    'DayCare_GetBoxMonNickname': ('daycare.c', 1, 1),
+    'CountPokemonInDaycare': ('daycare.c', 2, 2),
+    'StorePokemonInDaycare': ('daycare.c', 5, 1),
+    'StorePokemonInEmptyDaycareSlot': ('daycare.c', 6, 1),
+    'TakeSelectedPokemonMonFromDaycareShiftSlots': ('daycare.c', 11, 1),
+    'GetNumLevelsGainedForDaycareMon': ('daycare.c', 15, 2),
+    'GetDaycareCostForSelectedMon': ('daycare.c', 16, 1),
+    'GetDaycareCostForMon': ('daycare.c', 17, 1),
+    '_GiveEggFromDaycare': ('daycare.c', 37, 1),
+    'IsEggPending': ('daycare.c', 43, 1),
+    '_GetDaycareMonNicknames': ('daycare.c', 44, 1),
+    'AddHatchedMonToParty': ('daycare.c', 71, 1),
     'SavePlayerBag': ('load_save.c', 17, 1),
     'GetGameStat': ('overworld.c', 11, 3),
+    'SetGameStat': ('overworld.c', 12, 1),
     'SetObjEventTemplateCoords': ('overworld.c', 16, 1),
     'SetObjEventTemplateMovementType': ('overworld.c', 17, 1),
     'SetDynamicWarpWithCoords': ('overworld.c', 32, 1),
@@ -242,6 +327,7 @@ SOURCES = {
     'Overworld_ChangeMusicTo': ('overworld.c', 79, 2),
     'TryFadeOutOldMapMusic': ('overworld.c', 81, 1),
     'Overworld_FadeOutMapMusic': ('overworld.c', 83, 1),
+    'IsMapTypeIndoors': ('overworld.c', 95, 1),
     'IsUpdateLinkStateCBActive': ('overworld.c', 103, 2),
     'QueueExitLinkRoomKey': ('overworld.c', 196, 1),
     'MapGridGetMetatileBehaviorAt': ('fieldmap.c', 16, 1),
@@ -255,7 +341,7 @@ SOURCES = {
     'SetPlayerAvatarTransitionFlags': ('field_player_avatar.c', 45, 2),
     'PlayerGetDestCoords': ('field_player_avatar.c', 95, 1),
     'GetPlayerMovementDirection': ('field_player_avatar.c', 98, 1),
-    'TestPlayerAvatarFlags': ('field_player_avatar.c', 101, 1),
+    'TestPlayerAvatarFlags': ('field_player_avatar.c', 101, 2),
     'GetPlayerAvatarObjectId': ('field_player_avatar.c', 103, 1),
     'SavePlayerFacingDirectionForTeleport': ('field_player_avatar.c', 169, 1),
     'GetObjectEventIdByLocalIdAndMap': ('event_object_movement.c', 5, 2),
@@ -272,13 +358,14 @@ SOURCES = {
     'TryOverrideObjectEventTemplateCoords': ('event_object_movement.c', 98, 1),
     'SetTrainerMovementType': ('event_object_movement.c', 292, 1),
     'GetTrainerFacingDirectionMovementType': ('event_object_movement.c', 293, 1),
+    'ObjectEventClearHeldMovementIfActive': ('event_object_movement.c', 314, 1),
     'ObjectEventClearHeldMovementIfFinished': ('event_object_movement.c', 317, 2),
-    'ObjectEventFaceOppositeDirection': ('event_object_movement.c', 322, 1),
+    'ObjectEventFaceOppositeDirection': ('event_object_movement.c', 322, 2),
     'UnfreezeObjectEvents': ('event_object_movement.c', 718, 2),
     'TurnVirtualObject': ('event_object_movement.c', 746, 1),
     'FreezeObjects_WaitForPlayer': ('event_object_lock.c', 3, 2),
     'FreezeObjects_WaitForPlayerAndSelected': ('event_object_lock.c', 6, 1),
-    'LockPlayerFieldControls': ('script.c', 12, 6),
+    'LockPlayerFieldControls': ('script.c', 12, 7),
     'MsgSetSignpost': ('script.c', 27, 1),
     'MsgSetNotSignpost': ('script.c', 28, 1),
     'ScriptContext_Enable': ('script.c', 36, 1),
@@ -290,18 +377,18 @@ SOURCES = {
     'IsFlagOrVarStoredInQuestLog': ('event_data.c', 17, 1),
     'GetFlagAddr': ('event_data.c', 21, 3),
     'ActivatePerStepCallback': ('field_tasks.c', 3, 1),
-    'LoadPalette': ('palette.c', 1, 1),
-    'BeginNormalPaletteFade': ('palette.c', 7, 1),
+    'LoadPalette': ('palette.c', 1, 2),
+    'BeginNormalPaletteFade': ('palette.c', 7, 2),
     'PlayNewMapMusic': ('sound.c', 4, 2),
     'PlayFanfare': ('sound.c', 14, 1),
     'FadeOutBGMTemporarily': ('sound.c', 19, 1),
     'FadeInBGM': ('sound.c', 21, 1),
     'PlayCry_Script': ('sound.c', 28, 2),
     'PlaySE': ('sound.c', 38, 5),
-    'CreateTask': ('task.c', 1, 9),
+    'CreateTask': ('task.c', 1, 13),
     'DestroyTask': ('task.c', 3, 1),
     'FuncIsActiveTask': ('task.c', 9, 1),
-    'FindTaskIdByFunc': ('task.c', 10, 1),
+    'FindTaskIdByFunc': ('task.c', 10, 3),
     'FadeScreen': ('field_weather.c', 24, 2),
     'SetSavedWeather': ('field_weather_util.c', 0, 1),
     'SetSavedWeatherFromCurrMapHeader': ('field_weather_util.c', 2, 1),
@@ -337,7 +424,7 @@ SOURCES = {
     'SpeciesToMailSpecies': ('mail_data.c', 4, 1),
     'GetBagItemQuantity': ('item.c', 0, 3),
     'SetBagItemQuantity': ('item.c', 1, 1),
-    'CopyItemName': ('item.c', 7, 1),
+    'CopyItemName': ('item.c', 7, 2),
     'BagPocketGetFirstEmptySlot': ('item.c', 8, 1),
     'GetPocketByItemId': ('item.c', 15, 1),
     'CheckPCHasItem': ('item.c', 21, 1),
@@ -345,15 +432,23 @@ SOURCES = {
     'CreatePokemartMenu': ('shop.c', 57, 1),
     'CreateDecorationShop1Menu': ('shop.c', 58, 1),
     'CreateDecorationShop2Menu': ('shop.c', 59, 1),
+    'ItemIdToBerryType': ('berry.c', 6, 1),
+    'GetBerryNameByBerryType': ('berry.c', 8, 1),
     'ScriptMenu_Multichoice': ('script_menu.c', 2, 1),
     'ScriptMenu_MultichoiceWithDefault': ('script_menu.c', 3, 1),
+    'CreateMCMenuInputHandlerTask': ('script_menu.c', 6, 1),
     'ScriptMenu_YesNo': ('script_menu.c', 9, 1),
     'ScriptMenu_MultichoiceGrid': ('script_menu.c', 12, 1),
     'ScriptMenu_ShowPokemonPic': ('script_menu.c', 18, 1),
     'PicboxCancel': ('script_menu.c', 21, 1),
+    'CreateWindowFromRect': ('script_menu.c', 25, 2),
     'DrawMoneyBox': ('money.c', 11, 1),
     'HideMoneyBox': ('money.c', 12, 1),
+    'CheckPartyMonHasHeldItem': ('script_pokemon_util.c', 4, 1),
     'CreateScriptedWildMon': ('script_pokemon_util.c', 6, 1),
+    'GetMonSizeRecordInfo': ('pokemon_size_record.c', 5, 2),
+    'SetSafariZoneFlag': ('safari_zone.c', 1, 1),
+    'ShiftMoveSlot': ('party_menu_specials.c', 6, 1),
     'InitRegionMapWithExitCB': ('region_map.c', 3, 1),
     'GetProfOaksRatingMessageByCount': ('prof_pc.c', 1, 1),
     'SampleResortGorgeousMon': ('field_specials.c', 39, 1),
@@ -369,25 +464,56 @@ SOURCES = {
     'PrintCoinsString': ('coins.c', 6, 1),
     'ShowCoinsWindow': ('coins.c', 7, 1),
     'HideCoinsWindow': ('coins.c', 8, 1),
+    'TrySavingData': ('save.c', 22, 1),
     'SetMysteryEventScriptStatus': ('mystery_event_script.c', 7, 1),
+    'ResetBattleTowerStreak': ('battle_tower.c', 1, 1),
+    'BufferBattleTowerTrainerMessage': ('battle_tower.c', 15, 2),
+    'SetPlayerBattleTowerRecord': ('battle_tower.c', 24, 1),
+    'PopulateBravoTrainerBattleTowerLostData': ('battle_tower.c', 30, 1),
+    'GetCurrentBattleTowerWinStreak': ('battle_tower.c', 31, 1),
     'CopyEReaderTrainerName5': ('battle_tower.c', 38, 1),
+    'ClearEReaderTrainer': ('battle_tower.c', 41, 1),
+    'ScheduleBgCopyTilemapToVram': ('new_menu_helpers.c', 1, 2),
     'LoadStdWindowFrameGfx': ('new_menu_helpers.c', 23, 1),
     'DrawDialogueFrame': ('new_menu_helpers.c', 24, 1),
+    'DrawStdWindowFrame': ('new_menu_helpers.c', 25, 1),
+    'SetStdWindowBorderStyle': ('new_menu_helpers.c', 33, 2),
     'GetStartMenuWindowId': ('new_menu_helpers.c', 44, 1),
     'DrawHelpMessageWindowWithText': ('new_menu_helpers.c', 48, 1),
     'DestroyHelpMessageWindow_': ('new_menu_helpers.c', 49, 1),
+    'GetFontAttribute': ('new_menu_helpers.c', 52, 1),
+    'GetMenuCursorDimensionByFont': ('new_menu_helpers.c', 53, 1),
     'MapPreview_SetFlag': ('map_preview_screen.c', 13, 1),
+    'ListMenuInit': ('list_menu.c', 2, 1),
+    'IsCurMapPokeCenter': ('save_location.c', 1, 1),
     'DrawStdFrameWithCustomTileAndPalette': ('menu.c', 5, 1),
-    'ClearStdWindowAndFrameToTransparent': ('menu.c', 8, 1),
-    'QL_AvoidDisplay': ('quest_log.c', 42, 4),
+    'ClearStdWindowAndFrameToTransparent': ('menu.c', 8, 2),
+    'Menu_InitCursor': ('menu.c', 17, 1),
+    'SetWindowTemplateFields': ('menu.c', 32, 1),
+    'QL_AvoidDisplay': ('quest_log.c', 42, 7),
     'QL_GetPlaybackState': ('quest_log.c', 82, 1),
     'QuestLogGetFlagOrVarPtr': ('quest_log.c', 85, 1),
     'QuestLogSetFlagOrVar': ('quest_log.c', 86, 1),
     'SetQuestLogEvent': ('quest_log_events.c', 0, 1),
     'QuestLog_RecordEnteredMap': ('quest_log_events.c', 113, 1),
-    'SetHelpContext': ('help_system.c', 1, 1),
+    'GetCursorSelectionMonId': ('party_menu.c', 33, 3),
+    'GetMonNickname': ('party_menu.c', 48, 1),
+    'ChooseMonForDaycare': ('party_menu.c', 353, 1),
+    'SetHelpContext': ('help_system.c', 1, 2),
+    'IsInMartMap': ('help_system.c', 5, 1),
+    'IsInGymMap': ('help_system.c', 6, 1),
+    'IsInDungeonMap': ('help_system.c', 8, 1),
+    'HelpSystem_EnableToggleWithRButton': ('help_system.c', 15, 2),
+    'ShowSelectMovePokemonSummaryScreen': ('pokemon_summary_screen.c', 1, 1),
+    'SetPokemonSummaryScreenMode': ('pokemon_summary_screen.c', 69, 1),
     'PlaySlotMachine': ('slot_machine.c', 0, 1),
-    'LoadStdWindowGfx': ('text_window.c', 10, 1),
+    'LoadStdWindowGfx': ('text_window.c', 10, 2),
+    'DecryptBerryPowder': ('berry_powder.c', 0, 2),
+    'SetBerryPowder': ('berry_powder.c', 1, 1),
+    'HasEnoughBerryPowder': ('berry_powder.c', 3, 1),
+    'GetBerryPowder': ('berry_powder.c', 8, 2),
+    'PrintBerryPowderAmount': ('berry_powder.c', 9, 1),
+    'DrawPlayerPowderAmount': ('berry_powder.c', 10, 1),
 }
 
 WORKER_ADDRESSES = {name: address for address, name in WORKERS.items()}
