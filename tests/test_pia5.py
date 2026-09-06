@@ -55,3 +55,26 @@ def test_rejects_non_pia_and_short():
         PiaHeader5.parse(REAL[:8])
     with pytest.raises(ValueError):
         PiaHeader5.parse(b"\x00" * 32)
+
+
+def test_the_message_header_is_byte_exact_against_the_console():
+    """The 16 bytes in front of the console's own update session, off the sp4 capture.
+
+    The presence byte is 0x7F and not 0x0F - the four defined bits are all this header carries, but
+    the console sets three more that name nothing. Emitting 0x0F was the one byte our send path had
+    wrong; everything after it already matched.
+    """
+    from pokeldn.ldn.pia5 import build_message
+    real = bytes.fromhex("7f110079240000000000000000000000")
+    built = build_message(b"\0" * 121, protocol=36, port=0, message_flags=0x11, destination=0)
+    assert built[:16] == real
+    assert len(built) == 16 + 121 + 3            # padded up to a multiple of four
+
+
+def test_an_inherited_message_still_opens_with_its_own_presence_byte():
+    from pokeldn.ldn.pia5 import build_message, parse_messages
+    first = build_message(b"\x01\x02\x03\x04", protocol=36, message_flags=0x11, destination=0)
+    second = build_message(b"\x05\x06\x07\x08", protocol=0, inherit=True)
+    got = parse_messages(first + second)
+    assert [m.protocol for m in got] == [36, 36]         # the second inherits the first's
+    assert [m.message_flags for m in got] == [0x11, 0x11]

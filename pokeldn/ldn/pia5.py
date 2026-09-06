@@ -230,18 +230,25 @@ def pad_payload(plaintext):
     return bytes(plaintext) + b"\xff" * (-len(plaintext) % 16)
 
 
+ALL_FIELDS_PRESENT = 0x7F         # what the console writes; only bits 1/2/4/8 name a field
+
+
 def build_message(payload, protocol, port=0, message_flags=0, destination=0, inherit=False):
     """One Pia 5.27-6.30 message, padded to four bytes.
 
     `inherit=True` emits only the payload size, leaving protocol, port, destination and the message
     flags to be taken from the previous message - which is how the console packs a second message
     into a packet.
+
+    The presence byte is 0x7F, not the 0x0F the four defined bits would suggest: the console's own
+    update session reads `7f 11 0079 24 000000 00*8` and carries exactly those four fields, so bits
+    0x10/0x20/0x40 add nothing to the header and are simply set. Emit what the console emits.
     """
     payload = bytes(payload)
     if inherit:
         out = bytes([0x02]) + struct.pack(">H", len(payload))
     else:
-        out = (bytes([0x0F, message_flags & 0xFF]) + struct.pack(">H", len(payload))
+        out = (bytes([ALL_FIELDS_PRESENT, message_flags & 0xFF]) + struct.pack(">H", len(payload))
                + bytes([protocol & 0xFF]) + (port & 0xFFFFFF).to_bytes(3, "big")
                + struct.pack(">Q", destination))
     out += payload

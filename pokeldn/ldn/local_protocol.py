@@ -23,6 +23,14 @@ DESTROY_NETWORK = 0x12
 START_HOST_MIGRATION = 0x13
 UPDATE_SESSION_ACK = 0x21
 
+# What the Pia message around ANY of these carries. LocalProtocol has exactly one send path
+# (main.bin 0x016af22c) and all four message types reach it with the same options, so an ack is
+# framed exactly like the update session it answers - and the captured update session reads
+# `7f 11 0079 24 000000 0000000000000000` on the wire. 0x11 is "destination is a bitmap" (0x01)
+# plus "may not be bundled" (0x10); the bitmap is `1 << station_index`, and 0 means broadcast.
+MESSAGE_FLAGS = 0x11
+BROADCAST = 0                     # the destination bitmap the console itself sends
+
 HEADER_SIZE = 12                  # the local message header
 UPDATE_SESSION_FIXED = 0x30       # before the node list
 NODE_SIZE = 9
@@ -100,6 +108,11 @@ def build_ack(sequence_id):
 
     The host repeats its update session until every station acknowledges it, so sending this and
     watching the rebroadcast stop is a pass/fail that needs nothing on the console's screen.
+
+    Read off the console's own serializer (main.bin 0x016bc0f4, built at 0x016bc0c8): version 1,
+    the type byte, then the header's payload-size field - which the constructor leaves at ZERO for
+    an ack, `str w8, [x0, #0x14]` with w8 = 0x14 writing the 20-byte total and clearing the size
+    halfword at +0x16. An update session sets that field; an ack does not.
     """
     return (struct.pack("<BBH", 1, UPDATE_SESSION_ACK, 0) + b"\0" * 6 + b"\0" * 2
             + struct.pack("<I", sequence_id) + b"\0" * 4)

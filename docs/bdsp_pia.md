@@ -151,6 +151,59 @@ builds - which is the last thing that can be checked without spending a hardware
 assemble one; `decrypt_payload` returns `None` rather than raising on a bad tag, because sweeping
 candidates against it is a normal thing to do.
 
+## The ack, read off the console
+
+The console is waiting for one 20-byte message. Every field of it, and of the Pia message around it,
+is now read off BDSP's own code rather than guessed - `main.bin` addresses throughout.
+
+**The 20 bytes.** `LocalAckMessage::Serialize` at `0x016bc0f4` writes `1` at offset 0, the message
+type at 1, the object's payload-size halfword at 2, six zero bytes at 4, then the sequence id at
+0x0C and four zero bytes at 0x10. The constructor at `0x016bc0c8` is what settles the size field:
+it does `mov w8, #0x14; str w8, [x0, #0x14]`, a WORD store that writes the 20-byte total into the
+halfword at +0x14 and **zeroes the payload size at +0x16**. So an update session sets that field to
+73 and an ack leaves it at 0, and the whole message is 20 bytes either way.
+
+**The framing.** `LocalProtocol` has exactly ONE send path, `0x016af22c`, and all four of its
+message types - `0x11` update session, `0x12` destroy network, `0x13` start host migration, `0x21`
+ack - reach it with the same destination object and the same options struct. So an ack is framed
+exactly like the update session it answers, and the capture reads that framing off the wire:
+presence `0x7F`, message flags `0x11`, protocol 36, port 0, destination 0.
+
+`0x11` is "destination is a bitmap" (`0x01`) plus "may not be bundled" (`0x10`). The bitmap is
+built at `0x0159a15c`: zero four bytes, look the destination up to a station, read its station index
+from `station+0x38`, and if it is below 32 set `1 << index`. A destination that resolves to no
+single station leaves the bitmap at 0, which is the broadcast the console itself sends.
+
+**Presence is 0x7F, not 0x0F.** Only bits 1/2/4/8 name a field in Pia 5.27-6.30, and the console's
+message carries exactly those four fields - but it sets three more bits that name nothing. This is
+the one byte this project's send path had wrong: `7f 11 0079 24 000000 00*8` on the wire against
+`0f ...` from `build_message`. Everything after it already matched.
+
+**Who an ack is attributed to.** `0x016af96c` handles a received `0x21`: it requires the protocol's
+own two station ids to be valid and equal (the receiver must be the host), deserialises the ack,
+checks the length, and then calls `0x016aec94` with the sender's identity. That function walks nine
+node slots at `this+0x188` in steps of 0x40 and compares each with `0x0153b15c`, which is a memcmp
+of **16 bytes of address at +8 plus the port halfword at +0x18**. Only if a slot matches does the
+sequence id reach the "this node has acknowledged" bookkeeping.
+
+So the ack is matched by the sender's **address**, not by its variable id and not by its constant
+id. Our own Pia variable id - which the console has never been told, because we never sent a
+Station Protocol connection request - therefore cannot be what decides whether the ack lands. It
+still reaches the IV, as the low byte of the source variable id, so it has to be stable within a
+run and it must not be zero.
+
+**A free confirmation of all of it.** The wiki's LDN rule for a constant id is
+`mac[2] << 56 | mac[4] << 48 | mac[5] << 40 | mac[3] << 32 | mac[1] << 24 | mac[0] << 16`. The
+captured host constant id `0000 48f1 2022 9beb`, read as the little-endian field it is, unpacks by
+that rule to `48:f1:eb:20:9b:22` - which is exactly the MAC the scan recorded for the console. The
+byte order, the formula and the capture all agree, from three directions.
+
+**What is still not read off the console** is whether a client broadcasts its ack the way the host
+broadcasts the question, or unicasts it with the host's variable id in the packet header. The
+protocol's destination object lives at `LocalProtocol+0x130` and its initialiser has not been
+found. `bin/bdsp_ack.py` sends the phases in order and the rebroadcast either stops during one of
+them or it does not.
+
 ## The GCM nonce
 
 The IV is built by the **stream** object, one per family, and it is the reason naming it took so

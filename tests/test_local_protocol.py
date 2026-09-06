@@ -126,3 +126,29 @@ def test_an_ack_travels_as_a_protocol_36_message():
     m = parse_messages(body)
     assert len(m) == 1 and m[0].protocol == lp.PROTOCOL
     assert lp.parse_ack(m[0].payload) == 4
+
+
+def test_the_ack_carries_no_payload_size_the_way_the_console_writes_it():
+    """main.bin 0x016bc0c8 writes 0x14 as a WORD at +0x14, so the size halfword at +0x16 is zero.
+
+    The update session sets that field (73, the node list plus the migration state); the ack leaves
+    it at 0 and is 20 bytes regardless. Getting this from the console's serializer rather than from
+    the shape of the struct is what makes it a fact.
+    """
+    ack = lp.build_ack(4)
+    assert len(ack) == 20
+    assert ack[0] == 1 and ack[1] == lp.UPDATE_SESSION_ACK
+    assert struct.unpack_from("<H", ack, 2)[0] == 0
+    assert ack[4:12] == b"\0" * 8
+    assert ack[12:20] == struct.pack("<I", 4) + b"\0" * 4
+
+
+def test_an_ack_is_framed_exactly_like_the_update_session_it_answers():
+    """One send path in LocalProtocol means one framing: flags 0x11, destination 0, protocol 36."""
+    from pokeldn.ldn.pia5 import build_message, parse_messages
+    body = build_message(lp.build_ack(9), protocol=lp.PROTOCOL,
+                         message_flags=lp.MESSAGE_FLAGS, destination=lp.BROADCAST)
+    assert body[:16] == bytes.fromhex("7f110014240000000000000000000000")
+    m = parse_messages(body)
+    assert len(m) == 1 and m[0].message_flags == 0x11 and m[0].destination == 0
+    assert lp.parse_ack(m[0].payload) == 9
