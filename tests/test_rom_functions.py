@@ -206,3 +206,31 @@ def test_the_gap_that_is_left_is_the_one_the_boundary_table_names():
         except ValueError:
             continue
         raise AssertionError(f"0x{inside:08X} is in a gap and must not be guessed at")
+
+
+def test_stop_script_and_script_context_stop_are_two_different_functions():
+    """Named wrong until bs121. 0x0806D0EC is ScrCmd_end's one call and the decomp gives that as
+    StopScript(ctx) [src/script.c:76]; ScriptContext_Stop(void) [:360] is a different function, and
+    it is 0x0806D418 - what ScrCmd_waitstate calls and nothing else does. The declaration order
+    agrees with the addresses, which is the check that costs no run."""
+    assert rom_map.STOP_SCRIPT == 0x0806D0EC
+    assert rom_map.SCRIPT_CONTEXT_STOP == 0x0806D418
+    assert rom_map.STOP_SCRIPT < rom_map.SCRIPT_CONTEXT_STOP, "script.c:76 comes before script.c:360"
+
+
+def test_the_field_command_table_is_closed():
+    """213 handlers, and after bs121 every one of their bodies has been read off the cartridge.
+    The table itself was dumped at bs82; this is the code behind it."""
+    assert len(scrcmd_names.HANDLERS) == 214      # 214 opcodes, two of them the same ScrCmd_nop
+    assert len(set(scrcmd_names.HANDLERS)) == 213
+
+
+def test_the_workers_bs121_named_match_how_many_commands_call_them():
+    """The caller COUNT is the check. `Compare` has to be reached by exactly the eight compare_*
+    commands the decomp declares - a worker named off one caller is a guess."""
+    compares = [name for name in scrcmd_names.COMMANDS if name.startswith("compare_")]
+    assert len(compares) == 8
+    assert rom_map.COMPARE == 0x0806DCCC
+    assert rom_map.STRING_COPY == 0x0800C894
+    assert rom_map.HIDE_FIELD_MESSAGE_BOX == 0x0806CDE4
+    assert rom_map.SCRIPT_MOVEMENT_START == 0x0809AE54

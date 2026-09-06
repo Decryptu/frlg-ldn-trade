@@ -1346,9 +1346,20 @@ table had named it at in session 39, with its body read this time, so the two ta
 from a third direction. Two joins took `gSpecials` from 33 bodies held to 103, and harvested 99 call
 targets this project has no name for yet.
 
-Something the same reading turned up for free: the 213-entry **field script-command table is one
-join from closed** - 132 bodies are already held across the dumps on disk, and the rest fall inside
-a single 16 KB window. `tools/rom_functions.py --table field --plan --window 16384` prints it.
+bs121 spent that join. **The field script-command table is CLOSED**: 81 handlers in one dump,
+213 of 213 bodies read off the cartridge. bs82 had dumped the table; this is the code behind it.
+
+And it corrected a name this project had had wrong since session 39. `rom_map` called 0x0806D0EC
+`SCRIPT_CONTEXT_STOP`, from `ScrCmd_end`'s one call - but the decomp gives that call as
+`StopScript(ctx)` [src/script.c:76], and `ScriptContext_Stop(void)` [:360] is a DIFFERENT function.
+Twelve of the 81 new handlers call 0x0806D418 instead, and `ScrCmd_waitstate` is
+`ScriptContext_Stop(); return TRUE;` and nothing else. The declaration order settles it at no cost:
+script.c:76 before script.c:360, 0x0806D0EC before 0x0806D418.
+
+**THE CALLER COUNT IS THE CHECK.** A worker named off one caller is a guess; a worker reached by
+exactly as many commands as the decomp declares call it is a measurement. `Compare` came back with
+exactly the eight `compare_*` commands, `StringCopy` with the seven `buffer*` ones - and with the
+two specials bs113 read that build a name out of `gText_BigGuy`, from a different table entirely.
 
 TRAP, and it is the one this payload introduces: the readability guard has to cover the WHOLE span.
 A base clear of `gRngValue` says nothing about the sixteenth block, and MGL_Send CRCs one frame and

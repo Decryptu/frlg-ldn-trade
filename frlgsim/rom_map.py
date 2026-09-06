@@ -323,8 +323,28 @@ def callable_function(name):
 # order, against the decomp's body for that command. Two of the warp workers name THEMSELVES - the
 # specials table bs93/bs95 dumped calls 0x08081CC8 DoDiveWarp and 0x08081DA0 DoFallWarp - so the
 # two tables confirm each other here without either being assumed.
-SCRIPT_CONTEXT_STOP = 0x0806D0EC      # ScrCmd_end's one call
+# NAMED WRONG UNTIL bs121, and the correction is the method working. 0x0806D0EC is ScrCmd_end's one
+# call, and the decomp gives that as `StopScript(ctx)` [src/script.c:76] - NOT `ScriptContext_Stop`,
+# which is a different function taking no argument [src/script.c:360]. bs121 read the other 81
+# handlers and twelve of them (waitstate, dowildbattle, multichoice, pokemart, yesnobox, ...) call
+# 0x0806D418 instead; `ScrCmd_waitstate` is `ScriptContext_Stop(); return TRUE;` and nothing else.
+# The declaration order agrees: script.c:76 before script.c:360, 0x0806D0EC before 0x0806D418.
+STOP_SCRIPT = 0x0806D0EC              # StopScript(ctx), what `end` and `endram` call
+SCRIPT_CONTEXT_STOP = 0x0806D418      # ScriptContext_Stop(void), what the twelve waiters call
 SCRIPT_CONTEXT_SET_NATIVE = 0x0806D0E4  # what gotonative/delay/fadescreen hand their function to
+
+# --- the rest of the field-script workers, bs121 ------------------------------------------------
+# The run that CLOSED the table: 81 handlers in one join, 213 of 213 bodies now read off the
+# console. Each of these is named by the commands that call it and the decomp's body for them, not
+# by position - and the caller COUNT is the check, because it has to match how many commands the
+# decomp gives that call.
+COMPARE = 0x0806DCCC                  # Compare(a, b) [scrcmd.c:355]; exactly the 8 compare_* commands
+STRING_COPY = 0x0800C894              # the 7 buffer* commands, and the two specials that build a
+                                      # name from gText_BigGuy/gText_Son (bs113) reach it too
+HIDE_FIELD_MESSAGE_BOX = 0x0806CDE4   # closemessage, release, releaseall - each calls it first
+SCRIPT_MOVEMENT_START = 0x0809AE54    # ScriptMovement_StartObjectMovementScript; applymovement and
+                                      # applymovementat, which are the two the operand-width fix
+                                      # of session 40 had to invent a branch for
 SCRIPT_JUMP = 0x0806D1C0              # goto, goto_if, vgoto
 SCRIPT_CALL = 0x0806D1C4              # call, call_if, vcall
 SCRIPT_RETURN = 0x0806D1D8
