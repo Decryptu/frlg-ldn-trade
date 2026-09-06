@@ -76,60 +76,36 @@ Four bytes differ. The wiki value is a garbled transcription of the same underly
 different key and not a different version: its sixteen bytes appear **nowhere** in the game's
 executables or in any of the 16,630 files of its RomFS. Treat that row as unverified.
 
-## What is still missing
+## The GCM nonce
 
-**The GCM nonce construction.** With the measured key in hand the capture still does not
-authenticate, and the seed is no longer a suspect: a sweep of all 2^32 session-parameter values,
-against six captured packets and both twelve-byte IV layouts, produced nothing. What is read so far:
+The IV is built by the **stream** object, one per family, and it is the reason naming it took so
+long: it is neither the Protocol nor the PacketHandler, and its RTTI name says nothing about crypto.
 
-- the per-packet crypto is `nn::pia::common::Packet::Header::vfunc3` - encrypt and decrypt are two
-  entries into one function, and both take a `{u32 type; void* iv; u32 ivlen; void* key; u32 keylen}`
-  parameter struct built by the caller;
-- the IV is **twelve bytes**, and the key is sixteen at `PacketWriter+0xc` / `PacketReader+0xc`;
-- the plaintext is memset to `0xFF` and then overwritten by a shorter payload, so the tail of the
-  last block is padding - which is a free known-plaintext oracle, and is what makes a 2^32 sweep
-  cost minutes instead of hours;
-- the eight-byte header nonce is a **monotonic 64-bit counter**, written big-endian to `header+0x1b`,
-  which is what the wire always showed;
-- the IV buffer is filled by a virtual call on an object held at `PacketWriter+0x948`, passed in as
-  the third argument of `PacketWriter::Initialize`. Naming that object's class is the open thread.
+    nn::pia::local::LdnOutputStream::vfunc3     0x16b39c4      the LDN sender
+    nn::pia::local::LocalOutputStream::vfunc3   0x16bca80
+    nn::pia::lan::LanOutputStream::vfunc3       0x16a0f80
+    nn::pia::nex::NexOutputStream::vfunc3       0x16eca0c
 
-### The seed is not the key: four bytes are overwritten
+Each opens with `cmp w2, #0xb; b.hi` - the buffer must hold twelve bytes - and each takes
+`(this, buf, buflen, packet)`. The sender calls it on the object at `PacketWriter+0x948` just before
+encrypting; the receiver memsets twelve zero bytes and calls the same slot on `PacketReader+0xc8`.
 
-`cryptoKeyDataSeed` is not handed to Pia as it stands. The game builds the key at
-base_main.bin 0x1e3f404, and the array it pins is a *modified copy*:
+    IV[0..3]  = u32be( crc32(ten bytes) )
+    IV[3]     = overwritten with (packet.source_variable_id & 0xFF)
+    IV[4..11] = the eight-byte header nonce, copied from packet+0x1b
 
-    n    = PiaPluginUtil.GetCryptoKeySize()
-    key  = new byte[n]
-    Array.Copy(setting.cryptoKeyDataSeed, key, seed.Length)
-    key[1]  = (v >> 8) & 0xFF        ; each guarded by a length check,
-    key[3]  = (v >> 4) & 0xFF        ; so all four land for a 16-byte key
-    key[7]  = (v >> 1) & 0xFF
-    key[12] = (v >> 0) & 0xFF
-    cryptoSetting = { mode = Aes128 (1), pKeyData = GCHandle.AddrOfPinnedObject(key) }
+so only three bytes of the CRC reach the IV. The hash at `0x1719204` is ordinary CRC32 - its
+table-building fallback spells out `0xEDB88320`. The ten bytes are a u32 from the network object at
++0x450 followed by six bytes of a station record; CRC32 of the obvious addresses (either MAC, either
+IP, either order) is not the answer, so they are not simply address bytes.
 
-`v` is one u32 read from a live object, and the four shifts take only its low sixteen bits - so
-**the key is the measured seed plus a 16-bit unknown**, a space of 65,536. That the mode constant is
-`PiaPlugin.CryptoSetting.Mode.Aes128 = 1` is also what the `type == 1` guard in
-`LocalProtocol::SetKey` is testing.
-
-The chain from there down is now read rather than inferred:
-
-    IlcaNetBase (C#)  builds the key above, pins it, stores {mode, pKeyData}
-      -> LocalMatchMeshLayerController::vfunc2 (0x16c40c4) refuses a setting whose +0xb8 is
-         sixteen zero bytes, then passes setting+0xb4 = {u32 mode; u8 key[16]}
-      -> LocalFacade's key setter (0x16ab93c)
-      -> LocalProtocol::SetKey (0x16b1cb8): mode -> +0x5b8, the sixteen bytes -> +0x5bc
-
-So the sixteen bytes at `LocalProtocol+0x5bc` are `cryptoKeyDataSeed` with bytes 1, 3, 7 and 12
-replaced. Sweeping all 65,536 of them against the capture - for every session value the advertisement
-carries, twenty IV layouts built from a header field and the nonce, and both plausible block-counter
-origins - has not authenticated a packet. So the IV is not "a field the receiver already has,
-concatenated with the header nonce", and the nonce is the last unread piece rather than the key.
+That does not block the search. Three CRC bytes and the key's sixteen unknown bits are 2^40
+together, which is exhaustive in under an hour - the first search here that covers everything still
+unknown instead of a list of guesses.
 
 ## What is still missing
 
-**The GCM nonce construction.** The IV buffer is memset to twelve zero bytes and then filled by a
-virtual call - `PacketReader+0xc8`->vfunc3(buf, 12, packet) on receive, `PacketWriter+0x948` on
-send. Naming that object's class is the open thread; it is not `LocalProtocol`, whose slot 3 is only
-a getter.
+Whether that sweep finds the pair. If it does not, the remaining candidates are the block-counter
+origin, the session parameter the seed is taken from, and the possibility that the game update
+changed `cryptoKeyDataSeed` - the value here is read from the base NSP's metadata, and the console
+runs 1.3.0, whose `global-metadata.dat` sits behind BKTR in the patch NCA and has not been read.
