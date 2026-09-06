@@ -239,9 +239,11 @@ def test_the_high_segment_was_measured_without_knowing_a_symbol_up_there():
     assert rom_map.leafgreen_guess(0x083E3700) - 0x083E3700 == -0x1C4
     # bs117/lg190 carried its low end down to the m4a tables, so 0x08500000 is now INSIDE it.
     assert rom_map.leafgreen_guess(0x08500000) - 0x08500000 == -0x12D8
-    # The span that is still a gap is below them, and leafgreen_guess must refuse in there.
+    # And bs120/lg191 carried the -0x1C4 segment UP past 0x08400000 from the other side.
+    assert rom_map.leafgreen_guess(0x08400000) - 0x08400000 == -0x1C4
+    # What is still a gap is the 422 KB between them, and leafgreen_guess must refuse in there.
     with pytest.raises(ValueError, match="gap between measured segments"):
-        rom_map.leafgreen_guess(0x08400000)
+        rom_map.leafgreen_guess(0x08440000)
 
 
 def test_every_leafgreen_boundary_sits_between_the_segments_it_joins():

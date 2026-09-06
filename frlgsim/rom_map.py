@@ -506,7 +506,8 @@ LEAFGREEN_DELTA_SEGMENTS = (
     (0x0807D238, 0x080CE36C, -0x2C, "lg176b vs bs68b, 2 paired hits; lg161 vs bs13, 4 more"),
     (0x080EBA14, 0x0813E8CC, -0x28, "lg176b vs bs68b, 9 paired hits; lg161 vs bs13, 5 more"),
     (0x08148C74, 0x0824CDFC, -0x24, "lg176b vs bs68b, 3 paired hits; lg160, lg161-vs-bs13, lg165"),
-    (0x083DE528, 0x083E3700, -0x1C4, "lg169: 18 word-list pointers and the table, all -0x1C4"),
+    (0x083BEE74, 0x0841463E, -0x1C4, "lg169: 18 word-list pointers and the table; bs120/lg191 "
+     "carried BOTH ends out with 27 paired literal-pool words, from 0x083DE528..0x083E3700"),
     (0x0847DCF8, 0x086803FC, -0x12D8, "bs69/lg178 and bs72/lg179 two points 0x80000 apart at the "
      "top; bs117/lg190 carried the LOW end down from 0x086003E0 with five paired m4a pool words"),
 )
@@ -538,6 +539,19 @@ LEAFGREEN_DELTA_SEGMENTS = (
 # gMPlayTable and gSongTable are 0x30 apart, which is 4 music players of 12 bytes
 # [decomp:include/gba/m4a_internal.h:352, sound/music_player_table.inc], so the pair proves its own
 # alignment. FIVE points, not one - lg167 is what one costs.
+# bs120/lg191 did the same thing to the -0x1C4 segment, and paid far better because a 16-block dump
+# is 16 KB of literal pools rather than one. bs120 had already dumped 0x08081CC8 on FireRed for the
+# warp and battle-start specials; lg191 dumped the SAME code on LeafGreen at -0x2C, the delta that
+# segment is known to have. Pairing by CODE OFFSET rather than by index - the two pools hold 552 and
+# 550 words, so index-pairing drifts after the first mismatch and invents deltas - gives 550 sites,
+# 369 of them identical (the RAM addresses and the constants, which is the alignment proof) and:
+#
+#   27 cartridge pointers, 0x083BEE74..0x0841463E, ALL -0x1C4
+#    2 cartridge pointers at 0x082370FC, both -0x24
+#
+# The second pair is the CONTROL and it was free: 0x082370FC is inside the measured -0x24 segment,
+# so a run that answered anything else there would have been answering about the wrong console.
+# The 27 carry BOTH ends of the -0x1C4 segment outwards at once, which one needle never does.
 G_MPLAY_TABLE = 0x0849758C          # struct MusicPlayer[4]
 G_SONG_TABLE = 0x084975BC           # struct Song[347], {const u32 *header; u16 ms; u16 me}
 
@@ -557,10 +571,10 @@ LEAFGREEN_DELTA_BOUNDARIES = (
     (-0x28, -0x24, 0x0813E8CC, 0x08148C74, "lg176b/bs68b below, lg160 above"),
     # This one was never written down, though both its ends were measured: gSpeciesInfo is the top
     # of the -0x24 segment (lg176b/bs68b) and sEasyChatGroups the bottom of -0x1C4 (lg169).
-    (-0x24, -0x1C4, 0x0824CDFC, 0x083DE528, "lg176b/bs68b below at gSpeciesInfo, lg169 above at "
-     "sEasyChatGroups; 1.6 MB and no point inside it"),
-    (-0x1C4, -0x12D8, 0x083E3700, 0x0847DCF8, "lg169 below; bs117/lg190 above, narrowed 3.5x "
-     "from 0x086003E0 by five paired m4a literal-pool words"),
+    (-0x24, -0x1C4, 0x0824CDFC, 0x083BEE74, "lg176b/bs68b below at gSpeciesInfo; bs120/lg191 "
+     "above, from 0x083DE528"),
+    (-0x1C4, -0x12D8, 0x0841463E, 0x0847DCF8, "bs120/lg191 below, from 0x083E3700; bs117/lg190 "
+     "above, from 0x086003E0. 2163 KB this morning, 421 now"),
 )
 
 def leafgreen_guess(firered_address):

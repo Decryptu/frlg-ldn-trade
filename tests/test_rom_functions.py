@@ -199,7 +199,7 @@ def test_the_gap_that_is_left_is_the_one_the_boundary_table_names():
     interpolate."""
     boundary = [b for b in rom_map.LEAFGREEN_DELTA_BOUNDARIES if b[:2] == (-0x1C4, -0x12D8)][0]
     _from, _to, low, high = boundary[:4]
-    assert (low, high) == (0x083E3700, 0x0847DCF8)
+    assert (low, high) == (0x0841463E, 0x0847DCF8)
     for inside in (low + 1, (low + high) // 2, high - 1):
         try:
             rom_map.leafgreen_guess(inside)
@@ -234,3 +234,27 @@ def test_the_workers_bs121_named_match_how_many_commands_call_them():
     assert rom_map.STRING_COPY == 0x0800C894
     assert rom_map.HIDE_FIELD_MESSAGE_BOX == 0x0806CDE4
     assert rom_map.SCRIPT_MOVEMENT_START == 0x0809AE54
+
+
+def test_the_easy_chat_segment_reaches_out_both_ways_after_bs120_lg191():
+    """One needle moves one end. 27 paired literal-pool words moved BOTH: the -0x1C4 segment was
+    0x083DE528..0x083E3700, 21 KB, and is 0x083BEE74..0x0841463E now."""
+    low, high, delta, _e = [seg for seg in rom_map.LEAFGREEN_DELTA_SEGMENTS if seg[2] == -0x1C4][0]
+    assert (low, high) == (0x083BEE74, 0x0841463E)
+    assert rom_map.leafgreen_guess(0x083BEE74) == 0x083BEE74 - 0x1C4
+    assert rom_map.leafgreen_guess(0x0841463E) == 0x0841463E - 0x1C4
+    # The control that rode along: 0x082370FC is inside the measured -0x24 segment, and lg191 read
+    # it back at -0x24. A run that answered otherwise there was answering about the wrong console.
+    assert rom_map.leafgreen_guess(0x082370FC) == 0x082370FC - 0x24
+
+
+def test_no_boundary_is_wider_than_the_evidence_that_brackets_it():
+    """Every gap must still be REFUSED end to end - narrowing a segment without moving the boundary
+    beside it would leave leafgreen_guess quietly interpolating across a boundary."""
+    for _before, _after, low, high, _evidence in rom_map.LEAFGREEN_DELTA_BOUNDARIES:
+        for inside in (low + 1, (low + high) // 2, high - 1):
+            try:
+                rom_map.leafgreen_guess(inside)
+            except ValueError:
+                continue
+            raise AssertionError(f"0x{inside:08X} is inside a boundary and was guessed at")

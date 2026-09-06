@@ -216,12 +216,11 @@ padding values, so those two reads are not the same thing and neither has been c
 
 - **The three low boundaries are bracketed but not located.** Halving one needs a needle known to
   sit inside that span; nothing needs it yet.
-- **0x083E3700 .. 0x0847DCF8 is the gap now**, 617 KB, down from 2163. The delta goes from
-  −0x1C4 to −0x12D8 across it, a difference of 0x1114. See "A literal pool is a pointer table"
-  below for what closed the other three quarters.
-- **0x0824CDFC .. 0x083DE528 is the other one**, 1.6 MB, from gSpeciesInfo up to sEasyChatGroups,
-  where the delta goes −0x24 to −0x1C4. Both its ends were measured long ago and the boundary
-  itself was simply never written down; it is in `LEAFGREEN_DELTA_BOUNDARIES` now.
+- **0x0841463E .. 0x0847DCF8 is the gap now**, 422 KB. It was 2163 KB this morning. The delta goes
+  from −0x1C4 to −0x12D8 across it, a difference of 0x1114.
+- **0x0824CDFC .. 0x083BEE74 is the other one**, 1480 KB, from gSpeciesInfo upwards, where the delta
+  goes −0x24 to −0x1C4. Both its ends were measured long ago and the boundary itself was simply
+  never written down; it is in `LEAFGREEN_DELTA_BOUNDARIES` now.
 - **Nothing between 0x086803FC and the end of the data has been measured**, though bs118 read
   gSongTable and its song headers reach 0x086ABE68, so the data runs at least that far.
 
@@ -261,6 +260,32 @@ it starts at 0x0847DCF8 now, and the gap below it is 3.5 times smaller for two r
 **The pair proves its own alignment.** gMPlayTable and gSongTable came back 0x30 apart on BOTH
 cartridges, and 0x30 is four `struct MusicPlayer` of twelve bytes, which is exactly what
 `sound/music_player_table.inc` holds. A window read at the wrong offset does not produce that.
+
+### bs120/lg191: the same trick with sixteen times the pool
+
+A 16-block dump is 16 KB of literal pools instead of one, and that changes what a pair of joins is
+worth. bs120 had already dumped 0x08081CC8 on FireRed for the warp and battle-start specials, so the
+FireRed half cost nothing; lg191 dumped the SAME code on LeafGreen at −0x2C, the delta that segment
+is measured to have.
+
+**Pair by CODE OFFSET, not by index.** The two pools hold 552 and 550 words - the builds do not emit
+quite the same literals - so pairing them in order drifts after the first mismatch and starts
+inventing deltas (−0x53BADA0 and friends, all of them nonsense). Keyed on the site instead, minus
+the segment's own 0x2C, 550 sites appear in both:
+
+| | |
+|---|---|
+| identical words | 369 - the RAM addresses and the constants, which is the alignment proof |
+| cartridge pointers 0x083BEE74..0x0841463E | **27, every one −0x1C4** |
+| cartridge pointers at 0x082370FC | 2, both −0x24 |
+
+The second row is the control, and it was free: 0x082370FC lies inside the measured −0x24 segment,
+so a run answering anything else there would have been answering about the wrong console. The rule
+from lg167 was to use two points and a control; a 16 KB pool hands you twenty-seven and the control.
+
+**One needle moves one end of a segment. Twenty-seven moved both.** The −0x1C4 segment was
+0x083DE528..0x083E3700, 21 KB, known from lg169's Easy Chat pointers. It is 0x083BEE74..0x0841463E
+now, and the two gaps either side shrank to 1480 KB and 422 KB.
 
 What did NOT work, and is worth recording so it is not tried again: gSongTable looked like the ideal
 spreader - 347 entries of `{header, ms, me}` pointing into the largest blob in the ROM. bs118 dumped
