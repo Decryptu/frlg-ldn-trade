@@ -12,7 +12,9 @@ back-to-back scripts, which is what a region of `data/scripts/*.inc` actually is
 `--with-every-dump` adds every other ROM dump in `scratchpad/`, paired with the `--dump-address`
 its launcher log records. 127 runs are on disk and a script does not care which one caught the
 block it jumps to; without this the plan proposes runs for bytes we already have. `--dump
-PATH@0xADDR` adds one by hand.
+PATH@0xADDR` adds one by hand. It adds ONE cartridge's dumps - `--console`, FireRed by default -
+because the two cartridges keep the same code at addresses a segment delta apart and an image
+holding both answers with whichever it happened to place there.
 
 The operands are named, not just printed: a var, a flag, a special and a comparison all come back
 with the decomp's own name beside the number [frlgsim/symbol_names.py, special_names.py]. An
@@ -36,8 +38,20 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from frlgsim import rom_map, scrcmd
 
 
-def every_dump(directory):
-    """-> [(base, data)] for every ROM dump in `directory`, from what its launcher log recorded.
+def dump_console(tag, log_text):
+    """-> which cartridge a run was against: its own `--expect-console`, else the tag.
+
+    The flag is the run's own record and is checked against the game data before anything is sent,
+    so it is the authority. The tag is the fallback for the runs that predate it, and it is the same
+    rule `run_mg_fast.sh` uses to pass the flag: `lgNN` is LeafGreen, anything else is FireRed."""
+    match = re.search(r"--expect-console\s+(\w+)", log_text)
+    if match:
+        return match.group(1).lower()
+    return "leafgreen" if re.match(r"^lg\d", tag) else "firered"
+
+
+def dumps(directory):
+    """-> [(tag, console, base, data)] for every ROM dump in `directory`, from its launcher log.
 
     The log line is the run's own argv, so the pairing is the run's, not a guess. A dump with no
     `--dump-address` was a save-block or a scan and has no ROM address to place it at."""
@@ -48,10 +62,25 @@ def every_dump(directory):
         dump = directory / f"{tag}_dump.bin"
         if not dump.exists():
             continue
-        match = re.search(r"--dump-address\s+(0x[0-9A-Fa-f]+)", log.read_text())
+        text = log.read_text()
+        match = re.search(r"--dump-address\s+(0x[0-9A-Fa-f]+)", text)
         if match:
-            found.append((int(match.group(1), 0), dump.read_bytes()))
+            found.append((tag, dump_console(tag, text), int(match.group(1), 0), dump.read_bytes()))
     return found
+
+
+def every_dump(directory, console="firered"):
+    """-> [(base, data)] for the dumps of ONE cartridge; `console=None` for all of them.
+
+    ONE CARTRIDGE AT A TIME, and it is not a preference. lg191 dumped 16 KB of LeafGreen at
+    0x08081C9C, which is FireRed's 0x08081CC8 shifted by that segment's -0x2C, and folding it into
+    the same image as the FireRed dumps put LeafGreen bodies at FireRed addresses: gSpecials[54] is
+    Script_HasTrainerBeenFought at 0x08083C08 on FireRed and the mixed image answered 0x08083C34,
+    the +0x2C twin, whose body calls FlagSet where the decomp calls FlagGet. Every call target read
+    out of the wrong cartridge's copy is that cartridge's address, which is where a good part of
+    "127 call targets with no name" came from. Session 42."""
+    return [(base, data) for _tag, its_console, base, data in dumps(directory)
+            if console is None or its_console == console]
 
 
 def entry_points(data, base, args):
@@ -99,12 +128,17 @@ def main():
                     help="add another dump at an address; repeatable")
     ap.add_argument("--scratchpad", default="scratchpad",
                     help="where the dumps and launcher logs live (default scratchpad)")
+    ap.add_argument("--console", choices=("firered", "leafgreen", "both"), default="firered",
+                    help="which cartridge's dumps --with-every-dump may add (default firered); "
+                         "`both` puts two cartridges' code at one set of addresses, so use it only "
+                         "to compare them, never to read one")
     args = ap.parse_args()
 
     data = open(args.path, "rb").read()
     segments = [(args.base, data)]
     if args.with_every_dump:
-        segments += every_dump(args.scratchpad)
+        segments += every_dump(args.scratchpad,
+                               None if args.console == "both" else args.console)
     for spec in args.dump:
         path, _, address = spec.rpartition("@")
         segments.append((int(address, 0), open(path, "rb").read()))

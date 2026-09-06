@@ -1366,6 +1366,77 @@ A base clear of `gRngValue` says nothing about the sixteenth block, and MGL_Send
 sends the next, so a dump that crosses a region which moves kills the link mid transmission
 (lg172, lg173). `build_memory_dump_multi` takes `blocks` for that reason alone.
 
+## Session 42: naming 180 workers offline, and the two cartridges in one image
+
+bs84's method has a shape that does not need a console: **a body's `bl` targets, in address order,
+are the decomp's calls for that same function, in source order.** Every worker this project has
+named since session 39 came out of that - by eye, one body at a time, a handful a session.
+`scripts/gen_worker_names.py` does it over every body the dumps hold, all four tables at once, and
+writes `frlgsim/worker_names.py`. **180 addresses named, no run spent.** The field table now has
+three call targets left with no name and the specials 25, where between them they had 244.
+
+The zip is only evidence if it is checked, and four checks decide:
+
+| check | what it rules out | what it cost |
+|---|---|---|
+| **length** | inlining, `__umodsi3`, a macro read as a call | 24 bodies dropped |
+| **anchor** | a misaligned body: every address already measured must land back on its own name | 1 body dropped |
+| **agreement** | a target named differently by two of its callers | 0 |
+| **link order** | a name in the wrong place in the ROM entirely | 1 address dropped |
+
+The last one is the strong one and it is free. agbcc emits a translation unit in definition order
+and `ld_script_rev10.ld:53` lists the objects in the order they are laid down, so all 180 names and
+every anchor beside them form ONE ascending sequence, and a name out of place is out of the chain.
+`GetMonData3` proposed at 0x08129844 - a megabyte above the rest of pokemon.c - is what that caught.
+The check takes the LONGEST ascending chain rather than the first break, or one misplaced name
+throws out the four correct ones behind it.
+
+Reading the source needs the same care as reading the code. `firered_switch` is
+`GAME_VERSION=FIRERED GAME_REVISION=10 MODERN=0` [decomp:Makefile:227], so the 203
+`#if REVISION >= 0xA` blocks are live and the `#else` beside them is not. Evaluation order is
+post-order: `VarGet(ScriptReadHalfword(ctx))` is `bl ScriptReadHalfword` then `bl VarGet`, which is
+the shape of nearly every ScrCmd body. And a macro is not a call -
+`#define ScriptReadByte(ctx) (*(ctx->scriptPtr++))` [include/script.h:24] put a phantom `bl` in 151
+bodies until it was taken out, which was the difference between 136 names and 180.
+
+`NDEBUG` is a measurement rather than a build flag: `ScrCmd_special`'s body on the cartridge makes
+exactly two calls, and the assert branch would add a third, so the asserts compile to nothing here.
+
+Four names this project coined turned out to have one of the decomp's own behind them, each
+confirmed by every body that reaches the address - `rom_map.DECOMP_NAMES` is the join, and the count
+is the evidence:
+
+| this project | the decomp | bodies agreeing |
+|---|---|---|
+| `GET_MON_DATA` | `GetMonData3` | 15 |
+| `SCRIPT_CONTEXT_SET_NATIVE` | `SetupNativeScript` | 11 |
+| `SET_RESPAWN` | `SetLastHealLocationWarp` | 1 |
+| `SCRIPT_MOVEMENT_START` | `ScriptMovement_StartObjectMovementScript` | 2 |
+| `CHANGE_AMOUNT_MONEY_BOX` | `ChangeAmountInMoneyBox` | 2 |
+| `ME_CHECK_COMPATIBILITY` / `ME_SET_INCOMPATIBLE` | `CheckCompatibility` / `SetIncompatible` | 1 / 3 |
+
+`GetMonData` is not a symbol at all: it is a macro that dispatches on the argument count
+[include/pokemon.h:343] and `GetMonData2` is `__attribute__((alias("GetMonData3")))`
+[src/pokemon.c:2970] - one address, three names.
+
+### The bug the anchor check caught: two cartridges in one image
+
+`--with-every-dump` placed every dump in `scratchpad/` by the `--dump-address` in its launcher log,
+and three of those runs are LeafGreen. lg191 dumped 16 KB at 0x08081C9C, which is FireRed's
+0x08081CC8 shifted by that segment's -0x2C, so the image held **both cartridges' copies of the same
+code** and answered with whichever one it had placed at the address asked for.
+
+What that looks like from the outside: `gSpecials[54]` is `Script_HasTrainerBeenFought`, whose body
+is `FlagGet(GetTrainerAFlag())` - and the mixed image gave a body at 0x08083C34 calling `FlagSet`.
+0x08083C34 is +0x2C from FireRed's 0x08083C08, and it is `SetBattledTrainerFlag2`, the static the
+decomp marks "not used" and the ROM emits anyway. Every call target read out of the wrong
+cartridge's copy is that cartridge's address, which is where most of the "127 call targets with no
+name" came from.
+
+`script_read.every_dump` now takes ONE cartridge, FireRed by default, and reads which one a run was
+against out of the run's own `--expect-console`, falling back to the tag for the runs that predate
+that flag. `--console leafgreen` reads the other; `--console both` exists only for comparing them.
+
 ## What is left
 
 1. **Which function to call next.** Answered at bs82/bs84/bs85: `frlgsim/scrcmd_names.HANDLERS`

@@ -25,7 +25,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import rom_map, scrcmd, scrcmd_names, special_names, thumb
+from frlgsim import rom_map, scrcmd, scrcmd_names, special_names, thumb, worker_names
 from script_read import every_dump
 
 ROM_START, ROM_END = 0x08000000, 0x0A000000
@@ -44,20 +44,30 @@ def tables():
         "field": [(f"ScrCmd_{name} [{opcode}]", address & ~1)
                   for opcode, (name, address)
                   in enumerate(zip(scrcmd_names.COMMANDS, scrcmd_names.HANDLERS))],
-        "mystery-event": [(name, address & ~1)
+        # The Mystery Event table is kept by OPCODE name; the decomp's function for one is
+        # `MEScrCmd_<opcode>` [decomp:src/mystery_event_script.c:97], which is the name a reader
+        # can look up and the name `gen_worker_names.py` needs to find the body's source.
+        "mystery-event": [(f"MEScrCmd_{name}", address & ~1)
                           for name, address in rom_map.MYSTERY_EVENT_HANDLERS],
         "callable": [(name, address & ~1) for name, address in sorted(rom_map.CALLABLE.items())],
     }
 
 
-def known_names():
-    """-> {address: what this project calls it}, from every measured symbol and table."""
+def known_names(with_workers=True):
+    """-> {address: what this project calls it}, from every measured symbol and table.
+
+    `with_workers` is False for the generator that WRITES `worker_names`: a name it produced last
+    time is not evidence for producing it again, and a table this project can only regenerate from
+    its own output cannot be checked."""
     out = {}
     for name, value in vars(rom_map).items():
         if name.isupper() and isinstance(value, int) and ROM_START <= value < ROM_END:
             out.setdefault(value & ~1, name)
     for name, address in rom_map.CALLABLE.items():
         out[address & ~1] = name
+    if with_workers:
+        for address, name in worker_names.WORKERS.items():
+            out.setdefault(address & ~1, name)
     for group, entries in tables().items():
         if group == "callable":
             continue
@@ -106,7 +116,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--table", choices=sorted(tables()) + ["all"], default="specials")
     ap.add_argument("--with-every-dump", action="store_true", default=True,
-                    help="use every ROM dump in scratchpad/, placed by its launcher log (default)")
+                    help="use that cartridge's ROM dumps in scratchpad/, placed by its launcher "
+                         "log (default)")
     ap.add_argument("--no-every-dump", dest="with_every_dump", action="store_false")
     ap.add_argument("--dump", action="append", default=[], metavar="PATH@0xADDR",
                     help="add a dump at an address; repeatable")
@@ -115,9 +126,13 @@ def main():
     ap.add_argument("--plan", action="store_true", help="the plan only, no bodies")
     ap.add_argument("--runs", type=int, default=10, help="how many windows to plan (default 10)")
     ap.add_argument("--scratchpad", default="scratchpad")
+    ap.add_argument("--console", choices=("firered", "leafgreen"), default="firered",
+                    help="which cartridge's dumps to read (default firered). The two hold the same "
+                         "code a segment delta apart, so an image of both answers with whichever "
+                         "it placed at the address")
     args = ap.parse_args()
 
-    segments = every_dump(args.scratchpad) if args.with_every_dump else []
+    segments = every_dump(args.scratchpad, args.console) if args.with_every_dump else []
     for spec in args.dump:
         path, _, address = spec.rpartition("@")
         segments.append((int(address, 0), open(path, "rb").read()))

@@ -367,6 +367,24 @@ CALCULATE_PLAYER_PARTY_COUNT = 0x08044338   # = special 131, which is how it is 
 GET_PLAYER_FACING_DIRECTION = 0x0805FFC4    # = special 287
 SET_RESPAWN = 0x08058DE0               # ScrCmd_setrespawn: where a white-out returns the player
 
+# --- the decomp's own name for four addresses this project named itself, session 42 -------------
+# `scripts/gen_worker_names.py` zips a body's measured `bl` order against the decomp's call order
+# for the same function, and these four came back named from the other side. Each is what every
+# body that reaches the address agrees it is - the count is the evidence, and it is the same check
+# bs121 used to correct StopScript. The project's own names stay: they are what the docs and the
+# session log call these, and a rename would break the citation trail. This is the join.
+DECOMP_NAMES = {
+    GET_MON_DATA: "GetMonData3",          # 15 bodies. GetMonData is a macro that dispatches on the
+                                          # argument count [include/pokemon.h:343] and GetMonData2
+                                          # is an alias of GetMonData3 [pokemon.c:2970]: one symbol
+    SET_RESPAWN: "SetLastHealLocationWarp",              # ScrCmd_setrespawn's one call
+    SCRIPT_CONTEXT_SET_NATIVE: "SetupNativeScript",      # 11 bodies, every wait* command
+    SCRIPT_MOVEMENT_START: "ScriptMovement_StartObjectMovementScript",   # applymovement(at)
+    CHANGE_AMOUNT_MONEY_BOX: "ChangeAmountInMoneyBox",   # showmoneybox and updatemoneybox
+    ME_CHECK_COMPATIBILITY: "CheckCompatibility",        # MEScrCmd_checkcompat's first call
+    ME_SET_INCOMPATIBLE: "SetIncompatible",              # the one call both dead opcodes make
+}
+
 # NOT CALLABLE FROM A BUFFER SCRIPT. These run inside the Mystery Gift menu, where there is no
 # overworld to warp: they belong to a FIELD stub, which runs from the field engine. docs/rng.md
 # has how a stub is staged.
