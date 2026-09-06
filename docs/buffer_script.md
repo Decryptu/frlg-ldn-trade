@@ -1340,6 +1340,16 @@ What it does to the plan for `gSpecials`, with 199 bodies still unread:
 `--dump-blocks 1` returns `CLIENT_SCRIPT_DUMP_MEMORY` itself, byte for byte, so the path that has
 run on hardware a hundred times is untouched.
 
+bs120 spent the next join the same way, on the window the plan named next - 0x08081CC8, 30 entries,
+the warp and battle-start specials. `DoDiveWarp` came back at exactly the address the SCRIPT-COMMAND
+table had named it at in session 39, with its body read this time, so the two tables still agree
+from a third direction. Two joins took `gSpecials` from 33 bodies held to 103, and harvested 99 call
+targets this project has no name for yet.
+
+Something the same reading turned up for free: the 213-entry **field script-command table is one
+join from closed** - 132 bodies are already held across the dumps on disk, and the rest fall inside
+a single 16 KB window. `tools/rom_functions.py --table field --plan --window 16384` prints it.
+
 TRAP, and it is the one this payload introduces: the readability guard has to cover the WHOLE span.
 A base clear of `gRngValue` says nothing about the sixteenth block, and MGL_Send CRCs one frame and
 sends the next, so a dump that crosses a region which moves kills the link mid transmission
