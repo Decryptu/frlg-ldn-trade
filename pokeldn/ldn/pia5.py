@@ -71,3 +71,21 @@ def ciphertext(data):
 
 def is_pia5(data):
     return len(data) >= HEADER_SIZE and struct.unpack_from(">I", data, 0)[0] == MAGIC
+
+
+def ldn_session_key(game_key, seed):
+    """Pia 5.x's LDN session key: AES-128-ECB(game_key) over sixteen bytes of SEAD output.
+
+    Read off BDSP's `nn::pia::local::LocalProtocol` at main.bin 0x016b14e8 (sp7): the seed is a u32
+    stored at +0x5b0, the game key sixteen bytes at +0x5bc, and the plaintext four consecutive SEAD
+    draws packed little-endian. This is the LDN family's derivation and ONLY the LDN family's - the
+    HMAC-SHA256 one belongs to `nn::pia::lan::LanProtocol`, and applying it to an LDN capture cannot
+    work. docs/bdsp_pia.md "The session key".
+    """
+    from Crypto.Cipher import AES
+
+    from pokeldn.ldn.sead import Sead
+
+    if len(game_key) != 16:
+        raise ValueError(f"a Pia game key is sixteen bytes, not {len(game_key)}")
+    return AES.new(bytes(game_key), AES.MODE_ECB).encrypt(Sead(seed=seed).bytes(16))

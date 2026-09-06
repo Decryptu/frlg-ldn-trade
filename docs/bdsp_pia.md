@@ -36,6 +36,13 @@ Room session uses:
     rnd   = four consecutive xorshift128 draws (shifts 11, 8, 19) -> 16 bytes, little-endian
     key   = AES-128-ECB(game key at LocalProtocol+0x5bc).encrypt(rnd)
 
+That generator is **SEAD's**, Nintendo's own standard library RNG, and it is the one input here
+that is not in doubt: it was read instruction by instruction off the console and then found to
+match the NintendoClients wiki's published SEAD RNG exactly - the same init multiplier, the same
+11/8/19 shifts, the same state rotation. `pokeldn/ldn/sead.py` holds it and
+`pokeldn.ldn.pia5.ldn_session_key` is the derivation above. A failed derivation is therefore a
+wrong key or a wrong nonce, never a wrong xorshift.
+
 and that key is then installed into the transport, where a further HMAC step can re-key from it.
 
 ## The game key, measured
@@ -87,30 +94,42 @@ against six captured packets and both twelve-byte IV layouts, produced nothing. 
 - the IV buffer is filled by a virtual call on an object held at `PacketWriter+0x948`, passed in as
   the third argument of `PacketWriter::Initialize`. Naming that object's class is the open thread.
 
-## What was ruled out, with evidence
+### The seed is not the key: four bytes are overwritten
 
-Recorded because each cost real time:
+`cryptoKeyDataSeed` is not handed to Pia as it stands. The game builds the key at
+base_main.bin 0x1e3f404, and the array it pins is a *modified copy*:
 
-- **The passphrase is not the game key.** `SetWirelessCryptoKey` validates 16-64 bytes and memcpys
-  the raw string into an `nn::ldn::SecurityConfig`. No truncation, hash, or fold of
-  `WirelessStrongCryptoKey2021` produces a working key, because the code never performs one.
-- **The HMAC derivation is the LAN one.** Every HMAC-SHA256 function belongs to
-  `nn::pia::lan::LanProtocol`. Applying it to an LDN capture cannot work; roughly half of one
-  session's failed attempts were structurally incapable of succeeding for this reason.
-- **There is no AES-GCM import.** The game's dynamic symbol table imports SHA-256, SHA-1, MD5,
-  BigNum and random bytes from `nn::crypto`, and no AES at all. Pia carries its own software AES,
-  found by its S-box.
-- **MD5 and SHA-1 are not the reduction.** Both are imported but every call site is in the game's
-  own code, nowhere near Pia.
-- **The seed is not the missing input.** Every one of the 2^32 possible session parameters was
-  tried with the measured game key; none authenticates a packet. Whatever is still wrong is in the
-  nonce or in what reaches `LocalProtocol+0x5bc`, not in the seed.
-- **Passive decryption may be the wrong goal anyway.** This project did not solve FireRed by
-  decrypting its traffic from outside; it joined and spoke the protocol, and the keys fell out. The
-  seat is already held.
+    n    = PiaPluginUtil.GetCryptoKeySize()
+    key  = new byte[n]
+    Array.Copy(setting.cryptoKeyDataSeed, key, seed.Length)
+    key[1]  = (v >> 8) & 0xFF        ; each guarded by a length check,
+    key[3]  = (v >> 4) & 0xFF        ; so all four land for a 16-byte key
+    key[7]  = (v >> 1) & 0xFF
+    key[12] = (v >> 0) & 0xFF
+    cryptoSetting = { mode = Aes128 (1), pKeyData = GCHandle.AddrOfPinnedObject(key) }
 
-## A constraint worth keeping
+`v` is one u32 read from a live object, and the four shifts take only its low sixteen bits - so
+**the key is the measured seed plus a 16-bit unknown**, a space of 65,536. That the mode constant is
+`PiaPlugin.CryptoSetting.Mode.Aes128 = 1` is also what the `type == 1` guard in
+`LocalProtocol::SetKey` is testing.
 
-A retail Switch joining this session knows only the advertisement, the LDN layer's own values, and
-the game's key material. The key is therefore derivable from those - the problem is open, not
-closed.
+The chain from there down is now read rather than inferred:
+
+    IlcaNetBase (C#)  builds the key above, pins it, stores {mode, pKeyData}
+      -> LocalMatchMeshLayerController::vfunc2 (0x16c40c4) refuses a setting whose +0xb8 is
+         sixteen zero bytes, then passes setting+0xb4 = {u32 mode; u8 key[16]}
+      -> LocalFacade's key setter (0x16ab93c)
+      -> LocalProtocol::SetKey (0x16b1cb8): mode -> +0x5b8, the sixteen bytes -> +0x5bc
+
+So the sixteen bytes at `LocalProtocol+0x5bc` are `cryptoKeyDataSeed` with bytes 1, 3, 7 and 12
+replaced. Sweeping all 65,536 of them against the capture - for every session value the advertisement
+carries, twenty IV layouts built from a header field and the nonce, and both plausible block-counter
+origins - has not authenticated a packet. So the IV is not "a field the receiver already has,
+concatenated with the header nonce", and the nonce is the last unread piece rather than the key.
+
+## What is still missing
+
+**The GCM nonce construction.** The IV buffer is memset to twelve zero bytes and then filled by a
+virtual call - `PacketReader+0xc8`->vfunc3(buf, 12, packet) on receive, `PacketWriter+0x948` on
+send. Naming that object's class is the open thread; it is not `LocalProtocol`, whose slot 3 is only
+a getter.
