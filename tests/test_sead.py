@@ -320,3 +320,85 @@ def test_an_empty_or_all_padding_payload_yields_nothing():
     from pokeldn.ldn.pia5 import parse_messages
     assert parse_messages(b"") == []
     assert parse_messages(b"\xff" * 16) == []
+
+
+# --- The send path. Proven offline against the capture: re-encrypting the console's own plaintext
+# --- reproduces its ciphertext and tag for all 674 packets. These keep that path honest.
+
+def test_encrypt_and_decrypt_round_trip_under_the_real_session_values():
+    from pokeldn.ldn.pia5 import (decrypt_payload, encrypt_payload, gcm_iv, ldn_nonce_crc,
+                                  ldn_session_key)
+    sk = ldn_session_key(BDSP_KEY, SP4_SESSPARAM)
+    iv = gcm_iv(ldn_nonce_crc(SP4_NETID_LE, SP4_MAC), 0x11BAC90D,
+                bytes.fromhex("f5a83bd383ce712d"))
+    pt = bytes(range(144))
+    ct, tag = encrypt_payload(sk, iv, pt)
+    assert len(tag) == 8 and len(ct) == len(pt)
+    assert decrypt_payload(sk, iv, ct, tag) == pt
+
+
+def test_decrypt_returns_none_rather_than_raising_on_a_bad_tag():
+    """Callers sweep candidate keys against this, so a miss must be cheap and not an exception."""
+    from pokeldn.ldn.pia5 import decrypt_payload, encrypt_payload
+    sk, iv = bytes(range(16)), bytes(range(12))
+    ct, tag = encrypt_payload(sk, iv, b"hello world 1234")
+    assert decrypt_payload(sk, iv, ct, tag) == b"hello world 1234"
+    assert decrypt_payload(sk, iv, ct, bytes(8)) is None
+    assert decrypt_payload(sk, bytes(12), ct, tag) is None
+    assert decrypt_payload(bytes(16), iv, ct, tag) is None
+
+
+def test_the_payload_is_0xff_padded_to_sixteen():
+    from pokeldn.ldn.pia5 import pad_payload
+    assert pad_payload(b"") == b""
+    assert pad_payload(b"a" * 16) == b"a" * 16
+    assert pad_payload(b"a" * 17) == b"a" * 17 + b"\xff" * 15
+    assert len(pad_payload(b"x" * 137)) == 144
+
+
+def test_a_built_message_parses_back_to_what_went_in():
+    from pokeldn.ldn.pia5 import build_message, parse_messages
+    body = bytes(range(30))
+    m = parse_messages(build_message(body, protocol=36, port=7, message_flags=0x11,
+                                     destination=0xDEADBEEF))
+    assert len(m) == 1
+    assert m[0].payload == body
+    assert (m[0].protocol, m[0].port, m[0].message_flags) == (36, 7, 0x11)
+    assert m[0].destination == 0xDEADBEEF
+
+
+def test_an_inheriting_message_carries_only_its_size():
+    from pokeldn.ldn.pia5 import build_message, parse_messages
+    first = build_message(b"A" * 8, protocol=36, port=7, message_flags=0x11, destination=5)
+    second = build_message(b"BBBB", protocol=0, inherit=True)
+    assert len(second) == 8                                  # 1 flag + 2 size + 4 payload, padded
+    m = parse_messages(first + second)
+    assert [x.payload for x in m] == [b"A" * 8, b"BBBB"]
+    assert m[1].protocol == 36 and m[1].port == 7 and m[1].destination == 5
+
+
+def test_a_built_message_is_padded_to_four_bytes():
+    from pokeldn.ldn.pia5 import build_message
+    assert len(build_message(b"12345", protocol=1)) % 4 == 0
+
+
+def test_a_whole_packet_round_trips_header_messages_and_crypto():
+    """header || tag || ciphertext, the way a sent packet is assembled."""
+    from pokeldn.ldn.pia5 import (PiaHeader5, build_message, decrypt_payload, encrypt_payload,
+                                  gcm_iv, ldn_nonce_crc, ldn_session_key, pad_payload,
+                                  parse_messages)
+    sk = ldn_session_key(BDSP_KEY, SP4_SESSPARAM)
+    nonce8 = struct.pack(">Q", 0xF5A83BD383CE712D)
+    src_var = 0x11BAC90D
+    iv = gcm_iv(ldn_nonce_crc(SP4_NETID_LE, SP4_MAC), src_var, nonce8)
+    body = pad_payload(build_message(b"payload bytes", protocol=36))
+    ct, tag = encrypt_payload(sk, iv, body)
+    header = PiaHeader5(src_var=src_var, nonce8=nonce8, tag=tag).pack()
+    packet = header + ct
+    assert len(header) == 0x20
+    back = PiaHeader5.parse(packet)
+    assert back.src_var == src_var and back.nonce8 == nonce8 and back.encrypted
+    pt = decrypt_payload(sk, gcm_iv(ldn_nonce_crc(SP4_NETID_LE, SP4_MAC), back.src_var,
+                                    back.nonce8), packet[0x20:], back.tag)
+    assert pt == body
+    assert parse_messages(pt)[0].payload == b"payload bytes"

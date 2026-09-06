@@ -201,3 +201,48 @@ def parse_messages(plaintext):
         off += size
         off += -off % 4
     return out
+
+
+def encrypt_payload(session_key, iv, plaintext):
+    """-> (ciphertext, 8-byte tag). Pia keeps only the first eight bytes of the GCM tag."""
+    from Crypto.Cipher import AES
+
+    ct, tag = AES.new(bytes(session_key), AES.MODE_GCM, nonce=bytes(iv),
+                      mac_len=8).encrypt_and_digest(bytes(plaintext))
+    return ct, tag
+
+
+def decrypt_payload(session_key, iv, ciphertext, tag):
+    """-> plaintext, or None if the tag does not verify. The tag IS the oracle: a wrong key,
+    session key, IV or layout cannot pass it, which is what a derivation should be tested against.
+    """
+    from Crypto.Cipher import AES
+
+    try:
+        return AES.new(bytes(session_key), AES.MODE_GCM, nonce=bytes(iv),
+                       mac_len=8).decrypt_and_verify(bytes(ciphertext), bytes(tag))
+    except ValueError:
+        return None
+
+
+def pad_payload(plaintext):
+    """0xFF-pad to a multiple of 16, which is what Packet::Header::vfunc3 does before encrypting."""
+    return bytes(plaintext) + b"\xff" * (-len(plaintext) % 16)
+
+
+def build_message(payload, protocol, port=0, message_flags=0, destination=0, inherit=False):
+    """One Pia 5.27-6.30 message, padded to four bytes.
+
+    `inherit=True` emits only the payload size, leaving protocol, port, destination and the message
+    flags to be taken from the previous message - which is how the console packs a second message
+    into a packet.
+    """
+    payload = bytes(payload)
+    if inherit:
+        out = bytes([0x02]) + struct.pack(">H", len(payload))
+    else:
+        out = (bytes([0x0F, message_flags & 0xFF]) + struct.pack(">H", len(payload))
+               + bytes([protocol & 0xFF]) + (port & 0xFFFFFF).to_bytes(3, "big")
+               + struct.pack(">Q", destination))
+    out += payload
+    return out + b"\x00" * (-len(out) % 4)

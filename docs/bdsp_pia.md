@@ -127,6 +127,17 @@ visible to the game's own session protocol, holding an address the console is br
 The capture holds nothing else because the game never had anything else to say: we joined, held a
 seat, and never spoke, so the host simply repeated its session state.
 
+## The send path, proven offline
+
+Re-encrypting each captured plaintext with the derived session key and IV reproduces **the
+console's own ciphertext and its tag, byte for byte, for all 674 packets**, and the parsed header
+re-packs byte-identically. So the packets this project can now build are the packets the console
+builds - which is the last thing that can be checked without spending a hardware run.
+
+`pad_payload` (0xFF to a multiple of 16), `build_message`, `encrypt_payload` and `PiaHeader5.pack`
+assemble one; `decrypt_payload` returns `None` rather than raising on a bad tag, because sweeping
+candidates against it is a normal thing to do.
+
 ## The GCM nonce
 
 The IV is built by the **stream** object, one per family, and it is the reason naming it took so
