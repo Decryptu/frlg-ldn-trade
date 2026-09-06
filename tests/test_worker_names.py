@@ -218,3 +218,31 @@ def test_a_scattered_run_is_placed_block_by_block(tmp_path):
     placed = dumps(str(tmp_path))
     assert [(tag, base, block[0]) for tag, _console, base, block in placed] == [
         ("bs122[0]", 0x080CE040, 0xAA), ("bs122[1]", 0x0804A2A0, 0xBB)]
+
+
+def test_the_shipped_table_is_what_this_decomp_and_these_dumps_still_say():
+    """A generated module that nobody can reproduce is a claim, not a measurement. This regenerates
+    the naming from the decomp and the dumps on this machine and demands every shipped name back.
+
+    A SUBSET rather than equality: a dump taken later adds names, and that is not a failure. A name
+    that no longer comes out is - it means the alignment behind it stopped holding."""
+    decomp = pathlib.Path("~/pokefirered").expanduser()
+    scratchpad = pathlib.Path(__file__).resolve().parent.parent / "scratchpad"
+    if not (decomp / "src").is_dir() or not (scratchpad / "launcher_logs").is_dir():
+        pytest.skip("no decomp checkout or no dumps to regenerate from")
+
+    from frlgsim import scrcmd
+    from script_read import every_dump
+    from rom_functions import known_names as all_known_names
+
+    calls, where = decomp_source.read_tree(sorted(decomp.glob("src/**/*.c")))
+    memory = scrcmd.Memory(every_dump(str(scratchpad), "firered"))
+    names = {address: gen_worker_names.entry_name(label)
+             for address, label in all_known_names(with_workers=False).items()
+             if gen_worker_names.entry_name(label) not in gen_worker_names.MARKERS}
+    names.update(rom_map.DECOMP_NAMES)
+    proposals, _corrections, _dropped = gen_worker_names.align(calls, memory, names, set(where))
+    accepted, _rejected = gen_worker_names.resolve(proposals, where, names,
+                                                   gen_worker_names.link_order(decomp))
+    for address, name in worker_names.WORKERS.items():
+        assert accepted.get(address) == name, f"0x{address:08X} no longer comes back as {name}"
