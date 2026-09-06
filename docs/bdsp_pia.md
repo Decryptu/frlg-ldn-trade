@@ -95,6 +95,38 @@ All 674 packets of the sp4 capture authenticate:
     crc32(netid||MAC)  0xda291352
     IV (first packet)  da29130df5a83bd383ce712d
 
+## What the console is saying
+
+With the session key in hand the payloads parse. Every one of the 674 packets carries exactly one
+message, and all of them are the same thing:
+
+    presence 0x7f  flags 0x11  size 121  protocol 36  port 0  destination 0
+
+`parse_messages()` does the framing: Pia 5.27-6.30 messages open with a byte saying which header
+fields are present, absent fields **inherit from the previous message**, each message is padded to a
+multiple of four bytes, and the packet tail is 0xFF. Sizes and ids are big-endian.
+
+Protocol 36 is the **Local Protocol**, and the message is its `0x11` *update session*, which the
+host rebroadcasts every 100 ms until every station acknowledges it. Decoded:
+
+    local message header  version 1, type 0x11, size 73
+    sequence id           4
+    network id            8b4a3b22        random, and NOT the advertisement's network id
+    host variable id      11bac90d        the same value as the packet header's source variable id
+    host constant id      0000 48f1 2022 9beb
+    allow participating   1
+    node 0                169.254.54.1:12345          the console
+    node 1                169.254.54.2:12345   01     us
+    nodes 2-7             empty, marked 0xff
+    host migration state  0
+
+Eight nine-byte node slots then one byte, which is the Union Room's eight seats. **That is sp3's
+"participant 1 of 8" seen from inside the encrypted channel** - the seat the LDN layer granted is
+visible to the game's own session protocol, holding an address the console is broadcasting to.
+
+The capture holds nothing else because the game never had anything else to say: we joined, held a
+seat, and never spoke, so the host simply repeated its session state.
+
 ## The GCM nonce
 
 The IV is built by the **stream** object, one per family, and it is the reason naming it took so

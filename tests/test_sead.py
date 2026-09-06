@@ -252,3 +252,71 @@ def test_a_captured_packet_actually_decrypts_and_authenticates():
     assert AES.new(sk, AES.MODE_GCM, nonce=iv, mac_len=8).decrypt_and_verify(ct, tag) == plaintext
     with pytest.raises(ValueError):                      # and a wrong IV must not pass
         AES.new(sk, AES.MODE_GCM, nonce=bytes(12), mac_len=8).decrypt_and_verify(ct, tag)
+
+
+# --- Pia 5.27 message framing. Synthetic throughout: no captured traffic in the tree.
+
+def _msg(present, *, mflags=None, size=None, proto=None, port=None, dest=None, payload=b""):
+    out = bytes([present])
+    if mflags is not None: out += bytes([mflags])
+    if size is not None: out += struct.pack(">H", size)
+    if proto is not None: out += bytes([proto]) + port.to_bytes(3, "big")
+    if dest is not None: out += struct.pack(">Q", dest)
+    out += payload
+    return out + b"\x00" * (-len(out) % 4)
+
+
+def test_one_message_parses_with_every_field_present():
+    from pokeldn.ldn.pia5 import parse_messages
+    body = bytes(range(20))
+    m = parse_messages(_msg(0x0F, mflags=0x11, size=len(body), proto=36, port=0,
+                            dest=0, payload=body))
+    assert len(m) == 1
+    assert (m[0].message_flags, m[0].protocol, m[0].port) == (0x11, 36, 0)
+    assert m[0].payload == body
+
+
+def test_absent_fields_inherit_from_the_previous_message():
+    """The whole point of the presence byte: a follow-up message can be flags plus a payload."""
+    from pokeldn.ldn.pia5 import parse_messages
+    first = _msg(0x0F, mflags=0x11, size=8, proto=36, port=7, dest=0x1122334455667788,
+                 payload=b"A" * 8)
+    second = _msg(0x00 | 0x02, size=4, payload=b"B" * 4)
+    m = parse_messages(first + second)
+    assert len(m) == 2
+    assert m[1].protocol == 36 and m[1].port == 7
+    assert m[1].message_flags == 0x11
+    assert m[1].destination == 0x1122334455667788
+    assert m[1].payload == b"BBBB"
+
+
+def test_the_walk_stops_at_the_0xff_padding():
+    from pokeldn.ldn.pia5 import parse_messages
+    m = parse_messages(_msg(0x0F, mflags=1, size=4, proto=9, port=0, dest=0, payload=b"wxyz")
+                       + b"\xff" * 12)
+    assert len(m) == 1 and m[0].payload == b"wxyz"
+
+
+def test_messages_are_padded_to_four_bytes():
+    """A 5-byte payload leaves three bytes of padding; the next message must still be found."""
+    from pokeldn.ldn.pia5 import parse_messages
+    m = parse_messages(_msg(0x0F, mflags=1, size=5, proto=9, port=0, dest=0, payload=b"12345")
+                       + _msg(0x02, size=2, payload=b"ok"))
+    assert [x.payload for x in m] == [b"12345", b"ok"]
+
+
+def test_a_size_running_past_the_buffer_is_refused_not_read():
+    from pokeldn.ldn.pia5 import parse_messages
+    assert parse_messages(_msg(0x0F, mflags=1, size=900, proto=9, port=0, dest=0)) == []
+
+
+def test_a_truncated_header_does_not_raise():
+    from pokeldn.ldn.pia5 import parse_messages
+    for n in range(1, 16):
+        parse_messages(bytes([0x0F]) + b"\x01" * n)
+
+
+def test_an_empty_or_all_padding_payload_yields_nothing():
+    from pokeldn.ldn.pia5 import parse_messages
+    assert parse_messages(b"") == []
+    assert parse_messages(b"\xff" * 16) == []

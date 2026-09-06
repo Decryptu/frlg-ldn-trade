@@ -142,3 +142,62 @@ def ldn_nonce_crc(network_id_le, source_mac):
     if len(network_id_le) != 4 or len(source_mac) != 6:
         raise ValueError("network id is four bytes little-endian, MAC is six")
     return zlib.crc32(bytes(network_id_le) + bytes(source_mac)) & 0xFFFFFFFF
+
+
+class Pia5Message:
+    """One message out of a decrypted Pia 5.27-5.45 packet."""
+
+    __slots__ = ("message_flags", "protocol", "port", "destination", "payload")
+
+    def __init__(self, message_flags, protocol, port, destination, payload):
+        self.message_flags, self.protocol = message_flags, protocol
+        self.port, self.destination, self.payload = port, destination, payload
+
+    def __repr__(self):
+        return (f"Pia5Message(proto={self.protocol} port={self.port} "
+                f"flags={self.message_flags:#04x} dest={self.destination:#x} "
+                f"len={len(self.payload)})")
+
+
+def parse_messages(plaintext):
+    """Split a decrypted payload into messages. Presence-flagged, and fields INHERIT.
+
+    Pia 5.27-6.30: each message opens with a byte saying which header fields are present, and any
+    field that is absent keeps the previous message's value - so a packet's second message is often
+    a single byte of flags and a payload. Messages are padded to a multiple of four bytes, and the
+    packet's tail is 0xFF padding, which is where the walk stops.
+
+    Sizes and ids here are BIG-endian, like the packet header and unlike the wiki's note about the
+    advertisement. docs/bdsp_pia.md "What the console is saying".
+    """
+    out, off = [], 0
+    flags = size = protocol = port = 0
+    destination = 0
+    while off < len(plaintext):
+        present = plaintext[off]
+        if present == 0xFF or present == 0:
+            break                                   # padding, or an empty flags byte
+        off += 1
+        if present & 1:
+            if off >= len(plaintext):
+                break
+            flags = plaintext[off]; off += 1
+        if present & 2:
+            if off + 2 > len(plaintext):
+                break
+            size = struct.unpack_from(">H", plaintext, off)[0]; off += 2
+        if present & 4:
+            if off + 4 > len(plaintext):
+                break
+            protocol = plaintext[off]
+            port = int.from_bytes(plaintext[off + 1:off + 4], "big"); off += 4
+        if present & 8:
+            if off + 8 > len(plaintext):
+                break
+            destination = struct.unpack_from(">Q", plaintext, off)[0]; off += 8
+        if size > len(plaintext) - off:
+            break
+        out.append(Pia5Message(flags, protocol, port, destination, plaintext[off:off + size]))
+        off += size
+        off += -off % 4
+    return out
