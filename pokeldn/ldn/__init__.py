@@ -2,7 +2,8 @@
 
 Layers, bottom-up: UDP :12345 (`transport`) -> zstd + AES-GCM (`crypto`) -> Pia connection
 (`pia_connect`, Pia 6.32+; `pia5`, Pia 5.27-5.45) -> Pia message + Reliable (`reliable`).
-`sead` is Nintendo's own RNG, which Pia's LDN session key is built on.
+`sead` is Nintendo's own RNG, which Pia's LDN session key is built on, and `local_protocol` is
+Pia protocol 36 - the session bookkeeping a Union Room runs on, once its payloads decrypt.
 `host_pia` is the leader-side peer controller, `beacon`/`host_beacon` the advertisement a
 console discovers us by, and `joyspot_discovery`/`joyspot_probe` the discovery-only paths.
 

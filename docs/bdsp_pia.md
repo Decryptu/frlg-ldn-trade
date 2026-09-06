@@ -124,8 +124,21 @@ Eight nine-byte node slots then one byte, which is the Union Room's eight seats.
 "participant 1 of 8" seen from inside the encrypted channel** - the seat the LDN layer granted is
 visible to the game's own session protocol, holding an address the console is broadcasting to.
 
-The capture holds nothing else because the game never had anything else to say: we joined, held a
-seat, and never spoke, so the host simply repeated its session state.
+`pokeldn.ldn.local_protocol` parses it. The whole capture reads back as:
+
+    674 update-session messages, sequence id 4 in EVERY ONE
+    network id 0x223b4a8b   host variable id 0x11bac90d   allow participating yes
+    seat 0  169.254.54.1:12345  ranking 0      the console, the oldest node
+    seat 1  169.254.54.2:12345  ranking 1      us
+    seats 2-7  empty, ranking 255
+
+The sequence id never moving across 674 messages is the point: the host repeats an update session
+**until every station acknowledges it**, so this is a console asking the same question 674 times
+and never being answered. We are in its node table with a ranking, and we never replied.
+
+Watch the byte order. The Pia message header around these is big-endian, the Local Protocol's own
+fields are little-endian, and a local address inside them is big-endian again. All three are
+wrong-able in ways that still parse.
 
 ## The send path, proven offline
 
