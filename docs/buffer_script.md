@@ -1384,6 +1384,13 @@ The zip is only evidence if it is checked, and four checks decide:
 | **agreement** | a target named differently by two of its callers | 0 |
 | **link order** | a name in the wrong place in the ROM entirely | 1 address dropped |
 
+**AND IT RE-MEASURES WHAT WAS ALREADY MEASURED.** The anchor check is not only a filter: across the
+164 aligned bodies it lands on **68 distinct names this project had measured, 557 times**, every one
+of them back on its own address - `SCRIPT_READ_HALFWORD` 138 times, `VarGet` 109, `GetMonData3` 26,
+`SetupNativeScript` 16. Every worker named by hand in sessions 39 to 41 is in there, including the
+`StopScript` / `ScriptContext_Stop` correction bs121 made. One run's reading, checked against the
+decomp from every body that reaches it.
+
 The last one is the strong one and it is free. agbcc emits a translation unit in definition order
 and `ld_script_rev10.ld:53` lists the objects in the order they are laid down, so all 180 names and
 every anchor beside them form ONE ascending sequence, and a name out of place is out of the chain.
