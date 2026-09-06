@@ -54,6 +54,7 @@ WORKERS = {
     0x08048F9C: 'GetNumLevelsGainedForDaycareMon',          # GetNumLevelsGainedForRoute5DaycareMon +1
     0x08048FD0: 'GetDaycareCostForSelectedMon',             # GetCostToWithdrawRoute5DaycareMon
     0x08049008: 'GetDaycareCostForMon',                     # GetDaycareCost
+    0x08049758: 'RemoveEggFromDayCare',                     # RejectEggFromDayCare
     0x080498BC: '_GiveEggFromDaycare',                      # GiveEggFromDaycare
     0x08049BE4: 'IsEggPending',                             # GetDaycareState
     0x08049BF4: '_GetDaycareMonNicknames',                  # GetDaycareMonNicknames
@@ -61,8 +62,8 @@ WORKERS = {
     0x0804FAB4: 'SetContinueGameWarpStatus',                # EnterHallOfFame
     0x0804FD48: 'SavePlayerBag',                            # CleanupLinkRoomState
     0x08058518: 'ComputeWhiteOutMoneyLoss',                 # OverworldWhiteOutGetMoneyLoss
-    0x080587D8: 'GetGameStat',                              # EnterHallOfFame +3
-    0x08058814: 'SetGameStat',                              # BattleTowerUtil +1
+    0x080587D8: 'GetGameStat',                              # EnterHallOfFame +4
+    0x08058814: 'SetGameStat',                              # BattleTowerUtil +2
     0x080589EC: 'SetObjEventTemplateCoords',                # ScrCmd_setobjectxyperm
     0x08058A28: 'SetObjEventTemplateMovementType',          # ScrCmd_setobjectmovementtype
     0x08058D30: 'SetDynamicWarpWithCoords',                 # ScrCmd_setdynamicwarp
@@ -74,11 +75,13 @@ WORKERS = {
     0x0805904C: 'SetContinueGameWarpToHealLocation',        # EnterHallOfFame
     0x0805961C: 'SetFlashLevel',                            # ScrCmd_setflashlevel
     0x08059654: 'SetCurrentMapLayout',                      # ScrCmd_setmaplayoutindex
+    0x080596A0: 'GetCurrLocationDefaultMusic',              # Overworld_PlaySpecialMapMusic
     0x0805978C: 'Overworld_SetSavedMusic',                  # ForcePlayerOntoBike +2
     0x08059830: 'Overworld_ChangeMusicToDefault',           # ScrCmd_fadedefaultbgm
     0x0805985C: 'Overworld_ChangeMusicTo',                  # ForcePlayerOntoBike +1
     0x0805989C: 'TryFadeOutOldMapMusic',                    # DoCableClubWarp
     0x080598E8: 'Overworld_FadeOutMapMusic',                # Script_FadeOutMapMusic
+    0x08059A38: 'Overworld_MusicCanOverrideMapMusic',       # Overworld_PlaySpecialMapMusic
     0x08059B30: 'IsMapTypeIndoors',                         # SetHelpContextForMap
     0x08059D40: 'IsUpdateLinkStateCBActive',                # ScrCmd_lock +1
     0x0805B87C: 'QueueExitLinkRoomKey',                     # ExitLinkRoom
@@ -91,9 +94,9 @@ WORKERS = {
     0x0805EC10: 'FieldAnimateDoorOpen',                     # ScrCmd_opendoor
     0x0805EC64: 'GetDoorSoundEffect',                       # ScrCmd_opendoor
     0x0805F6EC: 'SetPlayerAvatarTransitionFlags',           # ForcePlayerOntoBike +1
-    0x0805FE38: 'PlayerGetDestCoords',                      # AnimateTeleporterCable +2
+    0x0805FE38: 'PlayerGetDestCoords',                      # AnimateTeleporterCable +3
     0x0805FFE4: 'GetPlayerMovementDirection',               # SetCableClubWarp
-    0x0806004C: 'TestPlayerAvatarFlags',                    # GetPlayerAvatarBike +1
+    0x0806004C: 'TestPlayerAvatarFlags',                    # GetPlayerAvatarBike +2
     0x08060068: 'GetPlayerAvatarObjectId',                  # RemoveCameraObject
     0x080613E4: 'SavePlayerFacingDirectionForTeleport',     # ScrCmd_warpspinenter
     0x08061860: 'GetObjectEventIdByLocalIdAndMap',          # ScrCmd_release +1
@@ -120,7 +123,7 @@ WORKERS = {
     0x0806D09C: 'InitScriptContext',                        # RunScriptImmediately
     0x0806D0D8: 'SetupBytecodeScript',                      # RunScriptImmediately
     0x0806D0F4: 'RunScriptCommand',                         # RunScriptImmediately
-    0x0806D230: 'LockPlayerFieldControls',                  # ChoosePartyMon +6
+    0x0806D230: 'LockPlayerFieldControls',                  # ChoosePartyMon +8
     0x0806D310: 'MsgSetSignpost',                           # ScrCmd_signmsg
     0x0806D31C: 'MsgSetNotSignpost',                        # ScrCmd_normalmsg
     0x0806D424: 'ScriptContext_Enable',                     # ReturnToListMenu
@@ -135,14 +138,16 @@ WORKERS = {
     0x08071E34: 'GetFlagAddr',                              # FlagClear +2
     0x08072144: 'ActivatePerStepCallback',                  # ScrCmd_setstepcallback
     0x08073C64: 'LoadPalette',                              # OpenMuseumFossilPic +1
-    0x08073E00: 'BeginNormalPaletteFade',                   # ChoosePartyMon +1
-    0x080752EC: 'PlayNewMapMusic',                          # PlayTrainerEncounterMusic +1
+    0x08073E00: 'BeginNormalPaletteFade',                   # ChoosePartyMon +3
+    0x080752E0: 'GetCurrentMapMusic',                       # Overworld_PlaySpecialMapMusic
+    0x080752EC: 'PlayNewMapMusic',                          # Overworld_PlaySpecialMapMusic +2
+    0x0807530C: 'StopMapMusic',                             # Overworld_PlaySpecialMapMusic
     0x080754D8: 'PlayFanfare',                              # ScrCmd_playfanfare
     0x080755DC: 'FadeOutBGMTemporarily',                    # ScrCmd_fadeoutbgm
-    0x0807561C: 'FadeInBGM',                                # ScrCmd_fadeinbgm
+    0x0807561C: 'FadeInBGM',                                # Overworld_PlaySpecialMapMusic +1
     0x0807579C: 'PlayCry_Script',                           # ScrCmd_playmoncry +1
     0x08075B44: 'PlaySE',                                   # AnimateElevator +4
-    0x0807AC94: 'CreateTask',                               # AnimateElevator +16
+    0x0807AC94: 'CreateTask',                               # AnimateElevator +19
     0x0807AD80: 'DestroyTask',                              # ListMenu
     0x0807AECC: 'FuncIsActiveTask',                         # AnimatePcTurnOn +1
     0x0807AF04: 'FindTaskIdByFunc',                         # CloseMuseumFossilPic +2
@@ -234,6 +239,7 @@ WORKERS = {
     0x080DDE3C: 'TrySavingData',                            # SaveBattleTowerProgress
     0x080DE3E8: 'SetMysteryEventScriptStatus',              # ScrCmd_setmysteryeventstatus
     0x080E9538: 'ResetBattleTowerStreak',                   # BattleTowerMapScript2 +1
+    0x080E995C: 'SetBattleTowerTrainerGfxId',               # SetEReaderTrainerGfxId
     0x080EA28C: 'BufferBattleTowerTrainerMessage',          # BufferEReaderTrainerGreeting +1
     0x080EA9E0: 'SetPlayerBattleTowerRecord',               # SaveBattleTowerProgress
     0x080EAC2C: 'PopulateBravoTrainerBattleTowerLostData',  # SaveBattleTowerProgress
@@ -287,6 +293,8 @@ WORKERS = {
     0x0814A808: 'IncrementSentRewardCounter',               # WonderNews_GetRewardInfo
     0x0814A874: 'GetRewardType',                            # WonderNews_GetRewardInfo
     0x0815392C: 'LoadStdWindowGfx',                         # DisplayBerryPowderVendorMenu +1
+    0x08161668: 'SetUpTrainerTowerDataStruct',              # CallTrainerTowerFunc
+    0x08161708: 'FreeTrainerTowerDataStruct',               # CallTrainerTowerFunc
     0x081627D4: 'DecryptBerryPowder',                       # Script_HasEnoughBerryPowder +1
     0x081627EC: 'SetBerryPowder',                           # Script_TakeBerryPowder
     0x08162820: 'HasEnoughBerryPowder',                     # Script_TakeBerryPowder
@@ -335,6 +343,7 @@ SOURCES = {
     'GetNumLevelsGainedForDaycareMon': ('daycare.c', 15, 2),
     'GetDaycareCostForSelectedMon': ('daycare.c', 16, 1),
     'GetDaycareCostForMon': ('daycare.c', 17, 1),
+    'RemoveEggFromDayCare': ('daycare.c', 33, 1),
     '_GiveEggFromDaycare': ('daycare.c', 37, 1),
     'IsEggPending': ('daycare.c', 43, 1),
     '_GetDaycareMonNicknames': ('daycare.c', 44, 1),
@@ -342,8 +351,8 @@ SOURCES = {
     'SetContinueGameWarpStatus': ('load_save.c', 7, 1),
     'SavePlayerBag': ('load_save.c', 17, 1),
     'ComputeWhiteOutMoneyLoss': ('overworld.c', 1, 1),
-    'GetGameStat': ('overworld.c', 11, 4),
-    'SetGameStat': ('overworld.c', 12, 2),
+    'GetGameStat': ('overworld.c', 11, 5),
+    'SetGameStat': ('overworld.c', 12, 3),
     'SetObjEventTemplateCoords': ('overworld.c', 16, 1),
     'SetObjEventTemplateMovementType': ('overworld.c', 17, 1),
     'SetDynamicWarpWithCoords': ('overworld.c', 32, 1),
@@ -355,11 +364,13 @@ SOURCES = {
     'SetContinueGameWarpToHealLocation': ('overworld.c', 47, 1),
     'SetFlashLevel': ('overworld.c', 66, 1),
     'SetCurrentMapLayout': ('overworld.c', 68, 1),
+    'GetCurrLocationDefaultMusic': ('overworld.c', 71, 1),
     'Overworld_SetSavedMusic': ('overworld.c', 75, 3),
     'Overworld_ChangeMusicToDefault': ('overworld.c', 78, 1),
     'Overworld_ChangeMusicTo': ('overworld.c', 79, 2),
     'TryFadeOutOldMapMusic': ('overworld.c', 81, 1),
     'Overworld_FadeOutMapMusic': ('overworld.c', 83, 1),
+    'Overworld_MusicCanOverrideMapMusic': ('overworld.c', 87, 1),
     'IsMapTypeIndoors': ('overworld.c', 95, 1),
     'IsUpdateLinkStateCBActive': ('overworld.c', 103, 2),
     'QueueExitLinkRoomKey': ('overworld.c', 196, 1),
@@ -372,9 +383,9 @@ SOURCES = {
     'FieldAnimateDoorOpen': ('field_door.c', 17, 1),
     'GetDoorSoundEffect': ('field_door.c', 19, 1),
     'SetPlayerAvatarTransitionFlags': ('field_player_avatar.c', 45, 2),
-    'PlayerGetDestCoords': ('field_player_avatar.c', 95, 3),
+    'PlayerGetDestCoords': ('field_player_avatar.c', 95, 4),
     'GetPlayerMovementDirection': ('field_player_avatar.c', 98, 1),
-    'TestPlayerAvatarFlags': ('field_player_avatar.c', 101, 2),
+    'TestPlayerAvatarFlags': ('field_player_avatar.c', 101, 3),
     'GetPlayerAvatarObjectId': ('field_player_avatar.c', 103, 1),
     'SavePlayerFacingDirectionForTeleport': ('field_player_avatar.c', 169, 1),
     'GetObjectEventIdByLocalIdAndMap': ('event_object_movement.c', 5, 2),
@@ -401,7 +412,7 @@ SOURCES = {
     'InitScriptContext': ('script.c', 0, 1),
     'SetupBytecodeScript': ('script.c', 1, 1),
     'RunScriptCommand': ('script.c', 4, 1),
-    'LockPlayerFieldControls': ('script.c', 12, 7),
+    'LockPlayerFieldControls': ('script.c', 12, 9),
     'MsgSetSignpost': ('script.c', 27, 1),
     'MsgSetNotSignpost': ('script.c', 28, 1),
     'ScriptContext_Enable': ('script.c', 36, 1),
@@ -416,14 +427,16 @@ SOURCES = {
     'GetFlagAddr': ('event_data.c', 21, 3),
     'ActivatePerStepCallback': ('field_tasks.c', 3, 1),
     'LoadPalette': ('palette.c', 1, 2),
-    'BeginNormalPaletteFade': ('palette.c', 7, 2),
-    'PlayNewMapMusic': ('sound.c', 4, 2),
+    'BeginNormalPaletteFade': ('palette.c', 7, 4),
+    'GetCurrentMapMusic': ('sound.c', 3, 1),
+    'PlayNewMapMusic': ('sound.c', 4, 3),
+    'StopMapMusic': ('sound.c', 5, 1),
     'PlayFanfare': ('sound.c', 14, 1),
     'FadeOutBGMTemporarily': ('sound.c', 19, 1),
-    'FadeInBGM': ('sound.c', 21, 1),
+    'FadeInBGM': ('sound.c', 21, 2),
     'PlayCry_Script': ('sound.c', 28, 2),
     'PlaySE': ('sound.c', 38, 5),
-    'CreateTask': ('task.c', 1, 17),
+    'CreateTask': ('task.c', 1, 20),
     'DestroyTask': ('task.c', 3, 1),
     'FuncIsActiveTask': ('task.c', 9, 2),
     'FindTaskIdByFunc': ('task.c', 10, 3),
@@ -515,6 +528,7 @@ SOURCES = {
     'TrySavingData': ('save.c', 22, 1),
     'SetMysteryEventScriptStatus': ('mystery_event_script.c', 7, 1),
     'ResetBattleTowerStreak': ('battle_tower.c', 1, 2),
+    'SetBattleTowerTrainerGfxId': ('battle_tower.c', 5, 1),
     'BufferBattleTowerTrainerMessage': ('battle_tower.c', 15, 2),
     'SetPlayerBattleTowerRecord': ('battle_tower.c', 24, 1),
     'PopulateBravoTrainerBattleTowerLostData': ('battle_tower.c', 30, 1),
@@ -568,6 +582,8 @@ SOURCES = {
     'IncrementSentRewardCounter': ('wonder_news.c', 6, 1),
     'GetRewardType': ('wonder_news.c', 8, 1),
     'LoadStdWindowGfx': ('text_window.c', 10, 2),
+    'SetUpTrainerTowerDataStruct': ('trainer_tower.c', 8, 1),
+    'FreeTrainerTowerDataStruct': ('trainer_tower.c', 9, 1),
     'DecryptBerryPowder': ('berry_powder.c', 0, 2),
     'SetBerryPowder': ('berry_powder.c', 1, 1),
     'HasEnoughBerryPowder': ('berry_powder.c', 3, 1),

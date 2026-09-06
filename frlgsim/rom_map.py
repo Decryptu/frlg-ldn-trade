@@ -409,6 +409,14 @@ LEAFGREEN_ADD_BAG_ITEM = 0x0809DA44      # lg189; the rest of that block is -0x2
 # pointing into the caller rather than into the veneer.
 CALL_VIA_R1 = 0x081E2228
 CALL_VIA_R3 = 0x081E2230
+# DEDUCTION, bs124, and it cost nothing: the veneers are one THUMB `bx rN` plus alignment, four
+# bytes each, and two of them are measured - r0 at 0x081E2224 and r1 at 0x081E2228. That fixes the
+# whole block by arithmetic: r2 0x081E222C, r3 0x081E2230 (measured, and it agrees), r4 0x081E2234,
+# r5 0x081E2238, r6 0x081E223C. bs124's aligner proposed a C function at 0x081E2234 and the
+# link-order check threw it out - a body in the middle of `game_clear.c` cannot sit up in the
+# veneers - which is what named it instead. The two the tables actually reach are r4 and r6.
+CALL_VIA_R4 = 0x081E2234
+CALL_VIA_R6 = 0x081E223C
 
 # --- variables ----------------------------------------------------------------------------------
 # Where CLI_RUN_BUFFER_SCRIPT copies our 1024 bytes and calls them. Deduced from ld_script.ld, then
