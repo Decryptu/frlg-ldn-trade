@@ -17,7 +17,7 @@ them is called, that call is the measurement.
 
 
 WORKERS = {
-    0x0800053C: 'SetMainCallback2',                         # DoCredits +5
+    0x0800053C: 'SetMainCallback2',                         # DoCredits +6
     0x080006EC: 'SetVBlankCallback',                        # DoSeagallopFerryScene +1
     0x08002B18: 'AllocZeroed',                              # DoCredits +1
     0x08002BB0: 'AddTextPrinterParameterized',              # DoPicboxCancel +3
@@ -125,12 +125,13 @@ WORKERS = {
     0x0806D09C: 'InitScriptContext',                        # RunScriptImmediately
     0x0806D0D8: 'SetupBytecodeScript',                      # RunScriptImmediately
     0x0806D0F4: 'RunScriptCommand',                         # RunScriptImmediately
-    0x0806D230: 'LockPlayerFieldControls',                  # ChoosePartyMon +9
+    0x0806D230: 'LockPlayerFieldControls',                  # ChoosePartyMon +10
     0x0806D310: 'MsgSetSignpost',                           # ScrCmd_signmsg
     0x0806D31C: 'MsgSetNotSignpost',                        # ScrCmd_normalmsg
     0x0806D424: 'ScriptContext_Enable',                     # ReturnToListMenu
     0x0806D5A0: 'CalculateRamScriptChecksum',               # InitRamScript
     0x0806D5C4: 'ClearRamScript',                           # InitRamScript +1
+    0x0806D6EC: 'ValidateRamScript',                        # ValidateSavedWonderCard
     0x0806D738: 'GetSavedRamScriptIfValid',                 # ScrCmd_trywondercardscript
     0x08070694: 'GetPlayerPosition',                        # SetCableClubWarp
     0x080714A4: 'GetWarpEventAtMapPosition',                # SetCableClubWarp
@@ -151,7 +152,7 @@ WORKERS = {
     0x0807579C: 'PlayCry_Script',                           # ScrCmd_playmoncry +1
     0x08075B44: 'PlaySE',                                   # AnimateElevator +4
     0x0807AC34: 'ResetTasks',                               # DoCredits
-    0x0807AC94: 'CreateTask',                               # AnimateElevator +23
+    0x0807AC94: 'CreateTask',                               # AnimateElevator +25
     0x0807AD80: 'DestroyTask',                              # ListMenu
     0x0807AECC: 'FuncIsActiveTask',                         # AnimatePcTurnOn +1
     0x0807AF04: 'FindTaskIdByFunc',                         # CloseMuseumFossilPic +2
@@ -298,12 +299,16 @@ WORKERS = {
     0x08138524: 'ShowSelectMovePokemonSummaryScreen',       # SelectMoveDeleterMove
     0x0813C924: 'SetPokemonSummaryScreenMode',              # SelectMoveDeleterMove
     0x08143604: 'PlaySlotMachine',                          # ScrCmd_playslotmachine
+    0x08145A54: 'ClearRoamerData',                          # InitRoamer
+    0x08145A94: 'CreateInitialRoamerMon',                   # InitRoamer
     0x08147B94: 'GetSavedWonderNewsMetadata',               # WonderNews_GetRewardInfo
     0x08147C1C: 'ValidateSavedWonderNews',                  # WonderNews_GetRewardInfo
+    0x08147E18: 'ValidateWonderCard',                       # ValidateSavedWonderCard
     0x0814A7DC: 'GetRewardItem',                            # WonderNews_GetRewardInfo
     0x0814A7FC: 'ResetSentRewardCounter',                   # WonderNews_GetRewardInfo
     0x0814A808: 'IncrementSentRewardCounter',               # WonderNews_GetRewardInfo
     0x0814A874: 'GetRewardType',                            # WonderNews_GetRewardInfo
+    0x0814D450: 'IsSpeciesAllowedInPokemonJump',            # IsPokemonJumpSpeciesInParty
     0x0815392C: 'LoadStdWindowGfx',                         # DisplayBerryPowderVendorMenu +1
     0x08161668: 'SetUpTrainerTowerDataStruct',              # CallTrainerTowerFunc
     0x08161708: 'FreeTrainerTowerDataStruct',               # CallTrainerTowerFunc
@@ -318,7 +323,7 @@ WORKERS = {
 # Where the decomp defines each one, and how many of the table's bodies reached
 # it. A worker with several callers is one several bodies agreed about.
 SOURCES = {
-    'SetMainCallback2': ('main.c', 4, 6),
+    'SetMainCallback2': ('main.c', 4, 7),
     'SetVBlankCallback': ('main.c', 12, 2),
     'AllocZeroed': ('malloc.c', 8, 2),
     'AddTextPrinterParameterized': ('text_printer.c', 2, 4),
@@ -426,12 +431,13 @@ SOURCES = {
     'InitScriptContext': ('script.c', 0, 1),
     'SetupBytecodeScript': ('script.c', 1, 1),
     'RunScriptCommand': ('script.c', 4, 1),
-    'LockPlayerFieldControls': ('script.c', 12, 10),
+    'LockPlayerFieldControls': ('script.c', 12, 11),
     'MsgSetSignpost': ('script.c', 27, 1),
     'MsgSetNotSignpost': ('script.c', 28, 1),
     'ScriptContext_Enable': ('script.c', 36, 1),
     'CalculateRamScriptChecksum': ('script.c', 48, 1),
     'ClearRamScript': ('script.c', 49, 2),
+    'ValidateRamScript': ('script.c', 52, 1),
     'GetSavedRamScriptIfValid': ('script.c', 53, 1),
     'GetPlayerPosition': ('field_control_avatar.c', 6, 1),
     'GetWarpEventAtMapPosition': ('field_control_avatar.c', 35, 1),
@@ -452,7 +458,7 @@ SOURCES = {
     'PlayCry_Script': ('sound.c', 28, 2),
     'PlaySE': ('sound.c', 38, 5),
     'ResetTasks': ('task.c', 0, 1),
-    'CreateTask': ('task.c', 1, 24),
+    'CreateTask': ('task.c', 1, 26),
     'DestroyTask': ('task.c', 3, 1),
     'FuncIsActiveTask': ('task.c', 9, 2),
     'FindTaskIdByFunc': ('task.c', 10, 3),
@@ -599,12 +605,16 @@ SOURCES = {
     'ShowSelectMovePokemonSummaryScreen': ('pokemon_summary_screen.c', 1, 1),
     'SetPokemonSummaryScreenMode': ('pokemon_summary_screen.c', 69, 1),
     'PlaySlotMachine': ('slot_machine.c', 0, 1),
+    'ClearRoamerData': ('roamer.c', 0, 1),
+    'CreateInitialRoamerMon': ('roamer.c', 1, 1),
     'GetSavedWonderNewsMetadata': ('mystery_gift.c', 4, 1),
     'ValidateSavedWonderNews': ('mystery_gift.c', 8, 1),
+    'ValidateWonderCard': ('mystery_gift.c', 17, 1),
     'GetRewardItem': ('wonder_news.c', 4, 1),
     'ResetSentRewardCounter': ('wonder_news.c', 5, 1),
     'IncrementSentRewardCounter': ('wonder_news.c', 6, 1),
     'GetRewardType': ('wonder_news.c', 8, 1),
+    'IsSpeciesAllowedInPokemonJump': ('pokemon_jump.c', 98, 1),
     'LoadStdWindowGfx': ('text_window.c', 10, 2),
     'SetUpTrainerTowerDataStruct': ('trainer_tower.c', 8, 1),
     'FreeTrainerTowerDataStruct': ('trainer_tower.c', 9, 1),

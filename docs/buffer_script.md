@@ -1493,11 +1493,40 @@ block at its own base, tagging them `<run>[0]`, `<run>[1]`, ... `run_mg_fast.sh`
 flag too, or a scattered run would not have been given a `--dump-file` at all and would have thrown
 its bytes away.
 
-Proven offline: the payload emulated pass by pass (each one sends the next address, junk in `param`
-starts at block zero, an over-run repeats the last block), and a whole simulated session through
-`scratchpad/mg_client_harness.py --buffer-script memory-dump-scatter --dump-scatter A,B,C` returning
-three blocks from three unrelated addresses. **Not yet run on hardware.**
-`./.venv/bin/python tools/rom_functions.py --table specials --plan --blocks 32` prints the join.
+Proven offline first: the payload emulated pass by pass (each one sends the next address, junk in
+`param` starts at block zero, an over-run repeats the last block), and a whole simulated session
+through `scratchpad/mg_client_harness.py --buffer-script memory-dump-scatter --dump-scatter A,B,C`.
+
+### bs122-bs126: five joins, and every table is closed
+
+**bs122 checked itself the way bs119 did.** Block 0 was aimed at 0x080CE550, which bs114 and bs119
+both already hold, and came back BYTE FOR BYTE IDENTICAL - with all sixteen blocks distinct and none
+empty. A new path that merely looks like the proven one is not the proven one.
+
+| run | blocks | what it read |
+|---|---|---|
+| bs122 | 16 | the self-check plus 80 specials bodies; `gSpecials` 106 -> 186 |
+| bs123 | 32 | 48 more specials and 12 callable; the payload at its ceiling |
+| bs124 | 32 | 234 -> 248, and a rejection that named two veneers |
+| bs125 | 32 | field, mystery-event and CALLABLE all closed; specials 265 |
+| bs126 | 7 | **gSpecials CLOSED, 272 of 272** |
+
+119 kilobytes in five joins. The old way was 1 KB a join.
+
+**Every body behind every table this project has ever read is now off the cartridge**: 213 field
+commands, 17 Mystery Event opcodes, 27 callable functions, 272 specials. `gen_worker_names` names
+the new surface as it arrives without a run of its own - **183 workers before bs122, 301 after
+bs126**.
+
+**bs124's REJECTION is the check earning its keep.** The aligner proposed a `game_clear.c` function
+at 0x081E2234 and the whole-ROM link order threw it out: nothing from that translation unit can sit
+among the call veneers. Which is what named the address instead - the veneers are `bx rN` plus
+alignment, four bytes each, and r0 0x081E2224 and r1 0x081E2228 are measured, so 0x081E2234 is
+`_call_via_r4` and 0x081E223C `_call_via_r6`, with the measured r3 0x081E2230 agreeing in between.
+bs126 refused three more, all macros the decomp has no function for (`CALC_CRC`, `tPressingSpeeds`).
+
+WHAT IS LEFT: 177 call targets the tables reach that have no name, 56 of whose bodies are not held.
+Two more scattered joins reads all 56, and a body names itself by what it calls.
 
 ## What is left
 
