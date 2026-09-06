@@ -1,6 +1,6 @@
 ---
 title: Brilliant Diamond and Shining Pearl
-nav_order: 6
+nav_order: 4
 has_children: true
 ---
 
@@ -22,8 +22,8 @@ datagram has been decrypted and no Pia handshake has been completed.
 
 ## The pages
 
-- [BDSP: joining the session](bdsp_ldn.md) - the advertisement, the passphrase, and taking a seat.
-- [BDSP: the Pia layer](bdsp_pia.md) - the packet format, the key hierarchy, and exactly what is
+- [Joining the session](bdsp_ldn.md) - the advertisement, the passphrase, and taking a seat.
+- [Pia, and the game key](bdsp_pia.md) - the packet format, the key hierarchy, and exactly what is
   still missing.
 
 ## Reading the game

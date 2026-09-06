@@ -7,5 +7,5 @@
     .text  the charmap and the Easy Chat vocabularies
 
 The two cartridges share most of their ROM at a per-segment offset; `frlg.rom.leafgreen_twins`
-and `frlg.rom.rom_map.LEAFGREEN_DELTA_BOUNDARIES` hold what has been measured. `docs/leafgreen.md`.
+and `frlg.rom.rom_map.LEAFGREEN_DELTA_BOUNDARIES` hold what has been measured. `docs/frlg_leafgreen.md`.
 """

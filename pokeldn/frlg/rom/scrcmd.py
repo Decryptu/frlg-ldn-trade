@@ -4,7 +4,7 @@ commands take [asm/macros/event.inc, data/script_cmd_table.inc; decomp:src/scrcm
 Every RAM script this project builds is assembled out of these bytes, whether the builder is
 `gift_composer`, `wonder_card` or `stamp_rally`, so they are stated once here rather than once
 per builder. `native_script` adds the two commands that stage and run code (`setptr` 0x11,
-`callnative` 0x23); docs/mystery_gift_composer.md is the composer that emits the rest.
+`callnative` 0x23); docs/frlg_gift_composer.md is the composer that emits the rest.
 """
 
 OP_END = 0x02
@@ -70,7 +70,7 @@ RAM_SCRIPT_VIRTUAL_BASE = 0x08000000
 # --- reading a script the console holds -----------------------------------------------------------
 # The opcode table is bs82's (scrcmd_names.COMMANDS) and the operand widths are the decomp's own
 # macros (scrcmd_args.ARGS, generated). Together they turn a dump into the script it is - which is
-# the only way to check a pointer into script data is really a script. docs/buffer_script.md.
+# the only way to check a pointer into script data is really a script. docs/frlg_rom_buffer_script.md.
 
 # Control never falls through these, so a linear walk stops: they are where one script ends and the
 # next begins. `goto` is in the set because the decomp's own labels sit right behind one -

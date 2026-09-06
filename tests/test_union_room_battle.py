@@ -1,5 +1,5 @@
 """The Union Room battle: the link buffer codec, struct BattlePokemon, and the non-master
-controller. Every constant here is a decomp citation; see docs/joiner_protocol_notes.md."""
+controller. Every constant here is a decomp citation; see docs/frlg_link_notes.md."""
 
 import os
 import sys

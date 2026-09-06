@@ -7,5 +7,5 @@ definition into bytes (`gift_composer`, `gift_registry`, `wonder_card_events`,
 `gift_artifact`, `gift_to_bin`). `game_data_log` keeps what each session's console told us
 about itself.
 
-`docs/mystery_gift.md`. The Mystery Event VM a card can carry is `pokeldn.frlg.rom.mystery_event`.
+`docs/frlg_gift.md`. The Mystery Event VM a card can carry is `pokeldn.frlg.rom.mystery_event`.
 """

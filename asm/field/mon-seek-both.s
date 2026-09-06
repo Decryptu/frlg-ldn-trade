@@ -9,7 +9,7 @@
 @       draws 4,5 -> 25/7/14/10/10/30     the mon that actually appeared
 @
 @ ONE EXTRA Random() ran between the personality draw and the IV draws. `CreateBoxMon` has no draw
-@ there [decomp:src/pokemon.c], and docs/rng.md already records this as measured and unexplained for
+@ there [decomp:src/pokemon.c], and docs/frlg_rom_rng.md already records this as measured and unexplained for
 @ WILD encounters - bs51's Weedle (Method 2, the stray before the IVs), bs52 and bs54 (Method 4,
 @ between the IV draws). What mev20 adds is that it happens on a SCRIPTED encounter too: bs53's
 @ Ditto was clean and so was mev19, so it is intermittent there rather than absent. A search that

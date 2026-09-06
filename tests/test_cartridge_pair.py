@@ -1,7 +1,7 @@
 """Pairing the two cartridges' copies of one window, and the delta map that comes out of it.
 
 lg169 made this measurement without naming it: a POINTER dumped off both consoles is a delta point
-at wherever it points. `tools/cartridge_pair.py` reads both kinds out of a window held on both
+at wherever it points. `tools/frlg/cartridge_pair.py` reads both kinds out of a window held on both
 cartridges - the literal-pool words, which sessions 40 and 41 paired by hand, and the `bl` targets,
 which nothing had. A `bl` is a RELATIVE call, so the same instruction resolves to a different
 address on each cartridge and the pair is two measurements rather than one plus an assumed delta.

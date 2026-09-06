@@ -4,7 +4,7 @@
 @ where it is. Four of the eleven words cannot be obtained by any other route:
 @
 @   [0] our own load address, from pc. gDecompressionBuffer is 0x0201C000 by DEDUCTION from
-@       ld_script.ld [docs/buffer_script.md]; this measures it.
+@       ld_script.ld [docs/frlg_rom_buffer_script.md]; this measures it.
 @   [1] lr. Client_RunBufferScript reaches us with `bx` through a function pointer
 @       [decomp:src/mystery_gift_client.c:276], so lr is the address IN ROM of the instruction after
 @       that call, with bit 0 set because the caller is THUMB. An absolute ROM address of a code site

@@ -5,7 +5,7 @@
 
 `rom_map.leafgreen_guess` applies a segment's delta and refuses inside a boundary, which is the
 right answer when nothing better exists. Something better exists for every pointer that appears in a
-window both cartridges have been dumped at: `tools/cartridge_pair.py` reads the same instruction off
+window both cartridges have been dumped at: `tools/frlg/cartridge_pair.py` reads the same instruction off
 both consoles and the two targets it resolves to are FireRed's address and LeafGreen's, each read
 off its own cartridge. No delta is applied and no segment has to be trusted.
 
@@ -40,7 +40,7 @@ inside a boundary.
 
 THE DELTA IS A PROPERTY OF A REGION. These pairs are also what the segment map is built from: 1863
 points across three run pairs, quantised into seven deltas with no outlier, which is what says the
-windows are really each other's twin. docs/leafgreen.md.
+windows are really each other's twin. docs/frlg_leafgreen.md.
 """
 import os
 import sys

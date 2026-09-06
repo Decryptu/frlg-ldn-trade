@@ -9,7 +9,7 @@ the difference between two sessions of the SAME console does.
 import json
 import types
 
-import frlgmg_host
+import frlg_mg_host
 import game_data_read
 from pokeldn.frlg.gift import game_data_log, mg_script, mystery_gift as mg
 from pokeldn.frlg.text import charmap, easychat
@@ -244,9 +244,9 @@ def test_a_session_the_console_never_identified_itself_in_writes_nothing(tmp_pat
 
 
 def test_the_ledger_is_off_unless_the_run_asks_for_it():
-    parser = frlgmg_host.build_parser()
-    default = frlgmg_host.build_run_config(parser, parser.parse_args(["--live"]))
-    asked = frlgmg_host.build_run_config(
+    parser = frlg_mg_host.build_parser()
+    default = frlg_mg_host.build_run_config(parser, parser.parse_args(["--live"]))
+    asked = frlg_mg_host.build_run_config(
         parser, parser.parse_args(["--live", "--game-data-log", "scratchpad/game_data.jsonl"]))
 
     assert default.game_data_log is None

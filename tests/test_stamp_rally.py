@@ -8,7 +8,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
-import frlgmg_host  # noqa: E402
+import frlg_mg_host  # noqa: E402
 from pokeldn import config  # noqa: E402
 from pokeldn.frlg.gift import gift_registry, mg_script, mg_server, mystery_gift, stamp_rally, wonder_card  # noqa: E402
 from pokeldn.frlg.text import charmap  # noqa: E402
@@ -135,15 +135,15 @@ def test_distribution_and_payload_models_are_immutable_with_role_specific_defaul
 
 
 def test_live_cli_adds_stamp_choices_and_dynamic_flag_default_only():
-    parser = frlgmg_host.build_parser()
-    sol = frlgmg_host.build_run_config(
+    parser = frlg_mg_host.build_parser()
+    sol = frlg_mg_host.build_run_config(
         parser, parser.parse_args(["--live", "--gift", "solrock-stamp"]))
-    luna = frlgmg_host.build_run_config(
+    luna = frlg_mg_host.build_run_config(
         parser, parser.parse_args([
             "--live", "--gift", "lunatone-stamp", "--flag-id", "1009"]))
     assert sol.payload.flag_id == 1006
     assert luna.payload.flag_id == 1009
-    explicit_legacy = frlgmg_host.build_run_config(
+    explicit_legacy = frlg_mg_host.build_run_config(
         parser, parser.parse_args([
             "--live", "--gift", "solrock-stamp", "--flag-id", "1003"]))
     assert explicit_legacy.payload.flag_id == 1003

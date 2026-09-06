@@ -7,7 +7,7 @@ read EC_WORD_ENJOY as STRESSE). Compose out of `CONFIRMED` and the console says 
 
 The four groups `CopyEasyChatWord` prints from `gSpeciesNames` / `gMoveNames`
 [decomp:src/easy_chat.c:155] need no verification in any language; `easychat.is_language_safe`
-recognises them. docs/easy_chat_french.md.
+recognises them. docs/frlg_rom_easy_chat_french.md.
 """
 
 from pokeldn.frlg.text.easychat import UNDEFINED, WORDS, describe_word, is_language_safe

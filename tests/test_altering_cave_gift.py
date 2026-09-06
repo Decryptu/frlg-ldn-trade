@@ -14,7 +14,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
-import frlgmg_host  # noqa: E402
+import frlg_mg_host  # noqa: E402
 from pokeldn.frlg.gift import gift_registry, gift_to_bin, mystery_gift, wonder_card, wonder_card_events as event  # noqa: E402
 from pokeldn.frlg.rom import buffer_script  # noqa: E402
 from pokeldn.frlg.save import save_inject  # noqa: E402
@@ -47,7 +47,7 @@ def test_the_card_is_registered_and_reaches_every_launcher():
     slug = event.GIFT_ALTERING_CAVE
     assert slug in gift_registry.GIFT_REGISTRY.live_choices
     assert slug in gift_registry.GIFT_REGISTRY.static_choices
-    assert slug in frlgmg_host.build_parser()._option_string_actions["--gift"].choices
+    assert slug in frlg_mg_host.build_parser()._option_string_actions["--gift"].choices
     assert slug in gift_to_bin.build_parser()._option_string_actions["--gift"].choices
     assert slug in save_inject.build_parser()._option_string_actions["--gift"].choices
 

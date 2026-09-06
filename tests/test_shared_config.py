@@ -1,6 +1,6 @@
 from dataclasses import FrozenInstanceError
 
-import frlgtrade
+import frlg_trade_join
 from pokeldn import config
 from pokeldn.frlg.link import linkplayer
 
@@ -52,12 +52,12 @@ def test_profile_is_immutable_and_serialization_padding_is_role_specific():
 
 
 def test_joiner_cli_builds_full_config_from_identity_overrides():
-    parser = frlgtrade.build_parser()
+    parser = frlg_trade_join.build_parser()
     args = parser.parse_args([
         "--live", "--ot", "Red", "--version", "firered",
         "--id=12345:34567", "one.pk3", "two.pk3",
     ])
-    run = frlgtrade._build_run_config(parser, args)
+    run = frlg_trade_join._build_run_config(parser, args)
     assert (run.profile.name, run.profile.version) == ("Red", "firered")
     assert (run.profile.tid, run.profile.sid) == (12345, 34567)
     assert run.plan.party_paths == ("one.pk3", "two.pk3")

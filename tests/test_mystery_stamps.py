@@ -8,7 +8,7 @@ from dataclasses import fields
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import frlgmg_host  # noqa: E402
+import frlg_mg_host  # noqa: E402
 from pokeldn.frlg.gift import gift_composer as gc, gift_registry, gift_to_bin, mystery_gift, wonder_card, wonder_card_events  # noqa: E402
 from pokeldn.frlg.save import save_inject  # noqa: E402
 from test_gift_composer import ScriptVM  # noqa: E402
@@ -193,11 +193,11 @@ def test_composed_cutscene_registry_uses_conditions_for_starter_branch():
 
 
 def test_all_three_clis_default_to_the_composed_fixed_level_65_cutscene():
-    host_args = frlgmg_host.build_parser().parse_args(["--live"])
+    host_args = frlg_mg_host.build_parser().parse_args(["--live"])
     export_args = gift_to_bin.build_parser().parse_args([])
     inject_args = save_inject.build_parser().parse_args(["game.sav"])
     parsers_and_args = (
-        (frlgmg_host.build_parser(), host_args),
+        (frlg_mg_host.build_parser(), host_args),
         (gift_to_bin.build_parser(), export_args),
         (save_inject.build_parser(), inject_args),
     )
@@ -210,8 +210,8 @@ def test_all_three_clis_default_to_the_composed_fixed_level_65_cutscene():
             for option in action.option_strings
         }
         assert not {"--level", "--item", "--title", "--subtitle"} & options
-    host_config = frlgmg_host.build_run_config(
-        frlgmg_host.build_parser(), host_args)
+    host_config = frlg_mg_host.build_run_config(
+        frlg_mg_host.build_parser(), host_args)
     # The payload names WHICH gift, never how it is built; anything shaping the card itself belongs
     # in the composed definition. `questionnaire` and `denied_message` are session gating, not gift
     # content, which is why they are allowed here [SVR_CHECK_QUESTIONNAIRE, mg_server.py].

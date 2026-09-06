@@ -103,7 +103,7 @@ them is called, that call is the measurement.
 def measured_bodies(memory, entries):
     """-> [(label, address, [bl targets])] for the table entries the dumps hold.
 
-    Bounded the way `tools/rom_functions.py` bounds them: by the next entry in the table AND by the
+    Bounded the way `tools/frlg/rom_functions.py` bounds them: by the next entry in the table AND by the
     function's own epilogue, because a function returning from more than one place otherwise
     swallows its neighbour."""
     held = [(label, address) for label, address in entries if address in memory]

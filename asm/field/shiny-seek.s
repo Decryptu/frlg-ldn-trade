@@ -2,9 +2,9 @@
 @
 @ This is not a buffer script. Nothing here is sent through CLI_RUN_BUFFER_SCRIPT; it is staged
 @ into EWRAM one byte at a time by a RAM SCRIPT and reached with `callnative`, so it runs in the
-@ OVERWORLD - the one place our native code could never reach [docs/rng.md].
+@ OVERWORLD - the one place our native code could never reach [docs/frlg_rom_rng.md].
 @
-@ WHY THE OVERWORLD CHANGES THE ANSWER. docs/rng.md calls hand-aiming structurally closed, and
+@ WHY THE OVERWORLD CHANGES THE ANSWER. docs/frlg_rom_rng.md calls hand-aiming structurally closed, and
 @ that paragraph is about FIELD BYTECODE: `compare` and `goto_if` cannot walk an LCG or test for
 @ shininess, so a target has to be computed before the trip and the title screen reseeds on the
 @ way out of Mystery Gift. A staged native stub is not field bytecode. It does the search itself,

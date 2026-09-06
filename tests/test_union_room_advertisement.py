@@ -106,8 +106,8 @@ def test_only_the_activity_differs_from_the_trade_advertisement():
 
 # --- the flag actually reaches the air ------------------------------------------------------------
 def test_union_room_flag_parses_and_reaches_host_options():
-    import frlgtrade_host
-    parser = frlgtrade_host.build_parser()
+    import frlg_trade_host
+    parser = frlg_trade_host.build_parser()
     args = parser.parse_args(["--union-room", "--no-live"])
     _profile, _ldn, options = host_cli.build_host_config(parser, args)
     assert options.union_room is True
@@ -142,8 +142,8 @@ def test_in_room_activities_carry_the_union_room_bit_and_search_does_not():
 
 
 def test_union_room_activity_flag_reaches_host_options():
-    import frlgtrade_host
-    parser = frlgtrade_host.build_parser()
+    import frlg_trade_host
+    parser = frlg_trade_host.build_parser()
     args = parser.parse_args(["--union-room", "--union-room-activity", "in-room-trade", "--no-live"])
     _p, _l, options = host_cli.build_host_config(parser, args)
     assert options.union_room_activity == beacon.IN_UNION_ROOM | beacon.ACTIVITY_TRADE

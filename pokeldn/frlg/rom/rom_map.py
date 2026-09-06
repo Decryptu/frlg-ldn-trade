@@ -5,8 +5,8 @@ of the cartridge header in bs07. The pret decomp's `firered_switch` target is GA
 matches the ENGLISH rev-10 ROM, so its addresses are never assumed here. A symbol that has not been
 read off the console does not belong in this file, and every entry carries the run that measured it.
 
-How each address was obtained is in docs/buffer_script.md (the payloads and the runs),
-docs/species_table.md (gSpeciesInfo and CreateMon) and docs/leafgreen.md (the second cartridge).
+How each address was obtained is in docs/frlg_rom_buffer_script.md (the payloads and the runs),
+docs/frlg_rom_species_table.md (gSpeciesInfo and CreateMon) and docs/frlg_leafgreen.md (the second cartridge).
 """
 
 GAME_CODE = b"BPRF"          # B-PR-F: Pokemon FireRed, French
@@ -68,7 +68,7 @@ G_SPECIAL_VARS = 0x081639A8         # u16 *const gSpecialVars[21], by var id
 # DERIVED, no run of its own: `script_data` opens with gScriptCmdTable and puts gSpecialVars
 # immediately after it [decomp:ld_script_rev10.ld:318], and the table is 214 entries of 4 bytes.
 # One dump of it names every field-script command's handler on this build; pokeldn/frlg/rom/scrcmd_names.py
-# carries the order. docs/buffer_script.md.
+# carries the order. docs/frlg_rom_buffer_script.md.
 G_SCRIPT_CMD_TABLE = G_SPECIAL_VARS - 214 * 4       # 0x08163650
 
 # --- gSpecials, bs92 ----------------------------------------------------------------------------
@@ -386,7 +386,7 @@ DECOMP_NAMES = {
 }
 
 # NOT CALLABLE FROM A BUFFER SCRIPT. These run inside the Mystery Gift menu, where there is no
-# overworld to warp: they belong to a FIELD stub, which runs from the field engine. docs/rng.md
+# overworld to warp: they belong to a FIELD stub, which runs from the field engine. docs/frlg_rom_rng.md
 # has how a stub is staged.
 
 # --- what the two cartridges share, lg184-lg189, carried up in session 42 -----------------------
@@ -399,7 +399,7 @@ DECOMP_NAMES = {
 #
 # 0x0807AF04 is where it reaches, not 0x08071FC4: bs120/lg191 and bs121/lg192 hold 1225 paired call
 # sites that did not move, the highest of them GetPlayerAvatarObjectId's caller at 0x0807AF04, and
-# the same pairing has 283 that moved by -0x2C from 0x0807E068 up. `tools/cartridge_pair.py`, and
+# the same pairing has 283 that moved by -0x2C from 0x0807E068 up. `tools/frlg/cartridge_pair.py`, and
 # every one of those addresses is in `pokeldn/frlg/rom/leafgreen_twins.py` read off its own cartridge.
 SHARED_WITH_LEAFGREEN_THROUGH = 0x0807AF04
 LEAFGREEN_ADD_BAG_ITEM = 0x0809DA44      # lg189; the rest of that block is -0x2C by segment
@@ -447,7 +447,7 @@ GPLAYER_PARTY_COUNT = 0x02024025    # u8
 GENEMY_PARTY = 0x02024028           # struct Pokemon[6], 600 bytes below gPlayerParty
 
 # The seed every random outcome in the game comes out of. Read out of Random's and SeedRng's literal
-# pools (bs14) and confirmed by its own recurrence (bs15). docs/rng.md.
+# pools (bs14) and confirmed by its own recurrence (bs15). docs/frlg_rom_rng.md.
 GRNG_VALUE = 0x03004220
 GAME_RANDOM_CALLS_PER_FRAME_AT_MG_MENU = 2
 
@@ -503,7 +503,7 @@ def read_client_funcs(dump):
 # two builds of the same game diverge where their data does and the divergence grows along the link
 # order. An address read low in the ROM therefore says nothing about one read high in it.
 #
-# THE RULE: an address is LeafGreen's only when it was measured ON LEAFGREEN. docs/leafgreen.md has
+# THE RULE: an address is LeafGreen's only when it was measured ON LEAFGREEN. docs/frlg_leafgreen.md has
 # each run and what it read.
 LEAFGREEN_GAME_CODE = b"BPGF"       # lg163, off the cartridge; FireRed is BPRF
 LEAFGREEN_SOFTWARE_VERSION = 0x0A   # lg163; the same Switch revision as FireRed
@@ -776,7 +776,7 @@ SPECIAL_ADDRESSES = (
 
 # --- the specials' BODIES, bs113 + bs114 --------------------------------------------------------
 # bs93/bs95 read the 444 ADDRESSES; these two runs read the CODE at the densest 2 KB of them (31
-# distinct bodies, `tools/rom_functions.py --table specials`) and that is what turns the decomp's
+# distinct bodies, `tools/frlg/rom_functions.py --table specials`) and that is what turns the decomp's
 # table order from an assumption into a measurement. A body is named by what it CALLS, not by where
 # it sits, and each of these lands on a function measured in some earlier and unrelated run:
 #

@@ -1,6 +1,6 @@
 ---
 title: Reverse-engineering a Switch title
-nav_order: 7
+nav_order: 5
 ---
 
 # Reverse-engineering a Switch title

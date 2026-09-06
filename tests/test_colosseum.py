@@ -1,7 +1,7 @@
 """The cable-club colosseum host: the advertisement, the extra LinkPlayer record, the battle.
 
 Every assertion here is a decomp fact; see pokeldn/frlg/link/cable_club.py and
-docs/mystery_gift_untried.md. NOTHING here is hardware-proven yet: no run has advertised
+docs/frlg_gift_untried.md. NOTHING here is hardware-proven yet: no run has advertised
 ACTIVITY_BATTLE_SINGLE.
 """
 
@@ -260,23 +260,23 @@ def test_the_host_app_advertises_the_battle_activity_only_with_the_option():
 def test_the_cli_flag_reaches_the_options_and_keeps_the_slot_valid():
     """--colosseum offers nothing, so the trade slot only has to index the party; the default
     --slot 1 must not fail a one-mon battle party."""
-    import frlgtrade_host
-    parser = frlgtrade_host.build_parser(
+    import frlg_trade_host
+    parser = frlg_trade_host.build_parser(
         __import__("pokeldn.config", fromlist=["config"]).HostFileConfig())
     args = parser.parse_args(["--colosseum", "--card-flag-id", "1005", "CARPY.pk3"])
-    run = frlgtrade_host.build_run_config(parser, args)
+    run = frlg_trade_host.build_run_config(parser, args)
     assert run.role.colosseum is True
     assert run.profile.card_flag_id == 1005
     assert run.plan.trade_slot == 0 and run.plan.offered_slots == (0,)
 
 
 def test_the_colosseum_and_the_union_room_are_refused_together_at_the_cli():
-    import frlgtrade_host
-    parser = frlgtrade_host.build_parser(
+    import frlg_trade_host
+    parser = frlg_trade_host.build_parser(
         __import__("pokeldn.config", fromlist=["config"]).HostFileConfig())
     args = parser.parse_args(["--colosseum", "--union-room", "CARPY.pk3"])
     with pytest.raises(SystemExit):
-        frlgtrade_host.build_run_config(parser, args)
+        frlg_trade_host.build_run_config(parser, args)
 
 
 def test_the_seat_route_keeps_the_ready_key_and_drops_the_trade_centre_walk():

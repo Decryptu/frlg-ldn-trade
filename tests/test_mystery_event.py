@@ -493,7 +493,7 @@ def test_the_cli_parses_a_phrase_in_every_form_it_accepts():
     """Every accepted spelling of the custom phrase mev04/mev06 gated on, plus the default the
     console holds now (bs07), which is four plain group/index slots."""
     from pokeldn.frlg.text import easychat, easychat_french
-    import frlgmg_host
+    import frlg_mg_host
     assert easychat.parse_phrase("species:55,FEELINGS/60,move:177,why") \
         == easychat_french.CONSOLE_QUESTIONNAIRE_CUSTOM
     assert easychat.parse_phrase("0x2a37,0x123c,0x24b1,0x1e25") \
@@ -503,10 +503,10 @@ def test_the_cli_parses_a_phrase_in_every_form_it_accepts():
     assert easychat.parse_phrase("link,with,case,trainer") \
         == easychat_french.CONSOLE_QUESTIONNAIRE
 
-    args = frlgmg_host.build_parser().parse_args(
+    args = frlg_mg_host.build_parser().parse_args(
         ["--live", "--gift", "mystery-event-probe",
          "--questionnaire", "species:55,FEELINGS/60,move:177,why"])
-    config = frlgmg_host.build_run_config(frlgmg_host.build_parser(), args)
+    config = frlg_mg_host.build_run_config(frlg_mg_host.build_parser(), args)
     assert config.payload.questionnaire == easychat_french.CONSOLE_QUESTIONNAIRE_CUSTOM
     assert config.payload.build_distribution().is_gated
 
@@ -518,8 +518,8 @@ def test_a_phrase_with_the_wrong_number_of_words_is_refused_at_the_cli():
 
 
 def test_news_cannot_be_gated_because_its_script_has_no_branch_for_it():
-    import frlgmg_host
-    parser = frlgmg_host.build_parser()
+    import frlg_mg_host
+    parser = frlg_mg_host.build_parser()
     args = parser.parse_args(["--live", "--news", "--questionnaire", "hello,friend,trade,why"])
     with pytest.raises(SystemExit):
-        frlgmg_host.build_run_config(parser, args)
+        frlg_mg_host.build_run_config(parser, args)

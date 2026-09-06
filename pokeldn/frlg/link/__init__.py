@@ -5,5 +5,5 @@ The trade room (`trade` joiner, `host_trade` leader), the Union Room (`uroom_cha
 player record exchanged at entry (`linkplayer`), the overworld link state (`linkstate`), and
 the runtimes that own one whole session (`host_app`, `host_session`, `sim`).
 
-`docs/protocol.md` and `docs/joiner_protocol_notes.md`.
+`docs/frlg_link.md` and `docs/frlg_link_notes.md`.
 """

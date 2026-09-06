@@ -73,7 +73,7 @@ contain this project's adapter compatibility fixes.
 
 | | |
 |---|---|
-| [`bin/`](bin) | the things you run against a console. FireRed/LeafGreen: `frlgmg_host.py` (Mystery Gift, Wonder News and native code), `frlgmg_client.py` (receive a card from a console), `frlgtrade_host.py` (trade and Union Room host), `frlgtrade.py` (trade joiner). Native titles: `bdsp_join.py` (associate and take a seat), `bdsp_pia_probe.py` (hold the seat and speak Pia) |
+| [`bin/`](bin) | the things you run against a console. FireRed/LeafGreen: `frlg_mg_host.py` (Mystery Gift, Wonder News and native code), `frlg_mg_client.py` (receive a card from a console), `frlg_trade_host.py` (trade and Union Room host), `frlg_trade_join.py` (trade joiner). Native titles: `bdsp_join.py` (associate and take a seat), `bdsp_pia_probe.py` (hold the seat and speak Pia) |
 | [`tools/`](tools) | offline helpers: `dump_read.py` (decode a save dump), plus the radio diagnostics `ldn_scan.py`, `sniff.py`, `joyspot_probe.py`, `ldn_debug_report.sh` |
 | [`tools/switch/`](tools/switch) | reading a retail Switch title's own code, all offline: `nso_read.py`, `nso_relocs.py`, `rtti_names.py`, `arm64_xref.py`, `arm64_dis.py` |
 | [`pokeldn/`](pokeldn) | the package everything above is made of: the LDN/Pia transport, the RFU link, the Mystery Gift server and client, the payload builders |
@@ -84,7 +84,7 @@ contain this project's adapter compatibility fixes.
 | [`tests/`](tests) | `python -m pytest tests/ -q` |
 | [`vendor/`](vendor) | the bundled LDN implementation and the mt7601u AP-mode driver |
 
-Run the entry points from the repo root: `sudo -E ./.venv/bin/python -u bin/frlgmg_host.py ...`.
+Run the entry points from the repo root: `sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py ...`.
 They put the root on `sys.path` themselves, so they work from anywhere, but the config files and
 the default output paths are resolved relative to the working directory.
 
@@ -95,7 +95,7 @@ the default output paths are resolved relative to the working directory.
 Use the original joiner when the Switch is the Direct Corner leader:
 
 ```bash
-sudo -E ./.venv/bin/python bin/frlgtrade.py --live -o output.pk3 PARTY1.pk3 PARTY2.pk3
+sudo -E ./.venv/bin/python bin/frlg_trade_join.py --live -o output.pk3 PARTY1.pk3 PARTY2.pk3
 ```
 
 ### Host a Direct Corner trade
@@ -103,7 +103,7 @@ sudo -E ./.venv/bin/python bin/frlgtrade.py --live -o output.pk3 PARTY1.pk3 PART
 Start a Direct Corner host with:
 
 ```bash
-sudo -E ./.venv/bin/python bin/frlgtrade_host.py \
+sudo -E ./.venv/bin/python bin/frlg_trade_host.py \
   -o output.pk3 PARTY1.pk3 PARTY2.pk3
 ```
 
@@ -111,7 +111,7 @@ Linux advertises the group and acts as the trade leader. With the default settin
 second supplied party member (`PARTY2.pk3`) and writes the Pokémon received from the Switch to
 `output.pk3`. Host defaults are loaded from `config/host.toml`, then optional ignored
 `config/host.local.toml`; command-line flags override both. Run
-`bin/frlgtrade_host.py --print-effective-config` to inspect the safe effective profile without root
+`bin/frlg_trade_host.py --print-effective-config` to inspect the safe effective profile without root
 or Wi-Fi hardware.
 
 **Optional Flags (not comprehensive):**
@@ -142,7 +142,7 @@ different accept list on the console rather than a different transport. From the
 can greet us, trade off the trading board, chat, or start a full link battle.
 
 ```bash
-sudo -E ./.venv/bin/python bin/frlgtrade_host.py --union-room --union-room-keepalive 120 \
+sudo -E ./.venv/bin/python bin/frlg_trade_host.py --union-room --union-room-keepalive 120 \
   PARTY1.pk3 PARTY2.pk3
 ```
 
@@ -153,13 +153,13 @@ and not a fault. Add `--board-type normal` to register the offered Pokémon on t
 everything, so we answer its controller commands rather than running any battle logic; it needs two
 non-egg Pokémon at level 30 or lower in its own party or it refuses on its own screen.
 
-See [Console protocol notes](docs/joiner_protocol_notes.md) for the connect sequence, the activity
+See [Console protocol notes](docs/frlg_link_notes.md) for the connect sequence, the activity
 bytes, and the link buffer protocol.
 
 ### Hosting Wi-Fi adapter profiles
 
-These profiles apply when Linux is hosting with `bin/frlgtrade_host.py` or `bin/frlgmg_host.py`; they do not
-change the Switch-hosted `bin/frlgtrade.py` joiner.
+These profiles apply when Linux is hosting with `bin/frlg_trade_host.py` or `bin/frlg_mg_host.py`; they do not
+change the Switch-hosted `bin/frlg_trade_join.py` joiner.
 
 | Adapter | Linux identity | Normal host configuration |
 |---|---|---|
@@ -173,7 +173,7 @@ if the adapter is missing or more than one matches. An explicit `--phy phyN` alw
 For the ALFA, select its actual PHY explicitly and override the receive compatibility mode:
 
 ```bash
-sudo -E ./.venv/bin/python bin/frlgtrade_host.py --phy phyN \
+sudo -E ./.venv/bin/python bin/frlg_trade_host.py --phy phyN \
   --skip-encryption --no-accept-decrypted-ccmp \
   -o output.pk3 PARTY1.pk3 PARTY2.pk3
 ```
@@ -210,10 +210,10 @@ The ID format is decimal `TID[:SID]`:
 
 ```bash
 # Set TID to 12345 and retain DEFAULT_TRAINER.sid
-./.venv/bin/python bin/frlgtrade.py --live --id=12345 PARTY1.pk3 PARTY2.pk3
+./.venv/bin/python bin/frlg_trade_join.py --live --id=12345 PARTY1.pk3 PARTY2.pk3
 
 # Set TID to 12345 and SID to 34567 while hosting
-sudo -E ./.venv/bin/python bin/frlgtrade_host.py --live --id=12345:34567 PARTY1.pk3 PARTY2.pk3
+sudo -E ./.venv/bin/python bin/frlg_trade_host.py --live --id=12345:34567 PARTY1.pk3 PARTY2.pk3
 ```
 
 Each component must be between 0 and 65535. The resulting 32-bit LinkPlayer ID is encoded as
@@ -223,12 +223,12 @@ Dex, or game-completion defaults that do not have CLI flags.
 
 ### Distribute a Mystery Gift
 
-`bin/frlgmg_host.py` advertises on the hardware-compatible Friend path and sends a Wonder Card plus a
+`bin/frlg_mg_host.py` advertises on the hardware-compatible Friend path and sends a Wonder Card plus a
 delivery RAM script. The default payload is the repeatable legendary-beast cutscene; use
 `--gift celebi` for the composed level-50 Celebi card.
 
 ```bash
-sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
+sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py \
   --gift beast-cutscene --flag-id 1005 \
   --capture mystery-stamps-hardware.jsonl
 ```
@@ -239,7 +239,7 @@ and retained-CCMP receive normalization are already enabled. For the ALFA, provi
 
 On the Switch choose **Mystery Gift → Wonder Cards → Friend**, then select the Linux host. The save
 must already have Mystery Gift unlocked. The host accepts the same `--ot`, `--version`, and decimal
-`--id TID[:SID]` identity overrides as the trade programs; run `bin/frlgmg_host.py --help` for all gift
+`--id TID[:SID]` identity overrides as the trade programs; run `bin/frlg_mg_host.py --help` for all gift
 and transport options.
 
 To retain a readable audit listing of the exact Wonder Card and delivery-script
@@ -247,7 +247,7 @@ bytes sent by a run, add `--make-artifact`. It is disabled by default and writes
 to `artifacts/`; choose another destination with `--artifact-dir DIR`:
 
 ```bash
-sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
+sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py \
   --gift worlds-xp --make-artifact --artifact-dir artifacts
 ```
 
@@ -256,20 +256,20 @@ instructions, branch/message targets, checksums, and the source delivery-stage
 plan. Use `--no-make-artifact` to explicitly disable it in an automated command.
 
 The beast depends on the receiving save's starter: Bulbasaur gives Suicune, Squirtle gives Entei,
-and Charmander gives Raikou. See [the legendary-beast gift guide](docs/legendary_beast_gift.md) for
+and Charmander gives Raikou. See [the legendary-beast gift guide](docs/frlg_gift_beast.md) for
 the reward sequence, binary export, and save-injection tools.
 
 The live host also distributes the two halves of a shared Stamp Rally card. Run it once with
 `--gift solrock-stamp` and later with `--gift lunatone-stamp` (in either order). Stamp events
 default to card flag ID `1006`; after each stamp, the deliveryman gives its level-30 Pokémon, then
 gives level-50 Celebi when both rewards have been collected. See the
-[Stamp Rally guide](docs/stamp_rally.md) for state, protocol pseudocode, and hardware checks. These
+[Stamp Rally guide](docs/frlg_gift_stamp_rally.md) for state, protocol pseudocode, and hardware checks. These
 dynamic events are intentionally unavailable in the static `.bin` exporter and save injector.
 
 The composed `--gift celebi` and `--gift porygon-tm-gift` events use the shared delivery-stage
 compiler. Porygon displays a Porygon card, makes Clefairy appear three tiles to the player's right,
 and delivers TM29 Psychic followed by TM46 Thief. See the [Porygon TM Gift
-guide](docs/porygon_tm_gift.md) for live, export, injection, and test commands.
+guide](docs/frlg_gift_porygon.md) for live, export, injection, and test commands.
 
 ### Distribute Wonder News
 
@@ -279,13 +279,13 @@ BERRY from the man in the house in Cerulean City. On the Switch choose **Mystery
 → Friend** - a Wonder Card host is not listed on that screen, and vice versa.
 
 ```bash
-sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --news
-sudo -E ./.venv/bin/python -u bin/frlgmg_host.py --news berry --news-id 7
+sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py --news
+sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py --news berry --news-id 7
 ```
 
 A console keeps news only when it differs from what it already holds, so re-sending the identical
 text is a deliberate no-op; `--news-id N` changes one field and makes the same text land again. See
-[the Wonder News guide](docs/wonder_news.md) for the struct, the advertisement change it needs, and
+[the Wonder News guide](docs/frlg_gift_wonder_news.md) for the struct, the advertisement change it needs, and
 the one place where the console answers the host back.
 
 ### Read the console's save
@@ -295,31 +295,31 @@ back. That covers the two things the game never shows you: the **secret ID**, an
 Pokémon's PID, IVs and nature.
 
 ```bash
-sudo -E ./.venv/bin/python -u bin/frlgmg_host.py \
+sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py \
   --buffer-script save-dump --dump-block sav2 --dump-size 64 --dump-file dump.bin
 
-./.venv/bin/python tools/dump_read.py dump.bin --block sav2
+./.venv/bin/python tools/frlg/dump_read.py dump.bin --block sav2
 ```
 
 The console stays on its Mystery Gift menu, nothing is written and no Wonder Card changes hands. See
-[Reading the save](docs/reading_the_save.md) for the party dump, the gotchas, and what else the same
-payload reaches; [Native code on the console](docs/buffer_script.md) has the mechanism and the other
+[Reading the save](docs/frlg_rom_save.md) for the party dump, the gotchas, and what else the same
+payload reaches; [Native code on the console](docs/frlg_rom_buffer_script.md) has the mechanism and the other
 payloads built on it.
 
-See [the Mystery Gift distributor guide](docs/mystery_gift_distributor.md) for the protocol flow, payload,
+See [the Mystery Gift distributor guide](docs/frlg_gift_distributor.md) for the protocol flow, payload,
 test commands, and why the Switch requires the Friend path rather than Wireless Communication.
 New events can be assembled from validated delivery stages, rewards, messages, sprites, battles,
-and up to six stamp slots; see the [composable gift authoring guide](docs/mystery_gift_composer.md).
+and up to six stamp slots; see the [composable gift authoring guide](docs/frlg_gift_composer.md).
 
 ### Hosting diagnostics
 
-- `tools/ldn_scan.py` prints discoverable LDN networks and decoded FRLG application data.
-- `tools/sniff.py` captures advertisement and management traffic from a monitor-capable radio.
-- `tools/ldn_debug_report.sh` records local radio, interface, route, and NetworkManager state for debugging.
-- `bin/frlgtrade_host.py --capture FILE` writes the host protocol trace as JSONL.
-- `bin/frlgmg_host.py --capture FILE` writes the Mystery Gift host trace as JSONL.
+- `tools/ldn/ldn_scan.py` prints discoverable LDN networks and decoded FRLG application data.
+- `tools/ldn/sniff.py` captures advertisement and management traffic from a monitor-capable radio.
+- `tools/ldn/ldn_debug_report.sh` records local radio, interface, route, and NetworkManager state for debugging.
+- `bin/frlg_trade_host.py --capture FILE` writes the host protocol trace as JSONL.
+- `bin/frlg_mg_host.py --capture FILE` writes the Mystery Gift host trace as JSONL.
 
-See [the host design document](docs/frlgtrade_host_design.md) for the component boundaries, protocol
+See [the host design document](docs/frlg_link_trade_host.md) for the component boundaries, protocol
 flow, timing ownership, trainer propagation, and shutdown sequence.
 
 **Step-by-step Usage**
@@ -345,7 +345,7 @@ group option), and wait in the Union Room. Then:
 
 ```bash
 # see the session without joining it
-sudo -E ./.venv/bin/python tools/ldn_scan.py --channels 1,6,11,36,40,44,48 --dwell 0.8
+sudo -E ./.venv/bin/python tools/ldn/ldn_scan.py --channels 1,6,11,36,40,44,48 --dwell 0.8
 
 # associate and hold a seat, logging everything the advertisement says
 sudo -E ./.venv/bin/python bin/bdsp_join.py --channels 6 --hold 90

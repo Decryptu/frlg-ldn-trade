@@ -100,7 +100,7 @@ def test_deployment_requires_clean_committed_state_and_fast_forward_only():
 
 
 def test_pi_guide_keeps_keys_and_references_out_of_deployment():
-    text = _text("docs/raspberry_pi.md")
+    text = _text("docs/hardware_raspberry_pi.md")
     assert "vendor/LDN" in text
     assert "GitHub" in text
     assert "Switch key setup" in text

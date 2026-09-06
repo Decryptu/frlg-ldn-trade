@@ -17,7 +17,7 @@ We send version signature 0x200 on purpose. LinkBattleComputeBattleTypeFlags [ba
 makes the console elect ITSELF master for any signature below 0x201 that is not 0x100, and only the
 master runs `gBattleMainFunc = BeginBattleIntro` [battle_controllers.c:141]. So the console runs the
 whole battle -- turn order, damage, RNG -- and we run a controller that answers its commands. See
-docs/joiner_protocol_notes.md "The Union Room battle".
+docs/frlg_link_notes.md "The Union Room battle".
 """
 
 from pokeldn.frlg.link import battle_link as bl

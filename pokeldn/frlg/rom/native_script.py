@@ -1,6 +1,6 @@
 """A RAM script that stages a THUMB stub into gDecompressionBuffer and `callnative`s it, which is
 how native code reaches the OVERWORLD - where an encounter is decided and the Mystery Gift link
-cannot go. docs/rng.md has the technique, the draw model and the runs; asm/field/ has the stubs.
+cannot go. docs/frlg_rom_rng.md has the technique, the draw model and the runs; asm/field/ has the stubs.
 
 Two invariants this module enforces, both of which cost a frozen overworld if broken: the entry
 address carries bit 0 (Thumb, `callnative` calls through a function pointer), and every stub is
@@ -296,7 +296,7 @@ def probability_for(criteria, placements=1):
     """-> the fraction of states that pass, when the IV floors must hold in `placements` words.
 
     asm/field/mon-seek-both.s tests the floors at TWO draw placements because the stray draw moves
-    them (mev20; docs/rng.md's Methods 1, 2 and 4), so the IV term is raised to that power. The
+    them (mev20; docs/frlg_rom_rng.md's Methods 1, 2 and 4), so the IV term is raised to that power. The
     shiny and nature terms are not: both come from the personality, which is drawn before the stray
     and is the same word in every method.
     """
@@ -321,7 +321,7 @@ def search_cost(criteria, cap, placements=1):
 
     The freeze is what the player sees, so both are in frames. Everything here rests on
     INSTRUCTIONS_PER_ITERATION and the GBA's clock and NOT on a hardware measurement; the first
-    run that reports a visible pause is the measurement, and it goes in docs/rng.md when it comes.
+    run that reports a visible pause is the measurement, and it goes in docs/frlg_rom_rng.md when it comes.
     """
     chance = probability_for(criteria, placements)
     cap = int(cap)
@@ -439,7 +439,7 @@ def describe(script):
 
 
 # --- running a stub offline, before it can ever reach the overworld ------------------------------
-# The same rule buffer payloads live under [docs/buffer_script.md], and it matters MORE here: a
+# The same rule buffer payloads live under [docs/frlg_rom_buffer_script.md], and it matters MORE here: a
 # buffer script that hangs freezes the Mystery Gift menu, which the player can at least see is
 # stuck; a field stub that hangs freezes the overworld inside a script, with no menu at all.
 
@@ -515,7 +515,7 @@ def frames_for(instructions):
 #
 # The body is 995 bytes [RamScriptData.script] and the Mystery Event script carrying it is 1024
 # [mystery_event.MAX_SCRIPT_SIZE] less the VM's own 16, so 995 binds by 13 bytes. `body_capacity`
-# states it. docs/rng.md.
+# states it. docs/frlg_rom_rng.md.
 
 RAMSCRIPT_IN_SAVEBLOCK1 = 0x361C        # SaveBlock1.ramScript [decomp:include/global.h]
 RAMSCRIPT_MAGIC_OFFSET = RAMSCRIPT_IN_SAVEBLOCK1 + 4        # past the u32 checksum
@@ -781,7 +781,7 @@ def build_mon_hunt_both_script(species, level, **kwargs):
     placements, so the stray draw cannot move the IVs out from under the answer.
 
     mev20 is why this exists and the .s header has the derivation: two words cover all three
-    methods docs/rng.md records, because word A puts the first IV triple on d3 and the second on
+    methods docs/frlg_rom_rng.md records, because word A puts the first IV triple on d3 and the second on
     d4, and word B puts them on d4 and d5.
     """
     kwargs.setdefault("stub_name", "mon-seek-both")

@@ -185,9 +185,9 @@ def test_the_console_is_told_the_verdict_in_a_message_we_compose():
 # --- the host CLI ---------------------------------------------------------------------------
 
 def _run_config(argv):
-    import frlgmg_host
-    parser = frlgmg_host.build_parser()
-    return frlgmg_host.build_run_config(parser, parser.parse_args(argv))
+    import frlg_mg_host
+    parser = frlg_mg_host.build_parser()
+    return frlg_mg_host.build_run_config(parser, parser.parse_args(argv))
 
 
 def test_the_cli_builds_a_buffer_script_session_with_its_own_expectation():
@@ -209,9 +209,9 @@ def test_the_cli_refuses_a_flag_id_or_a_questionnaire_with_a_buffer_script():
 
 
 def test_a_buffer_script_and_a_gift_are_mutually_exclusive_on_the_command_line():
-    import frlgmg_host
+    import frlg_mg_host
     with pytest.raises(SystemExit):
-        frlgmg_host.build_parser().parse_args(["--buffer-script", "--gift", "celebi"])
+        frlg_mg_host.build_parser().parse_args(["--buffer-script", "--gift", "celebi"])
 
 
 def test_the_live_application_for_a_buffer_script_is_the_buffer_script_one():

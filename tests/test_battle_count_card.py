@@ -15,8 +15,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
-import frlgmg_host  # noqa: E402
-import frlgtrade_host  # noqa: E402
+import frlg_mg_host  # noqa: E402
+import frlg_trade_host  # noqa: E402
 from pokeldn import config as configmod, host_cli  # noqa: E402
 from pokeldn.frlg.gift import gift_registry, mystery_gift, wonder_card, wonder_card_events as event  # noqa: E402
 from pokeldn.frlg.link import linkplayer  # noqa: E402
@@ -67,7 +67,7 @@ def test_the_card_is_registered_and_reads_the_wins_selector():
     assert int.from_bytes(distribution.card[0:2], "little") == event.BATTLE_COUNT_FLAG_ID
     assert event.GIFT_BATTLE_COUNT in gift_registry.GIFT_REGISTRY.live_choices
     assert event.GIFT_BATTLE_COUNT in \
-        frlgmg_host.build_parser()._option_string_actions["--gift"].choices
+        frlg_mg_host.build_parser()._option_string_actions["--gift"].choices
 
     # setvar VAR_RESULT, GET_CARD_BATTLES_WON then specialvar VAR_0x8008, the special: the selector
     # has to be in place before the special runs [decomp:src/field_specials.c:1957].
@@ -118,7 +118,7 @@ def test_our_trainer_card_is_what_arms_the_console():
 
 
 def test_the_trade_host_sends_the_flag_id_it_was_given():
-    parser = frlgtrade_host.build_parser()
+    parser = frlg_trade_host.build_parser()
     args = parser.parse_args(["--live", "--card-flag-id", "1005", "x.pk3"])
     profile, _, _ = host_cli.build_host_config(parser, args)
     assert profile.card_flag_id == 1005

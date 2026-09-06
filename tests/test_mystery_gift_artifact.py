@@ -10,14 +10,14 @@ from pathlib import Path
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
-import frlgmg_host  # noqa: E402
+import frlg_mg_host  # noqa: E402
 from pokeldn.frlg.gift import gift_artifact, gift_registry  # noqa: E402
 from pokeldn.config import MysteryGiftRunConfig  # noqa: E402
 from pokeldn.frlg.gift.host_mg_app import MysteryGiftHostApplication  # noqa: E402
 
 
 def test_artifact_boolean_flags_default_off_and_accept_both_variants():
-    parser = frlgmg_host.build_parser()
+    parser = frlg_mg_host.build_parser()
     options = {option for action in parser._actions for option in action.option_strings}
     assert {"--make-artifact", "--no-make-artifact", "--artifact-dir"} <= options
     assert parser.parse_args([]).make_artifact is False

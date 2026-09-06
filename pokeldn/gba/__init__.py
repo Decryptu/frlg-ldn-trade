@@ -7,5 +7,5 @@ Switch title does not have. Bottom-up: the 14-byte RFU command slot (`rfu`), the
 transfers (`ni`), block transfer (`block`) and the exit/close barrier (`barrier`).
 
 Cited against pokefirered's `link_rfu_2.c` and `librfu_rfu.c`, but the protocol is the
-adapter's, so it is shared by any Gen-3 wireless game. `docs/joiner_protocol_notes.md`.
+adapter's, so it is shared by any Gen-3 wireless game. `docs/frlg_link_notes.md`.
 """

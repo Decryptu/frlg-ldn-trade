@@ -24,7 +24,7 @@
 @   - which stray-draw method fired, by comparing the caught mon against draws from `found` -
 @     measured every run instead of inferred from the four we happen to have;
 @   - the exact instruction count (iterations * 15), which against the player's stopwatch is the
-@     first real measurement of CYCLES_PER_INSTRUCTION_FROM_EWRAM. docs/rng.md carries 3 as an
+@     first real measurement of CYCLES_PER_INSTRUCTION_FROM_EWRAM. docs/frlg_rom_rng.md carries 3 as an
 @     estimate from the GBA's clock and mev20/mev21 both ran high against it.
 @
 @ A MISS IS NOW INFORMATIVE TOO. If the cap is exhausted, `found` stays 0 and `iterations` says the

@@ -7,6 +7,6 @@ cartridge's copy of each. Native code is `buffer_script` + `buffer_payloads` (ge
 `native_script` + `field_stubs` (generated); the Mystery Event bytecode is `mystery_event`;
 the RNG is `lcg`, `rng_script` and `rng_countdown`.
 
-`docs/inside_the_console.md`, `docs/buffer_script.md`, `docs/rng.md`, `docs/mystery_event.md`.
+`docs/frlg_rom.md`, `docs/frlg_rom_buffer_script.md`, `docs/frlg_rom_rng.md`, `docs/frlg_rom_mystery_event.md`.
 An address belongs here only once a run has measured it - keep FACT and HYPOTHESIS apart.
 """

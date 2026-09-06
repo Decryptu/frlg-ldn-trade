@@ -35,17 +35,19 @@ The wireless layer underneath is the same for both, and is the part that carries
 ### [The wireless layer](ldn.md)
 
 LDN and Pia: what any Switch title advertises, what it takes to associate, the Pia packet formats by
-version, and the two families of session-key derivation. Game-independent.
+version, and the two families of session-key derivation. Game-independent, and the part that carries
+to the next title.
 
-### [FireRed and LeafGreen](protocol.md)
+### [FireRed and LeafGreen](frlg.md)
 
-The link protocol, [Mystery Gift](mystery_gift.md), and
-[inside the console](inside_the_console.md) - the Mystery Event VM, native ARM code, the save, the
-RNG, and the second cartridge.
+The deepest section. The [link protocol](frlg_link.md), [Mystery Gift](frlg_gift.md), and
+[inside the console](frlg_rom.md) - the Mystery Event VM, native ARM code, the ROM's own function
+tables, the save, and the RNG - plus [the second cartridge](frlg_leafgreen.md).
 
 ### [Brilliant Diamond and Shining Pearl](bdsp.md)
 
-Joining the session, the Pia layer, and an honest account of what is still missing.
+A native Switch title: no ROM, no emulator, Pia as the game's own transport. An LDN seat in a real
+Union Room session, a decoded packet format, and an honest account of what is still encrypted.
 
 ### [Reverse-engineering a Switch title](switch_re.md)
 
@@ -59,14 +61,14 @@ blaming the adapter.
 
 ## Start here
 
-- [Console protocol notes](joiner_protocol_notes.md) - the big one. What a host must give a
-  FireRed console, and what a peer must.
-- [Native code on the console](buffer_script.md) - how 1024 bytes of ARM get called on a retail
-  Switch with no glitch and no prepared save.
-- [The random number generator](rng.md) - reading the console's seed, and the staged stub that makes
-  a wild Pokemon shiny for one A press.
-- [BDSP: joining the session](bdsp_ldn.md) - a Linux box holding a seat in a native Switch game's
-  Union Room.
+- [Console protocol notes](frlg_link_notes.md) - the big one. What a host must give a FireRed
+  console, and what a peer must.
+- [Native code on the console](frlg_rom_buffer_script.md) - how 1024 bytes of ARM get called on a
+  retail Switch with no glitch and no prepared save.
+- [The random number generator](frlg_rom_rng.md) - reading the console's seed, and the staged stub
+  that makes a wild Pokemon shiny for one A press.
+- [Joining the session](bdsp_ldn.md) - a Linux box holding a seat in a native Switch game's Union
+  Room.
 - [Reverse-engineering a Switch title](switch_re.md) - the method, if you are pointing this at a
   game that is not here yet.
 

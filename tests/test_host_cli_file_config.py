@@ -9,8 +9,8 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import frlgmg_host
-import frlgtrade_host
+import frlg_mg_host
+import frlg_trade_host
 from pokeldn import config, host_cli
 from pokeldn.ldn import transport
 from pokeldn.frlg.link.host_app import HostApplication
@@ -50,16 +50,16 @@ skip_encryption = true
         assert no_local_path is None
         assert (no_local.live, no_local.skip_encryption) == (False, False)
 
-        parser = frlgmg_host.build_parser(no_local)
+        parser = frlg_mg_host.build_parser(no_local)
         assert parser.parse_args([]).live is False
         assert parser.parse_args(["--live"]).live is True
         assert parser.parse_args(["--live", "--no-live"]).live is False
 
 
 def test_mystery_gift_no_flag_profile_and_cli_boolean_overrides_are_effective():
-    parser = frlgmg_host.build_parser()
+    parser = frlg_mg_host.build_parser()
     args = parser.parse_args([])
-    run = frlgmg_host.build_run_config(parser, args)
+    run = frlg_mg_host.build_run_config(parser, args)
     assert args.live is True
     assert run.role.skip_encryption is True
     assert run.role.accept_decrypted_ccmp is True
@@ -73,7 +73,7 @@ def test_mystery_gift_no_flag_profile_and_cli_boolean_overrides_are_effective():
 def test_print_effective_config_is_safe_and_requires_no_root_or_party_files():
     output = io.StringIO()
     with redirect_stdout(output):
-        assert frlgmg_host.main([
+        assert frlg_mg_host.main([
             "--keys", "/private/pi/prod.keys", "--password", "deadbeef",
             "--print-effective-config"]) == 0
     rendered = output.getvalue()
@@ -86,7 +86,7 @@ def test_print_effective_config_is_safe_and_requires_no_root_or_party_files():
 
     output = io.StringIO()
     with redirect_stdout(output):
-        assert frlgtrade_host.main(["--print-effective-config"]) == 0
+        assert frlg_trade_host.main(["--print-effective-config"]) == 0
     assert "adapter = \"tplink-archer-t3u\"" in output.getvalue()
 
 
@@ -97,7 +97,7 @@ def test_print_effective_config_validates_transport_options():
             (["--print-effective-config", "--adapter", ""],
              "adapter must be a non-empty string")):
         try:
-            frlgmg_host.main(argv)
+            frlg_mg_host.main(argv)
         except SystemExit as exc:
             assert exc.code == 2
         else:

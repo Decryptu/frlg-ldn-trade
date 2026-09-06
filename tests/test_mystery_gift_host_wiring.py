@@ -44,7 +44,7 @@ def _search_word(app_data):
 # --- the advertisement --------------------------------------------------------------------------
 def test_wonder_card_advertisement_matches_the_proven_friend_control():
     """The JoySpot sweep's ``friend_control`` candidate was listed AND joined by a
-    real console; its record was ``...9515...`` (docs/joyspot_discovery_findings.md).
+    real console; its record was ``...9515...`` (docs/joyspot.md).
     Anything that changes these bytes changes whether the console can see us."""
     inactive, _active = build_wonder_card_app_data(DEFAULT_TRAINER, SESSION_ID)
     record = _record(inactive)
@@ -250,9 +250,9 @@ def test_the_expectation_has_to_name_a_cartridge():
 
 
 def test_the_cli_passes_the_expectation_through_to_the_engine():
-    import frlgmg_host
-    parser = frlgmg_host.build_parser()
-    config = frlgmg_host.build_run_config(
+    import frlg_mg_host
+    parser = frlg_mg_host.build_parser()
+    config = frlg_mg_host.build_run_config(
         parser, parser.parse_args(["--buffer-script", "--expect-console", "leafgreen"]))
 
     assert config.expect_console == "leafgreen"

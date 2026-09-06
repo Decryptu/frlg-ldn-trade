@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import frlgmg_host
-import frlgtrade_host
+import frlg_mg_host
+import frlg_trade_host
 from pokeldn import config
 from pokeldn.frlg.gift import gift_registry, mg_script, wonder_card
 from pokeldn.frlg.link import linkplayer
@@ -27,13 +27,13 @@ SESSION_ID = b"\x7b\xf1"
 
 
 def _build_mg(argv):
-    parser = frlgmg_host.build_parser()
-    return frlgmg_host.build_run_config(parser, parser.parse_args(argv))
+    parser = frlg_mg_host.build_parser()
+    return frlg_mg_host.build_run_config(parser, parser.parse_args(argv))
 
 
 def _build_trade(argv):
-    parser = frlgtrade_host.build_parser()
-    return frlgtrade_host.build_run_config(parser, parser.parse_args(argv))
+    parser = frlg_trade_host.build_parser()
+    return frlg_trade_host.build_run_config(parser, parser.parse_args(argv))
 
 
 def _record(app_data):
@@ -78,20 +78,20 @@ def test_flag_validation_is_centralized_in_the_payload():
 
 
 def test_gift_help_and_implicit_flag_ids_match_the_registered_catalog():
-    parser = frlgmg_host.build_parser()
+    parser = frlg_mg_host.build_parser()
     help_text = parser.format_help()
     for slug in gift_registry.GIFT_REGISTRY.live_choices:
         entry = gift_registry.GIFT_REGISTRY.entry(slug)
         assert slug in help_text
         assert f"flag ID {entry.default_flag_id}: {entry.description}" in help_text
 
-        run = frlgmg_host.build_run_config(
+        run = frlg_mg_host.build_run_config(
             parser, parser.parse_args(["--live", "--gift", slug]))
         assert run.payload.flag_id == entry.default_flag_id
         card = gift_registry.GIFT_REGISTRY.build_distribution(slug).card
         assert int.from_bytes(card[4:8], "little") == entry.default_flag_id % 100
 
-    override = frlgmg_host.build_run_config(
+    override = frlg_mg_host.build_run_config(
         parser, parser.parse_args([
             "--live", "--gift", "porygon-tm-gift", "--flag-id", "1012"]))
     assert override.payload.flag_id == 1012
@@ -113,7 +113,7 @@ def test_mystery_gift_client_ready_idle_frame_override_is_diagnostic_only():
             raise AssertionError(f"invalid timing override accepted: {bad_value!r}")
 
     for bad in ("-1", "601", "soon"):
-        parser = frlgmg_host.build_parser()
+        parser = frlg_mg_host.build_parser()
         with redirect_stderr(io.StringIO()):
             try:
                 parser.parse_args(["--live", "--client-ready-idle-frames", bad])
@@ -142,8 +142,8 @@ def test_mystery_gift_host_lifecycle_options_are_explicit_and_validated():
 
 
 def test_mystery_gift_main_returns_distinct_supervisor_outcomes():
-    original_app = frlgmg_host.MysteryGiftHostApplication
-    original_euid = frlgmg_host.os.geteuid
+    original_app = frlg_mg_host.MysteryGiftHostApplication
+    original_euid = frlg_mg_host.os.geteuid
 
     class FakeApplication:
         delivered = False
@@ -159,19 +159,19 @@ def test_mystery_gift_main_returns_distinct_supervisor_outcomes():
             return self.delivery_succeeded
 
     try:
-        frlgmg_host.MysteryGiftHostApplication = FakeApplication
-        frlgmg_host.os.geteuid = lambda: 0
+        frlg_mg_host.MysteryGiftHostApplication = FakeApplication
+        frlg_mg_host.os.geteuid = lambda: 0
         FakeApplication.delivered, FakeApplication.idle, FakeApplication.interrupted = True, False, False
-        assert frlgmg_host.main(["--live"]) == 0
+        assert frlg_mg_host.main(["--live"]) == 0
         FakeApplication.delivered, FakeApplication.idle, FakeApplication.interrupted = False, False, False
-        assert frlgmg_host.main(["--live"]) == 1
+        assert frlg_mg_host.main(["--live"]) == 1
         FakeApplication.idle = True
-        assert frlgmg_host.main(["--live"]) == 124
+        assert frlg_mg_host.main(["--live"]) == 124
         FakeApplication.idle, FakeApplication.interrupted = False, True
-        assert frlgmg_host.main(["--live"]) == 130
+        assert frlg_mg_host.main(["--live"]) == 130
     finally:
-        frlgmg_host.MysteryGiftHostApplication = original_app
-        frlgmg_host.os.geteuid = original_euid
+        frlg_mg_host.MysteryGiftHostApplication = original_app
+        frlg_mg_host.os.geteuid = original_euid
 
 
 def test_both_host_clis_use_the_same_explicit_transport_parsing():
@@ -210,11 +210,11 @@ def test_role_defaults_use_the_checked_in_tp_link_profile():
 def test_shared_host_parser_rejects_bad_hex_values():
     for argv in (["--live", "--password", "xyz"],
                  ["--live", "--comm-id", "not-hex"]):
-        parser = frlgmg_host.build_parser()
+        parser = frlg_mg_host.build_parser()
         args = parser.parse_args(argv)
         try:
             with redirect_stderr(io.StringIO()):
-                frlgmg_host.build_run_config(parser, args)
+                frlg_mg_host.build_run_config(parser, args)
         except SystemExit as exc:
             assert exc.code == 2
         else:
@@ -323,10 +323,10 @@ def test_hunt_criteria_reach_the_card_and_belong_only_to_the_hunt(capsys):
     for argv in (["--live", "--gift", "celebi", "--hunt-nature", "adamant"],
                  ["--live", "--news", "--hunt-iv", "speed=20"],
                  ["--live", "--buffer-script", "--hunt-cap", "1000"]):
-        parser = frlgmg_host.build_parser()
+        parser = frlg_mg_host.build_parser()
         with redirect_stderr(io.StringIO()) as err:
             try:
-                frlgmg_host.build_run_config(parser, parser.parse_args(argv))
+                frlg_mg_host.build_run_config(parser, parser.parse_args(argv))
             except SystemExit:
                 pass
             else:
@@ -338,10 +338,10 @@ def test_a_hunt_too_slow_to_run_is_refused_on_the_command_line():
     """Not when the console joins. The stub searches with the field engine stopped, so criteria
     whose search could outlast the ceiling are an error before the host ever comes up."""
     from pokeldn.frlg.gift import wonder_card_events
-    parser = frlgmg_host.build_parser()
+    parser = frlg_mg_host.build_parser()
     with redirect_stderr(io.StringIO()) as err:
         try:
-            frlgmg_host.build_run_config(parser, parser.parse_args(
+            frlg_mg_host.build_run_config(parser, parser.parse_args(
                 ["--live", "--gift", wonder_card_events.GIFT_RNG_MON_HUNT,
                  "--hunt-nature", "jolly", "--hunt-iv", "speed=31"]))
         except SystemExit:

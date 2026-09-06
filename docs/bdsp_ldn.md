@@ -1,5 +1,5 @@
 ---
-title: "BDSP: joining the session"
+title: Joining the session
 parent: Brilliant Diamond and Shining Pearl
 nav_order: 1
 ---
@@ -26,7 +26,7 @@ Two things are worth knowing before reading that.
 each other, so it does not identify which version is hosting.
 
 **Discovery costs nothing.** The advertisement is decrypted with `prod.keys` alone - no passphrase
-and no game key. `tools/ldn_scan.py` sees the session before anything about the game is known.
+and no game key. `tools/ldn/ldn_scan.py` sees the session before anything about the game is known.
 
 ## The application data
 

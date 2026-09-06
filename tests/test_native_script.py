@@ -661,7 +661,7 @@ def test_mev20_needed_one_extra_draw_between_the_personality_and_the_ivs():
     shiny Jolly MAGIKARP with SPEED 10. The state is not in doubt - exactly one state in 2**32 has
     that PID on its next two draws - and from it the criteria are satisfied at draws 3,4 and the
     mon that appeared came from draws 4,5. So the search was right and one Random() ran in
-    between. docs/rng.md already had this for wild encounters (bs51, Method 2); mev20 is the first
+    between. docs/frlg_rom_rng.md already had this for wild encounters (bs51, Method 2); mev20 is the first
     time it has been seen on a SCRIPTED one, where bs53 and mev19 were both clean."""
     assert lcg.nature_of(MEV20_PID) == 13                       # Jolly
     draws, _ = lcg.draws(MEV20_STATE, 5)

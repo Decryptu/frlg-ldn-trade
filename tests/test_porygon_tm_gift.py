@@ -8,7 +8,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
-import frlgmg_host  # noqa: E402
+import frlg_mg_host  # noqa: E402
 from pokeldn.frlg.gift import gift_registry, gift_to_bin, mystery_gift, wonder_card, wonder_card_events as event  # noqa: E402
 from pokeldn.frlg.save import save_inject  # noqa: E402
 from pokeldn.frlg.text import charmap  # noqa: E402
@@ -49,12 +49,12 @@ def test_definition_compiles_to_the_expected_porygon_card_and_cli_entry():
     slug = event.GIFT_PORYGON_TMS
     assert slug in gift_registry.GIFT_REGISTRY.live_choices
     assert slug in gift_registry.GIFT_REGISTRY.static_choices
-    assert slug in frlgmg_host.build_parser()._option_string_actions["--gift"].choices
+    assert slug in frlg_mg_host.build_parser()._option_string_actions["--gift"].choices
     assert slug in gift_to_bin.build_parser()._option_string_actions["--gift"].choices
     assert slug in save_inject.build_parser()._option_string_actions["--gift"].choices
 
-    host_parser = frlgmg_host.build_parser()
-    host_config = frlgmg_host.build_run_config(
+    host_parser = frlg_mg_host.build_parser()
+    host_config = frlg_mg_host.build_run_config(
         host_parser, host_parser.parse_args(["--live", "--gift", slug]))
     export_args = gift_to_bin.build_parser().parse_args(["--gift", slug])
     inject_args = save_inject.build_parser().parse_args(["game.sav", "--gift", slug])

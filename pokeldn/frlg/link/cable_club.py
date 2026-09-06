@@ -18,7 +18,7 @@ three 200-byte party blocks, the controller loop. `uroom_battle` runs all of it 
 
 Why it is worth hosting: only `CB2_ReturnFromCableClubBattle` increments the Wonder Card's
 battlesWon [cable_club.c:792], and the in-room Union Room battle returns through CB2_ReturnToField
-and counts nothing. See docs/mystery_gift_untried.md.
+and counts nothing. See docs/frlg_gift_untried.md.
 """
 
 from pokeldn.frlg.link import linkplayer

@@ -6,7 +6,7 @@ The index IS the opcode: `gScriptCmdTable[opcode]` is the handler the field engi
 
 The table's own address is not searched for: `script_data` opens with it and puts `gSpecialVars`
 immediately after [ld_script_rev10.ld:318], and gSpecialVars was measured at bs57, so the table
-starts SCRIPT_CMD_TABLE_SIZE bytes below it. docs/buffer_script.md.
+starts SCRIPT_CMD_TABLE_SIZE bytes below it. docs/frlg_rom_buffer_script.md.
 """
 
 COMMANDS = (

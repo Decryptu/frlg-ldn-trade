@@ -1,5 +1,5 @@
 ---
-title: "BDSP: the Pia layer"
+title: Pia, and the game key
 parent: Brilliant Diamond and Shining Pearl
 nav_order: 2
 ---

@@ -7,7 +7,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-import frlgtrade_host
+import frlg_trade_host
 from pokeldn import config
 from pokeldn.config import DEFAULT_TRAINER
 from pokeldn.frlg.link import host_app
@@ -69,7 +69,7 @@ def test_host_run_config_rejects_invalid_values():
 
 
 def test_host_cli_exposes_supported_options_and_removes_development_options():
-    parser = frlgtrade_host.build_parser()
+    parser = frlg_trade_host.build_parser()
     exposed = {
         option
         for action in parser._actions
@@ -98,12 +98,12 @@ def test_host_cli_exposes_supported_options_and_removes_development_options():
 
 
 def test_host_cli_applies_shared_identity_overrides():
-    parser = frlgtrade_host.build_parser()
+    parser = frlg_trade_host.build_parser()
     args = parser.parse_args([
         "--live", "--ot", "Red", "--version", "firered",
         "--id=12345:34567", "one.pk3", "two.pk3",
     ])
-    run = frlgtrade_host.build_run_config(parser, args)
+    run = frlg_trade_host.build_run_config(parser, args)
     assert (run.profile.name, run.profile.version) == ("Red", "firered")
     assert (run.profile.tid, run.profile.sid) == (12345, 34567)
     assert run.profile.trainer_id == (34567 << 16) | 12345

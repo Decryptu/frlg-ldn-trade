@@ -50,7 +50,7 @@ fi
 CONFIG_VALUES=""
 USE_EXPLICIT_PHY=false
 if [[ -x "$PYTHON" ]]; then
-    if "$PYTHON" "$PROJECT_ROOT/bin/frlgmg_host.py" \
+    if "$PYTHON" "$PROJECT_ROOT/bin/frlg_mg_host.py" \
             --print-effective-config "$@" >/dev/null; then
         pass "Mystery Gift CLI accepts the effective TOML configuration"
     else
@@ -61,12 +61,12 @@ import pathlib
 import sys
 root = pathlib.Path(sys.argv[1]).resolve()
 sys.path.insert(0, str(root))
-import frlgmg_host
+import frlg_mg_host
 from pokeldn import host_cli
 
 argv = sys.argv[2:]
 file_config, shared_path, local_path = host_cli.load_host_file_config_from_argv(argv)
-parser = frlgmg_host.build_parser(
+parser = frlg_mg_host.build_parser(
     file_config, shared_path=shared_path, local_path=local_path)
 args = parser.parse_args(argv)
 _profile, ldn, options = host_cli.build_host_config(parser, args)

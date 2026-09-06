@@ -5,7 +5,7 @@ console at bs13-bs15. Being affine makes `distance` exact at any range by baby-s
 where `buffer_script.lcg_distance` only walks the near neighbourhood; being a permutation of all
 2**32 states means a distance ALWAYS exists, so one is evidence only when it is small. `SeedRng`
 takes a u16 [decomp:src/random.c:15], which is what lets `predecessors` walk a state back to the
-seed the console booted with. docs/rng.md.
+seed the console booted with. docs/frlg_rom_rng.md.
 """
 
 RAND_MULT = 1103515245                  # 0x41C64E6D [decomp:include/random.h:18]
@@ -149,7 +149,7 @@ def seconds(turns, per_frame=2, fps=59.7275):
 #
 # The order of the personality's two halves is not assumed. Random32() is
 # `(Random() | (Random() << 16))` [decomp:include/random.h:15] and C does not order the operands of
-# `|`, so both are tried and the IVs decide. docs/rng.md.
+# `|`, so both are tried and the IVs decide. docs/frlg_rom_rng.md.
 
 MAX_IV_MASK = 31                        # [decomp:include/constants/pokemon.h]
 NUM_NATURES = 25

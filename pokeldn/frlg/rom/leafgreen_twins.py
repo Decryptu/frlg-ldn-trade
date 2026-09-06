@@ -9,7 +9,7 @@ inside a boundary.
 
 THE DELTA IS A PROPERTY OF A REGION. These pairs are also what the segment map is built from: 1863
 points across three run pairs, quantised into seven deltas with no outlier, which is what says the
-windows are really each other's twin. docs/leafgreen.md.
+windows are really each other's twin. docs/frlg_leafgreen.md.
 """
 import os
 import sys

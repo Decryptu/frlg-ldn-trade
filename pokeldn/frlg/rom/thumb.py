@@ -3,13 +3,13 @@
 bs84 established the method by hand and `scratchpad/handler_workers.py` automated it for one table:
 a handler is an entry point, the worker behind it is what is worth calling, and the `bl` targets a
 body makes - in order - name those workers against the decomp's own call order. This module is that
-reading, table-agnostic, so `tools/rom_functions.py` can point it at gSpecials, gScriptCmdTable or
+reading, table-agnostic, so `tools/frlg/rom_functions.py` can point it at gSpecials, gScriptCmdTable or
 gMysteryEventScriptCmdTable without three copies of the arithmetic.
 
 THE TRAP, and it cost one wrong answer (MEScrCmd_crc came back with 25 `bl` targets where the decomp
 gives it four): this ROM is agbcc-built and agbcc does NOT end a THUMB function `pop {..., pc}`
 (0xBDxx). It ends it `pop {r4,r5,r6}; pop {r1}; bx r1` - so `bx Rn` is a terminator too, and a
-reader looking only for 0xBDxx walks straight into the next function. docs/buffer_script.md.
+reader looking only for 0xBDxx walks straight into the next function. docs/frlg_rom_buffer_script.md.
 """
 
 # `bl` is a PAIR of halfwords on this core: F800|hi carries bits 22..12 of the offset, F800|lo bits

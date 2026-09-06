@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 INSTALLER = Path("scripts/install_switch_keys.sh")
-GUIDE = Path("docs/switch_keys.md")
+GUIDE = Path("docs/hardware_switch_keys.md")
 
 
 def test_key_installer_uses_private_modes_and_explicit_sources():

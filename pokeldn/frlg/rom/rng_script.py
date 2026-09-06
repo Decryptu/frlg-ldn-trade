@@ -4,7 +4,7 @@ The Mystery Gift link is the wrong place to seed from: every route out of the me
 `SeedRng` on the title screen, measured at bs50/bs51. A RAM script runs after that reseed, and
 gRngValue is a link-time IWRAM global at 0x03004220, so `setptr` needs no address read and no sled
 - unlike `callnative`, which would have to aim at a save block that moves. The script ends with
-`end` (0x02), not `endram`, so the binding survives and can be re-triggered. docs/rng.md.
+`end` (0x02), not `endram`, so the binding survives and can be re-triggered. docs/frlg_rom_rng.md.
 """
 
 from pokeldn.frlg.rom import rom_map
@@ -94,7 +94,7 @@ def describe_seed_script(script):
 # `setptr` and `setwildbattle` both return FALSE and the field engine runs commands until one
 # returns TRUE, so the seed writes and the generation happen back to back in one frame and the four
 # draws are a pure function of the seed just written. Nothing that yields may go between them - a
-# `playse` would break it silently. docs/rng.md.
+# `playse` would break it silently. docs/frlg_rom_rng.md.
 
 SCR_SETWILDBATTLE = 0xB6
 SCR_DOWILDBATTLE = 0xB7
@@ -121,7 +121,7 @@ VAR_0x8000 = 0x8000
 #
 # ScriptContext_RunScript calls UnlockPlayerFieldControls() the moment a script stops
 # [decomp:src/script.c:335], so the `end` alone gives the player back. Nothing in the battle or
-# overworld code writes gSpecialVar_0x8000. docs/rng.md.
+# overworld code writes gSpecialVar_0x8000. docs/frlg_rom_rng.md.
 BATTLE_TAIL = bytes([SCR_RELEASEALL, SCR_END])      # kept for the disassemblers only
 
 # The two bytes the trampoline holds, as the u16 `setvar` writes: dowildbattle, then end.
@@ -247,7 +247,7 @@ def check_two_readings(first, second, *, seconds=None):
 
     `seconds` is optional and deliberately not required: it sharpens the statement, it does not
     make it. The order-of-magnitude test stands without any clock, which is the point - see
-    docs/rng.md on why nothing here may depend on a hand-timed elapsed.
+    docs/frlg_rom_rng.md on why nothing here may depend on a hand-timed elapsed.
     """
     from pokeldn.frlg.rom import lcg
     turns = lcg.distance(first, second)
@@ -275,7 +275,7 @@ from pokeldn.frlg.gift.gift_composer import build_seed_rate_script      # noqa: 
 def measure_rate(first, second, frames):
     """-> lines: turns per frame, from two readings and an EXACT frame count.
 
-    This is the measurement docs/rng.md says had never been made outside the Mystery Gift menu.
+    This is the measurement docs/frlg_rom_rng.md says had never been made outside the Mystery Gift menu.
     Both inputs are exact - `lcg.distance` is exact arithmetic and `frames` is what `delay` was
     told to wait - so unlike every earlier attempt there is no clock in it and no rounding to argue
     about. 600 frames at ~2 turns each is ~1200 turns, twenty million times below the 2**32 point
