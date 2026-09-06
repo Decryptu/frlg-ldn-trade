@@ -17,8 +17,9 @@ them is called, that call is the measurement.
 
 
 WORKERS = {
-    0x0800053C: 'SetMainCallback2',                         # DoSeagallopFerryScene +4
+    0x0800053C: 'SetMainCallback2',                         # DoCredits +5
     0x080006EC: 'SetVBlankCallback',                        # DoSeagallopFerryScene +1
+    0x08002B18: 'AllocZeroed',                              # DoCredits +1
     0x08002BB0: 'AddTextPrinterParameterized',              # DoPicboxCancel +3
     0x08003C4C: 'AddWindow',                                # DisplayBerryPowderVendorMenu +2
     0x08003DA4: 'RemoveWindow',                             # CloseElevatorCurrentFloorWindow +1
@@ -29,6 +30,7 @@ WORKERS = {
     0x08009854: 'GetStringWidth',                           # DrawElevatorCurrentFloorWindow +1
     0x08009C80: 'CreateTextCursorSprite',                   # BrailleCursorToggle
     0x08009D18: 'DestroyTextCursorSprite',                  # BrailleCursorToggle
+    0x0800A490: 'ResetSpriteData',                          # DoCredits
     0x0800A90C: 'CreateSprite',                             # OpenMuseumFossilPic
     0x0800C0A0: 'LoadSpriteSheets',                         # OpenMuseumFossilPic
     0x0800C7E0: 'svc_SetStarter',                           # ScrCmd_givemon
@@ -86,7 +88,7 @@ WORKERS = {
     0x08059D40: 'IsUpdateLinkStateCBActive',                # ScrCmd_lock +1
     0x0805B87C: 'QueueExitLinkRoomKey',                     # ExitLinkRoom
     0x0805C878: 'MapGridGetMetatileBehaviorAt',             # SetCableClubWarp
-    0x0805C8A4: 'MapGridSetMetatileIdAt',                   # ScrCmd_setmetatile
+    0x0805C8A4: 'MapGridSetMetatileIdAt',                   # AnimatePcTurnOff +1
     0x0805E6D4: 'SetCameraPanningCallback',                 # AnimateElevator
     0x0805EB68: 'FieldSetDoorOpened',                       # ScrCmd_setdooropen
     0x0805EB9C: 'FieldSetDoorClosed',                       # ScrCmd_setdoorclosed
@@ -123,7 +125,7 @@ WORKERS = {
     0x0806D09C: 'InitScriptContext',                        # RunScriptImmediately
     0x0806D0D8: 'SetupBytecodeScript',                      # RunScriptImmediately
     0x0806D0F4: 'RunScriptCommand',                         # RunScriptImmediately
-    0x0806D230: 'LockPlayerFieldControls',                  # ChoosePartyMon +8
+    0x0806D230: 'LockPlayerFieldControls',                  # ChoosePartyMon +9
     0x0806D310: 'MsgSetSignpost',                           # ScrCmd_signmsg
     0x0806D31C: 'MsgSetNotSignpost',                        # ScrCmd_normalmsg
     0x0806D424: 'ScriptContext_Enable',                     # ReturnToListMenu
@@ -137,8 +139,9 @@ WORKERS = {
     0x08071D9C: 'IsFlagOrVarStoredInQuestLog',              # GetVarPointer
     0x08071E34: 'GetFlagAddr',                              # FlagClear +2
     0x08072144: 'ActivatePerStepCallback',                  # ScrCmd_setstepcallback
+    0x08072E98: 'StartMenu_PrepareForSave',                 # Field_AskSaveTheGame
     0x08073C64: 'LoadPalette',                              # OpenMuseumFossilPic +1
-    0x08073E00: 'BeginNormalPaletteFade',                   # ChoosePartyMon +3
+    0x08073E00: 'BeginNormalPaletteFade',                   # ChoosePartyMon +4
     0x080752E0: 'GetCurrentMapMusic',                       # Overworld_PlaySpecialMapMusic
     0x080752EC: 'PlayNewMapMusic',                          # Overworld_PlaySpecialMapMusic +2
     0x0807530C: 'StopMapMusic',                             # Overworld_PlaySpecialMapMusic
@@ -147,7 +150,8 @@ WORKERS = {
     0x0807561C: 'FadeInBGM',                                # Overworld_PlaySpecialMapMusic +1
     0x0807579C: 'PlayCry_Script',                           # ScrCmd_playmoncry +1
     0x08075B44: 'PlaySE',                                   # AnimateElevator +4
-    0x0807AC94: 'CreateTask',                               # AnimateElevator +19
+    0x0807AC34: 'ResetTasks',                               # DoCredits
+    0x0807AC94: 'CreateTask',                               # AnimateElevator +23
     0x0807AD80: 'DestroyTask',                              # ListMenu
     0x0807AECC: 'FuncIsActiveTask',                         # AnimatePcTurnOn +1
     0x0807AF04: 'FindTaskIdByFunc',                         # CloseMuseumFossilPic +2
@@ -160,6 +164,7 @@ WORKERS = {
     0x08081DF4: 'DoTeleportWarp',                           # ScrCmd_warpteleport
     0x08082880: 'AnimateFlash',                             # ScrCmd_animateflash
     0x08082EE8: 'CreateBattleStartTask',                    # StartGroudonKyogreBattle +2
+    0x08082F5C: 'StartWildBattle',                          # RockSmashWildEncounter
     0x080830C0: 'DoTrainerBattle',                          # StartRematchBattle
     0x0808311C: 'StartScriptedWildBattle',                  # ScrCmd_dowildbattle
     0x0808378C: 'GetWildBattleTransition',                  # StartMarowakBattle +1
@@ -176,6 +181,10 @@ WORKERS = {
     0x08083F98: 'CreateLinkupTask',                         # TryBattleLinkup +2
     0x08085088: 'CreateTask_EnterCableClubSeat',            # EnterColosseumPlayerSpot +1
     0x08085210: 'CreateTask_StartWiredTrade',               # StartWiredCableClubTrade
+    0x08085708: 'StartTrainerApproachWithFollowupTask',     # EndTrainerApproach
+    0x080861A0: 'GetCurrentMapWildMonHeaderId',             # RockSmashWildEncounter
+    0x08086358: 'TryGenerateWildMon',                       # RockSmashWildEncounter
+    0x08086438: 'DoWildEncounterRateTest',                  # RockSmashWildEncounter
     0x08086CB0: 'FieldEffectStart',                         # ScrCmd_dofieldeffect
     0x08086E04: 'ApplyGlobalFieldPaletteTint',              # SetDeoxysTrianglePalette
     0x0808C878: 'GetNationalPokedexCount',                  # GetPokedexCount
@@ -258,8 +267,10 @@ WORKERS = {
     0x080FB53C: 'GetFontAttribute',                         # DrawSeagallopDestinationMenu
     0x080FB624: 'GetMenuCursorDimensionByFont',             # DrawSeagallopDestinationMenu
     0x080FC120: 'MapPreview_SetFlag',                       # ScrCmd_setworldmapflag
+    0x080FEAB0: 'ResetHostRfuGameData',                     # RunUnionRoom
     0x08108784: 'DexScreen_GetSetPokedexFlag',              # GetSetPokedexFlag
     0x0810AA9C: 'ListMenuInit',                             # ShowDaycareLevelMenu
+    0x0810B7DC: 'ListMenuLoadStdPalAt',                     # RunUnionRoom
     0x0810F1E4: 'IsCurMapPokeCenter',                       # SetHelpContextForMap
     0x08110828: 'ShouldTryRematchBattleInternal',           # ShouldTryRematchBattle
     0x0811085C: 'HasRematchTrainerAlreadyBeenFought',       # ShouldTryRematchBattle
@@ -274,11 +285,12 @@ WORKERS = {
     0x081168A4: 'QuestLogSetFlagOrVar',                     # GetVarPointer
     0x08117044: 'SetQuestLogEvent',                         # SetUsedPkmnCenterQuestLogEvent
     0x0811923C: 'QuestLog_RecordEnteredMap',                # ScrCmd_setworldmapflag
+    0x0811EF20: 'ResetUnionRoomTrade',                      # Script_ResetUnionRoomTrade
     0x081227B0: 'InitPartyMenu',                            # ChooseMonForMoveTutor +1
     0x08123878: 'GetCursorSelectionMonId',                  # GetSelectedMonNicknameAndSpecies +2
     0x0812404C: 'GetMonNickname',                           # BufferMoveDeleterNicknameAndMove
     0x0812C0F4: 'ChooseMonForDaycare',                      # ChooseSendDaycareMon
-    0x0812EF90: 'SetHelpContext',                           # ForcePlayerToStartSurfing +1
+    0x0812EF90: 'SetHelpContext',                           # Field_AskSaveTheGame +2
     0x0812EFFC: 'IsInMartMap',                              # SetHelpContextForMap
     0x0812F00C: 'IsInGymMap',                               # SetHelpContextForMap
     0x0812F064: 'IsInDungeonMap',                           # SetHelpContextForMap
@@ -306,8 +318,9 @@ WORKERS = {
 # Where the decomp defines each one, and how many of the table's bodies reached
 # it. A worker with several callers is one several bodies agreed about.
 SOURCES = {
-    'SetMainCallback2': ('main.c', 4, 5),
+    'SetMainCallback2': ('main.c', 4, 6),
     'SetVBlankCallback': ('main.c', 12, 2),
+    'AllocZeroed': ('malloc.c', 8, 2),
     'AddTextPrinterParameterized': ('text_printer.c', 2, 4),
     'AddWindow': ('window.c', 2, 3),
     'RemoveWindow': ('window.c', 3, 2),
@@ -318,6 +331,7 @@ SOURCES = {
     'GetStringWidth': ('text.c', 15, 2),
     'CreateTextCursorSprite': ('text.c', 18, 1),
     'DestroyTextCursorSprite': ('text.c', 19, 1),
+    'ResetSpriteData': ('sprite.c', 0, 1),
     'CreateSprite': ('sprite.c', 8, 1),
     'LoadSpriteSheets': ('sprite.c', 85, 1),
     'svc_SetStarter': ('sloopsvc.c', 22, 1),
@@ -375,7 +389,7 @@ SOURCES = {
     'IsUpdateLinkStateCBActive': ('overworld.c', 103, 2),
     'QueueExitLinkRoomKey': ('overworld.c', 196, 1),
     'MapGridGetMetatileBehaviorAt': ('fieldmap.c', 16, 1),
-    'MapGridSetMetatileIdAt': ('fieldmap.c', 18, 1),
+    'MapGridSetMetatileIdAt': ('fieldmap.c', 18, 2),
     'SetCameraPanningCallback': ('field_camera.c', 24, 1),
     'FieldSetDoorOpened': ('field_door.c', 14, 1),
     'FieldSetDoorClosed': ('field_door.c', 15, 1),
@@ -412,7 +426,7 @@ SOURCES = {
     'InitScriptContext': ('script.c', 0, 1),
     'SetupBytecodeScript': ('script.c', 1, 1),
     'RunScriptCommand': ('script.c', 4, 1),
-    'LockPlayerFieldControls': ('script.c', 12, 9),
+    'LockPlayerFieldControls': ('script.c', 12, 10),
     'MsgSetSignpost': ('script.c', 27, 1),
     'MsgSetNotSignpost': ('script.c', 28, 1),
     'ScriptContext_Enable': ('script.c', 36, 1),
@@ -426,8 +440,9 @@ SOURCES = {
     'IsFlagOrVarStoredInQuestLog': ('event_data.c', 17, 1),
     'GetFlagAddr': ('event_data.c', 21, 3),
     'ActivatePerStepCallback': ('field_tasks.c', 3, 1),
+    'StartMenu_PrepareForSave': ('start_menu.c', 32, 1),
     'LoadPalette': ('palette.c', 1, 2),
-    'BeginNormalPaletteFade': ('palette.c', 7, 4),
+    'BeginNormalPaletteFade': ('palette.c', 7, 5),
     'GetCurrentMapMusic': ('sound.c', 3, 1),
     'PlayNewMapMusic': ('sound.c', 4, 3),
     'StopMapMusic': ('sound.c', 5, 1),
@@ -436,7 +451,8 @@ SOURCES = {
     'FadeInBGM': ('sound.c', 21, 2),
     'PlayCry_Script': ('sound.c', 28, 2),
     'PlaySE': ('sound.c', 38, 5),
-    'CreateTask': ('task.c', 1, 20),
+    'ResetTasks': ('task.c', 0, 1),
+    'CreateTask': ('task.c', 1, 24),
     'DestroyTask': ('task.c', 3, 1),
     'FuncIsActiveTask': ('task.c', 9, 2),
     'FindTaskIdByFunc': ('task.c', 10, 3),
@@ -449,6 +465,7 @@ SOURCES = {
     'DoTeleportWarp': ('field_fadetransition.c', 42, 1),
     'AnimateFlash': ('field_screen_effect.c', 6, 1),
     'CreateBattleStartTask': ('battle_setup.c', 1, 3),
+    'StartWildBattle': ('battle_setup.c', 3, 1),
     'DoTrainerBattle': ('battle_setup.c', 8, 1),
     'StartScriptedWildBattle': ('battle_setup.c', 10, 1),
     'GetWildBattleTransition': ('battle_setup.c', 25, 2),
@@ -465,6 +482,10 @@ SOURCES = {
     'CreateLinkupTask': ('cable_club.c', 0, 3),
     'CreateTask_EnterCableClubSeat': ('cable_club.c', 41, 2),
     'CreateTask_StartWiredTrade': ('cable_club.c', 45, 1),
+    'StartTrainerApproachWithFollowupTask': ('trainer_see.c', 9, 1),
+    'GetCurrentMapWildMonHeaderId': ('wild_encounter.c', 5, 1),
+    'TryGenerateWildMon': ('wild_encounter.c', 10, 1),
+    'DoWildEncounterRateTest': ('wild_encounter.c', 13, 1),
     'FieldEffectStart': ('field_effect.c', 0, 1),
     'ApplyGlobalFieldPaletteTint': ('field_effect.c', 11, 1),
     'GetNationalPokedexCount': ('pokedex.c', 3, 1),
@@ -547,8 +568,10 @@ SOURCES = {
     'GetFontAttribute': ('new_menu_helpers.c', 52, 1),
     'GetMenuCursorDimensionByFont': ('new_menu_helpers.c', 53, 1),
     'MapPreview_SetFlag': ('map_preview_screen.c', 13, 1),
+    'ResetHostRfuGameData': ('link_rfu_2.c', 94, 1),
     'DexScreen_GetSetPokedexFlag': ('pokedex_screen.c', 31, 1),
     'ListMenuInit': ('list_menu.c', 2, 1),
+    'ListMenuLoadStdPalAt': ('list_menu.c', 29, 1),
     'IsCurMapPokeCenter': ('save_location.c', 1, 1),
     'ShouldTryRematchBattleInternal': ('vs_seeker.c', 21, 1),
     'HasRematchTrainerAlreadyBeenFought': ('vs_seeker.c', 22, 1),
@@ -563,11 +586,12 @@ SOURCES = {
     'QuestLogSetFlagOrVar': ('quest_log.c', 86, 1),
     'SetQuestLogEvent': ('quest_log_events.c', 0, 1),
     'QuestLog_RecordEnteredMap': ('quest_log_events.c', 113, 1),
+    'ResetUnionRoomTrade': ('union_room.c', 101, 1),
     'InitPartyMenu': ('party_menu.c', 0, 2),
     'GetCursorSelectionMonId': ('party_menu.c', 33, 3),
     'GetMonNickname': ('party_menu.c', 48, 1),
     'ChooseMonForDaycare': ('party_menu.c', 353, 1),
-    'SetHelpContext': ('help_system.c', 1, 2),
+    'SetHelpContext': ('help_system.c', 1, 3),
     'IsInMartMap': ('help_system.c', 5, 1),
     'IsInGymMap': ('help_system.c', 6, 1),
     'IsInDungeonMap': ('help_system.c', 8, 1),
