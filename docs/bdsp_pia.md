@@ -299,23 +299,62 @@ version 0 for 5.19-5.45, so that is where they are.
 console's and that each of *our* entries carries the right version; it never checks that our ids are
 its ids. Nine entries of `(0xFF, 0)` therefore pass the whole negotiation.
 
-## The one thing left
+## Accepted, and into the mesh
 
-A minimal well-formed request, sent four times into a freshly re-entered Union Room as the first
-station-protocol packet that session had ever seen, comes back **result 7** every time. The request
-is parsed end to end and accepted at the protocol level.
+The station location this project sent for eight runs was malformed, and the way it failed is worth
+more than the fix. Its two size bytes count the **port** as well as the address: the console's
+InetAddress parser builds `1 << size` and tests it against `0x00040044`, so only **2, 6 and 18**
+pass, and we were writing 4. The connection-request parser then **throws the location's error
+away**, so the request still looked well formed to everything downstream while the location's
+variable id stayed 0 - which is why five different variable ids all drew the same refusal. None of
+them was ever read.
 
-Result 7 is produced at exactly one instruction, `0x0154fd98`, reached when the second stage
-`0x0154fcfc` has already found a station for our location and a call to `0x1548bbc` - in
-`nn::pia::mesh::MeshProtocol` code - returns true for our station location's variable id. That
-function reads an array of `u32` at `mesh+0x3b8` with a count at `mesh+0x98`, wants the count to be
-at least 2, and returns 1 on the first entry equal to its argument.
+With the size byte at 6 the console accepts. Connection result 0, and 949 bytes that hand over its
+whole side of the handshake:
 
-**That reading is wrong and is recorded as wrong.** Varying the station location's variable id
-across five values, including the host's own and `0x7fffffff`, returns 7 for all of them, and a
-list-membership test cannot match five arbitrary values. Either those fields are not a count and an
-array, or the argument is not the variable id that `0x15a3728` appears to fetch. It is also not a
-station left behind by an earlier run - the fresh-session test settled that.
+    its nine protocols   0x14 Station v2   0x18 Mesh v3      0x1c SyncClock v0
+                         0x24 Local v0     0x58 RTT v3       0x68 Unreliable v1
+                         0x7c Reliable v3  0x94 Session v1   0xa4 MonitoringData v0
+    its location         169.254.x.1:12345, constant id eb9b2220f1480000
+    the network id, the player counts, the player's name, and the ack id
+
+Every version measured by probing is confirmed by that list, and the three the probe could not see
+are exactly the version-0 ones it predicted. Mesh protocol version 3 pins the library to Pia
+5.30-5.45, so the 5.31-5.45 structures are the right ones everywhere else.
+
+Acking the acceptance (`05 00 00 00 <ack id>` on protocol 0x14) finishes it - the console sends the
+response once instead of twenty times.
+
+## The mesh
+
+The join request is six bytes: type 1, the station index **253** that means "not in a mesh yet",
+and an ack id. It is retransmitted every 500 ms and Pia gives up after ten seconds. The console
+answers with the mesh itself:
+
+    stations 2, host index 0, our index 1, max_active 8, update counter 0
+    station 0   the console
+    station 1   us - our own station location read back, with the ids we sent
+
+`max_active` 8 is the Union Room's eight seats, seen now from a third layer. Within a second of the
+join the console begins sending **RTT** (0x58) and **Reliable** (0x7c) traffic, which is the mesh
+treating the station as live. The game still shows nothing, and should not: the Session Protocol
+(0x94) above this has not been spoken to.
+
+**The method worth keeping is that a check which refuses you is a measurement instrument.** The
+console compares our protocol count against its own and answers only when it matches, so sweeping
+the count measured a number we could not see. An id it does not register expects version 0, so a
+version of 1 is a guaranteed verdict, and bisection then reads any protocol's version. Neither
+needed one of the console's protocols to be known in advance.
+
+## What result 7 was
+
+Before the fix, a well-formed-looking request came back **result 7** every time - internal error
+`0x11c0f`, produced at exactly one instruction, `0x0154fd98`, when the second stage has found a
+station for our location and a check on the location's variable id returns true. Varying that
+variable id across five values including the host's own changed nothing, which is what said the
+reading was wrong rather than the console being strange: the location was never parsed, so the
+variable id was 0 in every one of them. Recording that reading as wrong, rather than building on
+it, is what kept the search pointed at the right layer.
 
 ## The GCM nonce
 
