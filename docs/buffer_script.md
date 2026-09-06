@@ -1437,6 +1437,54 @@ name" came from.
 against out of the run's own `--expect-console`, falling back to the tag for the runs that predate
 that flag. `--console leafgreen` reads the other; `--console both` exists only for comparing them.
 
+## Session 42: memory-dump-scatter, because a plan does not ask for one long region
+
+bs119 turned one dump into sixteen by keeping a cursor in `client->param`, and every block it sends
+is `base + index * 1024`. That is the right shape for a long region and the wrong one for what a
+PLAN asks for. The 166 `gSpecials` bodies still unread are spread over a megabyte:
+
+| one join, 16 KB off the wire | bodies it catches |
+|---|---|
+| `memory-dump-multi`, sixteen CONSECUTIVE blocks at the best base | 22 |
+| `memory-dump-scatter`, the sixteen densest KILOBYTES | **83** |
+| `memory-dump-scatter`, 32 blocks - the client script's ceiling | **119 of 166** |
+
+Same session, same bytes on the air, four times the catch. `gSpecials` closes in two joins instead
+of eleven.
+
+`asm/memory-dump-scatter.s` is memory-dump-multi with one instruction changed in kind: the cursor
+INDEXES A TABLE of bases carried in the payload instead of being multiplied by 1024.
+
+    adr     r3, .Ltable
+    ldr     r3, [r3, r1, lsl #2]    @ this block's own base
+    str     r3, [r0, #0x3C]         @ client->link.sendBuffer
+
+`adr` is PC-relative, which is what lets the table be read from wherever `gDecompressionBuffer`
+happens to be. Everything else is unchanged, including the reason the cursor lives in `param` at
+all - `CLI_RUN_BUFFER_SCRIPT` memcpys `recvBuffer` over the image on every pass [decomp:
+src/mystery_gift_client.c:238], so the table survives and nothing else in the payload does.
+
+**Every slot in the 32-entry table is filled**, the unused ones with the last address. A pass the
+client script never promised then re-sends a block we already hold instead of pointing the console's
+outgoing message at 0x00000000.
+
+**The guard is per BLOCK, not over the span.** multi's blocks are one region and `gRngValue` has to
+be missed once; these are unrelated regions and each one is checked (lg172/lg173 is what that guard
+is for).
+
+**Where the bytes belong is the new problem it creates.** A scattered session's blocks arrive end to
+end in one file, and one `--dump-address` would place fifteen of the sixteen kilobytes wrong. The
+launcher line carries `--dump-scatter A,B,C`, so `script_read.dumps` splits the file and places each
+block at its own base, tagging them `<run>[0]`, `<run>[1]`, ... `run_mg_fast.sh` had to learn the
+flag too, or a scattered run would not have been given a `--dump-file` at all and would have thrown
+its bytes away.
+
+Proven offline: the payload emulated pass by pass (each one sends the next address, junk in `param`
+starts at block zero, an over-run repeats the last block), and a whole simulated session through
+`scratchpad/mg_client_harness.py --buffer-script memory-dump-scatter --dump-scatter A,B,C` returning
+three blocks from three unrelated addresses. **Not yet run on hardware.**
+`./.venv/bin/python tools/rom_functions.py --table specials --plan --blocks 32` prints the join.
+
 ## What is left
 
 1. **Which function to call next.** Answered at bs82/bs84/bs85: `frlgsim/scrcmd_names.HANDLERS`

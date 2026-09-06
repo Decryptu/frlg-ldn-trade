@@ -91,25 +91,50 @@ def deduplicate(entries):
     return out
 
 
-def plan(missing, window, limit):
-    """-> ready-made `--dump-address` lines, densest window first.
+def windows(missing, window, limit):
+    """-> [(start, [addresses caught])], densest first, disjoint.
 
     Greedy over the addresses not held: the window starting at each one, whichever catches the most,
     then the same again over what is left. A window is anchored ON an entry rather than on a round
     number because a body starts where the table says it does."""
-    left, lines = sorted(missing), []
-    while left and len(lines) < limit:
+    left, out = sorted(missing), []
+    while left and len(out) < limit:
         best_start, best = left[0], []
         for start in left:
             inside = [a for a in left if start <= a < start + window]
             if len(inside) > len(best):
                 best_start, best = start, inside
-        names = ", ".join(missing[a].split(" [")[0] for a in best[:6])
-        lines.append(f"  --dump-address 0x{best_start:08X} --dump-size {window}   "
-                     f"{len(best)} entr{'y' if len(best) == 1 else 'ies'}: {names}"
-                     + (", ..." if len(best) > 6 else ""))
+        out.append((best_start, best))
         left = [a for a in left if a not in set(best)]
-    return lines, len(left)
+    return out
+
+
+def plan(missing, window, limit):
+    """-> ready-made `--dump-address` lines, densest window first."""
+    chosen = windows(missing, window, limit)
+    lines = []
+    for start, caught in chosen:
+        names = ", ".join(missing[a].split(" [")[0] for a in caught[:6])
+        lines.append(f"  --dump-address 0x{start:08X} --dump-size {window}   "
+                     f"{len(caught)} entr{'y' if len(caught) == 1 else 'ies'}: {names}"
+                     + (", ..." if len(caught) > 6 else ""))
+    taken = {a for _start, caught in chosen for a in caught}
+    return lines, len(missing) - len(taken)
+
+
+def scatter_line(missing, window, blocks):
+    """-> the one-join line for `memory-dump-scatter`: the N densest windows, in one session.
+
+    THE POINT OF THE PAYLOAD. `memory-dump-multi` reads N CONSECUTIVE blocks, and a table's unread
+    entries are not consecutive - the densest 16 KB of gSpecials holds 22 bodies where the sixteen
+    densest KILOBYTES hold about sixty. Same join, same 16 KB off the wire."""
+    chosen = windows(missing, window, blocks)
+    if not chosen:
+        return []
+    addresses = ",".join(f"0x{start:08X}" for start, _caught in chosen)
+    caught = sum(len(entries) for _start, entries in chosen)
+    return [f"  --buffer-script memory-dump-scatter --dump-scatter {addresses}",
+            f"    one join, {len(chosen)} block(s) of {window}: {caught} bodies"]
 
 
 def main():
@@ -125,6 +150,9 @@ def main():
                     help="the dump size the plan should propose (default 1024)")
     ap.add_argument("--plan", action="store_true", help="the plan only, no bodies")
     ap.add_argument("--runs", type=int, default=10, help="how many windows to plan (default 10)")
+    ap.add_argument("--blocks", type=int, default=16,
+                    help="how many blocks one scattered join may carry (default 16, ceiling 32); "
+                         "the plan ends with that join as a ready-made --dump-scatter line")
     ap.add_argument("--scratchpad", default="scratchpad")
     ap.add_argument("--console", choices=("firered", "leafgreen"), default="firered",
                     help="which cartridge's dumps to read (default firered). The two hold the same "
@@ -186,6 +214,10 @@ def main():
                 print(line)
             if left:
                 print(f"  ... and {left} bodies in windows of fewer than that")
+            if args.blocks > 1:
+                print(f"\n  The same windows as ONE scattered join:")
+                for line in scatter_line(missing, args.window, args.blocks):
+                    print(line)
 
 
 if __name__ == "__main__":

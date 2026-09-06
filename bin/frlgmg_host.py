@@ -79,6 +79,11 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         help=("with --buffer-script memory-dump: the console address to read out (0x02000000 "
               "EWRAM, 0x03000000 IWRAM, 0x08000000 ROM). Accepts 0x hex"))
     parser.add_argument(
+        "--dump-scatter", default=None, metavar="A,B,C",
+        help=("with --buffer-script memory-dump-scatter: the UNRELATED addresses to read, one "
+              "block each, in this order. A plan asks for scattered kilobytes rather than one "
+              "long region, and this is the payload that answers it. Accepts 0x hex"))
+    parser.add_argument(
         "--dump-blocks", type=int, default=1, metavar="N",
         help=("with --buffer-script memory-dump-multi: how many consecutive blocks to pull in ONE "
               "session. MG_LINK_BUFFER_SIZE caps a message, not a session, so the client script "
@@ -414,6 +419,16 @@ def _hunt_bind(args):
     return given
 
 
+def _scatter_addresses(parser, text):
+    """-> the --dump-scatter list as addresses. One block per address, in the order given."""
+    if not text:
+        return ()
+    try:
+        return tuple(int(part, 0) for part in text.replace(" ", "").split(",") if part)
+    except ValueError:
+        parser.error(f"--dump-scatter takes a comma-separated list of addresses, got {text!r}")
+
+
 def _hunt_asked(args):
     return any(value is not None for value in (args.hunt_nature, args.hunt_iv, args.hunt_cap,
                                                args.hunt_species, args.hunt_level,
@@ -480,6 +495,8 @@ def build_run_config(parser, args):
             parser.error("--dump-address needs --buffer-script memory-dump")
         elif args.buffer_script is None and args.dump_blocks != 1:
             parser.error("--dump-blocks needs --buffer-script memory-dump-multi")
+        elif args.buffer_script is None and args.dump_scatter is not None:
+            parser.error("--dump-scatter needs --buffer-script memory-dump-scatter")
         elif args.buffer_script is not None:
             if args.questionnaire is not None:
                 parser.error(
@@ -538,6 +555,7 @@ def build_run_config(parser, args):
                 script=args.buffer_script, dump_address=args.dump_address,
                 dump_block=args.dump_block, dump_offset=args.dump_offset,
                 dump_size=args.dump_size, dump_blocks=args.dump_blocks,
+                dump_addresses=_scatter_addresses(parser, args.dump_scatter),
                 dump_file=args.dump_file,
                 write_data=write_data, write_unsafe=args.write_unsafe,
                 scan_word=args.scan_word, scan_start=args.scan_start,

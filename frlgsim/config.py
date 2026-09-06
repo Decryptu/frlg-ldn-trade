@@ -554,6 +554,9 @@ class BufferScriptPayload:
     dump_offset: int = 0
     dump_size: int = buffer_script.MAX_BUFFER_SCRIPT_SIZE
     dump_blocks: int = 1
+    # memory-dump-scatter: the blocks are UNRELATED addresses, so the payload carries a table of
+    # them and `dump_blocks` is however many were asked for rather than something to pass.
+    dump_addresses: tuple = ()
     # save-write only: the bytes to put into the save block, and the override for the guard that
     # keeps a write inside the region the game never reads.
     write_data: bytes | None = None
@@ -626,10 +629,21 @@ class BufferScriptPayload:
             raise ValueError(
                 f"an address to dump is only meaningful with {buffer_script.MEMORY_DUMP} "
                 f"and {buffer_script.MEMORY_DUMP_MULTI}")
-        if self.dump_blocks != 1 and self.script != buffer_script.MEMORY_DUMP_MULTI:
+        if self.script == buffer_script.MEMORY_DUMP_SCATTER:
+            if not self.dump_addresses:
+                raise ValueError(
+                    f"{buffer_script.MEMORY_DUMP_SCATTER} needs the addresses to read "
+                    "(--dump-scatter A,B,C)")
+            # The count is not a separate knob: one block per address, in the order given.
+            object.__setattr__(self, "dump_blocks", len(self.dump_addresses))
+        elif self.dump_addresses:
             raise ValueError(
-                f"more than one block per session is only {buffer_script.MEMORY_DUMP_MULTI}; "
-                "every other payload answers once")
+                f"a list of addresses is only meaningful with {buffer_script.MEMORY_DUMP_SCATTER}")
+        if self.dump_blocks != 1 and self.script not in (buffer_script.MEMORY_DUMP_MULTI,
+                                                         buffer_script.MEMORY_DUMP_SCATTER):
+            raise ValueError(
+                f"more than one block per session is only {buffer_script.MEMORY_DUMP_MULTI} and "
+                f"{buffer_script.MEMORY_DUMP_SCATTER}; every other payload answers once")
         if not 1 <= self.dump_blocks <= mg_script.MAX_DUMP_BLOCKS:
             raise ValueError(
                 f"a session carries 1..{mg_script.MAX_DUMP_BLOCKS} blocks, got {self.dump_blocks}")
@@ -747,6 +761,8 @@ class BufferScriptPayload:
         if self.script == buffer_script.MEMORY_DUMP_MULTI:
             return buffer_script.build_memory_dump_multi(
                 self.dump_address, self.dump_size, self.dump_blocks)
+        if self.script == buffer_script.MEMORY_DUMP_SCATTER:
+            return buffer_script.build_memory_dump_scatter(self.dump_addresses, self.dump_size)
         if self.script == buffer_script.SAVE_DUMP:
             return buffer_script.build_save_dump(
                 self.dump_block, self.dump_offset, self.dump_size)
@@ -797,7 +813,8 @@ class BufferScriptPayload:
             None, None, buffer_code=self.build_code(), buffer_expect=self.expect,
             buffer_dump_size=self.dump_size if self.is_dump else None,
             buffer_dump_blocks=self.dump_blocks,
-            buffer_dump_address=self.dump_address or 0,
+            buffer_dump_address=(self.dump_address or
+                                 (self.dump_addresses[0] if self.dump_addresses else 0)),
             buffer_decode=(self.script if self.script in buffer_script.DECODED_SCRIPTS
                            else None))
 

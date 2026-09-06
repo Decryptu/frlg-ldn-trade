@@ -389,14 +389,19 @@ DECOMP_NAMES = {
 # overworld to warp: they belong to a FIELD stub, which runs from the field engine. docs/rng.md
 # has how a stub is staged.
 
-# --- what the two cartridges share, lg184-lg189 -------------------------------------------------
+# --- what the two cartridges share, lg184-lg189, carried up in session 42 -----------------------
 # Four needles from FireRed dumps came back at the same address on LeafGreen (0x0806D7F4,
 # 0x080701C0, 0x08071E1C, 0x08071FC4), and lg189 is the control: a fifth from inside AddBagItem,
 # above the 0x0807D238 boundary, came back shifted -0x2C. So everything below 0x08071FC4 is the
 # same address on both cartridges - the gScriptCmdTable handler block 0x0806D7C0..0x080700B8, the
 # script engine from 0x0806D0E4, GetVarPointer/VarGet/FlagSet/FlagClear/FlagGet, and the
 # special/callnative veneer.
-SHARED_WITH_LEAFGREEN_THROUGH = 0x08071FC4
+#
+# 0x0807AF04 is where it reaches, not 0x08071FC4: bs120/lg191 and bs121/lg192 hold 1225 paired call
+# sites that did not move, the highest of them GetPlayerAvatarObjectId's caller at 0x0807AF04, and
+# the same pairing has 283 that moved by -0x2C from 0x0807E068 up. `tools/cartridge_pair.py`, and
+# every one of those addresses is in `frlgsim/leafgreen_twins.py` read off its own cartridge.
+SHARED_WITH_LEAFGREEN_THROUGH = 0x0807AF04
 LEAFGREEN_ADD_BAG_ITEM = 0x0809DA44      # lg189; the rest of that block is -0x2C by segment
 
 # --- gcc's THUMB-to-ARM call veneers ------------------------------------------------------------

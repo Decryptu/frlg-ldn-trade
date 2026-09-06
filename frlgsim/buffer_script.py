@@ -100,6 +100,7 @@ class BufferScriptSpec:
 
 MEMORY_DUMP = "memory-dump"
 MEMORY_DUMP_MULTI = "memory-dump-multi"
+MEMORY_DUMP_SCATTER = "memory-dump-scatter"
 SAVE_DUMP = "save-dump"
 ANCHORS = "anchors"
 SAVE_WRITE = "save-write"
@@ -202,6 +203,13 @@ DUMP_MULTI_MAGIC = 0x5A5A0000
 # The cursor is one byte of param and each block is MAX_BUFFER_SCRIPT_SIZE, so this is the ceiling
 # the PAYLOAD imposes. The client script imposes a smaller one; see mg_script.MAX_DUMP_BLOCKS.
 MAX_DUMP_MULTI_BLOCKS = 0x100
+
+# memory-dump-scatter: the same cursor, but it indexes a TABLE of bases carried in the payload
+# rather than multiplying by 1024. From its disassembly: `ldr [pc,#28] -> 0x48` is the size and
+# `add r3, pc, #44 -> 0x4C` is the table, 32 words of it (mg_script.MAX_DUMP_BLOCKS).
+DUMP_SCATTER_SIZE_OFFSET = 0x48
+DUMP_SCATTER_TABLE_OFFSET = 0x4C
+DUMP_SCATTER_TABLE_SLOTS = 32
 
 # --- memory-scan: searching instead of reading ---------------------------------------------------
 # Client_RunBufferScript ends the call only when the payload returns 1 and is reached once a frame
@@ -1536,6 +1544,12 @@ SCRIPT_REGISTRY = {
         "the same, but SEVERAL consecutive blocks in one session (--dump-address --dump-blocks N): "
         "the client script runs the payload once per block and each pass sends the next kilobyte",
         None),
+    MEMORY_DUMP_SCATTER: BufferScriptSpec(
+        MEMORY_DUMP_SCATTER,
+        "the same, but the blocks are UNRELATED addresses (--dump-scatter A,B,C): the payload "
+        "carries a table of bases and the cursor indexes it, so one session reads the sixteen "
+        "kilobytes a plan actually asked for rather than sixteen consecutive ones",
+        None),
     SAVE_WRITE: BufferScriptSpec(
         SAVE_WRITE,
         "write bytes into a save block and read the same region back in the same run; the console "
@@ -1712,6 +1726,45 @@ def build_memory_dump_multi(address, size=MAX_BUFFER_SCRIPT_SIZE, blocks=1):
     return bytes(code)
 
 
+def build_memory_dump_scatter(addresses, size=MAX_BUFFER_SCRIPT_SIZE):
+    """The scattered dump payload: one block per address in `addresses`, in that order.
+
+    WHY IT EXISTS. `memory-dump-multi` reads N CONSECUTIVE blocks, which is what a long region
+    needs. A plan does not ask for a long region: the gSpecials bodies still unread are spread over
+    a megabyte, and the densest 16 KB window catches 22 of them where sixteen 1 KB windows aimed
+    where the entries actually are catch about sixty. Same session, same 16 KB, three times the
+    catch.
+
+    EVERY slot in the table is filled - the unused ones with the last address - so a pass beyond
+    what the client script promised re-sends a block we already hold rather than pointing the
+    console's outgoing message at 0x00000000.
+    """
+    addresses = [int(address) for address in addresses]
+    size = int(size)
+    if not addresses:
+        raise BufferScriptError("a scattered dump needs at least one address")
+    if len(addresses) > DUMP_SCATTER_TABLE_SLOTS:
+        raise BufferScriptError(
+            f"the table holds {DUMP_SCATTER_TABLE_SLOTS} bases, got {len(addresses)}")
+    if not 0 < size <= MAX_BUFFER_SCRIPT_SIZE:
+        raise BufferScriptError(
+            f"a block is 1..{MAX_BUFFER_SCRIPT_SIZE} bytes (MG_LINK_BUFFER_SIZE), got {size}")
+    for address in addresses:
+        if not 0 <= address <= 0xFFFFFFFF:
+            raise BufferScriptError(f"0x{address:X} is not a 32-bit address")
+        if address % 2:
+            raise BufferScriptError(f"0x{address:X} is not halfword aligned")
+        # The guard is per BLOCK here, not over one span: the blocks are unrelated regions.
+        _refuse_a_moving_region(address, size)
+    code = bytearray(payload(MEMORY_DUMP_SCATTER))
+    code[DUMP_SCATTER_SIZE_OFFSET:DUMP_SCATTER_SIZE_OFFSET + 4] = size.to_bytes(4, "little")
+    table = addresses + [addresses[-1]] * (DUMP_SCATTER_TABLE_SLOTS - len(addresses))
+    for slot, address in enumerate(table):
+        at = DUMP_SCATTER_TABLE_OFFSET + 4 * slot
+        code[at:at + 4] = address.to_bytes(4, "little")
+    return bytes(code)
+
+
 def build_memory_dump(address, size=MAX_BUFFER_SCRIPT_SIZE):
     """The memory-dump payload with its target address and length patched in.
 
@@ -1747,8 +1800,8 @@ def script_choices():
 # lost to exactly that: table-scan ran on the console and found its table, and the host asked for
 # 4 bytes because a new payload had been added to neither list. A new payload goes in here.
 DUMP_SCRIPTS = frozenset({
-    MEMORY_DUMP, MEMORY_DUMP_MULTI, SAVE_DUMP, ANCHORS, SAVE_WRITE, MEMORY_SCAN, TABLE_SCAN,
-    RNG_TRACE, STRING_GATHER, CREATE_MON, CALL, CALL_CHAIN,
+    MEMORY_DUMP, MEMORY_DUMP_MULTI, MEMORY_DUMP_SCATTER, SAVE_DUMP, ANCHORS, SAVE_WRITE,
+    MEMORY_SCAN, TABLE_SCAN, RNG_TRACE, STRING_GATHER, CREATE_MON, CALL, CALL_CHAIN,
 })
 DECODED_SCRIPTS = frozenset({
     MEMORY_SCAN, TABLE_SCAN, RNG_TRACE, STRING_GATHER, CREATE_MON, CALL, CALL_CHAIN,
@@ -1769,6 +1822,8 @@ def format_script_help():
 PATCHED_SPANS = {
     MEMORY_DUMP: ((DUMP_TARGET_OFFSET, 8),),
     MEMORY_DUMP_MULTI: ((DUMP_MULTI_BASE_OFFSET, 8),),
+    MEMORY_DUMP_SCATTER: ((DUMP_SCATTER_SIZE_OFFSET,
+                           4 + 4 * DUMP_SCATTER_TABLE_SLOTS),),
     SAVE_DUMP: ((SAVE_DUMP_WHICH_OFFSET, 12),),
     SAVE_WRITE: ((SAVE_WRITE_WHICH_OFFSET, MAX_BUFFER_SCRIPT_SIZE),),
     RNG_TRACE: ((TRACE_ADDRESS_OFFSET,

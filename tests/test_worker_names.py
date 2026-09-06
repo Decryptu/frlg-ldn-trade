@@ -153,9 +153,12 @@ def test_every_worker_is_a_rom_address_named_once():
 def test_no_worker_contradicts_an_address_a_run_measured():
     # A name here is a reading; a name in rom_map cost a hardware run. The generator drops the whole
     # body when the two disagree, so nothing in this table may sit on a measured address.
-    measured = {value & ~1 for name, value in vars(rom_map).items()
-                if name.isupper() and isinstance(value, int) and ROM_START <= value < ROM_END}
-    assert not (set(worker_names.WORKERS) & measured)
+    # Against the addresses rom_map names as FUNCTIONS. A constant that is a limit rather than a
+    # name is not one of them: SHARED_WITH_LEAFGREEN_THROUGH is 0x0807AF04 because that is the
+    # highest call target that did not move between the cartridges, and the function there has a
+    # name of its own.
+    measured = set(rom_map.CALLABLE.values()) | set(rom_map.DECOMP_NAMES)
+    assert not (set(worker_names.WORKERS) & {address & ~1 for address in measured})
 
 
 def test_the_decomp_names_this_project_coined_are_the_ones_the_bodies_agreed_on():
@@ -198,3 +201,20 @@ def test_the_dumps_of_one_cartridge_are_not_placed_at_the_other_s_addresses(tmp_
     assert every_dump(str(tmp_path)) == [(0x08081CC8, b"\x01" * 16)]
     assert every_dump(str(tmp_path), "leafgreen") == [(0x08081C9C, b"\x02" * 16)]
     assert len(every_dump(str(tmp_path), None)) == 2
+
+
+def test_a_scattered_run_is_placed_block_by_block(tmp_path):
+    """`memory-dump-scatter` sends UNRELATED regions in one session and the host appends them, so
+    the file holds them end to end and one `--dump-address` would put every block after the first
+    in the wrong place. The run's own list of bases is what says where each one belongs."""
+    logs = tmp_path / "launcher_logs"
+    logs.mkdir()
+    (logs / "bs122_launcher.log").write_text(
+        "--expect-console firered --buffer-script memory-dump-scatter "
+        "--dump-scatter 0x080CE040,0x0804A2A0 --dump-size 1024")
+    (tmp_path / "bs122_dump.bin").write_bytes(b"\xAA" * 1024 + b"\xBB" * 1024)
+
+    from script_read import dumps
+    placed = dumps(str(tmp_path))
+    assert [(tag, base, block[0]) for tag, _console, base, block in placed] == [
+        ("bs122[0]", 0x080CE040, 0xAA), ("bs122[1]", 0x0804A2A0, 0xBB)]

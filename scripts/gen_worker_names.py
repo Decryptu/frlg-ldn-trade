@@ -58,7 +58,12 @@ from script_read import every_dump                                      # noqa: 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "frlgsim" / "worker_names.py"
 ROM_START, ROM_END = 0x08000000, 0x0A000000
-ADDRESS = 2                     # where the address sits in a link-order point
+ADDRESS = 2
+
+# rom_map constants that are a LIMIT rather than a name for the code at that address. Session 42's
+# paired call sites put SHARED_WITH_LEAFGREEN_THROUGH on 0x0807AF04, which is also the highest call
+# target that did not move between the cartridges - a function, and one this method can name.
+MARKERS = frozenset({"SHARED_WITH_LEAFGREEN_THROUGH"})                     # where the address sits in a link-order point
 
 
 def link_order(decomp):
@@ -312,7 +317,8 @@ def main():
         raise SystemExit(f"no {args.console} dumps under {args.scratchpad}")
     memory = scrcmd.Memory(segments)
     names = {address: entry_name(label)
-             for address, label in known_names(with_workers=False).items()}
+             for address, label in known_names(with_workers=False).items()
+             if entry_name(label) not in MARKERS}
     names.update(rom_map.DECOMP_NAMES)
 
     proposals, corrections, dropped = align(decomp_calls, memory, names, source_names)

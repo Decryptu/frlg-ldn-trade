@@ -54,7 +54,11 @@ def dumps(directory):
     """-> [(tag, console, base, data)] for every ROM dump in `directory`, from its launcher log.
 
     The log line is the run's own argv, so the pairing is the run's, not a guess. A dump with no
-    `--dump-address` was a save-block or a scan and has no ROM address to place it at."""
+    `--dump-address` was a save-block or a scan and has no ROM address to place it at.
+
+    A `--dump-scatter` run comes back as ONE segment PER BLOCK, tagged `run[n]`: the file holds the
+    blocks end to end in the order the payload's table names them, and they are unrelated regions,
+    so a single base would put fifteen of the sixteen kilobytes in the wrong place."""
     directory = pathlib.Path(directory)
     found = []
     for log in sorted((directory / "launcher_logs").glob("*_launcher.log")):
@@ -63,9 +67,21 @@ def dumps(directory):
         if not dump.exists():
             continue
         text = log.read_text()
+        data, console = dump.read_bytes(), dump_console(tag, text)
+        scatter = re.search(r"--dump-scatter\s+([0-9A-Fa-fx,]+)", text)
+        if scatter:
+            # memory-dump-scatter: one file, but its blocks are UNRELATED regions, so the run's
+            # own list of bases is the only thing that says where each one belongs.
+            size = int((re.search(r"--dump-size\s+(\d+)", text) or [None, "1024"])[1])
+            for index, base in enumerate(int(part, 0) for part in scatter.group(1).split(",")
+                                         if part):
+                block = data[index * size:(index + 1) * size]
+                if block:
+                    found.append((f"{tag}[{index}]", console, base, block))
+            continue
         match = re.search(r"--dump-address\s+(0x[0-9A-Fa-f]+)", text)
         if match:
-            found.append((tag, dump_console(tag, text), int(match.group(1), 0), dump.read_bytes()))
+            found.append((tag, console, int(match.group(1), 0), data))
     return found
 
 

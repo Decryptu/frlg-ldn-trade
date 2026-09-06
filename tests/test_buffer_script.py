@@ -2216,6 +2216,7 @@ def test_a_call_that_passes_fewer_arguments_leaves_the_stack_slots_it_did_not_se
 _MINIMAL_ARGS = {
     "memory-dump": {"dump_address": 0x0201C000},
     "memory-dump-multi": {"dump_address": 0x0201C000, "dump_blocks": 4},
+    "memory-dump-scatter": {"dump_addresses": (0x080CE040, 0x0804A2A0)},
     "create-mon": {"create_mon_species": 59, "create_mon_level": 30},
     "memory-scan": {"scan_word": 0x41C64E6D},
     "table-scan": {"table_delta": 2},
@@ -2606,3 +2607,78 @@ def test_the_multi_dump_guard_covers_the_whole_span_not_the_first_block():
     ).startswith(buffer_script.MEMORY_DUMP_MULTI)
     with pytest.raises(buffer_script.BufferScriptError, match="gRngValue"):
         buffer_script.build_memory_dump_multi(base, 1024, blocks=8)
+
+
+# --- memory-dump-scatter: several UNRELATED regions in one session ---------------------------------
+# multi reads N CONSECUTIVE blocks, which is what a long region needs. A PLAN does not ask for a long
+# region: the 166 gSpecials bodies still unread are spread over a megabyte, the densest 16 KB window
+# catches 22 of them, and the sixteen densest KILOBYTES catch 83. Same join, same bytes off the wire.
+
+def test_each_pass_of_a_scattered_dump_sends_the_next_address_in_the_table():
+    """The cursor indexes the payload's own table instead of multiplying by 1024, and the table
+    travels inside the image - which survives because CLI_RUN_BUFFER_SCRIPT re-copies it every pass
+    and only client->param carries anything forward."""
+    addresses = (0x080CE040, 0x0804A2A0, 0x08162848)
+    code = buffer_script.build_memory_dump_scatter(addresses, 1024)
+    param = 0
+    for expected in addresses:
+        run = buffer_script.emulate(code, param=param)
+        assert run.client.send_buffer == expected
+        assert run.client.send_size == 1024
+        param = run.client.param
+
+
+def test_a_scattered_dump_starts_over_from_a_param_that_is_not_ours():
+    code = buffer_script.build_memory_dump_scatter((0x08100000, 0x08200000), 1024)
+    for junk in (0, 0xDEADBEEF, 0xFFFFFFFF, 1, buffer_script.DUMP_MULTI_MAGIC - 1, 0x5A5B0000):
+        run = buffer_script.emulate(code, param=junk)
+        assert run.client.send_buffer == 0x08100000, f"param {junk:#x} did not start at block 0"
+
+
+def test_an_unpromised_pass_re_sends_the_last_block_rather_than_address_zero():
+    """Every slot in the table is filled, the unused ones with the last address. A pass the client
+    script did not promise then re-sends a block we already hold instead of pointing the console's
+    outgoing message at 0x00000000."""
+    code = buffer_script.build_memory_dump_scatter((0x08100000, 0x08200000), 1024)
+    run = buffer_script.emulate(code, param=buffer_script.DUMP_MULTI_MAGIC | 5)
+    assert run.client.send_buffer == 0x08200000
+
+
+def test_the_scattered_guard_is_per_block_because_the_blocks_are_unrelated():
+    """multi's guard covers one span; here each block is its own region and each one is checked."""
+    safe = 0x08100000
+    moving = (rom_map.GRNG_VALUE - 512) & ~1
+    assert buffer_script.describe(
+        buffer_script.build_memory_dump_scatter((safe, safe + 0x1000), 1024)
+    ).startswith(buffer_script.MEMORY_DUMP_SCATTER)
+    with pytest.raises(buffer_script.BufferScriptError, match="gRngValue"):
+        buffer_script.build_memory_dump_scatter((safe, moving), 1024)
+
+
+def test_the_scattered_payload_is_in_the_lists_it_cannot_see():
+    assert buffer_script.MEMORY_DUMP_SCATTER in buffer_script.DUMP_SCRIPTS
+    assert buffer_script.MEMORY_DUMP_SCATTER in buffer_script.PATCHED_SPANS
+    assert buffer_script.MEMORY_DUMP_SCATTER in buffer_script.SCRIPT_REGISTRY
+
+
+def test_a_scattered_dump_carries_one_block_per_address_and_says_so():
+    """The count is not a separate knob: asking for three addresses is asking for three blocks, and
+    the client script has to promise exactly that many passes."""
+    payload = configmod.BufferScriptPayload(
+        script=buffer_script.MEMORY_DUMP_SCATTER,
+        dump_addresses=(0x080CE040, 0x0804A2A0, 0x08162848))
+    assert payload.dump_blocks == 3
+    assert payload.build_distribution().buffer_dump_blocks == 3
+    with pytest.raises(ValueError, match="needs the addresses"):
+        configmod.BufferScriptPayload(script=buffer_script.MEMORY_DUMP_SCATTER)
+    with pytest.raises(ValueError, match="only meaningful"):
+        configmod.BufferScriptPayload(script=buffer_script.MEMORY_DUMP,
+                                      dump_address=0x08000000, dump_addresses=(0x08000000,))
+
+
+def test_a_scattered_dump_refuses_more_blocks_than_the_table_holds():
+    too_many = tuple(0x08000000 + 0x1000 * i
+                     for i in range(buffer_script.DUMP_SCATTER_TABLE_SLOTS + 1))
+    with pytest.raises(buffer_script.BufferScriptError, match="table holds"):
+        buffer_script.build_memory_dump_scatter(too_many, 1024)
+    assert buffer_script.DUMP_SCATTER_TABLE_SLOTS == mg_script.MAX_DUMP_BLOCKS
