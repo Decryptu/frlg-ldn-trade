@@ -58,7 +58,7 @@ IVs read HP, ATK, DEF, SPE, SPA, SPD. Pass `--tid`/`--sid` to fill in the shiny 
 that column is left blank rather than guessed. Every stored mon carries a checksum over its
 substructs, so `checksum ok` on every slot means the dump is a real party and not a stale buffer.
 
-Party mons are stored exactly as a `.pk3`/`.ek3` stores them, which is why `frlgsim.mon` decodes
+Party mons are stored exactly as a `.pk3`/`.ek3` stores them, which is why `pokeldn.frlg.save.mon` decodes
 them unchanged: the 48 bytes at offset 0x20 are XORed with `PID ^ OTID`, and the four substructs
 inside are ordered by `PID % 24`.
 
@@ -68,7 +68,7 @@ inside are ordered by `PID % 24`.
 `gPlayerParty` into `gSaveBlock1Ptr->playerParty` when the console saves
 [decomp:src/load_save.c:160], so SaveBlock1 holds the party as of the last save. For the live one,
 dump `gPlayerParty` by address instead - 0x02024280 on both measured cartridges, with
-`gPlayerPartyCount` at 0x02024025 (`frlgsim/rom_map.py`):
+`gPlayerPartyCount` at 0x02024025 (`pokeldn/frlg/rom/rom_map.py`):
 
     --buffer-script memory-dump --dump-address 0x02024280 --dump-size 600
 

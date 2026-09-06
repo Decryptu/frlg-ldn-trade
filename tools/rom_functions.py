@@ -25,8 +25,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import (leafgreen_twins, rom_map, scrcmd, scrcmd_names, special_names, thumb,
-                     worker_names)
+from pokeldn.frlg.rom import leafgreen_twins, rom_map, scrcmd, scrcmd_names, special_names, thumb, worker_names
 from script_read import every_dump
 
 ROM_START, ROM_END = 0x08000000, 0x0A000000

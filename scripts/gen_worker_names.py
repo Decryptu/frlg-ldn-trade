@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate frlgsim/worker_names.py: the workers behind the tables, named without a run.
+"""Regenerate pokeldn/frlg/rom/worker_names.py: the workers behind the tables, named without a run.
 
     ./.venv/bin/python scripts/gen_worker_names.py [~/pokefirered] [--report] [--check]
 
@@ -51,12 +51,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "tools"))
 
-from frlgsim import decomp_source, rom_map, scrcmd, thumb              # noqa: E402
+from pokeldn.frlg.rom import decomp_source, rom_map, scrcmd, thumb  # noqa: E402
 from rom_functions import deduplicate, known_names, tables              # noqa: E402
 from script_read import every_dump                                      # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-OUT = ROOT / "frlgsim" / "worker_names.py"
+OUT = ROOT / "pokeldn" / "frlg" / "rom" / "worker_names.py"
 ROM_START, ROM_END = 0x08000000, 0x0A000000
 ADDRESS = 2
 
@@ -322,7 +322,7 @@ def ascending_outliers(points):
 
 
 def render(accepted, where, proposals):
-    """-> the text of frlgsim/worker_names.py."""
+    """-> the text of pokeldn/frlg/rom/worker_names.py."""
     lines = [HEADER, "", "WORKERS = {"]
     for address in sorted(accepted):
         name = accepted[address]
@@ -392,9 +392,9 @@ def main():
     if args.check:
         current = OUT.read_text() if OUT.exists() else ""
         if current != text:
-            raise SystemExit("frlgsim/worker_names.py is not what this decomp and these dumps say; "
+            raise SystemExit("pokeldn/frlg/rom/worker_names.py is not what this decomp and these dumps say; "
                              "rerun scripts/gen_worker_names.py")
-        print(f"frlgsim/worker_names.py matches: {len(accepted)} workers")
+        print(f"pokeldn/frlg/rom/worker_names.py matches: {len(accepted)} workers")
         return
     OUT.write_text(text)
     print(f"wrote {OUT.relative_to(ROOT)}: {len(accepted)} workers named, "

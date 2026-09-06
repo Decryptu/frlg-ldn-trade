@@ -9,8 +9,11 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from frlgsim import charmap, mon, rfu, trade, uroom_chat  # noqa: E402
-from frlgsim.host_trade import H_UROOM_CHAT, H_UROOM_PROMPT, HostTradeEngine  # noqa: E402
+from pokeldn.frlg.link import trade, uroom_chat  # noqa: E402
+from pokeldn.frlg.save import mon  # noqa: E402
+from pokeldn.frlg.text import charmap  # noqa: E402
+from pokeldn.gba import rfu  # noqa: E402
+from pokeldn.frlg.link.host_trade import H_UROOM_CHAT, H_UROOM_PROMPT, HostTradeEngine  # noqa: E402
 
 
 def _mon(marker):
@@ -202,7 +205,7 @@ def test_the_console_leaving_the_chat_sends_our_drop_then_closes(cmd):
     """u13: the console sent LEAVE and then parked on !gReceivedRemoteLinkPlayers while we sat on
     an internal flag, so its yes/no prompt never cleared. The leader's native answer is a DROP
     block of its own followed by SetCloseLinkCallback [union_room_chat.c:1524, :665]."""
-    from frlgsim.host_trade import H_CLOSE
+    from pokeldn.frlg.link.host_trade import H_CLOSE
     h = _engine(union_room_chat=True, chat_messages=["UNSENT"])
     h.feed_child_slot(_packet_slot(0x45))
     h._blocks.clear()
@@ -295,7 +298,7 @@ def test_a_bad_live_line_raises_instead_of_being_sent_as_dots():
 
 
 def test_the_chat_file_watcher_yields_only_whole_lines(tmp_path):
-    from frlgsim.host_app import ChatFileWatcher
+    from pokeldn.frlg.link.host_app import ChatFileWatcher
     path = tmp_path / "chat.txt"
     path.write_text("SALUT\nCA VA\npartial")
     w = ChatFileWatcher(str(path))
@@ -307,7 +310,7 @@ def test_the_chat_file_watcher_yields_only_whole_lines(tmp_path):
 
 
 def test_the_chat_file_watcher_survives_a_missing_or_truncated_file(tmp_path):
-    from frlgsim.host_app import ChatFileWatcher
+    from pokeldn.frlg.link.host_app import ChatFileWatcher
     path = tmp_path / "chat.txt"
     w = ChatFileWatcher(str(path))
     assert w.lines(0.0) == []                         # not created yet
@@ -318,7 +321,7 @@ def test_the_chat_file_watcher_survives_a_missing_or_truncated_file(tmp_path):
 
 
 def test_the_chat_file_watcher_paces_its_polls():
-    from frlgsim.host_app import CHAT_FILE_POLL_SECONDS, ChatFileWatcher
+    from pokeldn.frlg.link.host_app import CHAT_FILE_POLL_SECONDS, ChatFileWatcher
     w = ChatFileWatcher("/nonexistent")
     assert w.due(0.0)
     w.lines(0.0)

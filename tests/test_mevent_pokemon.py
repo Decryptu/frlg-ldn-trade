@@ -1,7 +1,7 @@
 """The `givepokemon` payload: a struct Pokemon the console can decrypt, followed by the struct Mail
 it reads at +sizeof(struct Pokemon).
 
-The mon is checked through `frlgsim.mon`'s decoder, which is the same wire form the trade host has
+The mon is checked through `pokeldn.frlg.save.mon`'s decoder, which is the same wire form the trade host has
 been putting on the air since before this feature existed, so a mon that decodes here is a mon the
 console has already been shown to accept.
 """
@@ -13,10 +13,10 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import (  # noqa: E402
-    charmap, easychat, gift_registry, mevent_pokemon as mp, mon as monmod, mystery_event,
-    wonder_card_events,
-)
+from pokeldn.frlg.gift import gift_registry, wonder_card_events  # noqa: E402
+from pokeldn.frlg.rom import mystery_event  # noqa: E402
+from pokeldn.frlg.save import mevent_pokemon as mp, mon as monmod  # noqa: E402
+from pokeldn.frlg.text import charmap, easychat  # noqa: E402
 
 
 def _celebi(**kwargs):
@@ -52,7 +52,7 @@ def test_the_mail_byte_starts_as_mail_none():
 
 def test_the_encryption_key_is_never_zero():
     """personality == otId leaves the secure region in the clear and both .pk3 and .ek3 then
-    validate, so a mon could ship unshuffled [frlgsim.mon.Mon.from_pk3]."""
+    validate, so a mon could ship unshuffled [pokeldn.frlg.save.mon.Mon.from_pk3]."""
     mon = _celebi(ot_id=0x1234ABCD, personality=0x1234ABCD)
     assert mon.pid != mon.otid
     assert mon.checksum_ok

@@ -28,7 +28,7 @@
 @
 @ NOTHING HERE IS WRITTEN TO THE CONSOLE BY THE PAYLOAD. Whatever the CALLEE writes is the
 @ callee's business, and that is the whole risk of this payload: `function` decides everything.
-@ The builder in frlgsim/buffer_script.py refuses an address outside the cartridge, and a function
+@ The builder in pokeldn/frlg/rom/buffer_script.py refuses an address outside the cartridge, and a function
 @ that never returns hangs the Mystery Gift menu with no way out - so an address that has not been
 @ read as code first has no business here.
 @

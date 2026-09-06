@@ -24,7 +24,7 @@ The paths below are defaults used by the deployment helper; change them with
 `--path` and `--repo` if your Pi uses a different layout.
 
 ```bash
-cd /path/to/frlg-ldn-trade
+cd /path/to/pokeldn
 git status
 git add -A
 git commit -m "Prepare Raspberry Pi deployment"
@@ -32,9 +32,9 @@ git commit -m "Prepare Raspberry Pi deployment"
 ```
 
 `deploy_pi.sh` refuses a dirty desktop checkout, runs the configuration and
-documentation tests, creates `/home/PI_USER/repos/frlg-ldn-trade.git` on the
+documentation tests, creates `/home/PI_USER/repos/pokeldn.git` on the
 Pi if needed, pushes the current commit to its `deploy` branch, and creates or
-fast-forwards `/home/PI_USER/frlg-ldn-trade`. It never force-resets a Pi
+fast-forwards `/home/PI_USER/pokeldn`. It never force-resets a Pi
 checkout. A Pi checkout with its own uncommitted files is rejected rather than
 overwritten.
 
@@ -43,15 +43,15 @@ paths instead:
 
 ```bash
 ./scripts/deploy_pi.sh --host pi-ldn \
-  --path /home/PI_USER/frlg-ldn-trade \
-  --repo /home/PI_USER/repos/frlg-ldn-trade.git
+  --path /home/PI_USER/pokeldn \
+  --repo /home/PI_USER/repos/pokeldn.git
 ```
 
 After the first deployment, connect to the Pi and bootstrap it:
 
 ```bash
 ssh pi-ldn
-cd ~/frlg-ldn-trade
+cd ~/pokeldn
 ./scripts/setup_pi.sh
 ```
 
@@ -102,7 +102,7 @@ For a key file already accessible on the Pi:
 Plug in the TP-Link adapter, then run:
 
 ```bash
-cd ~/frlg-ldn-trade
+cd ~/pokeldn
 ./scripts/preflight_pi.sh
 ./scripts/run_mystery_gift.sh
 ```
@@ -208,7 +208,7 @@ After deploying a clean commit, install it explicitly either from the desktop:
 or on the Pi:
 
 ```bash
-cd ~/frlg-ldn-trade
+cd ~/pokeldn
 ./scripts/setup_pi.sh --install-mt7601u-ap --no-networkmanager
 ```
 
@@ -242,7 +242,7 @@ the Pi refreshes its virtual environment automatically. To update manually on
 the Pi after a successful push, run:
 
 ```bash
-cd ~/frlg-ldn-trade
+cd ~/pokeldn
 ./scripts/update_pi.sh
 ```
 

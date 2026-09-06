@@ -1,6 +1,6 @@
 """The cable-club colosseum host: the advertisement, the extra LinkPlayer record, the battle.
 
-Every assertion here is a decomp fact; see frlgsim/cable_club.py and
+Every assertion here is a decomp fact; see pokeldn/frlg/link/cable_club.py and
 docs/mystery_gift_untried.md. NOTHING here is hardware-proven yet: no run has advertised
 ACTIVITY_BATTLE_SINGLE.
 """
@@ -12,11 +12,12 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import beacon, cable_club, linkplayer, transport, trade  # noqa: E402
-from frlgsim import uroom_battle as ub  # noqa: E402
-from frlgsim.config import DEFAULT_TRAINER  # noqa: E402
-from frlgsim.host_beacon import build_colosseum_app_data, build_trade_app_data  # noqa: E402
-from frlgsim.host_trade import (  # noqa: E402
+from pokeldn.frlg.link import cable_club, linkplayer, trade  # noqa: E402
+from pokeldn.ldn import beacon, transport  # noqa: E402
+from pokeldn.frlg.link import uroom_battle as ub  # noqa: E402
+from pokeldn.config import DEFAULT_TRAINER  # noqa: E402
+from pokeldn.ldn.host_beacon import build_colosseum_app_data, build_trade_app_data  # noqa: E402
+from pokeldn.frlg.link.host_trade import (  # noqa: E402
     H_CC_BATTLE_ENTRY, H_UROOM_BATTLE_LINK, HostTradeEngine,
 )
 
@@ -28,7 +29,7 @@ def _mon():
                         "scratchpad", "TREECKO.pk3")
     if not os.path.exists(path):
         pytest.skip("scratchpad/TREECKO.pk3 is not in this checkout")
-    from frlgsim import mon as monmod
+    from pokeldn.frlg.save import mon as monmod
     return monmod.Mon.from_file(path)
 
 
@@ -106,7 +107,7 @@ def test_the_card_standby_arms_the_battle_entry_without_waiting_for_a_seat():
     """cc1: the console fades to black on its spot and parks in Task_StartWirelessCableClubBattle
     case 3 waiting for our record. The trade centre's post-seat standby rounds never come, so
     gating on them deadlocked both sides."""
-    from frlgsim.host_trade import H_ENTRY_CARD
+    from pokeldn.frlg.link.host_trade import H_ENTRY_CARD
     h = _engine()
     h._set_state(H_ENTRY_CARD)
     h._expected = "warp1"
@@ -116,7 +117,7 @@ def test_the_card_standby_arms_the_battle_entry_without_waiting_for_a_seat():
 
 
 def test_the_trade_host_still_takes_its_seat_at_that_standby():
-    from frlgsim.host_trade import H_ENTRY_CARD, H_ENTRY_SEAT
+    from pokeldn.frlg.link.host_trade import H_ENTRY_CARD, H_ENTRY_SEAT
     h = _engine(colosseum=False)
     h._set_state(H_ENTRY_CARD)
     h._expected = "warp1"
@@ -132,7 +133,7 @@ def test_the_seat_opens_the_battle_entry_instead_of_the_trade_menu():
 
 
 def test_the_trade_host_still_opens_its_party_exchange_there():
-    from frlgsim.host_trade import H_PARTY
+    from pokeldn.frlg.link.host_trade import H_PARTY
     h = _engine(colosseum=False)
     h._begin_seated_activity()
     assert h.state == H_PARTY
@@ -190,7 +191,7 @@ def test_our_trainer_id_is_the_one_the_counter_records():
     """MysteryGift_TryIncrementStat(CARD_STAT_BATTLES_WON, gLinkPlayers[id ^ 1].trainerId)
     [cable_club.c:794], and IncrementCardStatForNewTrainer counts an id once
     [mystery_gift.c:630] - so three wins need three --id values, carried by this block."""
-    from frlgsim import config as configmod
+    from pokeldn import config as configmod
     profile = configmod.profile_from_overrides(trainer_id=(1234, 4321))
     h = HostTradeEngine([_mon()], trade_slot=0, colosseum=True, profile=profile)
     blk = cable_club.local_link_player_block(h.lp)
@@ -202,7 +203,7 @@ def test_a_forfeit_is_still_a_win_for_the_console():
     [battle_main.c:4300], but HandleEndTurn_BattleWon clears that bit before
     CB2_ReturnFromCableClubBattle switches on the outcome [battle_main.c:3734], so the plain
     B_OUTCOME_WON case is what runs. Our default forfeit therefore still moves battlesWon."""
-    from frlgsim import battle_link as bl
+    from pokeldn.frlg.link import battle_link as bl
     h = _engine()
     h._begin_seated_activity()
     h._after_child_block(cable_club.COUNT_LOCAL,
@@ -221,8 +222,9 @@ def test_a_forfeit_is_still_a_win_for_the_console():
 def _advertised_activity(**options):
     """Drive the real HostApplication._build_components and read what it puts on the air."""
     import tempfile
-    from frlgsim import config as configmod, mevent_pokemon
-    from frlgsim.host_app import HostApplication
+    from pokeldn import config as configmod
+    from pokeldn.frlg.save import mevent_pokemon
+    from pokeldn.frlg.link.host_app import HostApplication
 
     seen = {}
 
@@ -260,7 +262,7 @@ def test_the_cli_flag_reaches_the_options_and_keeps_the_slot_valid():
     --slot 1 must not fail a one-mon battle party."""
     import frlgtrade_host
     parser = frlgtrade_host.build_parser(
-        __import__("frlgsim.config", fromlist=["config"]).HostFileConfig())
+        __import__("pokeldn.config", fromlist=["config"]).HostFileConfig())
     args = parser.parse_args(["--colosseum", "--card-flag-id", "1005", "CARPY.pk3"])
     run = frlgtrade_host.build_run_config(parser, args)
     assert run.role.colosseum is True
@@ -271,7 +273,7 @@ def test_the_cli_flag_reaches_the_options_and_keeps_the_slot_valid():
 def test_the_colosseum_and_the_union_room_are_refused_together_at_the_cli():
     import frlgtrade_host
     parser = frlgtrade_host.build_parser(
-        __import__("frlgsim.config", fromlist=["config"]).HostFileConfig())
+        __import__("pokeldn.config", fromlist=["config"]).HostFileConfig())
     args = parser.parse_args(["--colosseum", "--union-room", "CARPY.pk3"])
     with pytest.raises(SystemExit):
         frlgtrade_host.build_run_config(parser, args)
@@ -280,7 +282,7 @@ def test_the_colosseum_and_the_union_room_are_refused_together_at_the_cli():
 def test_the_seat_route_keeps_the_ready_key_and_drops_the_trade_centre_walk():
     """Only READY gates GetCableClubPartnersReady [overworld.c:2989]; the walk in
     ENTRY_LEFT_CHAIR_ROUTE is the TRADE CENTRE's map and would be wrong here."""
-    from frlgsim.host_trade import (
+    from pokeldn.frlg.link.host_trade import (
         COLOSSEUM_SPOT_ROUTE, ENTRY_LEFT_CHAIR_ROUTE, LINK_KEY_EMPTY, LINK_KEY_READY,
     )
     keys = {key for key, _held in COLOSSEUM_SPOT_ROUTE}
@@ -291,7 +293,7 @@ def test_the_seat_route_keeps_the_ready_key_and_drops_the_trade_centre_walk():
 
 
 def test_the_engine_plays_the_colosseum_route_at_the_seat():
-    from frlgsim.host_trade import COLOSSEUM_SPOT_ROUTE, ENTRY_LEFT_CHAIR_ROUTE
+    from pokeldn.frlg.link.host_trade import COLOSSEUM_SPOT_ROUTE, ENTRY_LEFT_CHAIR_ROUTE
     h = _engine()
     h._start_entry_route()
     assert h._held_label == "COLOSSEUM_SPOT"
@@ -306,7 +308,7 @@ def test_the_console_leaving_the_colosseum_is_answered_with_our_own_exit_key():
     """cc2/cc3: the console's door script waits for every player to reach
     PLAYER_LINK_STATE_EXITING_ROOM [overworld.c:2977]; unanswered, it sits on "veuillez patienter"
     until the link errors."""
-    from frlgsim.host_trade import H_EXIT, H_UROOM_BATTLE_LINK, LINK_KEY_EXIT_ROOM
+    from pokeldn.frlg.link.host_trade import H_EXIT, H_UROOM_BATTLE_LINK, LINK_KEY_EXIT_ROOM
     h = _engine()
     h._set_state(H_UROOM_BATTLE_LINK)
     h._child_send_held_keys({"keycode": LINK_KEY_EXIT_ROOM})

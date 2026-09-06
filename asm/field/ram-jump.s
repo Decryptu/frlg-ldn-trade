@@ -16,7 +16,7 @@
 @ script runs, at one script byte each - and bytes after the script's last command are never read
 @ by the field engine at all. They are free storage that has already been delivered.
 @
-@ The only reason that was not usable before is aiming at it. frlgsim/rng_script.py's header says
+@ The only reason that was not usable before is aiming at it. pokeldn/frlg/rom/rng_script.py's header says
 @ so in as many words: gSaveBlock1Ptr "carries a random 4-aligned offset re-rolled on every battle
 @ and load" [SetSaveBlocksPointers, decomp:src/load_save.c:75], measured moving 76 bytes between
 @ two runs (bs45, bs46), so a `callnative` address baked in when the card is built is a guess.

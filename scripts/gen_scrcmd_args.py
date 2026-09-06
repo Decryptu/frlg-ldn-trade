@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-r"""Regenerate frlgsim/scrcmd_args.py from the decompilation's own script macros.
+r"""Regenerate pokeldn/frlg/rom/scrcmd_args.py from the decompilation's own script macros.
 
 A field script is a byte stream: one opcode then its operands, and the operand WIDTHS are what say
 where the next opcode starts. asm/macros/event.inc is the authority - each macro emits its opcode
@@ -47,7 +47,7 @@ import re
 import sys
 
 DECOMP = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "~/pokefirered").expanduser()
-OUT = pathlib.Path(__file__).resolve().parent.parent / "frlgsim" / "scrcmd_args.py"
+OUT = pathlib.Path(__file__).resolve().parent.parent / "pokeldn" / "frlg" / "rom" / "scrcmd_args.py"
 
 WIDTHS = {".byte": 1, ".2byte": 2, ".4byte": 4}
 

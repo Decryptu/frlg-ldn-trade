@@ -12,14 +12,15 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import frlgmg_host
 import frlgtrade_host
-from frlgsim import (
-    beacon, charmap, config, gift_registry, linkplayer, mg_script, transport,
-    wonder_card,
-)
-from frlgsim.host_beacon import build_wonder_card_app_data
-from frlgsim.host_mg_app import MysteryGiftHostApplication
-from frlgsim.host_mystery_gift import HostMysteryGiftEngine
-from frlgsim.host_pia import HostPeerProtocol
+from pokeldn import config
+from pokeldn.frlg.gift import gift_registry, mg_script, wonder_card
+from pokeldn.frlg.link import linkplayer
+from pokeldn.frlg.text import charmap
+from pokeldn.ldn import beacon, transport
+from pokeldn.ldn.host_beacon import build_wonder_card_app_data
+from pokeldn.frlg.gift.host_mg_app import MysteryGiftHostApplication
+from pokeldn.frlg.gift.host_mystery_gift import HostMysteryGiftEngine
+from pokeldn.ldn.host_pia import HostPeerProtocol
 
 
 SESSION_ID = b"\x7b\xf1"
@@ -294,7 +295,8 @@ def test_hunt_criteria_reach_the_card_and_belong_only_to_the_hunt(capsys):
     definition is built with the defaults at import, so a run that was given criteria has to
     compose another card - and one that was not must still send the registered one, byte for
     byte."""
-    from frlgsim import native_script, wonder_card_events
+    from pokeldn.frlg.gift import wonder_card_events
+    from pokeldn.frlg.rom import native_script
 
     plain = _build_mg(["--live", "--gift", wonder_card_events.GIFT_RNG_MON_HUNT])
     assert plain.payload.definition is None
@@ -335,7 +337,7 @@ def test_hunt_criteria_reach_the_card_and_belong_only_to_the_hunt(capsys):
 def test_a_hunt_too_slow_to_run_is_refused_on_the_command_line():
     """Not when the console joins. The stub searches with the field engine stopped, so criteria
     whose search could outlast the ceiling are an error before the host ever comes up."""
-    from frlgsim import wonder_card_events
+    from pokeldn.frlg.gift import wonder_card_events
     parser = frlgmg_host.build_parser()
     with redirect_stderr(io.StringIO()) as err:
         try:

@@ -15,8 +15,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import lcg, native_script, rng_countdown, rng_script, rom_map  # noqa: E402
-from frlgsim.field_stubs import STUBS  # noqa: E402
+from pokeldn.frlg.rom import lcg, native_script, rng_countdown, rng_script, rom_map  # noqa: E402
+from pokeldn.frlg.rom.field_stubs import STUBS  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -279,7 +279,8 @@ def test_the_opcode_sweep_runs_all_three_and_the_order_is_the_experiment():
     (ctx->data[2]) [decomp:src/mystery_event_script.c], so the last thing to run decides the answer.
     Markers go AFTER each opcode; setenigmaberry goes last because its own status tells success
     (2) from failure (1)."""
-    from frlgsim import mystery_event, wonder_card_events as w
+    from pokeldn.frlg.gift import wonder_card_events as w
+    from pokeldn.frlg.rom import mystery_event
     script = w.MEVENT_SWEEP_GIFT.mevent
     result = mystery_event.run(script)
     assert result.status == mystery_event.STATUS_SUCCESS
@@ -292,7 +293,7 @@ def test_the_sweep_berry_validates_and_keeps_the_cartridge_own_description_point
     checksum is recomputed by SetEnigmaBerry, so we do not have to produce one. The two ROM pointers
     are NOT invented - bs59 read them out of gSaveBlock1Ptr->enigmaBerry. They live in the save for
     ever and the Berry Pouch dereferences them to print the description."""
-    from frlgsim import wonder_card_events as w
+    from pokeldn.frlg.gift import wonder_card_events as w
     berry = w.build_sweep_berry()
     assert len(berry) == 28
     assert berry[10] != 0 and berry[20] != 0, "maxYield and stageDuration decide validity"
@@ -482,7 +483,7 @@ def test_the_richer_stub_also_leaves_the_rng_alone_when_the_cap_runs_out():
 def test_the_hunt_card_carries_the_criteria_it_says_it_does():
     """The registry's definition is built with the defaults at import; a host given criteria on
     the command line composes another card rather than mutating that one."""
-    from frlgsim import wonder_card_events as w
+    from pokeldn.frlg.gift import wonder_card_events as w
     default = w.RNG_MON_HUNT_GIFT.mevent
     assert len(default) <= 0x400                     # the console's receive buffer
     other = w.build_rng_mon_hunt_gift(native_script.MonCriteria(natures=(0,))).mevent
@@ -500,7 +501,8 @@ def test_the_bytes_the_console_will_actually_be_sent_search_for_what_the_card_sa
     its `initramscript` payload is the field script the console would store, the `setptr` run in it
     is read back into the bytes it stages, and THOSE are what unicorn executes. bs56's family of
     bug - a path that only the live host takes - has no room left here."""
-    from frlgsim import mystery_event, wonder_card_events as w
+    from pokeldn.frlg.gift import wonder_card_events as w
+    from pokeldn.frlg.rom import mystery_event
 
     effects = mystery_event.run(w.RNG_MON_HUNT_GIFT.mevent).effects
     kind, _group, _num, _object, field_script = effects[0]

@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "scripts"))
 
-from frlgsim import decomp_source, rom_map, worker_names   # noqa: E402
+from pokeldn.frlg.rom import decomp_source, rom_map, worker_names  # noqa: E402
 from script_read import dump_console                       # noqa: E402
 import gen_worker_names                                    # noqa: E402
 
@@ -231,7 +231,7 @@ def test_the_shipped_table_is_what_this_decomp_and_these_dumps_still_say():
     if not (decomp / "src").is_dir() or not (scratchpad / "launcher_logs").is_dir():
         pytest.skip("no decomp checkout or no dumps to regenerate from")
 
-    from frlgsim import scrcmd
+    from pokeldn.frlg.rom import scrcmd
     from script_read import every_dump
     from rom_functions import known_names as all_known_names
 

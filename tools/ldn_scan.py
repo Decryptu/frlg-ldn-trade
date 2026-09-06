@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Receive-path isolation test: list nearby LDN hosts with the LDN library's own `ldn.scan` (no frlgsim beacon or
+"""Receive-path isolation test: list nearby LDN hosts with the LDN library's own `ldn.scan` (no pokeldn beacon or
 transport code involved). A waiting FRLG trade console is the RFU parent = LDN host, so it shows up here."""
 import argparse
 import os
@@ -7,7 +7,7 @@ import subprocess
 import sys
 
 
-# The frlgsim package and vendor/ are at the repo root, one level up from tools/.
+# The pokeldn package and vendor/ are at the repo root, one level up from tools/.
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, 'vendor', 'LDN')
@@ -17,8 +17,8 @@ if os.path.isdir(BUNDLED_LDN):
 import trio
 
 import ldn
-from frlgsim.transport import find_ap_phy, list_phys
-from frlgsim.host_support import resolve_keys
+from pokeldn.ldn.transport import find_ap_phy, list_phys
+from pokeldn.host_support import resolve_keys
 
 STALE_VIFS = ["ldn", "ldn-mon", "ldn-tap"]
 

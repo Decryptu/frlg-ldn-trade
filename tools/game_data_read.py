@@ -9,7 +9,8 @@ import sys
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from frlgsim import easychat, easychat_french, game_data_log      # noqa: E402
+from pokeldn.frlg.gift import game_data_log  # noqa: E402
+from pokeldn.frlg.text import easychat, easychat_french  # noqa: E402
 
 
 def build_parser():

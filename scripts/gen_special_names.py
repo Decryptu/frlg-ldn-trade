@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate frlgsim/special_names.py from the decompilation.
+"""Regenerate pokeldn/frlg/rom/special_names.py from the decompilation.
 
 `gSpecials` is the field engine's second dispatch table: `ScrCmd_special` reads a u16, indexes the
 table and `bx`es through it [decomp:src/scrcmd.c:101]. bs92 read its address and its END out of
@@ -14,7 +14,7 @@ import re
 import sys
 
 DECOMP = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "~/pokefirered").expanduser()
-OUT = pathlib.Path(__file__).resolve().parent.parent / "frlgsim" / "special_names.py"
+OUT = pathlib.Path(__file__).resolve().parent.parent / "pokeldn" / "frlg" / "rom" / "special_names.py"
 
 HEADER = '''"""The 444 entries of `gSpecials`, in table order [decomp:data/specials.inc].
 

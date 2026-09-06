@@ -10,7 +10,7 @@ What the console needs to hear before it will talk to anything, and what it does
 
 The Switch release runs the original GBA ROM inside an emulator, so there are two layers here and
 they fail differently. Beneath the game is the LDN/Pia wireless layer, which is the emulator's own
-and is reimplemented by `vendor/LDN` and `frlgsim/pia_connect.py`. Above it is the GBA link - RFU
+and is reimplemented by `vendor/LDN` and `pokeldn/ldn/pia_connect.py`. Above it is the GBA link - RFU
 frames, the seat barrier, block sends - which is the ROM's, and for which
 [pret/pokefirered](https://github.com/pret/pokefirered) is authoritative.
 

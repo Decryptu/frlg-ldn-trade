@@ -276,7 +276,7 @@ falls inside a boundary rather than reading it at a guess. 184 of the 213 field 
 FireRed has, at LeafGreen's addresses. LeafGreen's bodies call the twins of what FireRed's call.
 
 **And the pairing is a table of LeafGreen addresses, not only a delta map.**
-`frlgsim/leafgreen_twins.py` holds all 738 distinct pairs, each one read off its own cartridge:
+`pokeldn/frlg/rom/leafgreen_twins.py` holds all 738 distinct pairs, each one read off its own cartridge:
 `leafgreen_twins.leafgreen(address)` answers exactly where it has a pair and falls back to
 `rom_map.leafgreen_guess` - which applies the segment delta and refuses inside a boundary -
 everywhere else. About 200 of them are functions this project can name, so the item and money block
@@ -406,5 +406,5 @@ narrowing. Everything below it is the same address on both cartridges:
 
 `rom_map.SHARED_WITH_LEAFGREEN_THROUGH` is the boundary; `LEAFGREEN_ADD_BAG_ITEM` is 0x0809DA44.
 The rest of the item and money block was -0x2C by segment, predicted - session 42's paired call
-sites measured it, and `frlgsim/leafgreen_twins.py` is where those addresses are. The delta-0
+sites measured it, and `pokeldn/frlg/rom/leafgreen_twins.py` is where those addresses are. The delta-0
 segment reaches 0x0807AF04 now, not 0x08071FC4.

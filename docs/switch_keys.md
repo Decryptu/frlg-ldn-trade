@@ -28,7 +28,7 @@ creates `~/.switch` with mode `0700`, installs the file with mode `0600`, and
 never displays the contents:
 
 ```bash
-cd ~/frlg-ldn-trade
+cd ~/pokeldn
 ./scripts/install_switch_keys.sh --source /absolute/path/to/prod.keys
 ```
 
@@ -40,7 +40,7 @@ usually the best way to transfer the key over an SSH tunnel:
 ```bash
 # Run on the desktop. pi-ldn is your existing SSH alias/tunnel.
 KEY_SOURCE="$HOME/.switch/prod.keys"
-ssh pi-ldn 'cd ~/frlg-ldn-trade && ./scripts/install_switch_keys.sh --stdin' \
+ssh pi-ldn 'cd ~/pokeldn && ./scripts/install_switch_keys.sh --stdin' \
   < "$KEY_SOURCE"
 ```
 
@@ -60,7 +60,7 @@ file immediately after a successful installation:
 KEY_SOURCE="$HOME/.switch/prod.keys"
 ssh pi-ldn 'install -d -m 700 "$HOME/.frlg-ldn-provision"'
 scp -p "$KEY_SOURCE" pi-ldn:.frlg-ldn-provision/prod.keys
-ssh pi-ldn 'cd ~/frlg-ldn-trade && \
+ssh pi-ldn 'cd ~/pokeldn && \
   ./scripts/install_switch_keys.sh --source "$HOME/.frlg-ldn-provision/prod.keys" && \
   rm -f "$HOME/.frlg-ldn-provision/prod.keys" && \
   rmdir "$HOME/.frlg-ldn-provision"'

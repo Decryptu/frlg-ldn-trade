@@ -33,7 +33,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import rom_map, thumb, worker_names
+from pokeldn.frlg.rom import rom_map, thumb, worker_names
 from rom_functions import known_names
 from script_read import dumps
 

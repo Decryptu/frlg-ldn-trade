@@ -1,7 +1,7 @@
 # Vendored LDN
 
 This directory contains the minimal distributable source for the `ldn` Python
-package used by `frlg-ldn-trade`. It is deliberately tracked in this repository
+package used by `pokeldn`. It is deliberately tracked in this repository
 so a fresh clone has the exact WLAN implementation tested with the project.
 
 ## Upstream
@@ -30,7 +30,7 @@ The vendored package incorporates the following project-specific fixes:
 
 Keep this file current whenever the vendored copy is rebased or modified.
 
-## frlg-ldn-trade experiment hooks (2026-09-02/03, all default-off)
+## pokeldn experiment hooks (2026-09-02/03, all default-off)
 
 - `DataFrame` decodes QoS data (subtype 8): TID in the CCMP nonce priority byte and the
   TID-only QoS control in the AAD. Before this every QoS data frame was rejected, which is

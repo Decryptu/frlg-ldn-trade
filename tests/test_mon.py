@@ -1,4 +1,4 @@
-from frlgsim import mon
+from pokeldn.frlg.save import mon
 
 
 def test_the_misc_substruct_reads_back_what_was_written_into_it():

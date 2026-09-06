@@ -6,9 +6,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import reliable
-from frlgsim.host_session import HOST_OUTSTANDING_MAX, HostSession
-from frlgsim.rfu_leader import UNI
+from pokeldn.ldn import reliable
+from pokeldn.frlg.link.host_session import HOST_OUTSTANDING_MAX, HostSession
+from pokeldn.gba.rfu_leader import UNI
 
 
 class _Engine:

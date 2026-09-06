@@ -742,8 +742,8 @@ The first command of every battle is `GETMONDATA` with `REQUEST_ALL_BATTLE`, emi
 in turn [battle_main.c:2519]. The reply is a whole `struct BattlePokemon` [pokemon.h:170, 0x58 bytes]
 built field by field in `CopyPlayerMonData` [player.c:1519]. Every field it fills - species, the five
 stats, moves, PP, the six IVs, level, hp/maxHP, item, nickname, otName, experience, personality,
-status1, friendship, ppBonuses, abilityNum, otId - we already compute or carry (`frlgsim/stats.py`,
-`frlgsim/mon.py`). Note what it does *not* fill: `statStages`, `ability`, `type1`, `type2`, `status2`,
+status1, friendship, ppBonuses, abilityNum, otId - we already compute or carry (`pokeldn/frlg/save/stats.py`,
+`pokeldn/frlg/save/mon.py`). Note what it does *not* fill: `statStages`, `ability`, `type1`, `type2`, `status2`,
 `unknown`. They go out as stack garbage and the receiver recomputes them, so we may send zeros.
 
 **We may skip the BUFFER_B replies for battler 0**, the console's own mon: it answers its own

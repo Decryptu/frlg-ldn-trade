@@ -15,11 +15,14 @@ import signal
 import sys
 import time
 
-# This launcher lives in bin/; the frlgsim package is at the repo root beside it.
+# This launcher lives in bin/; the pokeldn package is at the repo root beside it.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from frlgsim import config as configmod, crypto as cryptomod, sim as simmod  # noqa: E402
-from frlgsim import transport as tmod, pia_connect, mg_client  # noqa: E402
-from frlgsim import trade_runtime as runtime  # noqa: E402
+from pokeldn import config as configmod  # noqa: E402
+from pokeldn.frlg.link import sim as simmod  # noqa: E402
+from pokeldn.ldn import crypto as cryptomod  # noqa: E402
+from pokeldn.frlg.gift import mg_client  # noqa: E402
+from pokeldn.ldn import pia_connect, transport as tmod  # noqa: E402
+from pokeldn.frlg.link import trade_runtime as runtime  # noqa: E402
 
 PERIOD = 1.0 / 59.727
 

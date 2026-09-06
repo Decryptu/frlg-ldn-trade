@@ -1,5 +1,5 @@
 """Test-time import paths: `bin/` and `tools/` for the launchers the tests import by name
-(`import frlgmg_host`), and the repo root for `frlgsim` and `vendor/LDN`."""
+(`import frlgmg_host`), and the repo root for `pokeldn` and `vendor/LDN`."""
 
 import os
 import sys

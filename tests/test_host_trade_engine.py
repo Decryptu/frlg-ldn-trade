@@ -11,9 +11,12 @@ from dataclasses import FrozenInstanceError
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import block, config, linkplayer, mon, rfu, trade
-from frlgsim.host_session import HostSession
-from frlgsim.host_trade import (
+from pokeldn import config
+from pokeldn.frlg.link import linkplayer, trade
+from pokeldn.frlg.save import mon
+from pokeldn.gba import block, rfu
+from pokeldn.frlg.link.host_session import HostSession
+from pokeldn.frlg.link.host_trade import (
     CLOSE_RETRY_FRAMES, H_ANIM, H_CANCEL, H_CONFIRM, H_DONE, H_EXIT, H_LEAVE_MENU, H_PARTY,
     H_SAVE, H_SELECT,
     ENTRY_FINAL_STANDBY_QUIET_FRAMES, FINAL_MENU_READY_FRAMES, PARTY_LINK_SETTLE_FRAMES,

@@ -17,7 +17,7 @@ because the two cartridges keep the same code at addresses a segment delta apart
 holding both answers with whichever it happened to place there.
 
 The operands are named, not just printed: a var, a flag, a special and a comparison all come back
-with the decomp's own name beside the number [frlgsim/symbol_names.py, special_names.py]. An
+with the decomp's own name beside the number [pokeldn/frlg/rom/symbol_names.py, special_names.py]. An
 operand of 0x4000 or more is a variable REFERENCE whatever it sits in, because every ScrCmd body
 passes its arguments through VarGet [decomp:src/event_data.c:235].
 
@@ -35,7 +35,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import rom_map, scrcmd
+from pokeldn.frlg.rom import rom_map, scrcmd
 
 
 def dump_console(tag, log_text):

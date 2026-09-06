@@ -19,9 +19,9 @@ BUNDLED = os.path.join(PROJECT_ROOT, 'vendor', 'LDN')
 if os.path.isdir(BUNDLED): sys.path.insert(0, BUNDLED)
 
 import trio, ldn
-from frlgsim.pia5 import PiaHeader5, is_pia5, HEADER_SIZE, CT_OFF
-from frlgsim.transport import find_ap_phy
-from frlgsim.host_support import resolve_keys
+from pokeldn.ldn.pia5 import PiaHeader5, is_pia5, HEADER_SIZE, CT_OFF
+from pokeldn.ldn.transport import find_ap_phy
+from pokeldn.host_support import resolve_keys
 
 BDSP_PASSPHRASE = b"WirelessStrongCryptoKey2021"
 PIA_PORT = 12345

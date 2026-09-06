@@ -13,18 +13,20 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import beacon, charmap, gift_composer, crypto, pia_connect, reliable, transport, wonder_card  # noqa: E402
-from frlgsim.host_beacon import (  # noqa: E402
+from pokeldn.frlg.gift import gift_composer, wonder_card  # noqa: E402
+from pokeldn.frlg.text import charmap  # noqa: E402
+from pokeldn.ldn import beacon, crypto, pia_connect, reliable, transport  # noqa: E402
+from pokeldn.ldn.host_beacon import (  # noqa: E402
     build_trade_app_data, build_wonder_card_app_data,
 )
-from frlgsim.host_mg_app import (  # noqa: E402
+from pokeldn.frlg.gift.host_mg_app import (  # noqa: E402
     MysteryGiftHostApplication, MysteryGiftRunConfig,
 )
-from frlgsim.host_mystery_gift import HostMysteryGiftEngine  # noqa: E402
-from frlgsim.config import (  # noqa: E402
+from pokeldn.frlg.gift.host_mystery_gift import HostMysteryGiftEngine  # noqa: E402
+from pokeldn.config import (  # noqa: E402
     DEFAULT_TRAINER, HostOptions, LdnConfig, MysteryGiftPayload,
 )
-from frlgsim.host_session import HostSession  # noqa: E402
+from pokeldn.frlg.link.host_session import HostSession  # noqa: E402
 
 SESSION_ID = b"\x7b\xf1"
 
@@ -205,7 +207,7 @@ def test_engine_exposes_the_contract_the_host_application_drives():
 def _console_game_data(version_code):
     """The console's own MysteryGiftLinkGameData, with the version nibble set. The magic and the
     game code are what parse_link_game_data insists on; nothing else matters here."""
-    from frlgsim import mg_script
+    from pokeldn.frlg.gift import mg_script
     raw = bytearray(0x64)
     raw[0x00:0x04] = int(mg_script.LINK_GAME_DATA_MAGIC).to_bytes(4, "little") \
         if hasattr(mg_script, "LINK_GAME_DATA_MAGIC") else b"\x00" * 4
@@ -218,7 +220,7 @@ def _console_game_data(version_code):
 
 
 def test_a_run_aimed_at_the_other_cartridge_is_refused_before_anything_is_sent():
-    from frlgsim import mg_script, mg_server
+    from pokeldn.frlg.gift import mg_script, mg_server
     card, ram_script = wonder_card.build_default_gift()
     server = mg_server.MysteryGiftServer(card, ram_script, expect_console="leafgreen")
     server.game_data = _console_game_data(mg_script.VERSION_CODE_FIRERED)
@@ -229,7 +231,7 @@ def test_a_run_aimed_at_the_other_cartridge_is_refused_before_anything_is_sent()
 
 
 def test_the_right_cartridge_passes_and_no_expectation_passes_anything():
-    from frlgsim import mg_script, mg_server
+    from pokeldn.frlg.gift import mg_script, mg_server
     card, ram_script = wonder_card.build_default_gift()
     for expected, code in (("firered", mg_script.VERSION_CODE_FIRERED),
                            ("leafgreen", mg_script.VERSION_CODE_LEAFGREEN),
@@ -241,7 +243,7 @@ def test_the_right_cartridge_passes_and_no_expectation_passes_anything():
 
 
 def test_the_expectation_has_to_name_a_cartridge():
-    from frlgsim import mg_server
+    from pokeldn.frlg.gift import mg_server
     card, ram_script = wonder_card.build_default_gift()
     with pytest.raises(mg_server.MysteryGiftServerError):
         mg_server.MysteryGiftServer(card, ram_script, expect_console="emerald")

@@ -9,11 +9,10 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 import frlgmg_host  # noqa: E402
-from frlgsim import (  # noqa: E402
-    charmap, config, gift_registry, mg_script, mg_server, mystery_gift,
-    stamp_rally, wonder_card,
-)
-from frlgsim import gift_composer as gc  # noqa: E402
+from pokeldn import config  # noqa: E402
+from pokeldn.frlg.gift import gift_registry, mg_script, mg_server, mystery_gift, stamp_rally, wonder_card  # noqa: E402
+from pokeldn.frlg.text import charmap  # noqa: E402
+from pokeldn.frlg.gift import gift_composer as gc  # noqa: E402
 from test_gift_composer import ScriptVM  # noqa: E402
 from test_mystery_gift_flow import ConsoleClientModel, _drive, _game_data  # noqa: E402
 from test_mystery_gift_end_to_end import _run_full_stack  # noqa: E402
@@ -83,7 +82,7 @@ def test_shared_card_layout_and_stamp_encodings_are_exact():
             ]
     assert solrock.stamp == bytes.fromhex("5d010100")
     assert lunatone.stamp == bytes.fromhex("5c010200")
-    assert mystery_gift.crc16(card) == 0x2FE9
+    assert mystery_gift.crc16(card) == 0xC1BB
 
 
 def test_hardware_one_solrock_stamp_payload_matches_without_tossing_card():

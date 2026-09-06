@@ -39,7 +39,7 @@ Everything here is a decompilation fact unless it is marked otherwise.
 | 15 | `checksum` | u32, ptr, ptr | **TRUE** | status 1 if `CalcByteArraySum` over the range does not match |
 | 16 | `crc` | u32, ptr, ptr | **TRUE** | the same with `CalcCRC16` |
 
-`frlgsim/mystery_event.py` assembles all of them; `MysteryEventScript.blob()` holds the data and the
+`pokeldn/frlg/rom/mystery_event.py` assembles all of them; `MysteryEventScript.blob()` holds the data and the
 assembler resolves the pointers.
 
 ## Where the table IS, on the console
@@ -306,18 +306,18 @@ pushed by `CLI_COPY_MSG`, so an arbitrary on-screen message with a save is avail
 
 ## How it is wired
 
-- `frlgsim/mystery_event.py` - opcodes, the assembler, a disassembler (`describe`), and `run()`, a
+- `pokeldn/frlg/rom/mystery_event.py` - opcodes, the assembler, a disassembler (`describe`), and `run()`, a
   simulator of the console's execution used by the offline client.
-- `frlgsim/mg_script.py` - `CLIENT_SCRIPT_SAVE_CARD_AND_MEVENT` (no card held: card, delivery
+- `pokeldn/frlg/gift/mg_script.py` - `CLIENT_SCRIPT_SAVE_CARD_AND_MEVENT` (no card held: card, delivery
   script, then the event), `CLIENT_SCRIPT_RUN_MEVENT` (the console already holds this card: the
   event alone, nothing tossed) and `CLIENT_SCRIPT_MEVENT_DONE`, the shared success tail.
-- `frlgsim/mg_server.py` - `SCRIPT_SEND_MYSTERY_EVENT`, with `SVR_LOAD_MEVENT` and
+- `pokeldn/frlg/gift/mg_server.py` - `SCRIPT_SEND_MYSTERY_EVENT`, with `SVR_LOAD_MEVENT` and
   `SVR_READ_MEVENT_STATUS`; the status lands in `server.mevent_status` and in the host log.
-- `frlgsim/gift_composer.py` - `WonderGift.mevent` takes assembled bytes and validates them.
+- `pokeldn/frlg/gift/gift_composer.py` - `WonderGift.mevent` takes assembled bytes and validates them.
 
 ## `givepokemon`: the only Pokemon on this link that can carry Mail
 
-`frlgsim/mevent_pokemon.py` builds the payload - a 100-byte encrypted party mon followed by the
+`pokeldn/frlg/save/mevent_pokemon.py` builds the payload - a 100-byte encrypted party mon followed by the
 34-byte `struct Mail` the console reads at `pointer + sizeof(struct Pokemon)`. `--gift
 mystery-event-celebi` ships one.
 
@@ -360,10 +360,10 @@ We sent `hello, friend, i_ve_arrived, thank_you, enjoy`. Four of the five slots 
 English table promised. `EC_WORD_ENJOY` (FEELINGS/42) printed **STRESSE**.
 
 An Easy Chat word id is `(group << 9) | index` - a *slot*, not a word - and every localized ROM
-carries its own `gEasyChatGroup_*` tables. `frlgsim/easychat_words.py` is generated from the English
+carries its own `gEasyChatGroup_*` tables. `pokeldn/frlg/text/easychat_words.py` is generated from the English
 decompilation, so it is mostly right and occasionally wrong, with nothing to warn you. That applies
 to every Easy Chat phrase this project composes: mail, the trainer card profile quote, and the
-visiting trainer's three six-word lines. `frlgsim/easychat_french.py` records what has actually been
+visiting trainer's three six-word lines. `pokeldn/frlg/text/easychat_french.py` records what has actually been
 seen on the French console; compose from that.
 
 The cheapest fix is a channel we already had and never read. The Poke Mart questionnaire stores four

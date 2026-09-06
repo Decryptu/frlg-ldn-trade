@@ -1,11 +1,11 @@
-title: frlg-ldn-trade
+title: pokeldn
 description: >-
   Reverse-engineering notes for speaking Nintendo Switch local wireless (LDN) to
   Pokemon games: the wireless layer, FireRed/LeafGreen's link protocol and Mystery
   Gift distributor, and native Switch titles.
 
 url: https://decryptu.github.io
-baseurl: /frlg-ldn-trade
+baseurl: /pokeldn
 
 remote_theme: just-the-docs/just-the-docs
 plugins:
@@ -22,7 +22,7 @@ heading_anchors: true
 
 aux_links:
   "View on GitHub":
-    - "https://github.com/Decryptu/frlg-ldn-trade"
+    - "https://github.com/Decryptu/pokeldn"
 aux_links_new_tab: true
 
 back_to_top: true

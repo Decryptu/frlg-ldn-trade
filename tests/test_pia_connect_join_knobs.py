@@ -1,7 +1,7 @@
 """Session-12 client-side join experiment knobs on ConnectionManager (all default-off)."""
 
-from frlgsim import pia_connect
-from frlgsim.pia_connect import PROTO_NET, PROTO_RTT, PROTO_SESSION
+from pokeldn.ldn import pia_connect
+from pokeldn.ldn.pia_connect import PROTO_NET, PROTO_RTT, PROTO_SESSION
 
 
 def _net_0x11(host_var=0x7620):

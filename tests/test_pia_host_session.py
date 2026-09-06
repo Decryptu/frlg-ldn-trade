@@ -6,18 +6,18 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import beacon, pia_connect, transport
-from frlgsim import crypto as cryptomod
-from frlgsim.host_beacon import (CAPTURED_TRADE_BEACON,
+from pokeldn.ldn import beacon, pia_connect, transport
+from pokeldn.ldn import crypto as cryptomod
+from pokeldn.ldn.host_beacon import (CAPTURED_TRADE_BEACON,
                                  activate_trade_app_data,
                                  build_trade_app_data)
-from frlgsim.host_pia import (PiaNonceSequence, build_host_rtt,
+from pokeldn.ldn.host_pia import (PiaNonceSequence, build_host_rtt,
                               build_messages, build_net_probe,
                               build_net_property_update,
                               build_session_acceptance, decode_datagram,
                               reliable_output_batches)
-from frlgsim.config import TrainerProfile
-from frlgsim.reliable import ReliableEmission, FLAGSA_CTRL, FLAGSA_GBA
+from pokeldn.config import TrainerProfile
+from pokeldn.ldn.reliable import ReliableEmission, FLAGSA_CTRL, FLAGSA_GBA
 
 
 JOIN = bytes.fromhex(

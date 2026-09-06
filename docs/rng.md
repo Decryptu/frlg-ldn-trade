@@ -29,7 +29,7 @@ void SeedRng(u16 seed) { gRngValue = seed; }
 what makes it possible: two draws give 32 bits, but the low half of the first state stays
 unconstrained, so a personality alone leaves 2<sup>16</sup> candidate states.
 
-`frlgsim/lcg.py` is the arithmetic. `distance(a, b)` is exact at any range via baby-step/giant-step
+`pokeldn/frlg/rom/lcg.py` is the arithmetic. `distance(a, b)` is exact at any range via baby-step/giant-step
 on the affine map, 2<sup>17</sup> operations instead of up to 2<sup>32</sup>. The map is a
 permutation of all 2<sup>32</sup> states, so **a distance always exists**; it is evidence only when
 it is small (odds N / 2<sup>32</sup>).
@@ -251,7 +251,7 @@ relocation, in the field engine.
 vars and the message two lines. It takes a var ID rather than an address, so only `copybyte`'s
 destination ever needed an address hunt - and `table-scan` (see
 [native code](buffer_script.md)) found `gSpecialVar_0x8000` = 0x020370B4 at bs57, with four
-consistency checks recorded in `frlgsim/rom_map.py`.
+consistency checks recorded in `pokeldn/frlg/rom/rom_map.py`.
 
 **mev08 confirmed it, and the proof is talking twice.** The man in the south of Pallet Town was asked
 twice, about twenty seconds apart:
@@ -296,7 +296,7 @@ and most of the error was the player chasing him.
 A shiny frame arrives every ~8192 frames (~137 s), and a press with a 4.5-frame spread lands on one
 chosen frame about 9% of the time, so a hand-aimed shiny costs on the order of 25 minutes against
 about 23 hours of random encounters. A miss costs one A press and is measured exactly, because the
-script prints the state it generated from. `frlgsim/rng_countdown.py` is the countdown, and
+script prints the state it generated from. `pokeldn/frlg/rom/rng_countdown.py` is the countdown, and
 `--aimed-at STATE` turns a missed press into a signed frame count.
 
 This is no longer how a shiny is obtained - the stub below removes the aim entirely - but it remains
@@ -304,7 +304,7 @@ the route when the RAM script slot is holding a Wonder Card.
 
 ## The stub that does the search
 
-`--gift rng-shiny-hunt`, `frlgsim/native_script.py`, `asm/field/shiny-seek.s`. Proven on hardware at
+`--gift rng-shiny-hunt`, `pokeldn/frlg/rom/native_script.py`, `asm/field/shiny-seek.s`. Proven on hardware at
 mev15, twice: the card installed, the player talked to their mother in Pallet Town, and the Ditto
 that appeared was shiny; they fled, talked again, and it was shiny again from a different state. A
 one-in-8192 event does not happen twice in two attempts. One run settles `callnative` on this build,

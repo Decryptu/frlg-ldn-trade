@@ -8,8 +8,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from frlgsim import charmap, gift_composer as gc  # noqa: E402
-from frlgsim import gift_registry, mg_script, mg_server, stamp_rally, wonder_card  # noqa: E402
+from pokeldn.frlg.gift import gift_composer as gc  # noqa: E402
+from pokeldn.frlg.text import charmap  # noqa: E402
+from pokeldn.frlg.gift import gift_registry, mg_script, mg_server, stamp_rally, wonder_card  # noqa: E402
 from test_mystery_gift_end_to_end import _run_full_stack  # noqa: E402
 
 

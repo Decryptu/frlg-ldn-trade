@@ -11,8 +11,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import frlgmg_host
 import frlgtrade_host
-from frlgsim import config, host_cli, transport
-from frlgsim.host_app import HostApplication
+from pokeldn import config, host_cli
+from pokeldn.ldn import transport
+from pokeldn.frlg.link.host_app import HostApplication
 
 
 def _write(path, contents):

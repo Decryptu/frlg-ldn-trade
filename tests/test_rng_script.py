@@ -6,7 +6,8 @@ is checked is that every byte is the opcode the table names and that the decode 
 """
 import pytest
 
-from frlgsim import gift_composer, lcg, rng_script, rom_map
+from pokeldn.frlg.gift import gift_composer
+from pokeldn.frlg.rom import lcg, rng_script, rom_map
 
 
 def test_the_opcodes_are_the_ones_the_command_table_names():
@@ -94,7 +95,7 @@ def test_nothing_that_yields_sits_between_the_seed_and_the_generation():
 
 
 def test_the_chosen_seed_makes_a_shiny_ditto_for_this_console():
-    from frlgsim import wonder_card_events
+    from pokeldn.frlg.gift import wonder_card_events
     got = rng_script.predict_wild_mon(wonder_card_events.RNG_DITTO_SEED, 57189, 58811)
     assert got["shiny"] is True
     assert got["low_first"]["shiny_value"] == got["high_first"]["shiny_value"] == 3
@@ -119,7 +120,7 @@ def test_it_refuses_a_species_or_level_the_operands_cannot_carry():
 
 
 def test_the_gift_carries_that_script_and_binds_it_to_the_pallet_town_man():
-    from frlgsim import gift_registry, wonder_card_events
+    from pokeldn.frlg.gift import gift_registry, wonder_card_events
     assert wonder_card_events.GIFT_RNG_SHINY_DITTO in gift_registry.GIFT_REGISTRY.live_choices
     mevent = wonder_card_events.build_rng_shiny_ditto_script()
     inner = rng_script.build_wild_battle_script(
@@ -129,7 +130,7 @@ def test_the_gift_carries_that_script_and_binds_it_to_the_pallet_town_man():
 
 
 def test_a_field_script_and_lines_are_not_both_accepted():
-    from frlgsim import wonder_card_events
+    from pokeldn.frlg.gift import wonder_card_events
     with pytest.raises(ValueError):
         wonder_card_events.build_mevent_npc_script(lines=("hi",), field_script=b"\x02")
 
@@ -143,7 +144,7 @@ def test_mev07_the_console_built_exactly_what_was_predicted():
     on the console's French screen - so `Random32()` evaluates its LOW half first at CreateBoxMon's
     call site, the same way CreateMonWithNature's does.
     """
-    from frlgsim import wonder_card_events
+    from pokeldn.frlg.gift import wonder_card_events
     got = rng_script.predict_wild_mon(wonder_card_events.RNG_DITTO_SEED, 57189, 58811)
     assert got["low_first"]["personality"] == 0x026F38B2
     assert got["low_first"]["nature"] == 17
@@ -344,7 +345,7 @@ def test_the_two_rate_models_are_told_apart_by_the_frame_count_and_only_that():
     """mev09's 1,202 turns over 600 frames fits both `2N+2` and `2.003333N`. They diverge by ~27
     turns over an 8192-frame countdown, against a target one state wide, so the run that separates
     them changes the frame count and nothing else."""
-    from frlgsim import wonder_card_events as events
+    from pokeldn.frlg.gift import wonder_card_events as events
 
     short = gift_composer.build_seed_rate_script(frames=600)
     long = gift_composer.build_seed_rate_script(frames=events.RNG_RATE_PROBE_LONG_FRAMES)

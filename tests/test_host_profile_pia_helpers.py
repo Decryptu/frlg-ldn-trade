@@ -8,9 +8,10 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import beacon, crypto, linkplayer, pia_connect, reliable, transport
-from frlgsim.host_beacon import build_trade_app_data, parse_mac
-from frlgsim.host_pia import (
+from pokeldn.frlg.link import linkplayer
+from pokeldn.ldn import beacon, crypto, pia_connect, reliable, transport
+from pokeldn.ldn.host_beacon import build_trade_app_data, parse_mac
+from pokeldn.ldn.host_pia import (
     HostPeerProtocol,
     PiaNonceSequence,
     PIA_HOST_VAR,
@@ -19,8 +20,8 @@ from frlgsim.host_pia import (
     decode_datagram,
     reliable_output_batches,
 )
-from frlgsim.config import DEFAULT_TRAINER, TrainerProfile
-from frlgsim.reliable import FLAGSA_CTRL, FLAGSA_GBA, ReliableEmission
+from pokeldn.config import DEFAULT_TRAINER, TrainerProfile
+from pokeldn.ldn.reliable import FLAGSA_CTRL, FLAGSA_GBA, ReliableEmission
 
 
 def _profile(**overrides):
@@ -139,7 +140,7 @@ def test_native_nonce_sequence_increments_and_wraps():
 
 
 def test_random_nonce_mode_returns_eight_bytes():
-    with mock.patch("frlgsim.host_pia.os.urandom", lambda size: b"R" * size):
+    with mock.patch("pokeldn.ldn.host_pia.os.urandom", lambda size: b"R" * size):
         nonces = PiaNonceSequence(native=False, initial=123)
         assert nonces.take() == b"R" * 8
         assert nonces.take() == b"R" * 8

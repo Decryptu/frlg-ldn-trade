@@ -23,7 +23,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import buffer_script, rom_map  # noqa: E402
+from pokeldn.frlg.rom import buffer_script, rom_map  # noqa: E402
 
 MYSTERY_EVENT_CMD_COUNT = 17            # [decomp:data/mystery_event_script_cmd_table.s]
 MYSTERY_EVENT_TABLE_BYTES = MYSTERY_EVENT_CMD_COUNT * 4
@@ -139,7 +139,7 @@ def test_the_seventeen_entries_are_seventeen_functions():
 def test_the_table_order_is_the_vms_own_opcode_order():
     """The names in rom_map are the decomp's table order; mystery_event.OPCODE_NAMES was written
     from the VM's behaviour on the console, run by run. They have to agree entry for entry."""
-    from frlgsim import mystery_event
+    from pokeldn.frlg.rom import mystery_event
     assert [name for name, _address in rom_map.MYSTERY_EVENT_HANDLERS] == [
         mystery_event.OPCODE_NAMES[opcode] for opcode in range(MYSTERY_EVENT_CMD_COUNT)]
 

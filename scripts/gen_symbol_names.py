@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate frlgsim/symbol_names.py: the var and flag ids, by name, from the decomp's headers.
+"""Regenerate pokeldn/frlg/rom/symbol_names.py: the var and flag ids, by name, from the decomp's headers.
 
     ./.venv/bin/python scripts/gen_symbol_names.py [~/pokefirered]
 
@@ -23,7 +23,7 @@ import re
 import sys
 
 DECOMP = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "~/pokefirered").expanduser()
-OUT = pathlib.Path(__file__).resolve().parent.parent / "frlgsim" / "symbol_names.py"
+OUT = pathlib.Path(__file__).resolve().parent.parent / "pokeldn" / "frlg" / "rom" / "symbol_names.py"
 
 # flags.h builds the trainer flags on the TRAINER_* ids and the system flags on MAX_TRAINERS_COUNT,
 # so the headers it takes those from have to be read with it.

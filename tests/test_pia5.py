@@ -2,7 +2,7 @@
 Pearl in the Union Room, session 43 - see NOTES.local.md sp4/sp8."""
 import pytest
 
-from frlgsim.pia5 import PiaHeader5, is_pia5, HEADER_SIZE, CT_OFF, MAGIC, VERSION
+from pokeldn.ldn.pia5 import PiaHeader5, is_pia5, HEADER_SIZE, CT_OFF, MAGIC, VERSION
 
 # the first datagram of sp4: 169.254.54.1:12345 -> .255:12345, 176 bytes
 REAL = bytes.fromhex(

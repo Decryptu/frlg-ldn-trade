@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import rom_map, scrcmd, scrcmd_args, scrcmd_names  # noqa: E402
+from pokeldn.frlg.rom import rom_map, scrcmd, scrcmd_args, scrcmd_names  # noqa: E402
 
 
 def test_the_table_is_the_decomps_length():
@@ -24,7 +24,7 @@ def test_the_address_is_derived_from_the_measured_gspecialvars():
 
 def test_the_index_is_the_opcode_this_project_already_emits():
     """A cross-check against the opcodes the composers write: if the generated order were wrong,
-    these would not line up [frlgsim/scrcmd.py]."""
+    these would not line up [pokeldn/frlg/rom/scrcmd.py]."""
     assert scrcmd_names.COMMANDS[scrcmd.OP_END] == "end"
     assert scrcmd_names.COMMANDS[scrcmd.OP_ADDVAR] == "addvar"
     assert scrcmd_names.COMMANDS[scrcmd.OP_SETVAR] == "setvar"

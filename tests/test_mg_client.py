@@ -1,4 +1,4 @@
-"""Mystery Gift CLIENT (frlgsim.mg_client) driven against our own Mystery Gift HOST.
+"""Mystery Gift CLIENT (pokeldn.frlg.gift.mg_client) driven against our own Mystery Gift HOST.
 
 Row-level, no radio, no Pia: one parent row and one child row per tick, the parent echoing
 the child's previous row in gRecvCmds row 1 (the reflection the child's BlockSender acks on).
@@ -6,8 +6,10 @@ The host engine is the one proven on retail hardware, so a client that completes
 the same block/message protocol a console does.
 """
 
-from frlgsim import host_mystery_gift, linkplayer, mg_client, mg_script, rfu, wonder_card
-from frlgsim import mystery_gift as mg
+from pokeldn.frlg.gift import host_mystery_gift, mg_client, mg_script, wonder_card
+from pokeldn.frlg.link import linkplayer
+from pokeldn.gba import rfu
+from pokeldn.frlg.gift import mystery_gift as mg
 
 
 def _drive(client, *, holding=None, flag_id=1005, ticks=6000):

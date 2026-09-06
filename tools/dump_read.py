@@ -7,7 +7,7 @@
 name, gender, play time and the 32-bit trainer id [decomp:include/global.h:327]; SaveBlock1 at 0x34
 holds playerPartyCount followed by playerParty[6] [decomp:include/global.h:772].
 
-Party mons are stored the way a .ek3 stores them, so frlgsim.mon decodes them unchanged: the
+Party mons are stored the way a .ek3 stores them, so pokeldn.frlg.save.mon decodes them unchanged: the
 48-byte region at offset 0x20 is XORed with PID^OTID and its four substructs are shuffled by
 PID % 24. The IVs, the nature and the shiny flag all come out of that region, and none of them is
 printed anywhere in the game.
@@ -18,8 +18,9 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import charmap, mon as monlib
-from frlgsim.rng_countdown import NATURE_NAMES
+from pokeldn.frlg.save import mon as monlib
+from pokeldn.frlg.text import charmap
+from pokeldn.frlg.rom.rng_countdown import NATURE_NAMES
 
 PARTY_OFFSET = 0x38
 PARTY_COUNT_OFFSET = 0x34

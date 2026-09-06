@@ -12,7 +12,8 @@ import pytest
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from frlgsim import easychat, linkplayer  # noqa: E402
+from pokeldn.frlg.link import linkplayer  # noqa: E402
+from pokeldn.frlg.text import easychat  # noqa: E402
 
 
 def _quote_of(card):

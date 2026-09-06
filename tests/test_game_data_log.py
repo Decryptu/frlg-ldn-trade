@@ -11,7 +11,8 @@ import types
 
 import frlgmg_host
 import game_data_read
-from frlgsim import charmap, easychat, game_data_log, mg_script, mystery_gift as mg
+from pokeldn.frlg.gift import game_data_log, mg_script, mystery_gift as mg
+from pokeldn.frlg.text import charmap, easychat
 
 
 def _game_data(*, flag_id=0, questionnaire=(), profile=(), battles_won=0, battles_lost=0,
@@ -111,7 +112,7 @@ def test_a_slot_no_french_console_has_rendered_is_named_for_one_question():
     unknown = game_data_log.unknown_words(entry)
     # Whatever is unknown must be genuinely unknown: `french` is what the gate and every card
     # composed for this player is checked against.
-    from frlgsim import easychat_french
+    from pokeldn.frlg.text import easychat_french
     assert all(easychat_french.french(value) is None for value in unknown)
 
 
@@ -204,7 +205,7 @@ def _host_app_stub(path, capture=None):
 
 
 def test_the_host_writes_one_record_per_session_and_names_the_run_tag(tmp_path):
-    from frlgsim.host_mg_app import MysteryGiftHostApplication
+    from pokeldn.frlg.gift.host_mg_app import MysteryGiftHostApplication
     path = str(tmp_path / "game_data.jsonl")
     app, lines = _host_app_stub(path, capture="scratchpad/mev25.pcap")
     engine = types.SimpleNamespace(server=types.SimpleNamespace(
@@ -218,7 +219,7 @@ def test_the_host_writes_one_record_per_session_and_names_the_run_tag(tmp_path):
 
 
 def test_the_host_says_what_moved_since_the_last_session_of_that_console(tmp_path):
-    from frlgsim.host_mg_app import MysteryGiftHostApplication
+    from pokeldn.frlg.gift.host_mg_app import MysteryGiftHostApplication
     path = str(tmp_path / "game_data.jsonl")
     game_data_log.append(path, _game_data(flag_id=1009, battles_won=2, trades=1), tag="u34")
     app, lines = _host_app_stub(path, capture="scratchpad/u35.pcap")
@@ -232,7 +233,7 @@ def test_the_host_says_what_moved_since_the_last_session_of_that_console(tmp_pat
 
 
 def test_a_session_the_console_never_identified_itself_in_writes_nothing(tmp_path):
-    from frlgsim.host_mg_app import MysteryGiftHostApplication
+    from pokeldn.frlg.gift.host_mg_app import MysteryGiftHostApplication
     path = str(tmp_path / "game_data.jsonl")
     app, lines = _host_app_stub(path)
 

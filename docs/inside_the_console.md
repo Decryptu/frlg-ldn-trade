@@ -28,7 +28,7 @@ consoles run it too. A payload that faults, or that never returns 1, hangs the M
 with no way out.
 
 **Nothing is inferred from the decompilation's addresses.** The console runs the French build, game
-code BPRF, software version `0x0A`, read out of its own cartridge header. `frlgsim/rom_map.py`
+code BPRF, software version `0x0A`, read out of its own cartridge header. `pokeldn/frlg/rom/rom_map.py`
 records how each address was obtained. The decomp's *link order* is fair evidence and has been used
 twice; its addresses never are.
 

@@ -27,11 +27,12 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import (  # noqa: E402
-    block, buffer_script, charmap, ereader_trainer, host_mystery_gift, linkplayer, mg_link,
-    mg_script, mg_server, rfu, rfu_leader, trade, wonder_card, wonder_news,
-)
-from frlgsim import mystery_gift as mg  # noqa: E402
+from pokeldn.frlg.gift import ereader_trainer, host_mystery_gift, mg_link, mg_script, mg_server, wonder_card, wonder_news  # noqa: E402
+from pokeldn.frlg.link import linkplayer, trade  # noqa: E402
+from pokeldn.frlg.rom import buffer_script  # noqa: E402
+from pokeldn.frlg.text import charmap  # noqa: E402
+from pokeldn.gba import block, rfu, rfu_leader  # noqa: E402
+from pokeldn.frlg.gift import mystery_gift as mg  # noqa: E402
 
 
 # --- MysteryGiftLink framing ------------------------------------------------------------------
@@ -610,7 +611,7 @@ class ConsoleClientModel:
     def _run_mystery_event(self, payload):
         """MEventScript_Run over gMysteryEventScriptCmdTable [mystery_event_script.c].
 
-        Written from the decomp, not from frlgsim.mystery_event. Two rules drive it: pointer
+        Written from the decomp, not from pokeldn.frlg.rom.mystery_event. Two rules drive it: pointer
         operands are relocated ``operand - ctx->data[1] + ctx->data[0]`` with data[1] == 0 and
         data[0] == the buffer, and the chain runs until a command returns TRUE, because
         ``RunScriptCommand`` loops [script.c:107] and ``MEventScript_Run`` stops as soon as one
@@ -1116,7 +1117,7 @@ def test_stale_link_player_block_stops_without_restarting_the_child_transfer():
 
 # --- the visiting trainer ---------------------------------------------------------------------
 def _visiting_trainer():
-    from frlgsim import gift_registry
+    from pokeldn.frlg.gift import gift_registry
     return gift_registry.GIFT_REGISTRY.build_distribution("visiting-trainer")
 
 

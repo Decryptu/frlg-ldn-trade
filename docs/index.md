@@ -10,7 +10,7 @@ running on it. These pages are the working notes behind that: what the console d
 with the decompilation citations, the disassembly and the hardware runs behind each finding.
 
 The code, the install instructions and the CLI reference are in the
-[repository README](https://github.com/Decryptu/frlg-ldn-trade#readme).
+[repository README](https://github.com/Decryptu/pokeldn#readme).
 
 ## Two kinds of target
 

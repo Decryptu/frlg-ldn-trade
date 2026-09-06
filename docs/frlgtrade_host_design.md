@@ -152,7 +152,7 @@ cleanup; saving a received Pokémon is independent of capture logging.
 
 ## Trainer profile propagation
 
-`frlgsim.config.DEFAULT_TRAINER` supplies the shared default identity. All three CLIs may derive an
+`pokeldn.config.DEFAULT_TRAINER` supplies the shared default identity. All three CLIs may derive an
 immutable per-run `TrainerProfile` with `--ot`, `--version`, and decimal `--id TID[:SID]` overrides.
 The profile validates Gen III names and numeric ranges, then derives every protocol view:
 
@@ -214,17 +214,17 @@ game-level RFU policy; increasing the LDN participant limit alone is insufficien
 | Source | Responsibility |
 |---|---|
 | `bin/frlgtrade_host.py` | CLI parsing, configuration construction, application entry point |
-| `frlgsim/host_cli.py` | shared host identity, LDN, Pia, and lifecycle CLI options |
-| `frlgsim/host_app.py` | runtime lifecycle, event loop, output and cleanup |
-| `frlgsim/config.py` | shared trainer, trade-plan, Mystery Gift payload, LDN, role, and run configuration |
-| `frlgsim/trade_runtime.py` | shared CLI logging, party loading, slot parsing, and output saving |
-| `frlgsim/host_beacon.py` | captured trade beacon, discovery mutation, raw beacon injection |
-| `frlgsim/host_support.py` | OS-facing support such as sudo-aware key-path resolution |
-| `frlgsim/transport.py` | LDN host lifecycle, interfaces, participant events, UDP data plane |
-| `frlgsim/host_pia.py` | Pia framing and `HostPeerProtocol` |
-| `frlgsim/host_session.py` | Reliable → RFU leader → trade composition |
-| `frlgsim/reliable.py` | ordered/retransmitted application channel |
-| `frlgsim/rfu_leader.py` | parent RFU framing, NI/UNI handshake, echo table |
-| `frlgsim/host_trade.py` | leader trade-room state machine and timing |
-| `frlgsim/linkplayer.py` | LinkPlayer and trainer-card encoders |
-| `frlgsim/ldntrace.py` | optional JSONL diagnostics |
+| `pokeldn/host_cli.py` | shared host identity, LDN, Pia, and lifecycle CLI options |
+| `pokeldn/frlg/link/host_app.py` | runtime lifecycle, event loop, output and cleanup |
+| `pokeldn/config.py` | shared trainer, trade-plan, Mystery Gift payload, LDN, role, and run configuration |
+| `pokeldn/frlg/link/trade_runtime.py` | shared CLI logging, party loading, slot parsing, and output saving |
+| `pokeldn/ldn/host_beacon.py` | captured trade beacon, discovery mutation, raw beacon injection |
+| `pokeldn/host_support.py` | OS-facing support such as sudo-aware key-path resolution |
+| `pokeldn/ldn/transport.py` | LDN host lifecycle, interfaces, participant events, UDP data plane |
+| `pokeldn/ldn/host_pia.py` | Pia framing and `HostPeerProtocol` |
+| `pokeldn/frlg/link/host_session.py` | Reliable → RFU leader → trade composition |
+| `pokeldn/ldn/reliable.py` | ordered/retransmitted application channel |
+| `pokeldn/gba/rfu_leader.py` | parent RFU framing, NI/UNI handshake, echo table |
+| `pokeldn/frlg/link/host_trade.py` | leader trade-room state machine and timing |
+| `pokeldn/frlg/link/linkplayer.py` | LinkPlayer and trainer-card encoders |
+| `pokeldn/ldn/ldntrace.py` | optional JSONL diagnostics |

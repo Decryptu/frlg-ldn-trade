@@ -1,7 +1,7 @@
 """Deterministic child/parent simulation for RFU leader milestones 3.1-3.3."""
 
-from frlgsim import gbaframe, ni, rfu, rfu_leader
-from frlgsim.rfu_leader import CHILD_NI, PARENT_NI, UNI, RFULeader
+from pokeldn.gba import gbaframe, ni, rfu, rfu_leader
+from pokeldn.gba.rfu_leader import CHILD_NI, PARENT_NI, UNI, RFULeader
 
 
 def _child_t(slot, ts):

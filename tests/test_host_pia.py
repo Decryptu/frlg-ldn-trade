@@ -3,8 +3,8 @@
 from types import SimpleNamespace
 from unittest import mock
 
-from frlgsim import crypto, pia_connect, reliable
-from frlgsim.host_pia import (
+from pokeldn.ldn import crypto, pia_connect, reliable
+from pokeldn.ldn.host_pia import (
     HostPeerProtocol,
     PIA_HOST_VAR,
     PiaNonceSequence,
@@ -13,7 +13,7 @@ from frlgsim.host_pia import (
     decode_datagram,
     reliable_output_batches,
 )
-from frlgsim.reliable import FLAGSA_CTRL, FLAGSA_GBA, ReliableEmission
+from pokeldn.ldn.reliable import FLAGSA_CTRL, FLAGSA_GBA, ReliableEmission
 
 
 def _network():
@@ -32,7 +32,7 @@ def test_nonce_modes_increment_wrap_and_generate_random_bytes():
     assert native.take() == b"\xff" * 8
     assert native.take() == b"\x00" * 8
     assert native.take() == b"\x00" * 7 + b"\x01"
-    with mock.patch("frlgsim.host_pia.os.urandom", lambda size: b"R" * size):
+    with mock.patch("pokeldn.ldn.host_pia.os.urandom", lambda size: b"R" * size):
         random = PiaNonceSequence(native=False)
         assert random.take() == random.take() == b"R" * 8
 

@@ -8,10 +8,10 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import frlgtrade_host
-from frlgsim import config
-from frlgsim.config import DEFAULT_TRAINER
-from frlgsim import host_app
-from frlgsim.host_app import HostApplication
+from pokeldn import config
+from pokeldn.config import DEFAULT_TRAINER
+from pokeldn.frlg.link import host_app
+from pokeldn.frlg.link.host_app import HostApplication
 
 
 def _config(**changes):

@@ -10,7 +10,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import charmap, rom_map, scrcmd, scrcmd_names, special_names, thumb  # noqa: E402
+from pokeldn.frlg.rom import rom_map, scrcmd, scrcmd_names, special_names, thumb  # noqa: E402
+from pokeldn.frlg.text import charmap  # noqa: E402
 
 # ScrCmd_special and the literal pool immediately after it, as bs92 dumped it. The two words in the
 # pool ARE gSpecials and gSpecialsEnd: this is the run that located the table.

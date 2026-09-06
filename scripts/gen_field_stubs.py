@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Assemble every asm/field/*.s into frlgsim/field_stubs.py.
+"""Assemble every asm/field/*.s into pokeldn/frlg/rom/field_stubs.py.
 
 These are NOT buffer scripts and deliberately do not live in `asm/`, which
 scripts/gen_buffer_scripts.py globs: nothing here goes through CLI_RUN_BUFFER_SCRIPT. A field
 stub is THUMB code that a RAM script stages into EWRAM one byte at a time and reaches with
-`callnative`, so it runs in the overworld [frlgsim/native_script.py].
+`callnative`, so it runs in the overworld [pokeldn/frlg/rom/native_script.py].
 
 The committed bytes are the source of truth at run time, exactly as with the buffer payloads: a
 live host must not need a GBA toolchain. tests/test_native_script.py re-assembles and compares
@@ -27,7 +27,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ASM_DIR = ROOT / "asm" / "field"
-OUT = ROOT / "frlgsim" / "field_stubs.py"
+OUT = ROOT / "pokeldn" / "frlg" / "rom" / "field_stubs.py"
 
 AS = "arm-none-eabi-as"
 OBJCOPY = "arm-none-eabi-objcopy"

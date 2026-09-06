@@ -28,13 +28,14 @@ import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import beacon, mevent_pokemon, transport  # noqa: E402
-from frlgsim.host_beacon import (  # noqa: E402
+from pokeldn.frlg.save import mevent_pokemon  # noqa: E402
+from pokeldn.ldn import beacon, transport  # noqa: E402
+from pokeldn.ldn.host_beacon import (  # noqa: E402
     build_trade_app_data, build_union_room_app_data,
 )
-from frlgsim.config import DEFAULT_TRAINER  # noqa: E402
-from frlgsim import config, host_cli  # noqa: E402
-from frlgsim.host_app import HostApplication  # noqa: E402
+from pokeldn.config import DEFAULT_TRAINER  # noqa: E402
+from pokeldn import config, host_cli  # noqa: E402
+from pokeldn.frlg.link.host_app import HostApplication  # noqa: E402
 
 SESSION_ID = b"\x7b\xf1"
 
@@ -200,7 +201,7 @@ def test_host_app_advertises_the_chosen_in_room_activity():
 def _advertisements(union_room):
     """Drive the real HostApplication._build_components; return (pre-join app_data, the app_data
     handed to HostPeerProtocol for the post-join session update)."""
-    from frlgsim import host_app as host_app_module
+    from pokeldn.frlg.link import host_app as host_app_module
     seen = {}
     peer_args = []
 
@@ -262,7 +263,7 @@ def _record(app_data):
 
 def test_host_app_registers_the_offered_mon_on_the_board():
     """The offered slot (1) is the CHANSEY lv26 that _party_files builds."""
-    from frlgsim import host_app as host_app_module
+    from pokeldn.frlg.link import host_app as host_app_module
     seen = {}
 
     class FakeTransport:

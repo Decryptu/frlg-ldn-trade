@@ -12,7 +12,7 @@ beast battle. The host, binary exporter, and save injector all select this paylo
 Their only gift-specific controls are `--gift` and `--flag-id`; each named gift owns all of its
 card text, graphics, rewards, encounter parameters, and delivery-script behavior. The live event is
 authored with the composable delivery system; the older byte-exact builder remains available in
-`frlgsim.wonder_card` for compatibility checks.
+`pokeldn.frlg.gift.wonder_card` for compatibility checks.
 
 ## Live Switch distribution
 
@@ -46,7 +46,7 @@ The encounter is fixed at level 65. `--flag-id` uses the shared Wonder Card rang
 ## Export the paired `.bin` files
 
 ```bash
-./.venv/bin/python -m frlgsim.gift_to_bin \
+./.venv/bin/python -m pokeldn.frlg.gift.gift_to_bin \
   --gift beast-cutscene --flag-id 1005 \
   --out-dir exported-gift
 ```
@@ -59,7 +59,7 @@ padding expected by `pokemon-gen3-mysterygift-tool`. Use `--name NAME` to choose
 Always preserve an untouched backup. By default, the injector writes a new `<save>.gift.sav` file:
 
 ```bash
-./.venv/bin/python -m frlgsim.save_inject game.sav \
+./.venv/bin/python -m pokeldn.frlg.save.save_inject game.sav \
   --gift beast-cutscene --flag-id 1005
 ```
 

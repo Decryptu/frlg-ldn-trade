@@ -24,12 +24,16 @@ import signal
 import sys
 import time
 
-# This launcher lives in bin/; the frlgsim package is at the repo root beside it.
+# This launcher lives in bin/; the pokeldn package is at the repo root beside it.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from frlgsim import config as configmod, crypto as cryptomod, trade, sim as simmod  # noqa
-from frlgsim import transport as tmod, linkstate as lsmod  # noqa: E402
-from frlgsim import barrier as lsmod_barrier, pia_connect  # noqa: E402
-from frlgsim import trade_runtime as runtime  # noqa: E402
+from pokeldn import config as configmod  # noqa
+from pokeldn.frlg.link import sim as simmod, trade  # noqa
+from pokeldn.ldn import crypto as cryptomod  # noqa
+from pokeldn.frlg.link import linkstate as lsmod  # noqa: E402
+from pokeldn.ldn import transport as tmod  # noqa: E402
+from pokeldn.gba import barrier as lsmod_barrier  # noqa: E402
+from pokeldn.ldn import pia_connect  # noqa: E402
+from pokeldn.frlg.link import trade_runtime as runtime  # noqa: E402
 
 
 def make_engine(run_config, lg, *, default_anim_delay=None):
@@ -80,7 +84,7 @@ def _live_connect(run_config, lg):
     pc = cryptomod.PiaCrypto(t.ssid)
     engine = make_engine(run_config, lg)
     # The sim must not emit trade traffic or sit until the host confirms the Pia connection
-    # (Net 0x11->0x12, Session join) [frlgsim/pia_connect.py].
+    # (Net 0x11->0x12, Session join) [pokeldn/ldn/pia_connect.py].
     if not t.our_mac or not t.host_mac:
         lg(f"[live] WARNING: MAC(s) not resolved from the participant list "
               f"(us={t.our_mac and t.our_mac.hex()} host={t.host_mac and t.host_mac.hex()}); "

@@ -8,7 +8,9 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import battle_link as bl, battle_mon, charmap, mon as monmod, uroom_battle as ub  # noqa: E402
+from pokeldn.frlg.link import battle_link as bl, uroom_battle as ub  # noqa: E402
+from pokeldn.frlg.save import battle_mon, mon as monmod  # noqa: E402
+from pokeldn.frlg.text import charmap  # noqa: E402
 
 
 def _mon():
@@ -247,8 +249,9 @@ def test_replies_and_acks_from_the_console_owe_nothing():
 
 def _engine(**kw):
     """A HostTradeEngine parked at the Union Room's "do something" prompt, as the chat tests do."""
-    from frlgsim import rfu, trade
-    from frlgsim.host_trade import H_UROOM_PROMPT, HostTradeEngine
+    from pokeldn.frlg.link import trade
+    from pokeldn.gba import rfu
+    from pokeldn.frlg.link.host_trade import H_UROOM_PROMPT, HostTradeEngine
     kw.setdefault("union_room", True)
     kw.setdefault("union_room_battle", True)
     h = HostTradeEngine([_mon(), _mon()], **kw)
@@ -264,14 +267,14 @@ def _engine(**kw):
 
 
 def _packet_slot(*words):
-    from frlgsim import rfu
+    from pokeldn.gba import rfu
     slot = bytearray(rfu.serialize(rfu.send_packet_words(list(words))))
     slot[0] |= 0x60
     return bytes(slot)
 
 
 def _queued_packets(h):
-    from frlgsim import rfu
+    from pokeldn.gba import rfu
     return [w[1] for w in h._words if w[0] == rfu.SEND_PACKET]
 
 
@@ -281,7 +284,7 @@ def _sent(h):
 
 
 def test_a_battle_request_is_still_declined_unless_it_is_asked_for():
-    from frlgsim.host_trade import HostTradeEngine
+    from pokeldn.frlg.link.host_trade import HostTradeEngine
     h = _engine(union_room_battle=False)
     h.feed_child_slot(_packet_slot(0x41))
     assert _queued_packets(h) == [0x52] * HostTradeEngine.UR_PACKET_REPEAT
@@ -290,8 +293,8 @@ def test_a_battle_request_is_still_declined_unless_it_is_asked_for():
 def test_the_whole_entry_sequence_runs_block_for_block():
     """SEND_PACKET 0x41 -> accept -> the 0x20 selection block -> the 31-byte header -> three
     200-byte party blocks -> the controller loop."""
-    from frlgsim import trade
-    from frlgsim.host_trade import H_UROOM_BATTLE, H_UROOM_BATTLE_LINK, HostTradeEngine
+    from pokeldn.frlg.link import trade
+    from pokeldn.frlg.link.host_trade import H_UROOM_BATTLE, H_UROOM_BATTLE_LINK, HostTradeEngine
     h = _engine()
     h.feed_child_slot(_packet_slot(0x41))
     assert _queued_packets(h) == [0x51] * HostTradeEngine.UR_PACKET_REPEAT
@@ -317,7 +320,7 @@ def test_the_whole_entry_sequence_runs_block_for_block():
 
 
 def test_the_selection_block_saying_decline_takes_us_back_to_the_prompt():
-    from frlgsim.host_trade import H_UROOM_PROMPT
+    from pokeldn.frlg.link.host_trade import H_UROOM_PROMPT
     h = _engine()
     h.feed_child_slot(_packet_slot(0x41))
     h._blocks.clear()
@@ -326,7 +329,7 @@ def test_the_selection_block_saying_decline_takes_us_back_to_the_prompt():
 
 
 def _into_the_battle(**kw):
-    from frlgsim import trade
+    from pokeldn.frlg.link import trade
     h = _engine(**kw)
     h.feed_child_slot(_packet_slot(0x41))
     h._after_child_block(ub.COUNT_ACCEPT, ub.accept_block())
@@ -368,7 +371,8 @@ def test_a_short_link_record_is_not_mistaken_for_a_trade_linkcmd():
     bytes, i.e. trade.COUNT_LINKCMD, so _on_child_block routed every ack and every short command --
     including the very first GETMONDATA -- into the trade LINKCMD path and dropped it. Inside a
     battle the state decides, not the size."""
-    from frlgsim import block, trade
+    from pokeldn.frlg.link import trade
+    from pokeldn.gba import block
     h = _into_the_battle()
     cmd = bl.build(bl.BUFFER_A, bl.OUR_BATTLER, bytes([bl.GETMONDATA, bl.REQUEST_ALL_BATTLE, 0, 0]))
     assert len(cmd) == 16 and block.frag_count(len(cmd)) == trade.COUNT_LINKCMD
@@ -378,7 +382,7 @@ def test_a_short_link_record_is_not_mistaken_for_a_trade_linkcmd():
 
 
 def test_a_linkcmd_sized_block_is_still_a_linkcmd_outside_a_battle():
-    from frlgsim import trade
+    from pokeldn.frlg.link import trade
     h = _engine()
     h._on_child_block(trade.COUNT_LINKCMD, bytes(24))
     assert _sent(h) == []
@@ -454,7 +458,7 @@ def test_a_dropped_earlier_fragment_holds_the_ack_until_its_resend_is_echoed():
 def test_the_leader_keeps_one_echo_record_per_console_block():
     """SEND_BLOCK_INIT opens a record (repeated INITs with no fragment between are one block); each
     emitted SEND_BLOCK adds its index; drops add nothing."""
-    from frlgsim import rfu, rfu_leader
+    from pokeldn.gba import rfu, rfu_leader
     rec = rfu_leader.ChildEcho()
     init = (rfu.SEND_BLOCK_INIT).to_bytes(2, "little") + (3).to_bytes(2, "little") + bytes(10)
     frag = lambda i: (rfu.SEND_BLOCK | i).to_bytes(2, "little") + bytes(12)
@@ -468,7 +472,7 @@ def test_the_echo_never_drops_a_distinct_child_command():
     for one fragment back - it only sees that its mirrored bitmask is short. So a distinct command
     dropped from the relay costs a whole HandleSendFailure repair round (bs05 lost fragments 13, 16,
     17 and 18 of a 21-fragment chunk to a bound of two and never recovered)."""
-    from frlgsim import rfu, rfu_leader
+    from pokeldn.gba import rfu, rfu_leader
     echo = rfu_leader.ChildEcho()
     frags = [(rfu.SEND_BLOCK | i).to_bytes(2, "little") + bytes(12) for i in range(8)]
     for cmd in frags:                                 # a burst of eight, as one flush of its queue
@@ -481,7 +485,7 @@ def test_the_echo_folds_away_a_repeat_that_is_still_waiting():
     """SendLastBlock re-sends the same fragment every frame while it waits [link_rfu_2.c:1398], and
     mirroring each repeat is what put the row one behind by 0.5 s in lg122. One entry is enough: the
     console is waiting to see that command once."""
-    from frlgsim import rfu, rfu_leader
+    from pokeldn.gba import rfu, rfu_leader
     echo = rfu_leader.ChildEcho()
     last = (rfu.SEND_BLOCK | 20).to_bytes(2, "little") + bytes(12)
     for _ in range(30):

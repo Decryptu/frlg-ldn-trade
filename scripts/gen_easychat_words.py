@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate frlgsim/easychat_words.py from the pokefirered decomp.
+"""Regenerate pokeldn/frlg/text/easychat_words.py from the pokefirered decomp.
 
     ./scripts/gen_easychat_words.py [~/pokefirered]
 
@@ -71,7 +71,7 @@ def main(argv):
         text = fp.read()
     body, count = generate(text)
     target = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                          os.pardir, "frlgsim", "easychat_words.py")
+                          os.pardir, "pokeldn", "frlg", "text", "easychat_words.py")
     with open(os.path.normpath(target), "w") as fp:
         fp.write(body)
     print(f"wrote {count} easy-chat words to {os.path.normpath(target)}")

@@ -17,20 +17,22 @@ import sys
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# This launcher lives in bin/; the frlgsim package and vendor/ are at the repo root.
+# This launcher lives in bin/; the pokeldn package and vendor/ are at the repo root.
 sys.path.insert(0, PROJECT_ROOT)
 
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
-from frlgsim import (buffer_script, config as configmod, easychat, gift_artifact,  # noqa: E402
-                     gift_registry, host_cli, native_script, rom_map, trade_runtime,
-                     wonder_news)
-from frlgsim.host_mg_app import (  # noqa: E402
+from pokeldn import config as configmod, host_cli  # noqa: E402
+from pokeldn.frlg.gift import gift_artifact, gift_registry, wonder_news  # noqa: E402
+from pokeldn.frlg.link import trade_runtime  # noqa: E402
+from pokeldn.frlg.rom import buffer_script, native_script, rom_map  # noqa: E402
+from pokeldn.frlg.text import easychat  # noqa: E402
+from pokeldn.frlg.gift.host_mg_app import (  # noqa: E402
     BufferScriptHostApplication, MysteryGiftHostApplication, WonderNewsHostApplication)
-from frlgsim import wonder_card_events  # noqa: E402
-from frlgsim.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
+from pokeldn.frlg.gift import wonder_card_events  # noqa: E402
+from pokeldn.frlg.gift.wonder_card import GIFT_BEAST_CUTSCENE  # noqa: E402
 
 HOST_GIFT_CHOICES = gift_registry.GIFT_REGISTRY.live_choices
 

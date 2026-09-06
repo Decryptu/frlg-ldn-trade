@@ -2,7 +2,7 @@
 
 The payload is executed for real (unicorn, on a model of the GBA memory map) rather than asserted
 about, and the end-to-end tests run it through the same ConsoleClientModel the Mystery Event work
-used, whose client-script engine is written from the decomp independently of frlgsim.
+used, whose client-script engine is written from the decomp independently of pokeldn.
 """
 
 import os
@@ -14,12 +14,11 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import (  # noqa: E402
-    buffer_script, host_mystery_gift, mg_script, mg_server, rfu, rfu_leader, rom_map,
-    stamp_rally,
-)
-from frlgsim import config as configmod  # noqa: E402
-from frlgsim.buffer_payloads import PAYLOADS  # noqa: E402
+from pokeldn.frlg.gift import host_mystery_gift, mg_script, mg_server, stamp_rally  # noqa: E402
+from pokeldn.frlg.rom import buffer_script, rom_map  # noqa: E402
+from pokeldn.gba import rfu, rfu_leader  # noqa: E402
+from pokeldn import config as configmod  # noqa: E402
+from pokeldn.frlg.rom.buffer_payloads import PAYLOADS  # noqa: E402
 from test_mystery_gift_flow import CONSOLE_TRAINER_ID, ConsoleClientModel, _drive  # noqa: E402
 
 
@@ -216,7 +215,7 @@ def test_a_buffer_script_and_a_gift_are_mutually_exclusive_on_the_command_line()
 
 
 def test_the_live_application_for_a_buffer_script_is_the_buffer_script_one():
-    from frlgsim.host_mg_app import BufferScriptHostApplication, MysteryGiftHostApplication
+    from pokeldn.frlg.gift.host_mg_app import BufferScriptHostApplication, MysteryGiftHostApplication
 
     assert issubclass(BufferScriptHostApplication, MysteryGiftHostApplication)
     assert BufferScriptHostApplication.SUCCESS_RESULTS == (mg_server.SVR_MSG_GIFT_SENT_1,)
@@ -228,8 +227,9 @@ def test_the_identity_log_names_the_payload_and_the_expectation():
     it reaches for exists on a buffer script session, where there is no card and no flagId."""
     from types import SimpleNamespace
 
-    from frlgsim import config as configmod, linkplayer
-    from frlgsim.host_mg_app import BufferScriptHostApplication
+    from pokeldn import config as configmod
+    from pokeldn.frlg.link import linkplayer
+    from pokeldn.frlg.gift.host_mg_app import BufferScriptHostApplication
 
     lines = []
     payload = configmod.BufferScriptPayload()
@@ -256,7 +256,7 @@ def test_the_success_message_reads_the_status_off_the_running_engine():
     is the session's activity; the application has never had an `engine` attribute."""
     from types import SimpleNamespace
 
-    from frlgsim.host_mg_app import BufferScriptHostApplication
+    from pokeldn.frlg.gift.host_mg_app import BufferScriptHostApplication
 
     app = SimpleNamespace(
         session=SimpleNamespace(activity=SimpleNamespace(
@@ -275,7 +275,7 @@ def test_a_newline_becomes_the_games_line_break():
     """bs01 printed 'ly. code ran and read yourTRAINER IDc' on the console: charmap.encode drops
     every character it does not know, newline included, so the two lines went out as one 47-
     character line and wrapped around inside window 1."""
-    from frlgsim import charmap
+    from pokeldn.frlg.text import charmap
 
     encoded = mg_server._encode_message("first line\nsecond line", None)
 
@@ -298,7 +298,7 @@ def test_more_lines_than_the_window_holds_are_refused_offline():
 
 
 def test_every_default_message_fits_the_window():
-    from frlgsim import charmap
+    from pokeldn.frlg.text import charmap
 
     for message in (mg_server.DEFAULT_BUFFER_SUCCESS_MESSAGE,
                     mg_server.DEFAULT_BUFFER_FAILURE_MESSAGE,
@@ -331,7 +331,8 @@ def test_the_trainer_id_probe_reports_the_secret_id():
 
 
 def _game_data_with_trainer_id(trainer_id):
-    from frlgsim import charmap, mystery_gift as mg
+    from pokeldn.frlg.gift import mystery_gift as mg
+    from pokeldn.frlg.text import charmap
     data = bytearray(mg_script.GAME_DATA_SIZE)
     data[0x00:0x04] = mg.GAME_DATA_VALID_VAR.to_bytes(4, "little")
     data[0x10:0x14] = mg.VERSION_CODE_FIRERED.to_bytes(4, "little")
@@ -515,7 +516,7 @@ def test_a_dump_is_written_to_a_file(tmp_path):
     that is not kept has spent a console run for a head line."""
     from types import SimpleNamespace
 
-    from frlgsim.host_mg_app import BufferScriptHostApplication
+    from pokeldn.frlg.gift.host_mg_app import BufferScriptHostApplication
 
     path = tmp_path / "bs04_dump.bin"
     dump = bytes(range(256))
@@ -533,7 +534,7 @@ def test_a_dump_is_written_to_a_file(tmp_path):
 def test_no_dump_file_and_no_dump_are_both_harmless(tmp_path):
     from types import SimpleNamespace
 
-    from frlgsim.host_mg_app import BufferScriptHostApplication
+    from pokeldn.frlg.gift.host_mg_app import BufferScriptHostApplication
 
     for server, payload in (
             (SimpleNamespace(buffer_dump=b"\x01"), SimpleNamespace(dump_file=None)),
@@ -1310,7 +1311,7 @@ WORD_INFO_STRIDE = 12           # struct EasyChatWordInfo [decomp:include/easy_c
 
 def _word_info_fixture(words=GATHER_WORDS, text=GATHER_TEXT, array=GATHER_ARRAY):
     """A real struct EasyChatWordInfo array - text, alphabeticalOrder, enabled - and its strings."""
-    from frlgsim import charmap
+    from pokeldn.frlg.text import charmap
     blob, array_bytes = bytearray(), bytearray()
     for index, word in enumerate(words):
         array_bytes += (text + len(blob)).to_bytes(4, "little")
@@ -1336,7 +1337,7 @@ def test_the_gather_operands_are_where_we_patch_them():
 
 @needs_unicorn
 def test_the_gather_follows_the_pointers_and_sends_back_the_strings():
-    from frlgsim import charmap
+    from pokeldn.frlg.text import charmap
     memory = _word_info_fixture()
 
     run, gathered = _gathered(
@@ -1356,7 +1357,7 @@ def test_the_gather_stops_before_a_word_it_cannot_fit_whole_and_resumes_exactly(
     """A half-copied word would be indistinguishable from a French word that really is that
     short, which is the kind of silent wrong this project keeps paying for. So a string that does
     not fit ends the run BEFORE it, and `next` is where the following run starts."""
-    from frlgsim import charmap
+    from pokeldn.frlg.text import charmap
     memory = _word_info_fixture()
     fits = len(charmap.encode(GATHER_WORDS[0])) + 1 + len(charmap.encode(GATHER_WORDS[1])) + 1
 
@@ -1448,7 +1449,8 @@ def _valid_mon(species=151, level=30, ivs=31, personality=0x3ADE0000, ot_id=CONS
     Not a model of CreateMon - a fixture. What it is for is the DECODE: a mon that travels the
     whole path proves that what comes off the console can be read as one.
     """
-    from frlgsim import charmap, mon as monlib, stats
+    from pokeldn.frlg.save import mon as monlib, stats
+    from pokeldn.frlg.text import charmap
     canon = bytearray(monlib.PARTY_MON_SIZE)
     canon[0:4] = personality.to_bytes(4, "little")
     canon[4:8] = ot_id.to_bytes(4, "little")

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate frlgsim/easychat_values.py from the decompilation.
+"""Regenerate pokeldn/frlg/text/easychat_values.py from the decompilation.
 
 The four groups that print from gSpeciesNames / gMoveNames index by species number and move id, so
 they are the only Easy Chat words that are the same word in every language. IsECWordInvalid checks
@@ -13,7 +13,7 @@ import re
 import sys
 
 DECOMP = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else "~/pokefirered").expanduser()
-OUT = pathlib.Path(__file__).resolve().parent.parent / "frlgsim" / "easychat_values.py"
+OUT = pathlib.Path(__file__).resolve().parent.parent / "pokeldn" / "frlg" / "text" / "easychat_values.py"
 
 GROUPS = (
     ("POKEMON_VALUES", "easy_chat_group_pokemon.h", "SPECIES_", "include/constants/species.h"),

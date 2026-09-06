@@ -10,7 +10,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import buffer_script, scrcmd, symbol_names  # noqa: E402
+from pokeldn.frlg.rom import buffer_script, scrcmd, symbol_names  # noqa: E402
 from tests.test_script_cmd_table import TRAINER_BATTLE_BASE, TRAINER_BATTLE_BYTES  # noqa: E402
 
 # gStdScripts as bs97 read it off the console, ten pointers [decomp:data/event_scripts.s].

@@ -3,7 +3,7 @@ import os
 import tempfile
 from types import SimpleNamespace
 
-from frlgsim import ldntrace, transport
+from pokeldn.ldn import ldntrace, transport
 
 
 _IW_NO_AP = """Wiphy phy0

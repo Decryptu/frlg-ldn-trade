@@ -12,11 +12,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pytest  # noqa: E402
 
-from frlgsim import (  # noqa: E402
-    charmap, easychat, ereader_trainer, gift_composer, gift_registry, mg_script, mg_server,
-    wonder_card_events,
-)
-from frlgsim.ereader_trainer import (  # noqa: E402
+from pokeldn.frlg.gift import ereader_trainer, gift_composer, gift_registry, mg_script, mg_server, wonder_card_events  # noqa: E402
+from pokeldn.frlg.text import charmap, easychat  # noqa: E402
+from pokeldn.frlg.gift.ereader_trainer import (  # noqa: E402
     EReaderTrainerError, TrainerMon, VisitingTrainer,
 )
 
@@ -234,7 +232,8 @@ def test_the_client_scripts_end_on_the_trainer_message():
 
 
 def test_the_host_engine_takes_the_trainer_from_the_distribution():
-    from frlgsim import host_mystery_gift, linkplayer
+    from pokeldn.frlg.gift import host_mystery_gift
+    from pokeldn.frlg.link import linkplayer
     distribution = gift_registry.GIFT_REGISTRY.build_distribution("visiting-trainer")
     engine = host_mystery_gift.HostMysteryGiftEngine(
         distribution=distribution,

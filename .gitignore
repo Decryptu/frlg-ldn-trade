@@ -1,14 +1,14 @@
 # Ignore every top-level folder, then allow back the published ones. This keeps
 # scratchpad/, .venv/, captures and notes out of the repository by default.
 /*/
-!/frlgsim/
+!/pokeldn/
 !/bin/
 !/tests/
 !/tools/
 !/docs/
 !/scripts/
 # ARM sources for CLI_RUN_BUFFER_SCRIPT payloads; the assembled bytes are committed in
-# frlgsim/buffer_payloads.py and these are what they must still assemble to.
+# pokeldn/frlg/rom/buffer_payloads.py and these are what they must still assemble to.
 !/asm/
 !/config/
 !/config/host.toml
@@ -20,7 +20,7 @@
 !/vendor/**
 
 # Never publish Pokemon data files (live-trade outputs can carry trainer/account
-# identifiers); covers any stray .pk3/.ek3 at the root or inside frlgsim/ too.
+# identifiers); covers any stray .pk3/.ek3 at the root or inside pokeldn/ too.
 *.pk3
 *.ek3
 
@@ -30,7 +30,7 @@ prod.keys
 *.keys
 .switch/
 
-# Python bytecode (applies inside frlgsim/ as well)
+# Python bytecode (applies inside pokeldn/ as well)
 __pycache__/
 *.pyc
 
@@ -50,9 +50,9 @@ logs/
 LDN/
 
 # Saves and ROM for testing wonder cards on emulation.
-frlgsim/POKEMON_FIRE_BPRE01.gba
-frlgsim/POKEMON_FIRE_BPRE01.sav.gift.sav
-frlgsim/POKEMON_FIRE_BPRE01.sav
+pokeldn/POKEMON_FIRE_BPRE01.gba
+pokeldn/POKEMON_FIRE_BPRE01.sav.gift.sav
+pokeldn/POKEMON_FIRE_BPRE01.sav
 
 # Untracked working notes.
 CLAUDE.md

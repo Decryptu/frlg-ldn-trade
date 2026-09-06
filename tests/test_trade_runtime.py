@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from frlgsim.trade_runtime import parse_slots, received_paths
+from pokeldn.frlg.link.trade_runtime import parse_slots, received_paths
 
 
 def test_parse_slots_accepts_empty_and_valid_lists():

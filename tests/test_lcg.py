@@ -8,7 +8,7 @@ import random
 
 import pytest
 
-from frlgsim import buffer_script, lcg
+from pokeldn.frlg.rom import buffer_script, lcg
 
 
 def test_constants_agree_with_the_payload_builder():
@@ -208,7 +208,7 @@ def test_the_scripted_battle_recovers_to_the_seed_we_actually_wrote():
     """mev07's Ditto is the only one whose state was not inferred but CHOSEN: the field script wrote
     it four commands earlier. It recovers to exactly that, with both gaps zero - so the scripted
     generation is plain Method 1, with none of the stray draws the walked encounters showed."""
-    from frlgsim import wonder_card_events
+    from pokeldn.frlg.gift import wonder_card_events
     personality, ivs, state, gap, iv_gap = CONSOLE_MONS["bs53 Ditto"]
     assert state == wonder_card_events.RNG_DITTO_SEED
     assert (gap, iv_gap) == (0, 0)

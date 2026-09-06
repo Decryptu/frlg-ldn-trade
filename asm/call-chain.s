@@ -70,7 +70,7 @@
 @
 @ THE RISK IS THE CALLEE'S, AS IT IS IN call.s: an address that has not been read as code first
 @ has no business here, a function that never returns hangs the Mystery Gift menu with no way
-@ out, and a WRITE step writes the player's live save. The builder in frlgsim/buffer_script.py
+@ out, and a WRITE step writes the player's live save. The builder in pokeldn/frlg/rom/buffer_script.py
 @ refuses a call outside the cartridge and refuses any write at all without an explicit override.
 
     .arm

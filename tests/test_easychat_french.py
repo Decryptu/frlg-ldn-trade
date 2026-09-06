@@ -19,8 +19,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import easychat, easychat_french             # noqa: E402
-from frlgsim.easychat import WORDS                        # noqa: E402
+from pokeldn.frlg.text import easychat, easychat_french  # noqa: E402
+from pokeldn.frlg.text.easychat import WORDS                        # noqa: E402
 
 
 def test_the_rom_table_agrees_with_every_word_read_off_the_console_screen():
@@ -50,7 +50,7 @@ def test_the_two_feelings_words_the_console_rendered_are_in_the_table_it_was_rea
 def test_a_group_read_off_the_console_is_read_whole():
     """A gather run that stopped on its budget leaves a group half known, and a half-known group
     is the one thing that would make `check` lie: it would pass a slot nobody has read."""
-    from frlgsim import easychat_french_words as table
+    from pokeldn.frlg.text import easychat_french_words as table
     for group, (tag, _address, words) in table.GROUPS.items():
         indices = sorted(words)
         assert indices == list(range(len(indices))), \

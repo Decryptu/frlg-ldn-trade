@@ -6,10 +6,10 @@ nav_order: 2
 
 # Composable Mystery Gift Authoring
 
-`frlgsim.gift_composer` builds Wonder Cards and deliveryman scripts from immutable Python
+`pokeldn.frlg.gift.gift_composer` builds Wonder Cards and deliveryman scripts from immutable Python
 definitions. The live `beast-cutscene`, `celebi`, `porygon-tm-gift`, and Sun/Moon Stamp Rally
 entries are registered as composed gifts. The byte-exact legacy Celebi and legendary-beast builders
-remain in `frlgsim.wonder_card` for compatibility tests and older callers.
+remain in `pokeldn.frlg.gift.wonder_card` for compatibility tests and older callers.
 
 ## One top-level gift type
 
@@ -54,7 +54,7 @@ The compiler rejects stages in an unsupported section instead of silently ignori
 An ordinary gift selects `GiftSpec` and puts its stages in the shared middle:
 
 ```python
-from frlgsim.gift_composer import (
+from pokeldn.frlg.gift.gift_composer import (
     AnyOf, BattleLegendary, DeliveryPlan, DeliveryStage, GiftSpec, GiveItem,
     Message, Not, RelativeToPlayer, ShowSprite, VarEquals, WonderCardSpec,
     WonderGift,
@@ -67,7 +67,7 @@ MEWTWO_GIFT = WonderGift(
         title="MYSTERIOUS ENCOUNTER",
         subtitle="A powerful presence",
         body=("Visit the deliveryman.",),
-        footer1="frlg-ldn-trade",
+        footer1="pokeldn",
         default_flag_id=1008,
     ),
     intro_message="A powerful presence is waiting!",
@@ -173,7 +173,7 @@ This differs from `condition=...`: a false `condition` skips the stage and still
 A rally wraps the shared middle with slot-specific and completion-specific hooks:
 
 ```python
-from frlgsim.gift_composer import (
+from pokeldn.frlg.gift.gift_composer import (
     BattlePokemon, DeliveryPlan, DeliveryStage, GivePokemon, Message,
     RelativeToPlayer, ShowSprite, StampRallySpec, StampSlot,
     WonderCardSpec, WonderGift,
@@ -277,7 +277,7 @@ gated by `RequireSpecialResult(...)`.
 Register a `WonderGift` with the shared catalog:
 
 ```python
-from frlgsim.gift_registry import GIFT_REGISTRY
+from pokeldn.frlg.gift.gift_registry import GIFT_REGISTRY
 
 GIFT_REGISTRY.register_definition(MEWTWO_GIFT)
 GIFT_REGISTRY.register_definition(RALLY)

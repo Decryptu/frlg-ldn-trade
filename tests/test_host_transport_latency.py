@@ -6,7 +6,7 @@ from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import transport
+from pokeldn.ldn import transport
 
 
 def _host_with_rx(rx):

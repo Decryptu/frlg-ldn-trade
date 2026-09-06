@@ -17,22 +17,16 @@ sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 import frlgmg_host  # noqa: E402
 import frlgtrade_host  # noqa: E402
-from frlgsim import (  # noqa: E402
-    buffer_script,
-    config as configmod,
-    gift_registry,
-    host_cli,
-    linkplayer,
-    mon,
-    mystery_gift,
-    wonder_card,
-    wonder_card_events as event,
-)
-from frlgsim.gift_composer import (  # noqa: E402
+from pokeldn import config as configmod, host_cli  # noqa: E402
+from pokeldn.frlg.gift import gift_registry, mystery_gift, wonder_card, wonder_card_events as event  # noqa: E402
+from pokeldn.frlg.link import linkplayer  # noqa: E402
+from pokeldn.frlg.rom import buffer_script  # noqa: E402
+from pokeldn.frlg.save import mon  # noqa: E402
+from pokeldn.frlg.gift.gift_composer import (  # noqa: E402
     GET_CARD_BATTLES_WON, SPECIAL_GET_MYSTERY_GIFT_CARD_STAT, VAR_MYSTERY_GIFT_1,
     compile_definition,
 )
-from frlgsim.scrcmd import VAR_0x8008, VAR_RESULT  # noqa: E402
+from pokeldn.frlg.rom.scrcmd import VAR_0x8008, VAR_RESULT  # noqa: E402
 from test_gift_composer import ScriptVM  # noqa: E402
 
 
@@ -57,7 +51,7 @@ def test_the_card_declares_the_type_that_makes_the_counters_move():
     card = compile_definition(event.BATTLE_COUNT_GIFT).card
     assert card[8] & 0x3 == mystery_gift.CARD_TYPE_LINK_STAT == 2
 
-    from frlgsim.gift_composer import GiftValidationError
+    from pokeldn.frlg.gift.gift_composer import GiftValidationError
     import dataclasses
     stamped = dataclasses.replace(event.BATTLE_COUNT_GIFT.card, card_type=mystery_gift.CARD_TYPE_STAMP)
     try:
@@ -129,7 +123,7 @@ def test_the_trade_host_sends_the_flag_id_it_was_given():
     profile, _, _ = host_cli.build_host_config(parser, args)
     assert profile.card_flag_id == 1005
 
-    from frlgsim.host_trade import HostTradeEngine
+    from pokeldn.frlg.link.host_trade import HostTradeEngine
     party = [mon.Mon(b"\x01" + b"\x00" * 99)]
     engine = HostTradeEngine(party, profile=profile)
     assert engine.card_flag_id == 1005

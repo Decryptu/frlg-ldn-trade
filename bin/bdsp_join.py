@@ -23,8 +23,8 @@ if os.path.isdir(BUNDLED_LDN):
 
 import trio
 import ldn
-from frlgsim.transport import find_ap_phy
-from frlgsim.host_support import resolve_keys
+from pokeldn.ldn.transport import find_ap_phy
+from pokeldn.host_support import resolve_keys
 
 STALE_VIFS = ["ldn", "ldn-mon", "ldn-tap", "ldnclient"]
 

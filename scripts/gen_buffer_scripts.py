@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assemble every asm/*.s into frlgsim/buffer_payloads.py.
+"""Assemble every asm/*.s into pokeldn/frlg/rom/buffer_payloads.py.
 
 The payloads are ARM machine code the console executes through CLI_RUN_BUFFER_SCRIPT, so the
 bytes are committed rather than assembled at run time: a live host must not need a GBA
@@ -18,7 +18,7 @@ import tempfile
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 ASM_DIR = ROOT / "asm"
-OUT = ROOT / "frlgsim" / "buffer_payloads.py"
+OUT = ROOT / "pokeldn" / "frlg" / "rom" / "buffer_payloads.py"
 
 AS = "arm-none-eabi-as"
 OBJCOPY = "arm-none-eabi-objcopy"

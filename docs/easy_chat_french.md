@@ -7,13 +7,13 @@ nav_order: 3
 # The French Easy Chat vocabulary, read off the console
 
 **Status: CLOSED.** All 1006 language-dependent Easy Chat words are read out of the console's own
-ROM (bs16-bs36, eighteen hardware runs, every one first try). `frlgsim/easychat_french_words.py`
+ROM (bs16-bs36, eighteen hardware runs, every one first try). `pokeldn/frlg/text/easychat_french_words.py`
 is the table; `easychat_french.french(id)` answers from it. Composing a phrase for a French
 console is no longer a guess.
 
 ## What the problem was
 
-An Easy Chat id is `(group << 9) | index` - a **slot**, not a word. `frlgsim/easychat_words.py` is
+An Easy Chat id is `(group << 9) | index` - a **slot**, not a word. `pokeldn/frlg/text/easychat_words.py` is
 generated from the English decompilation, so it names what the ENGLISH ROM keeps in that slot.
 Every localized ROM carries its own `gEasyChatGroup_*` tables, and nothing in the decomp can say
 what the French one holds. Every phrase this project ever composed for a French console - mail, the
@@ -90,7 +90,7 @@ There is no shortcut and no way to tell by looking at an id. Use the table.
 ## Using it
 
 ```python
-from frlgsim import easychat, easychat_french
+from pokeldn import easychat, easychat_french
 easychat_french.french(easychat.WORDS["enjoy"])     # 'STRESSE', not 'enjoy'
 easychat_french.render(ids)                          # the line as the console will print it
 easychat_french.check(ids, strict=True)              # raises on anything unread

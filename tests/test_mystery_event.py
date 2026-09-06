@@ -2,7 +2,7 @@
 and the return channel it opens back from the console.
 
 The end-to-end tests drive the ConsoleClientModel from tests/test_mystery_gift_flow.py, whose
-Mystery Event interpreter is written from the decomp rather than from ``frlgsim.mystery_event``, so
+Mystery Event interpreter is written from the decomp rather than from ``pokeldn.frlg.rom.mystery_event``, so
 agreement between the two is evidence and not a tautology.
 """
 
@@ -13,10 +13,8 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import (  # noqa: E402
-    ereader_trainer, gift_registry, host_mystery_gift, mg_script, mg_server, mystery_event,
-    stamp_rally, wonder_card_events, wonder_news,
-)
+from pokeldn.frlg.gift import ereader_trainer, gift_registry, host_mystery_gift, mg_script, mg_server, stamp_rally, wonder_card_events, wonder_news  # noqa: E402
+from pokeldn.frlg.rom import mystery_event  # noqa: E402
 from test_mystery_gift_flow import ConsoleClientModel, _drive  # noqa: E402
 
 
@@ -266,7 +264,8 @@ def test_end_to_end_a_console_holding_another_card_is_asked_before_anything_runs
 # --- the questionnaire gate ------------------------------------------------------------------
 
 def _game_data(*, flag_id=0, questionnaire=(), profile=(), battles_won=0, trades=0):
-    from frlgsim import easychat, mystery_gift as mg
+    from pokeldn.frlg.gift import mystery_gift as mg
+    from pokeldn.frlg.text import easychat
     raw = bytearray(mg_script.GAME_DATA_SIZE)
     raw[0:4] = mg.GAME_DATA_VALID_VAR.to_bytes(4, "little")
     raw[4] = raw[8] = raw[0x0C] = raw[0x10] = 1
@@ -290,7 +289,7 @@ def _run_server(server, game_data):
         if action[0] == "send":
             server.on_sent()
         elif action[0] == "recv":
-            from frlgsim import mystery_gift as mg
+            from pokeldn.frlg.gift import mystery_gift as mg
             if action[1] == mg.MG_LINKID_GAME_DATA:
                 server.on_received(action[1], game_data)
             else:
@@ -299,7 +298,7 @@ def _run_server(server, game_data):
 
 
 def test_the_gate_declines_a_console_that_typed_the_wrong_phrase():
-    from frlgsim import easychat
+    from pokeldn.frlg.text import easychat
     card, ram_script = _probe_card()
     phrase = easychat.resolve_words(("hello", "friend", "thank_you", "trade"), 4)
     server = mg_server.MysteryGiftServer(
@@ -312,7 +311,7 @@ def test_the_gate_declines_a_console_that_typed_the_wrong_phrase():
 
 
 def test_the_gate_lets_the_right_phrase_through_to_the_gift():
-    from frlgsim import easychat
+    from pokeldn.frlg.text import easychat
     card, ram_script = _probe_card()
     phrase = easychat.resolve_words(("hello", "friend", "thank_you", "trade"), 4)
     server = mg_server.MysteryGiftServer(card, ram_script, questionnaire=phrase)
@@ -326,7 +325,7 @@ def test_the_gate_lets_the_right_phrase_through_to_the_gift():
 def test_the_gate_compares_all_four_words_in_order():
     """MysteryGift_DoesQuestionnaireMatch returns FALSE on the first mismatch, in order
     [decomp:src/mystery_gift.c:422] - a reordered phrase is a different phrase."""
-    from frlgsim import easychat
+    from pokeldn.frlg.text import easychat
     card, ram_script = _probe_card()
     phrase = easychat.resolve_words(("hello", "friend", "thank_you", "trade"), 4)
     server = mg_server.MysteryGiftServer(card, ram_script, questionnaire=phrase)
@@ -346,7 +345,7 @@ def test_a_refusal_message_longer_than_the_console_copies_is_refused():
     """Two bounds, and the tighter one bites first: a line wider than the message window wraps
     around inside it (bs01), well before 64 bytes is reached. Pre-encoded bytes skip the line
     check and still have to fit what CLI_COPY_MSG copies."""
-    from frlgsim import easychat
+    from pokeldn.frlg.text import easychat
     card, ram_script = _probe_card()
     with pytest.raises(mg_server.MysteryGiftServerError, match="wraps around"):
         mg_server.MysteryGiftServer(
@@ -434,7 +433,7 @@ def test_species_and_move_words_are_built_from_ids_not_from_the_english_table():
     """mev03: the player typed AKWAKWAK and the console stored POKEMON/55 (SPECIES_GOLDUCK); they
     typed AEROBLAST and it stored MOVE_1/177 (MOVE_AEROBLAST). Our constructors must produce
     exactly those ids."""
-    from frlgsim import easychat
+    from pokeldn.frlg.text import easychat
     assert easychat.species_word(55) == 0x2A37
     assert easychat.move_word(177) == 0x24B1
     assert easychat.is_language_safe(0x2A37)
@@ -444,7 +443,7 @@ def test_species_and_move_words_are_built_from_ids_not_from_the_english_table():
 
 def test_an_illegal_species_or_move_is_refused():
     """IsECWordInvalid checks the group's value list, not a count [decomp:src/easy_chat.c:129]."""
-    from frlgsim import easychat, easychat_values
+    from pokeldn.frlg.text import easychat, easychat_values
     missing = next(i for i in range(1, 412) if i not in easychat_values.POKEMON_VALUES)
     with pytest.raises(ValueError, match="value list"):
         easychat.species_word(missing)
@@ -456,7 +455,7 @@ def test_the_french_check_passes_language_safe_words_and_flags_guesses():
     """All 1006 language-dependent slots have been read out of the console's own
     sEasyChatGroup_* tables (bs18-bs36), so `check` flags no real word: what it still catches is
     an id that is not a word at all."""
-    from frlgsim import easychat, easychat_french
+    from pokeldn.frlg.text import easychat, easychat_french
     assert easychat_french.check([easychat.species_word(55)]) == ()
     assert easychat_french.check([easychat.WORDS["hello"]]) == ()          # observed on hardware
     assert easychat_french.check([easychat.WORDS["trade"]]) == ()          # bs20: ECHANGER
@@ -474,7 +473,7 @@ def test_the_phrase_read_off_the_console_gates_a_gift():
     """Every session logs the console's four questionnaire ids; they are the key the gate compares
     against. CONSOLE_QUESTIONNAIRE is whatever the console currently holds - the default phrase since
     bs07 - so this test follows the console rather than pinning a phrase."""
-    from frlgsim import easychat_french
+    from pokeldn.frlg.text import easychat_french
     card, ram_script = _probe_card()
     server = mg_server.MysteryGiftServer(
         card, ram_script, questionnaire=easychat_french.CONSOLE_QUESTIONNAIRE)
@@ -493,7 +492,7 @@ def test_the_phrase_read_off_the_console_gates_a_gift():
 def test_the_cli_parses_a_phrase_in_every_form_it_accepts():
     """Every accepted spelling of the custom phrase mev04/mev06 gated on, plus the default the
     console holds now (bs07), which is four plain group/index slots."""
-    from frlgsim import easychat, easychat_french
+    from pokeldn.frlg.text import easychat, easychat_french
     import frlgmg_host
     assert easychat.parse_phrase("species:55,FEELINGS/60,move:177,why") \
         == easychat_french.CONSOLE_QUESTIONNAIRE_CUSTOM
@@ -513,7 +512,7 @@ def test_the_cli_parses_a_phrase_in_every_form_it_accepts():
 
 
 def test_a_phrase_with_the_wrong_number_of_words_is_refused_at_the_cli():
-    from frlgsim import easychat
+    from pokeldn.frlg.text import easychat
     with pytest.raises(ValueError, match="exactly 4 words"):
         easychat.parse_phrase("hello,friend")
 

@@ -10,15 +10,17 @@ import sys
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# This launcher lives in bin/; the frlgsim package and vendor/ are at the repo root.
+# This launcher lives in bin/; the pokeldn package and vendor/ are at the repo root.
 sys.path.insert(0, PROJECT_ROOT)
 
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
-from frlgsim import beacon as beaconmod, config as configmod, host_cli, trade_runtime  # noqa: E402
-from frlgsim.host_app import HostApplication  # noqa: E402
+from pokeldn import config as configmod, host_cli  # noqa: E402
+from pokeldn.frlg.link import trade_runtime  # noqa: E402
+from pokeldn.ldn import beacon as beaconmod  # noqa: E402
+from pokeldn.frlg.link.host_app import HostApplication  # noqa: E402
 
 
 def build_parser(file_config=None, *, shared_path=None, local_path=None):

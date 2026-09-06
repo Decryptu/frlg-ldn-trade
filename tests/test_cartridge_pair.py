@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "tools"))
 
-from frlgsim import leafgreen_twins, rom_map                                    # noqa: E402
+from pokeldn.frlg.rom import leafgreen_twins, rom_map  # noqa: E402
 from cartridge_pair import (boundaries, candidate_pairs, paired_calls,          # noqa: E402
                             paired_literals, segments)
 

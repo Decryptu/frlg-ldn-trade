@@ -13,11 +13,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import joyspot_probe
-from frlgsim import beacon, charmap, transport
-from frlgsim.host_beacon import CAPTURED_TRADE_BEACON
-from frlgsim.config import DEFAULT_TRAINER, TrainerProfile
-from frlgsim.joyspot_probe import JoySpotProbeApplication, JoySpotProbeConfig
-from frlgsim.joyspot_discovery import (
+from pokeldn.frlg.text import charmap
+from pokeldn.ldn import beacon, transport
+from pokeldn.ldn.host_beacon import CAPTURED_TRADE_BEACON
+from pokeldn.config import DEFAULT_TRAINER, TrainerProfile
+from pokeldn.ldn.joyspot_probe import JoySpotProbeApplication, JoySpotProbeConfig
+from pokeldn.ldn.joyspot_discovery import (
     JOYSPOT_CANDIDATES,
     JOYSPOT_LOCAL_COMMUNICATION_ID,
     JOYSPOT_MAX_PARTICIPANTS,

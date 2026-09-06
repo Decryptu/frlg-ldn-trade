@@ -150,7 +150,7 @@ Two limits worth recording:
 or not anything reads them [`src/mystery_gift.c:361`].
 
 `--game-data-log PATH` on `bin/frlgmg_host.py` appends one record per session to a jsonl ledger
-(`frlgsim/game_data_log.py`), and the host prints what moved since the last session of that same
+(`pokeldn/frlg/gift/game_data_log.py`), and the host prints what moved since the last session of that same
 console. `tools/game_data_read.py PATH` reads the ledger back; `--session N` re-parses one session's
 raw bytes, so a question asked later costs no run.
 

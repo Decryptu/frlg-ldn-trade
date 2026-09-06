@@ -7,8 +7,10 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from frlgsim import mon, rfu, trade  # noqa: E402
-from frlgsim.host_trade import H_ENTRY_CARD, H_UROOM_PROMPT, HostTradeEngine  # noqa: E402
+from pokeldn.frlg.link import trade  # noqa: E402
+from pokeldn.frlg.save import mon  # noqa: E402
+from pokeldn.gba import rfu  # noqa: E402
+from pokeldn.frlg.link.host_trade import H_ENTRY_CARD, H_UROOM_PROMPT, HostTradeEngine  # noqa: E402
 
 
 def _mon(marker):
@@ -105,7 +107,7 @@ def test_packets_are_ignored_outside_the_union_room():
 def test_exit_at_the_prompt_answers_the_close_link_handshake():
     """u10: after Retour the console sent READY_CLOSE_LINK and waited; WaitAllReadyToCloseLink
     [link_rfu_2.c:1471] needs the parent's READY_CLOSE_LINK before the child disconnects itself."""
-    from frlgsim.host_trade import H_CLOSE
+    from pokeldn.frlg.link.host_trade import H_CLOSE
     h = _engine()
     h._after_child_block(trade.COUNT_TRAINER_CARD, bytes(100))
     h.feed_child_slot(_packet_slot(0x40))
@@ -127,7 +129,7 @@ def test_trading_board_request_runs_mon_mail_animation_save_and_close():
     console sends its Pokemon (100 B) and mail (220 B) blocks with no request, then CB2_LinkTrade
     with the mons preselected, whose READY_FINISH / CONFIRM_FINISH and save barriers are the
     trade-centre ones; the room then closes the link [trade_scene.c:2722]. Proven u12."""
-    from frlgsim.host_trade import H_ANIM, H_CLOSE, H_SAVE, H_UROOM_TRADE
+    from pokeldn.frlg.link.host_trade import H_ANIM, H_CLOSE, H_SAVE, H_UROOM_TRADE
     h = HostTradeEngine([_mon(1)], union_room=True, anim_delay=1)
     h._words.clear()
     h._begin_card_exchange()

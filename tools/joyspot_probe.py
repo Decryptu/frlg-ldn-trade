@@ -10,21 +10,21 @@ import time
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# This launcher lives in tools/; the frlgsim package and vendor/ are at the repo root.
+# This launcher lives in tools/; the pokeldn package and vendor/ are at the repo root.
 sys.path.insert(0, PROJECT_ROOT)
 
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, "vendor", "LDN")
 if os.path.isdir(os.path.join(BUNDLED_LDN, "ldn")):
     sys.path.insert(0, BUNDLED_LDN)
 
-from frlgsim.config import DEFAULT_TRAINER  # noqa: E402
-from frlgsim.joyspot_discovery import (  # noqa: E402
+from pokeldn.config import DEFAULT_TRAINER  # noqa: E402
+from pokeldn.ldn.joyspot_discovery import (  # noqa: E402
     JOYSPOT_CANDIDATES,
     JOYSPOT_STAGES,
     candidate_by_name,
     candidates_for_stage,
 )
-from frlgsim.joyspot_probe import (  # noqa: E402
+from pokeldn.ldn.joyspot_probe import (  # noqa: E402
     JoySpotProbeApplication,
     JoySpotProbeConfig,
 )

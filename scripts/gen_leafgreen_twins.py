@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate frlgsim/leafgreen_twins.py: LeafGreen's address for what FireRed holds, MEASURED.
+"""Regenerate pokeldn/frlg/rom/leafgreen_twins.py: LeafGreen's address for what FireRed holds, MEASURED.
 
     ./.venv/bin/python scripts/gen_leafgreen_twins.py [--scratchpad scratchpad]
 
@@ -27,7 +27,7 @@ from cartridge_pair import candidate_pairs, paired_calls, paired_literals   # no
 from script_read import dumps                                              # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-OUT = ROOT / "frlgsim" / "leafgreen_twins.py"
+OUT = ROOT / "pokeldn" / "frlg" / "rom" / "leafgreen_twins.py"
 
 HEADER = '''"""LeafGreen's address for a FireRed one, read off LeafGreen. Generated; do not edit by hand.
 
@@ -47,7 +47,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import rom_map
+from pokeldn.frlg.rom import rom_map
 
 
 def leafgreen(address):

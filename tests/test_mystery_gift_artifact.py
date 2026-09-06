@@ -11,9 +11,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 import frlgmg_host  # noqa: E402
-from frlgsim import gift_artifact, gift_registry  # noqa: E402
-from frlgsim.config import MysteryGiftRunConfig  # noqa: E402
-from frlgsim.host_mg_app import MysteryGiftHostApplication  # noqa: E402
+from pokeldn.frlg.gift import gift_artifact, gift_registry  # noqa: E402
+from pokeldn.config import MysteryGiftRunConfig  # noqa: E402
+from pokeldn.frlg.gift.host_mg_app import MysteryGiftHostApplication  # noqa: E402
 
 
 def test_artifact_boolean_flags_default_off_and_accept_both_variants():

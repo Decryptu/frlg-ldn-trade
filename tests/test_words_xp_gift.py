@@ -9,17 +9,11 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tests"))
 
 import frlgmg_host  # noqa: E402
-from frlgsim import (  # noqa: E402
-    charmap,
-    gift_registry,
-    gift_to_bin,
-    mystery_gift,
-    save_inject,
-    wonder_card,
-    wonder_card_events as event,
-)
-from frlgsim import mg_script, mg_server  # noqa: E402
-from frlgsim.gift_composer import (  # noqa: E402
+from pokeldn.frlg.gift import gift_registry, gift_to_bin, mystery_gift, wonder_card, wonder_card_events as event  # noqa: E402
+from pokeldn.frlg.save import save_inject  # noqa: E402
+from pokeldn.frlg.text import charmap  # noqa: E402
+from pokeldn.frlg.gift import mg_script, mg_server  # noqa: E402
+from pokeldn.frlg.gift.gift_composer import (  # noqa: E402
     BattleLegendary,
     FLAG_MYSTERY_GIFT_DONE,
     SPECIAL_HAS_ALL_KANTO_MONS,

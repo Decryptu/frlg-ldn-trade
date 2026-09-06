@@ -5,7 +5,7 @@ the runs rather than against a restatement of the same arithmetic.
 """
 import pytest
 
-from frlgsim import lcg, rng_countdown, rng_script
+from pokeldn.frlg.rom import lcg, rng_countdown, rng_script
 
 # mev11's own reading, and the mon bs58 dumped out of gPlayerParty afterwards.
 MEV11_BEFORE = 0x9A4F5DAA

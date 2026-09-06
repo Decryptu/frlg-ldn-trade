@@ -24,11 +24,10 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import (  # noqa: E402
-    beacon, config as configmod, host_beacon, host_mg_app, host_mystery_gift, mg_client,
-    mg_script, mg_server, stamp_rally, transport, wonder_news,
-)
-from frlgsim import mystery_gift as mg  # noqa: E402
+from pokeldn import config as configmod  # noqa: E402
+from pokeldn.frlg.gift import host_mg_app, host_mystery_gift, mg_client, mg_script, mg_server, stamp_rally, wonder_news  # noqa: E402
+from pokeldn.ldn import beacon, host_beacon, transport  # noqa: E402
+from pokeldn.frlg.gift import mystery_gift as mg  # noqa: E402
 from tests.test_mystery_gift_flow import ConsoleClientModel, _drive  # noqa: E402
 
 

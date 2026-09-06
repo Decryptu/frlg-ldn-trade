@@ -18,7 +18,7 @@ are implemented here:
 | Pia version byte | 15/16 (6.32+) | **9** (5.27-5.45) |
 | header size | 0x1D | **0x20** |
 | variable ids | 2 bytes each | **4 bytes each** |
-| module | `frlgsim/pia_connect.py` | `frlgsim/pia5.py` |
+| module | `pokeldn/ldn/pia_connect.py` | `pokeldn/ldn/pia5.py` |
 
 ## The 5.27-5.45 header
 
@@ -36,7 +36,7 @@ parser byte-swaps three fields with `rev`:
     0x18  8  AES-GCM tag, truncated from 16
     0x20     ciphertext, the plaintext padded to a multiple of 16
 
-`frlgsim/pia5.py` implements it and round-trips real captured packets byte-identically; the fixture
+`pokeldn/ldn/pia5.py` implements it and round-trips real captured packets byte-identically; the fixture
 in `tests/test_pia5.py` is one of them.
 
 ## Two families of session key

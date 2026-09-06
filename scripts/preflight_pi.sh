@@ -62,7 +62,7 @@ import sys
 root = pathlib.Path(sys.argv[1]).resolve()
 sys.path.insert(0, str(root))
 import frlgmg_host
-from frlgsim import host_cli
+from pokeldn import host_cli
 
 argv = sys.argv[2:]
 file_config, shared_path, local_path = host_cli.load_host_file_config_from_argv(argv)

@@ -109,20 +109,20 @@ Switch's valid block, then sends its own block and waits for the standby barrier
 
 | file | role |
 |---|---|
-| `frlgsim/mg_link.py` | MysteryGiftLink framing: 6-byte `{ident, crc, size}` header block + ≤252-byte chunks |
-| `frlgsim/mg_script.py` | client-script assembler, the decomp's canned scripts, `MysteryGiftLinkGameData` reader |
-| `frlgsim/mg_server.py` | server-script interpreter (`SVR_*`), transcribing `gMysteryGiftServerScript_SendWonderCard` |
-| `frlgsim/host_mystery_gift.py` | the leader activity engine: `tick()` → parent gSendCmd, `feed_child_slot()` ← child row |
-| `frlgsim/config.py` | immutable `MysteryGiftPayload` and `MysteryGiftRunConfig`, composed with the shared trainer/LDN/host models |
-| `frlgsim/host_cli.py` | shared identity, LDN, and Pia CLI parsing used by both host applications |
-| `frlgsim/host_mg_app.py` | Mystery Gift application hooks over the activity-neutral host runtime |
+| `pokeldn/frlg/gift/mg_link.py` | MysteryGiftLink framing: 6-byte `{ident, crc, size}` header block + ≤252-byte chunks |
+| `pokeldn/frlg/gift/mg_script.py` | client-script assembler, the decomp's canned scripts, `MysteryGiftLinkGameData` reader |
+| `pokeldn/frlg/gift/mg_server.py` | server-script interpreter (`SVR_*`), transcribing `gMysteryGiftServerScript_SendWonderCard` |
+| `pokeldn/frlg/gift/host_mystery_gift.py` | the leader activity engine: `tick()` → parent gSendCmd, `feed_child_slot()` ← child row |
+| `pokeldn/config.py` | immutable `MysteryGiftPayload` and `MysteryGiftRunConfig`, composed with the shared trainer/LDN/host models |
+| `pokeldn/host_cli.py` | shared identity, LDN, and Pia CLI parsing used by both host applications |
+| `pokeldn/frlg/gift/host_mg_app.py` | Mystery Gift application hooks over the activity-neutral host runtime |
 | `bin/frlgmg_host.py` | thin Mystery Gift CLI and run-config construction |
-| `frlgsim/wonder_card.py` | shared Celebi and legendary-beast Wonder Card/RAM-script builders |
-| `frlgsim/stamp_rally.py` | shared Stamp Rally card, stamps, activation wrappers, and delivery script |
-| `frlgsim/gift_composer.py` | immutable action definitions, cursor-state validation, and RAM-script compiler |
-| `frlgsim/gift_registry.py` | capability-aware catalog for legacy and composed gifts |
-| `frlgsim/gift_to_bin.py` | paired `.bin` exporter for external Gen-3 Mystery Gift tools |
-| `frlgsim/save_inject.py` | validated FRLG save injection with card, RAM-script, and sector checksums |
+| `pokeldn/frlg/gift/wonder_card.py` | shared Celebi and legendary-beast Wonder Card/RAM-script builders |
+| `pokeldn/frlg/gift/stamp_rally.py` | shared Stamp Rally card, stamps, activation wrappers, and delivery script |
+| `pokeldn/frlg/gift/gift_composer.py` | immutable action definitions, cursor-state validation, and RAM-script compiler |
+| `pokeldn/frlg/gift/gift_registry.py` | capability-aware catalog for legacy and composed gifts |
+| `pokeldn/frlg/gift/gift_to_bin.py` | paired `.bin` exporter for external Gen-3 Mystery Gift tools |
+| `pokeldn/frlg/save/save_inject.py` | validated FRLG save injection with card, RAM-script, and sector checksums |
 
 `HostSession` now takes an `engine=` keyword, so the LDN/Pia/Reliable/RFU stack is shared verbatim
 with the trade host and only the activity above it differs.

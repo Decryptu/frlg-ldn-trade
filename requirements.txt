@@ -1,4 +1,4 @@
-# frlg-ldn-trade runtime dependencies (tested versions; install into a venv)
+# pokeldn runtime dependencies (tested versions; install into a venv)
 # The LDN implementation is vendored because it contains the host-side
 # compatibility fixes required by our tested Wi-Fi adapters.  Keep this before
 # packages that also appear in vendor/LDN/setup.py so pip resolves one source.

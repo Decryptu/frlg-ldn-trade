@@ -5,7 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from frlgsim import linkplayer, mystery_gift_attempts
+from pokeldn.frlg.gift import mystery_gift_attempts
+from pokeldn.frlg.link import linkplayer
 
 
 def test_attempt_ledger_uses_daily_csv_and_preserves_client_identity():

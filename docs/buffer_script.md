@@ -45,18 +45,18 @@ puts `ewram` at 0x2000000 under `ALIGN(4)`, reserves `gHeap` for 0x1C000, then l
 ## Our side
 
 - `asm/*.s` - one ARM source per payload, assembled by `scripts/gen_buffer_scripts.py` into
-  `frlgsim/buffer_payloads.py`. The machine code is committed so a live host needs no GBA
+  `pokeldn/frlg/rom/buffer_payloads.py`. The machine code is committed so a live host needs no GBA
   toolchain; `tests/test_buffer_script.py` re-assembles and compares whenever `arm-none-eabi-as` is
   installed, which keeps the two honest.
-- `frlgsim/buffer_script.py` - the payload registry, the validation, and `emulate()`, which runs a
+- `pokeldn/frlg/rom/buffer_script.py` - the payload registry, the validation, and `emulate()`, which runs a
   payload under unicorn on the GBA memory map with the console's three arguments. A payload that
   faults, or never returns 1, is caught there and never reaches the air.
-- `frlgsim/mg_script.py` - `CLIENT_SCRIPT_RUN_BUFFER` (recv, run, load the return channel, send it,
+- `pokeldn/frlg/gift/mg_script.py` - `CLIENT_SCRIPT_RUN_BUFFER` (recv, run, load the return channel, send it,
   recv the next script) and `CLIENT_SCRIPT_BUFFER_SUCCESS`.
-- `frlgsim/mg_server.py` - `SCRIPT_RUN_BUFFER_SCRIPT`. No card, no toss prompt, no branch on what
+- `pokeldn/frlg/gift/mg_server.py` - `SCRIPT_RUN_BUFFER_SCRIPT`. No card, no toss prompt, no branch on what
   the console holds: a buffer script is not a gift, so a console carrying any card takes the same
   path and keeps it.
-- Both simulated consoles execute the payload for real: `frlgsim/mg_client.py` and
+- Both simulated consoles execute the payload for real: `pokeldn/frlg/gift/mg_client.py` and
   `ConsoleClientModel` in `tests/test_mystery_gift_flow.py`, which is written from the decomp
   independently and models the once-per-frame re-entry.
 
@@ -316,7 +316,7 @@ mystery_gift_server.c, named by what its code does rather than by position: 0x08
 Server_Init's `svr->funcId = FUNC_RUN; return SVR_RET_INIT`, and 0x08148DF8 is Server_Done returning
 SVR_RET_END = 3.
 
-`frlgsim/rom_map.py` holds the result with its evidence and `tests/test_rom_map.py` checks it
+`pokeldn/frlg/rom/rom_map.py` holds the result with its evidence and `tests/test_rom_map.py` checks it
 against the dumps. Nothing in it is inferred from the decomp's English rev-10 build; a symbol that
 has not been read off the console does not belong in that file.
 
@@ -881,7 +881,7 @@ already satisfies. So it is at **0x081640EC**, and bs97 dumped it: ten words, al
 forty bytes of each other, which is what five tiny scripts laid out in source order look like.
 
 **bs98 read them as scripts.** The operand widths come out of the decomp's own macros
-(`scripts/gen_scrcmd_args.py` -> `frlgsim/scrcmd_args.py`: each `.macro` emits its opcode as a
+(`scripts/gen_scrcmd_args.py` -> `pokeldn/frlg/rom/scrcmd_args.py`: each `.macro` emits its opcode as a
 `.byte` and then a `.byte`/`.2byte`/`.4byte` per argument), and with bs82's opcode table that is a
 disassembler. Pointed at 0x081A7624, the console's own bytes:
 
@@ -990,7 +990,7 @@ needs no table at all:
 its arguments through `VarGet`, which returns the number unchanged below `VARS_START` and reads the
 variable at or above it [decomp:src/event_data.c:235, GetVarPointer:214]. So `additem 0x8004` is not
 item 0x8004, it is the item id held in `VAR_0x8004` - and this holds for a command nothing else is
-known about. `frlgsim/symbol_names.py` has the 274 var and 1470 flag names, generated from
+known about. `pokeldn/frlg/rom/symbol_names.py` has the 274 var and 1470 flag names, generated from
 `include/constants/vars.h` and `flags.h`, whose values are arithmetic on other constants and are
 evaluated rather than transcribed.
 
@@ -1149,7 +1149,7 @@ interest removes it entirely.
 `gScriptCmdTable` needed no search at all. `script_data` opens with it and puts `gSpecialVars`
 immediately after [ld_script_rev10.ld:318], the table is 214 entries of four bytes, and bs57 had
 already measured `gSpecialVars` - so the table starts at **0x08163650**, and one 856-byte
-`memory-dump` reads the whole thing. The index is the opcode, so `frlgsim/scrcmd_names.py` names
+`memory-dump` reads the whole thing. The index is the opcode, so `pokeldn/frlg/rom/scrcmd_names.py` names
 every entry from the decomp's own table order and `scrcmd_names.handler("additem")` answers offline
 from then on.
 
@@ -1204,7 +1204,7 @@ handlers into the workers behind them, and bs85 called one.
 
 **bs57: `gSpecialVars` = 0x081639A8, `gSpecialVar_0x8000` = 0x020370B4.** 939 frames, ~23 s, 2.75 MB
 searched, exactly one twelve-word run rising by 2 in all of it. The console held its link throughout.
-The four consistency checks are in `frlgsim/rom_map.py` beside the symbols.
+The four consistency checks are in `pokeldn/frlg/rom/rom_map.py` beside the symbols.
 
 `gSpecialVar_0x8000` is `EWRAM_DATA`, a link-time global that does not move, so naming it as a
 constant is sound in a way naming a save address never is. [The RNG page](rng.md) is what wanted it.
@@ -1231,7 +1231,7 @@ the dump. It is not a measurement of the mapping.
 table entry is an address; the code at that address makes `bl` calls in the decomp's own call order
 and keeps the globals it touches in its literal pool. So the tool takes any of the four function
 tables this project has read off a cartridge, finds the entries a dump holds, bounds each body by
-the next entry AND by its own epilogue (`frlgsim/thumb.py`, and the agbcc trap below), and prints
+the next entry AND by its own epilogue (`pokeldn/frlg/rom/thumb.py`, and the agbcc trap below), and prints
 every call and pool word with a name beside the ones already measured. What it prints last is the
 plan: the entries NOT held, clustered into `--dump-address` windows and ranked by how many one run
 would catch - the same idea as `tools/script_read.py`'s, because a run should be spent where the
@@ -1372,7 +1372,7 @@ bs84's method has a shape that does not need a console: **a body's `bl` targets,
 are the decomp's calls for that same function, in source order.** Every worker this project has
 named since session 39 came out of that - by eye, one body at a time, a handful a session.
 `scripts/gen_worker_names.py` does it over every body the dumps hold, all four tables at once, and
-writes `frlgsim/worker_names.py`. **183 addresses named, no run spent.** The field table now has three call
+writes `pokeldn/frlg/rom/worker_names.py`. **183 addresses named, no run spent.** The field table now has three call
 targets left with no name and the specials 22, where they had 127 and 117.
 
 The zip is only evidence if it is checked, and four checks decide:
@@ -1530,7 +1530,7 @@ Two more scattered joins reads all 56, and a body names itself by what it calls.
 
 ## What is left
 
-1. **Which function to call next.** Answered at bs82/bs84/bs85: `frlgsim/scrcmd_names.HANDLERS`
+1. **Which function to call next.** Answered at bs82/bs84/bs85: `pokeldn/scrcmd_names.HANDLERS`
    holds all 214 handlers and `rom_map` the workers behind twenty-four of them, and `call-chain`
    calls them in lists. What is left is not addresses but *questions* - a worker whose effect the
    player can see and which nothing else could have produced.

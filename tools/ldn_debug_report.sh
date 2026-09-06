@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Collect a shareable debug report for the LDN hosting failure (ENOTSUP at create_ap) -
-# everything the LDN library author would ask for, in one file, with ZERO frlg-ldn-trade
+# everything the LDN library author would ask for, in one file, with ZERO pokeldn
 # code involved.
 #
 #   sudo ./ldn_debug_report.sh [phy]        (default phy0; writes ldn-debug-report.txt)

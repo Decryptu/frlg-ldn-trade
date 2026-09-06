@@ -21,8 +21,8 @@ Usage: scripts/deploy_pi.sh --host SSH_ALIAS [options]
 Options:
   --host HOST       SSH config alias or tunnel hostname (or PI_SSH_HOST)
   --user USER       remote user, unless the SSH alias already sets one
-  --path PATH       absolute Pi checkout path (default: /home/USER/frlg-ldn-trade)
-  --repo PATH       absolute Pi bare-repository path (default: /home/USER/repos/frlg-ldn-trade.git)
+  --path PATH       absolute Pi checkout path (default: /home/USER/pokeldn)
+  --repo PATH       absolute Pi bare-repository path (default: /home/USER/repos/pokeldn.git)
   --branch NAME     deployment branch (default: deploy)
   --install-mt7601u-ap
                     after deployment, explicitly install the custom MT7601U
@@ -64,8 +64,8 @@ if [[ -z "$PI_PATH" || -z "$PI_REPO" ]]; then
         printf '--path and --repo are required unless --user provides their safe defaults.\n' >&2
         exit 2
     }
-    PI_PATH=${PI_PATH:-"/home/$SSH_USER/frlg-ldn-trade"}
-    PI_REPO=${PI_REPO:-"/home/$SSH_USER/repos/frlg-ldn-trade.git"}
+    PI_PATH=${PI_PATH:-"/home/$SSH_USER/pokeldn"}
+    PI_REPO=${PI_REPO:-"/home/$SSH_USER/repos/pokeldn.git"}
 fi
 [[ "$PI_PATH" == /* && "$PI_REPO" == /* ]] || {
     printf '--path and --repo must be absolute remote paths.\n' >&2; exit 2;

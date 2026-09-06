@@ -1,0 +1,975 @@
+import dataclasses
+import argparse
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+import tomllib
+from typing import Any, Mapping
+
+from pokeldn.frlg.gift import gift_composer, gift_registry, mg_script, stamp_rally, wonder_card, wonder_news
+from pokeldn.frlg.link import linkplayer, uroom_chat
+from pokeldn.frlg.rom import buffer_script, rom_map
+from pokeldn.frlg.text import charmap
+from pokeldn.gba import ni
+from pokeldn.ldn import beacon
+
+
+VERSIONS = {
+    "firered": linkplayer.VERSION_FIRE_RED,
+    "leafgreen": linkplayer.VERSION_LEAF_GREEN,
+}
+# Japanese is absent: its kana table shares byte values with the accented Latin range in charmap.py.
+LANGUAGES = {
+    "english": linkplayer.LANGUAGE_ENGLISH,
+    "french": linkplayer.LANGUAGE_FRENCH,
+    "italian": linkplayer.LANGUAGE_ITALIAN,
+    "german": linkplayer.LANGUAGE_GERMAN,
+    "spanish": linkplayer.LANGUAGE_SPANISH,
+}
+
+MysteryGiftDistribution = stamp_rally.MysteryGiftDistribution
+
+
+@dataclass(frozen=True)
+class TrainerProfile:
+    name: str
+    tid: int
+    sid: int
+    gender: int = 0
+    version: str = "leafgreen"
+    language: str = "english"
+    has_national_dex: bool = True
+    has_completed_game: bool = True
+    # The Wonder Card flag id our trainer card claims, at offset 96 of the BLOCK_REQ_SIZE_100
+    # exchange buffer. The console arms ITS OWN card counters when this equals the card it holds
+    # [MysteryGift_TryEnableStatsByFlagId, decomp:src/union_room.c:1777]; 0 arms nothing.
+    card_flag_id: int = 0
+
+    def __post_init__(self):
+        if not isinstance(self.name, str):
+            raise ValueError("trainer name must be a string")
+        encoded = charmap.encode(self.name)
+        if not self.name or charmap.decode(encoded) != self.name:
+            raise ValueError("trainer name contains unsupported Gen III characters")
+        if len(encoded) > 7:
+            raise ValueError("trainer name must encode to at most 7 Gen III characters")
+        if (type(self.tid) is not int or type(self.sid) is not int
+                or not 0 <= self.tid <= 0xFFFF or not 0 <= self.sid <= 0xFFFF):
+            raise ValueError("TID and SID must each fit in 16 bits")
+        if type(self.gender) is not int or self.gender not in (0, 1):
+            raise ValueError("gender must be 0 (male) or 1 (female)")
+        if self.version not in VERSIONS:
+            raise ValueError(f"version must be one of {', '.join(VERSIONS)}")
+        if self.language not in LANGUAGES:
+            raise ValueError(f"language must be one of {', '.join(LANGUAGES)}")
+        if type(self.has_national_dex) is not bool:
+            raise ValueError("has_national_dex must be a bool")
+        if type(self.has_completed_game) is not bool:
+            raise ValueError("has_completed_game must be a bool")
+        if type(self.card_flag_id) is not int or not 0 <= self.card_flag_id <= 0xFFFF:
+            raise ValueError("card_flag_id must fit in 16 bits")
+
+    @property
+    def trainer_id(self):
+        return (self.sid << 16) | self.tid
+
+    @property
+    def progress_flags(self):
+        return ((1 if self.has_national_dex else 0)
+                | (0x10 if self.has_completed_game else 0))
+
+    @property
+    def discovery_name(self):
+        return self.name
+
+    @property
+    def discovery_trainer_id(self):
+        return self.tid
+
+    @property
+    def session_name(self):
+        return self.name
+
+    def to_link_player(self):
+        return linkplayer.LinkPlayer(
+            name=self.name,
+            trainer_id=self.trainer_id,
+            version=VERSIONS[self.version],
+            progress_flags=self.progress_flags,
+            progress_flags_copy=self.progress_flags,
+            gender=self.gender,
+            player_id=0,
+            language=LANGUAGES[self.language],
+        )
+
+    def build_link_player_block(self, *, name_pad=0x00):
+        return linkplayer.build_block(self.to_link_player(), name_pad=name_pad)
+
+    def build_trainer_card(self, mon_species=None, *, name_pad=0x00):
+        return linkplayer.build_trainer_card(
+            self.to_link_player(), wonder_card_id=self.card_flag_id,
+            mon_species=mon_species, name_pad=name_pad)
+
+    def build_rfu_game_data(self, activity, *, started=True):
+        return ni.build_game_data(
+            VERSIONS[self.version], self.tid, self.name,
+            language=LANGUAGES[self.language], activity=activity,
+            started=started)
+
+
+DEFAULT_TRAINER = TrainerProfile(
+    name="PkCamp", tid=0x8822, sid=0x47ED, gender=0,
+    version="leafgreen", language="english",
+    has_national_dex=True, has_completed_game=True)
+
+
+@dataclass(frozen=True)
+class TradePlan:
+    party_paths: tuple
+    output_path: str = "received.pk3"
+    output_size: int = 100
+    output_format: str = "pk3"
+    trade_slot: int = 1
+    offered_slots: tuple | None = None
+    trades: int = 1
+    anim_delay: int | None = None
+    player_ids_repeat_frames: int | None = None
+    link_player_idle_frames: int | None = None
+    trust_pia: bool = False
+
+    def __post_init__(self):
+        if not 1 <= len(self.party_paths) <= 6:
+            raise ValueError("party must contain 1..6 Pokemon files")
+        if not 1 <= self.trades <= 6 or self.trades > len(self.party_paths):
+            raise ValueError("trades must be 1..6 and cannot exceed party size")
+        if self.output_size not in (80, 100):
+            raise ValueError("output_size must be 80 or 100")
+        if self.output_format not in ("pk3", "ek3"):
+            raise ValueError("output_format must be pk3 or ek3")
+        if type(self.trade_slot) is not int or not 0 <= self.trade_slot < len(self.party_paths):
+            raise ValueError("trade_slot must reference the configured party")
+        if self.anim_delay is not None \
+                and (type(self.anim_delay) is not int or self.anim_delay < 0):
+            raise ValueError("anim_delay must be a non-negative integer")
+        if (self.player_ids_repeat_frames is not None
+                and (type(self.player_ids_repeat_frames) is not int
+                     or not 1 <= self.player_ids_repeat_frames <= 600)):
+            raise ValueError("player_ids_repeat_frames must be between 1 and 600")
+        if (self.link_player_idle_frames is not None
+                and (type(self.link_player_idle_frames) is not int
+                     or not 0 <= self.link_player_idle_frames <= 600)):
+            raise ValueError("link_player_idle_frames must be between 0 and 600")
+        if self.offered_slots is not None:
+            if len(self.offered_slots) != self.trades:
+                raise ValueError("offered_slots must contain one slot per trade")
+            if len(set(self.offered_slots)) != len(self.offered_slots):
+                raise ValueError("offered_slots must be distinct")
+            if any(type(slot) is not int or not 0 <= slot < len(self.party_paths)
+                   for slot in self.offered_slots):
+                raise ValueError("offered_slots must reference the configured party")
+
+
+@dataclass(frozen=True)
+class LdnConfig:
+    password: bytes | None = None
+    phy: str = "phy0"
+    # Resolved to a concrete phy at runtime when ``phy`` is "auto".
+    adapter: str | None = None
+    keys_path: str = "~/.switch/prod.keys"
+    local_comm_id: int | None = None
+    capture_path: str | None = None
+
+    def __post_init__(self):
+        if self.password is not None and not isinstance(self.password, bytes):
+            raise ValueError("password must be bytes or None")
+        if self.adapter is not None and (
+                not isinstance(self.adapter, str) or not self.adapter):
+            raise ValueError("adapter must be a non-empty string or None")
+        if self.local_comm_id is not None and (
+                type(self.local_comm_id) is not int
+                or not 0 <= self.local_comm_id <= 0xFFFFFFFFFFFFFFFF):
+            raise ValueError("local_comm_id must fit in 64 bits")
+
+
+@dataclass(frozen=True)
+class JoinerOptions:
+    live: bool = True
+    replay_path: str | None = None
+    self_id: int = 1
+    decline: bool = False
+    refuse_illegit: bool = False
+    compress: bool = False
+    pace_ms: int = 0
+    connect_id: bytes | None = None
+
+    def __post_init__(self):
+        if self.live == bool(self.replay_path):
+            raise ValueError("select exactly one of live mode or replay_path")
+        if self.self_id != 1:
+            raise ValueError("joiner self_id must be 1")
+        if self.connect_id is not None and len(self.connect_id) != 2:
+            raise ValueError("connect_id must contain exactly two bytes")
+
+
+@dataclass(frozen=True)
+class HostOptions:
+    channel: int = 1
+    scene_id: int | None = None
+    max_participants: int = 6
+    skip_preflight: bool = False
+    skip_encryption: bool = False
+    accept_decrypted_ccmp: bool = False
+    native_nonce_sequence: bool = False
+    session_response_first: bool = False
+    # Host for the Union Room (the middle NPC on Pokemon Center 2F) instead of the trade centre:
+    # bare IN_UNION_ROOM advertisement, no parent NI, SEND_PACKET prompt, room trade flow.
+    union_room: bool = False
+    # Which activity --union-room advertises. None = ACTIVITY_SEARCH, the form Task_InitUnionRoom
+    # looks for (the screen before entering). A console already standing in the room runs
+    # Task_RunUnionRoom and searches with the RESUME list, which accepts IN_UNION_ROOM | activity.
+    union_room_activity: int | None = None
+    # After the child's name NI, re-present a parent NI_START for this many VBlanks before the first
+    # UNI frame. The room child 'D's after five unanswered parent frames and only enters UNI 480
+    # frames after our last NI_START (its NI fail counter), so 0 never connects; 120 is proven.
+    union_room_keepalive: int = 0
+    # Trading board: the type we ask for in return (beacon.TYPE_NAMES value). None = no
+    # registration, so the console's board does not list us. Species and level come from the
+    # offered party mon unless union_room_board_level overrides the level.
+    union_room_board_type: int | None = None
+    union_room_board_level: int | None = None
+    # Accept the room's "Tchat" instead of declining it, and the lines to send once the chat opens.
+    union_room_chat: bool = False
+    chat_messages: tuple = ()
+    # Accept the room's Combat instead of declining it, and whether to forfeit at the first prompt.
+    union_room_battle: bool = False
+    battle_forfeit: bool = True
+    battle_move_slot: int = 0
+    # Host the cable-club colosseum (Direct Corner -> Colosseum -> Single Battle) instead of the
+    # trade centre: ACTIVITY_BATTLE_SINGLE on the air, then a link battle where the trade menu
+    # would be. Only this path increments the console's Wonder Card battlesWon [cable_club.c:792].
+    colosseum: bool = False
+    # A file the running host tails: every line appended to it is sent into a live chat.
+    chat_file: str | None = None
+
+    def __post_init__(self):
+        # LDN channels: 2.4 GHz 1/6/11 and 5 GHz 36/40/44/48 [kinnay LDN wiki, WLAN Channels].
+        if type(self.channel) is not int or not (1 <= self.channel <= 14 or self.channel in (36, 40, 44, 48)):
+            raise ValueError("channel must be 1..14 or one of 36, 40, 44, 48")
+        if type(self.max_participants) is not int or not 2 <= self.max_participants <= 8:
+            raise ValueError("max_participants must be 2..8")
+        if self.scene_id is not None and (
+                type(self.scene_id) is not int or not 0 <= self.scene_id <= 0xFFFF):
+            raise ValueError("scene_id must fit in 16 bits")
+        for text in self.chat_messages:
+            uroom_chat.check_text(text)
+
+
+# --union-room-activity names, resolved to the packed activity field.
+#   search    Task_InitUnionRoom advertises ACTIVITY_SEARCH and its search (LINK_GROUP_UNION_ROOM_INIT)
+#             accepts only ACTIVITY_SEARCH. This is the screen BEFORE entering the room.
+#   in-room*  Task_RunUnionRoom sets sPlayerCurrActivity = IN_UNION_ROOM and searches with
+#             LINK_GROUP_UNION_ROOM_RESUME, which accepts IN_UNION_ROOM | activity. This is a console
+#             standing in the room. [src/union_room.c:2664, src/data/union_room.h:407-418]
+UNION_ROOM_ACTIVITIES = {
+    "search": beacon.ACTIVITY_SEARCH,
+    "in-room": beacon.IN_UNION_ROOM | 0,                      # IN_UNION_ROOM | ACTIVITY_NONE
+    "in-room-trade": beacon.IN_UNION_ROOM | beacon.ACTIVITY_TRADE,
+    "in-room-chat": beacon.IN_UNION_ROOM | 5,                 # ACTIVITY_CHAT
+}
+
+
+def resolve_board_type(name):
+    if name is None:
+        return None
+    try:
+        return beacon.TYPE_NAMES[name]
+    except KeyError:
+        raise ValueError("board type must be one of " + ", ".join(sorted(beacon.TYPE_NAMES)))
+
+
+def resolve_union_room_activity(name):
+    # Default to the in-room form: it is the only one proven to get a console past
+    # IsPartnerActivityIncompatible (u03). "search" remains untested.
+    if name is None:
+        return UNION_ROOM_ACTIVITIES["in-room"]
+    try:
+        return UNION_ROOM_ACTIVITIES[name]
+    except KeyError:
+        raise ValueError(
+            "union_room_activity must be one of "
+            + ", ".join(sorted(UNION_ROOM_ACTIVITIES)))
+
+
+HOST_CONFIG_FILENAME = "host.toml"
+HOST_LOCAL_CONFIG_FILENAME = "host.local.toml"
+
+
+@dataclass(frozen=True)
+class HostFileConfig:
+    """Strict ``[host]`` / ``[ldn]`` TOML sections; the local file overrides the tracked one."""
+
+    live: bool = True
+    adapter: str = "tplink-archer-t3u"
+    trust_pia: bool = True
+    channel: int = 1
+    scene_id: int | None = None
+    max_participants: int = 6
+    skip_preflight: bool = False
+    skip_encryption: bool = True
+    accept_decrypted_ccmp: bool = True
+    native_nonce_sequence: bool = True
+    session_response_first: bool = True
+    phy: str = "auto"
+    keys_path: str = "~/.switch/prod.keys"
+    local_comm_id: int | None = None
+    capture_path: str | None = None
+
+    def __post_init__(self):
+        _require_bool("host.live", self.live)
+        _require_nonempty_string("host.adapter", self.adapter)
+        _require_bool("host.trust_pia", self.trust_pia)
+        if self.channel not in (36, 40, 44, 48):
+            _require_int_range("host.channel", self.channel, 1, 14)
+        if self.scene_id is not None:
+            _require_int_range("host.scene_id", self.scene_id, 0, 0xFFFF)
+        _require_int_range("host.max_participants", self.max_participants, 2, 8)
+        _require_bool("host.skip_preflight", self.skip_preflight)
+        _require_bool("host.skip_encryption", self.skip_encryption)
+        _require_bool("host.accept_decrypted_ccmp", self.accept_decrypted_ccmp)
+        _require_bool("host.native_nonce_sequence", self.native_nonce_sequence)
+        _require_bool("host.session_response_first", self.session_response_first)
+        _require_nonempty_string("ldn.phy", self.phy)
+        _require_nonempty_string("ldn.keys_path", self.keys_path)
+        if self.local_comm_id is not None:
+            _require_int_range("ldn.local_comm_id", self.local_comm_id, 0,
+                               0xFFFFFFFFFFFFFFFF)
+        if self.capture_path is not None:
+            _require_nonempty_string("ldn.capture_path", self.capture_path)
+
+    def to_host_options(self):
+        return HostOptions(
+            channel=self.channel,
+            scene_id=self.scene_id,
+            max_participants=self.max_participants,
+            skip_preflight=self.skip_preflight,
+            skip_encryption=self.skip_encryption,
+            accept_decrypted_ccmp=self.accept_decrypted_ccmp,
+            native_nonce_sequence=self.native_nonce_sequence,
+            session_response_first=self.session_response_first,
+        )
+
+    def to_ldn_config(self):
+        return LdnConfig(
+            phy=self.phy,
+            adapter=self.adapter,
+            keys_path=self.keys_path,
+            local_comm_id=self.local_comm_id,
+            capture_path=self.capture_path,
+        )
+
+    def with_overrides(self, overrides: Mapping[str, Mapping[str, Any]] | None):
+        return _apply_host_config_layer(self, overrides, source="overrides")
+
+
+_HOST_TOML_FIELDS = frozenset({
+    "live", "adapter", "trust_pia", "channel", "scene_id",
+    "max_participants", "skip_preflight", "skip_encryption",
+    "accept_decrypted_ccmp", "native_nonce_sequence",
+    "session_response_first",
+})
+_LDN_TOML_FIELDS = frozenset({
+    "phy", "keys_path", "local_comm_id", "capture_path",
+})
+_TOP_LEVEL_TOML_SECTIONS = frozenset({"host", "ldn"})
+
+
+def project_config_directory():
+    return Path(__file__).resolve().parent.parent / "config"
+
+
+def default_host_config_path():
+    return project_config_directory() / HOST_CONFIG_FILENAME
+
+
+def default_host_local_config_path():
+    return project_config_directory() / HOST_LOCAL_CONFIG_FILENAME
+
+
+def load_host_file_config(config_path, *, local_path=None, overrides=None):
+    """Layers: builtin < config_path (required) < local_path (optional) < overrides."""
+    result = BUILTIN_HOST_FILE_CONFIG
+    result = _apply_host_config_layer(
+        result, _read_host_toml(Path(config_path), required=True),
+        source=str(config_path))
+    if local_path is not None:
+        local_path = Path(local_path)
+        if local_path.is_file():
+            result = _apply_host_config_layer(
+                result, _read_host_toml(local_path, required=False),
+                source=str(local_path))
+        elif local_path.exists():
+            raise ValueError(f"host local configuration is not a file: {local_path}")
+    return _apply_host_config_layer(result, overrides, source="overrides")
+
+
+def load_project_host_file_config(*, overrides=None):
+    return load_host_file_config(
+        default_host_config_path(),
+        local_path=default_host_local_config_path(),
+        overrides=overrides,
+    )
+
+
+def _read_host_toml(path, *, required):
+    if not path.is_file():
+        if required:
+            raise ValueError(f"host configuration file does not exist: {path}")
+        return {}
+    try:
+        with path.open("rb") as source:
+            raw = tomllib.load(source)
+    except tomllib.TOMLDecodeError as exc:
+        raise ValueError(f"invalid TOML in host configuration {path}: {exc}") from exc
+    if not isinstance(raw, dict):
+        raise ValueError(f"host configuration must be a TOML table: {path}")
+    return raw
+
+
+def _apply_host_config_layer(base, layer, *, source):
+    if layer is None:
+        return base
+    if not isinstance(layer, Mapping):
+        raise ValueError(f"{source} host configuration must be a mapping")
+
+    unexpected = set(layer) - _TOP_LEVEL_TOML_SECTIONS
+    if unexpected:
+        raise ValueError(
+            f"{source} has unknown host configuration section(s): "
+            f"{', '.join(sorted(unexpected))}")
+
+    values = {}
+    for section, allowed in (("host", _HOST_TOML_FIELDS), ("ldn", _LDN_TOML_FIELDS)):
+        section_values = layer.get(section, {})
+        if not isinstance(section_values, Mapping):
+            raise ValueError(f"{source} [{section}] must be a TOML table")
+        unexpected = set(section_values) - allowed
+        if unexpected:
+            raise ValueError(
+                f"{source} [{section}] has unknown key(s): "
+                f"{', '.join(sorted(unexpected))}")
+        values.update(section_values)
+    try:
+        return replace(base, **values)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"invalid {source} host configuration: {exc}") from exc
+
+
+def _require_bool(name, value):
+    if type(value) is not bool:
+        raise ValueError(f"{name} must be a boolean")
+
+
+def _require_nonempty_string(name, value):
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{name} must be a non-empty string")
+
+
+def _require_int_range(name, value, lower, upper):
+    if type(value) is not int or not lower <= value <= upper:
+        raise ValueError(f"{name} must be an integer between {lower} and {upper}")
+
+
+BUILTIN_HOST_FILE_CONFIG = HostFileConfig()
+
+
+@dataclass(frozen=True)
+class TradeRunConfig:
+    profile: TrainerProfile
+    plan: TradePlan
+    ldn: LdnConfig
+    role: JoinerOptions | HostOptions
+
+
+@dataclass(frozen=True)
+class MysteryGiftPayload:
+    gift: str = wonder_card.GIFT_CELEBI
+    flag_id: int | None = None
+    # A questionnaire phrase gates the whole session: the console must already hold these four Easy
+    # Chat word ids or nothing is sent [SVR_CHECK_QUESTIONNAIRE].
+    questionnaire: tuple | None = None
+    denied_message: str | None = None
+    # A COMPOSED DEFINITION, not a knob. Some gifts are a family rather than a constant -
+    # rng-mon-hunt carries whatever search the caller asked for [wonder_card_events.
+    # build_rng_mon_hunt_gift] - and the rule above still holds for them: the card is composed in
+    # wonder_card_events and arrives here already built, and this field only says to send THAT one
+    # instead of the registry's. Nothing gift-specific belongs in this dataclass.
+    definition: object = None
+
+    def __post_init__(self):
+        choices = gift_registry.GIFT_REGISTRY.live_choices
+        if self.gift not in choices:
+            raise ValueError(
+                f"gift must be one of {', '.join(choices)}")
+        if self.flag_id is None:
+            object.__setattr__(self, "flag_id",
+                               gift_registry.GIFT_REGISTRY.default_flag_id(self.gift))
+        wonder_card.flag_for_flag_id(self.flag_id)
+        if self.definition is not None and self.definition.slug != self.gift:
+            raise ValueError(
+                f"the composed definition is {self.definition.slug!r}, not {self.gift!r}")
+
+    @property
+    def receipt_flag(self):
+        return wonder_card.flag_for_flag_id(self.flag_id)
+
+    def build(self):
+        distribution = self.build_distribution()
+        return distribution.card, distribution.ram_script
+
+    def build_distribution(self):
+        if self.definition is not None:
+            distribution = gift_composer.compile_definition(
+                self.definition, flag_id=self.flag_id)
+        else:
+            distribution = gift_registry.GIFT_REGISTRY.build_distribution(
+                self.gift, flag_id=self.flag_id)
+        if self.questionnaire is None:
+            return distribution
+        return dataclasses.replace(
+            distribution, questionnaire=tuple(self.questionnaire),
+            denied_message=self.denied_message)
+
+
+@dataclass(frozen=True)
+class BufferScriptPayload:
+    """Native ARM code for CLI_RUN_BUFFER_SCRIPT [buffer_script.py].
+
+    Not a gift: no card, no flagId, no receipt flag, nothing saved unless the payload's answer is
+    the one we demanded. The console reaches it through the ordinary Wonder Cards -> Friend
+    screen, so the advertisement and every layer below the server script are the Wonder Card
+    host's.
+    """
+    script: str = buffer_script.TRAINER_ID_PROBE
+    expect: object = None
+    _expect_explicit: bool = False
+    # The dumps: memory-dump reads an absolute address, save-dump an offset into a save block
+    # whose pointer the console hands the payload.
+    dump_address: int | None = None
+    dump_block: str = buffer_script.SAVE_BLOCK_2
+    dump_offset: int = 0
+    dump_size: int = buffer_script.MAX_BUFFER_SCRIPT_SIZE
+    dump_blocks: int = 1
+    # memory-dump-scatter: the blocks are UNRELATED addresses, so the payload carries a table of
+    # them and `dump_blocks` is however many were asked for rather than something to pass.
+    dump_addresses: tuple = ()
+    # save-write only: the bytes to put into the save block, and the override for the guard that
+    # keeps a write inside the region the game never reads.
+    write_data: bytes | None = None
+    write_unsafe: bool = False
+    # memory-scan: the needle, the range and the frame budget. The scan is not a dump of somewhere
+    # we already knew about - it is how an address is found in the first place.
+    scan_word: int | None = None
+    scan_start: int = buffer_script.SCAN_ROM_START
+    scan_end: int = buffer_script.SCAN_ROM_END
+    scan_blocks: int = buffer_script.SCAN_DEFAULT_BLOCKS
+    scan_max_calls: int | None = None
+    # table-scan: a SHAPE instead of a value - a run of `table_runlen` words each exactly
+    # `table_delta` above the one before it. It is how a table of pointers is found when no
+    # constant in it is known, which is the case for gSpecialVars.
+    table_delta: int | None = None
+    table_runlen: int = buffer_script.SPECIAL_VARS_RUN_LENGTH
+    table_start: int = buffer_script.SCAN_ROM_START
+    table_end: int = buffer_script.SCAN_ROM_END
+    table_blocks: int = buffer_script.TABLE_SCAN_DEFAULT_BLOCKS
+    table_max_calls: int | None = None
+    # rng-trace: the word to sample once a frame, and what to call between the two reads of it.
+    trace_address: int | None = None
+    trace_call: int = 0
+    trace_samples: int = buffer_script.TRACE_SAMPLE_CAPACITY
+    trace_max_calls: int | None = None
+    # call: any ROM function, with arguments we choose. `call_watch` is one address read either
+    # side of the call, which for a function returning nothing - SeedRng - is the only evidence
+    # that it ran and did what it was called for.
+    call_address: int | None = None
+    call_args: tuple = ()
+    call_watch: int = 0
+    # call-chain: a LIST of those, as buffer_script.ChainStep, run in one frame. `write_unsafe`
+    # covers every write step here, because a chain has no scratch region to be safe in: its
+    # targets are wherever the game keeps the thing being changed.
+    chain_steps: tuple = ()
+    # string-gather: an array of pointers to follow, and how far apart they are. This is the one
+    # payload that dereferences, so the answer is the strings rather than a window around them.
+    gather_address: int | None = None
+    gather_count: int = 1
+    gather_stride: int = 12
+    gather_maxlen: int = buffer_script.GATHER_DEFAULT_MAXLEN
+    # create-mon: the eight arguments CreateMon takes, and where the finished 100 bytes go. The mon
+    # is always BUILT inside the payload's own image; `create_mon_destination` copies it onward,
+    # which is a write to the console's live memory and so needs write_unsafe, exactly as an
+    # out-of-scratch save-write does.
+    create_mon_call: int | None = None
+    create_mon_species: int = 1
+    create_mon_level: int = 5
+    create_mon_fixed_iv: int = buffer_script.USE_RANDOM_IVS
+    create_mon_personality: int | None = None
+    create_mon_ot_id_type: int = buffer_script.OT_ID_PLAYER_ID
+    create_mon_ot_id: int = 0
+    create_mon_destination: int = 0
+    create_mon_append: bool = False
+    create_mon_append_dry_run: bool = False
+    # Where to write the bytes that come back. A dump whose contents only ever reached a log line
+    # is a run spent for 16 bytes of head.
+    dump_file: str | None = None
+
+    def __post_init__(self):
+        choices = buffer_script.script_choices()
+        if self.script not in choices:
+            raise ValueError(f"buffer script must be one of {', '.join(choices)}")
+        if not self._expect_explicit:
+            object.__setattr__(self, "expect", self.spec.expect)
+        if self.script in (buffer_script.MEMORY_DUMP, buffer_script.MEMORY_DUMP_MULTI):
+            if self.dump_address is None:
+                raise ValueError(f"{self.script} needs an address to read from")
+        elif self.dump_address is not None:
+            raise ValueError(
+                f"an address to dump is only meaningful with {buffer_script.MEMORY_DUMP} "
+                f"and {buffer_script.MEMORY_DUMP_MULTI}")
+        if self.script == buffer_script.MEMORY_DUMP_SCATTER:
+            if not self.dump_addresses:
+                raise ValueError(
+                    f"{buffer_script.MEMORY_DUMP_SCATTER} needs the addresses to read "
+                    "(--dump-scatter A,B,C)")
+            # The count is not a separate knob: one block per address, in the order given.
+            object.__setattr__(self, "dump_blocks", len(self.dump_addresses))
+        elif self.dump_addresses:
+            raise ValueError(
+                f"a list of addresses is only meaningful with {buffer_script.MEMORY_DUMP_SCATTER}")
+        if self.dump_blocks != 1 and self.script not in (buffer_script.MEMORY_DUMP_MULTI,
+                                                         buffer_script.MEMORY_DUMP_SCATTER):
+            raise ValueError(
+                f"more than one block per session is only {buffer_script.MEMORY_DUMP_MULTI} and "
+                f"{buffer_script.MEMORY_DUMP_SCATTER}; every other payload answers once")
+        if not 1 <= self.dump_blocks <= mg_script.MAX_DUMP_BLOCKS:
+            raise ValueError(
+                f"a session carries 1..{mg_script.MAX_DUMP_BLOCKS} blocks, got {self.dump_blocks}")
+        if self.script not in (buffer_script.SAVE_DUMP, buffer_script.SAVE_WRITE) \
+                and self.dump_offset:
+            raise ValueError(
+                f"an offset into a save block is only meaningful with {buffer_script.SAVE_DUMP} "
+                f"and {buffer_script.SAVE_WRITE}")
+        if self.script == buffer_script.SAVE_WRITE:
+            if not self.write_data:
+                raise ValueError(
+                    f"{buffer_script.SAVE_WRITE} needs the bytes to write (--write-text/--write-hex)")
+            # The answer is the destination read back, so it is exactly as long as what we wrote.
+            object.__setattr__(self, "dump_size", len(self.write_data))
+        elif self.write_data is not None:
+            raise ValueError(
+                f"bytes to write are only meaningful with {buffer_script.SAVE_WRITE}")
+        if self.script == buffer_script.MEMORY_SCAN:
+            if self.scan_word is None:
+                raise ValueError(
+                    f"{buffer_script.MEMORY_SCAN} needs the 32-bit value to look for")
+            # The answer is a fixed-size table however many matches there are, so the host's
+            # length check stays the proof that the payload repointed the send.
+            object.__setattr__(self, "dump_size", buffer_script.SCAN_ANSWER_SIZE)
+        elif self.scan_word is not None:
+            raise ValueError(
+                f"a value to search for is only meaningful with {buffer_script.MEMORY_SCAN}")
+        if self.script == buffer_script.TABLE_SCAN:
+            if self.table_delta is None:
+                raise ValueError(
+                    f"{buffer_script.TABLE_SCAN} needs the step between entries (--table-delta)")
+            object.__setattr__(self, "dump_size", buffer_script.TABLE_ANSWER_SIZE)
+        elif self.table_delta is not None:
+            raise ValueError(
+                f"a table shape is only meaningful with {buffer_script.TABLE_SCAN}")
+        if self.script == buffer_script.RNG_TRACE:
+            if self.trace_address is None:
+                raise ValueError(f"{buffer_script.RNG_TRACE} needs an address to sample")
+            object.__setattr__(self, "dump_size",
+                               buffer_script.trace_answer_size(self.trace_samples))
+        elif self.trace_address is not None or self.trace_call:
+            raise ValueError(
+                f"a word to sample is only meaningful with {buffer_script.RNG_TRACE}")
+        if self.script == buffer_script.CALL:
+            if self.call_address is None:
+                raise ValueError(
+                    f"{buffer_script.CALL} needs the function to call (--call-address); 0 calls "
+                    "nothing, which checks the send path with the ROM left out")
+            object.__setattr__(self, "dump_size", buffer_script.CALL_ANSWER_SIZE)
+        elif self.call_address is not None or self.call_args or self.call_watch:
+            raise ValueError(
+                f"a function to call with chosen arguments is only meaningful with "
+                f"{buffer_script.CALL}")
+        if self.script == buffer_script.CALL_CHAIN:
+            if not self.chain_steps:
+                raise ValueError(
+                    f"{buffer_script.CALL_CHAIN} needs at least one step (--chain-step)")
+            # A fixed-size answer however many steps ran, so the host's length check stays the
+            # proof that the payload repointed the send.
+            object.__setattr__(self, "dump_size", buffer_script.CHAIN_ANSWER_SIZE)
+        elif self.chain_steps:
+            raise ValueError(
+                f"a list of steps is only meaningful with {buffer_script.CALL_CHAIN}")
+        if self.script == buffer_script.STRING_GATHER:
+            if self.gather_address is None:
+                raise ValueError(
+                    f"{buffer_script.STRING_GATHER} needs the array of pointers to follow "
+                    "(--gather-address)")
+            # A fixed-size answer however many strings fit, so the host's length check stays the
+            # proof that the payload repointed the send.
+            object.__setattr__(self, "dump_size", buffer_script.GATHER_ANSWER_SIZE)
+        elif self.gather_address is not None:
+            raise ValueError(
+                f"an array of pointers is only meaningful with {buffer_script.STRING_GATHER}")
+        if self.script == buffer_script.CREATE_MON:
+            object.__setattr__(self, "dump_size", buffer_script.CREATE_MON_ANSWER_SIZE)
+            if self.create_mon_destination and not self.write_unsafe:
+                raise ValueError(
+                    "copying the finished mon to 0x%08X writes the console's live memory; that "
+                    "needs --write-unsafe, the same deliberate override an out-of-scratch "
+                    "save-write takes" % self.create_mon_destination)
+            if self.create_mon_append and self.create_mon_append_dry_run:
+                raise ValueError(
+                    "--create-mon-append and --create-mon-append-dry-run are the same run with "
+                    "and without the two stores that change the save; ask for one of them")
+            if self.create_mon_append and not self.write_unsafe:
+                raise ValueError(
+                    "appending the mon to the player's party writes their LIVE SAVE - 100 bytes "
+                    "at playerParty[playerPartyCount] and the count byte - and the console commits "
+                    "it to flash afterwards. That needs --write-unsafe, the same deliberate "
+                    "override an out-of-scratch save-write takes")
+        elif (self.create_mon_call is not None or self.create_mon_destination
+                or self.create_mon_append or self.create_mon_append_dry_run):
+            raise ValueError(
+                f"a function to call with eight arguments is only meaningful with "
+                f"{buffer_script.CREATE_MON}")
+        if self.script == buffer_script.ANCHORS:
+            # It reports a fixed set of words; --dump-size means nothing to it.
+            object.__setattr__(self, "dump_size", buffer_script.ANCHORS_SIZE)
+        if self.is_dump:
+            self.build_code()       # every operand check, before a console is involved
+
+    @property
+    def is_dump(self):
+        """Anything whose answer comes back as bytes on ident 19 rather than the 4-byte channel."""
+        return self.script in buffer_script.DUMP_SCRIPTS
+
+    @property
+    def spec(self):
+        return buffer_script.SCRIPT_REGISTRY[self.script]
+
+    def build_code(self):
+        if self.script == buffer_script.MEMORY_DUMP:
+            return buffer_script.build_memory_dump(self.dump_address, self.dump_size)
+        if self.script == buffer_script.MEMORY_DUMP_MULTI:
+            return buffer_script.build_memory_dump_multi(
+                self.dump_address, self.dump_size, self.dump_blocks)
+        if self.script == buffer_script.MEMORY_DUMP_SCATTER:
+            return buffer_script.build_memory_dump_scatter(self.dump_addresses, self.dump_size)
+        if self.script == buffer_script.SAVE_DUMP:
+            return buffer_script.build_save_dump(
+                self.dump_block, self.dump_offset, self.dump_size)
+        if self.script == buffer_script.RNG_TRACE:
+            return buffer_script.build_rng_trace(
+                self.trace_address, self.trace_call, self.trace_samples, self.trace_max_calls)
+        if self.script == buffer_script.MEMORY_SCAN:
+            return buffer_script.build_memory_scan(
+                self.scan_word, self.scan_start, self.scan_end,
+                self.scan_blocks, self.scan_max_calls)
+        if self.script == buffer_script.TABLE_SCAN:
+            return buffer_script.build_table_scan(
+                self.table_delta, self.table_runlen, self.table_start, self.table_end,
+                self.table_blocks, self.table_max_calls)
+        if self.script == buffer_script.CALL:
+            return buffer_script.build_call(
+                self.call_address, self.call_args, self.call_watch)
+        if self.script == buffer_script.CALL_CHAIN:
+            return buffer_script.build_call_chain(
+                self.chain_steps, unsafe=self.write_unsafe)
+        if self.script == buffer_script.STRING_GATHER:
+            return buffer_script.build_string_gather(
+                self.gather_address, self.gather_count, self.gather_stride,
+                maxlen=self.gather_maxlen)
+        if self.script == buffer_script.CREATE_MON:
+            has_fixed = self.create_mon_personality is not None
+            return buffer_script.build_create_mon(
+                rom_map.thumb(rom_map.CREATE_MON) if self.create_mon_call is None
+                else self.create_mon_call,
+                self.create_mon_species, self.create_mon_level,
+                fixed_iv=self.create_mon_fixed_iv,
+                has_fixed_personality=int(has_fixed),
+                fixed_personality=self.create_mon_personality if has_fixed else 0,
+                ot_id_type=self.create_mon_ot_id_type, fixed_ot_id=self.create_mon_ot_id,
+                destination=self.create_mon_destination,
+                party_append=(buffer_script.PARTY_APPEND_DRY_RUN
+                              if self.create_mon_append_dry_run
+                              else buffer_script.PARTY_APPEND_WRITE if self.create_mon_append
+                              else buffer_script.PARTY_APPEND_NO))
+        if self.script == buffer_script.SAVE_WRITE:
+            return buffer_script.build_save_write(
+                self.write_data, self.dump_block, self.dump_offset,
+                unsafe=self.write_unsafe)
+        return buffer_script.payload(self.script)
+
+    def build_distribution(self):
+        return MysteryGiftDistribution(
+            None, None, buffer_code=self.build_code(), buffer_expect=self.expect,
+            buffer_dump_size=self.dump_size if self.is_dump else None,
+            buffer_dump_blocks=self.dump_blocks,
+            buffer_dump_address=(self.dump_address or
+                                 (self.dump_addresses[0] if self.dump_addresses else 0)),
+            buffer_decode=(self.script if self.script in buffer_script.DECODED_SCRIPTS
+                           else None))
+
+
+@dataclass(frozen=True)
+class WonderNewsPayload:
+    """The other half of the console's Mystery Gift menu: {Wonder Cards, Wonder News} x {Wireless, Friend}.
+
+    News has no flagId and no receipt flag, so nothing here mirrors MysteryGiftPayload.flag_id. What
+    decides whether a console keeps the news is a byte-for-byte compare against the news it already
+    holds [IsWonderNewsSameAsSaved, decomp:src/mystery_gift.c:140], so `news_id` overrides the id to
+    make the same text land again on a console that already took it.
+    """
+    news: str = wonder_news.DEFAULT_NEWS
+    news_id: int | None = None
+
+    def __post_init__(self):
+        choices = wonder_news.news_choices()
+        if self.news not in choices:
+            raise ValueError(f"news must be one of {', '.join(choices)}")
+        if self.news_id is not None and (type(self.news_id) is not int
+                                         or not 0 < self.news_id <= 0xFFFF):
+            raise ValueError("news_id must be between 1 and 65535")
+        self.build_news()
+
+    @property
+    def spec(self):
+        return wonder_news.NEWS_REGISTRY[self.news]
+
+    def build_news(self):
+        return wonder_news.build_news(self.news, news_id=self.news_id)
+
+    def build_distribution(self):
+        return MysteryGiftDistribution(None, None, news=self.build_news())
+
+
+def _mystery_gift_host_defaults():
+    return HostOptions(
+        skip_encryption=True,
+        native_nonce_sequence=True,
+        session_response_first=True,
+    )
+
+
+@dataclass(frozen=True)
+class MysteryGiftRunConfig:
+    profile: TrainerProfile = DEFAULT_TRAINER
+    payload: MysteryGiftPayload = field(default_factory=MysteryGiftPayload)
+    # Which cartridge the run is for, checked against the console's game data. None: do not check.
+    expect_console: str | None = None
+    ldn: LdnConfig = field(default_factory=lambda: LdnConfig(phy="auto"))
+    role: HostOptions = field(default_factory=_mystery_gift_host_defaults)
+    trust_pia: bool = True
+    client_ready_idle_frames: int | None = None
+    inter_block_gap_frames: int | None = None
+    block_repeat: int | None = None
+    ram_script_block_repeat: int | None = None
+    end_on_success: bool = False
+    idle_timeout_seconds: int | None = None
+    attempt_log_dir: str | None = None
+    # Where to keep what the console says about itself. See pokeldn/frlg/gift/game_data_log.py: the
+    # card counters only mean something as a difference between two sessions.
+    game_data_log: str | None = None
+
+    def __post_init__(self):
+        if not isinstance(self.profile, TrainerProfile):
+            raise ValueError("profile must be a TrainerProfile")
+        if not isinstance(self.payload,
+                          (MysteryGiftPayload, WonderNewsPayload, BufferScriptPayload)):
+            raise ValueError(
+                "payload must be a MysteryGiftPayload, WonderNewsPayload or BufferScriptPayload")
+        if not isinstance(self.ldn, LdnConfig):
+            raise ValueError("ldn must be an LdnConfig")
+        if not isinstance(self.role, HostOptions):
+            raise ValueError("role must be HostOptions")
+        if type(self.trust_pia) is not bool:
+            raise ValueError("trust_pia must be a bool")
+        if (self.client_ready_idle_frames is not None
+                and (type(self.client_ready_idle_frames) is not int
+                     or not 0 <= self.client_ready_idle_frames <= 600)):
+            raise ValueError("client_ready_idle_frames must be between 0 and 600")
+        if (self.inter_block_gap_frames is not None
+                and (type(self.inter_block_gap_frames) is not int
+                     or not 0 <= self.inter_block_gap_frames <= 600)):
+            raise ValueError("inter_block_gap_frames must be between 0 and 600")
+        if (self.block_repeat is not None
+                and (type(self.block_repeat) is not int
+                     or not 1 <= self.block_repeat <= 8)):
+            raise ValueError("block_repeat must be between 1 and 8")
+        if (self.ram_script_block_repeat is not None
+                and (type(self.ram_script_block_repeat) is not int
+                     or not 1 <= self.ram_script_block_repeat <= 8)):
+            raise ValueError("ram_script_block_repeat must be between 1 and 8")
+        if type(self.end_on_success) is not bool:
+            raise ValueError("end_on_success must be a bool")
+        if (self.idle_timeout_seconds is not None
+                and (type(self.idle_timeout_seconds) is not int
+                     or not 1 <= self.idle_timeout_seconds <= 24 * 60 * 60)):
+            raise ValueError("idle_timeout_seconds must be between 1 and 86400")
+        if self.attempt_log_dir is not None and not isinstance(self.attempt_log_dir, str):
+            raise ValueError("attempt_log_dir must be a string or None")
+        if self.game_data_log is not None and not isinstance(self.game_data_log, str):
+            raise ValueError("game_data_log must be a string or None")
+
+
+def parse_trainer_id(value):
+    parts = value.split(":")
+    if len(parts) not in (1, 2) or any(not part or not part.isdecimal() for part in parts):
+        raise ValueError("ID must be decimal TID or TID:SID")
+    values = tuple(int(part, 10) for part in parts)
+    if any(number > 0xFFFF for number in values):
+        raise ValueError("TID and SID must each be between 0 and 65535")
+    return values[0], values[1] if len(values) == 2 else None
+
+
+def trainer_id_argument(value):
+    try:
+        return parse_trainer_id(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def add_identity_arguments(parser):
+    parser.add_argument("--ot", default=None, help="trainer name; defaults to DEFAULT_TRAINER")
+    parser.add_argument("--version", choices=tuple(VERSIONS), default=None,
+                        help="game version; defaults to DEFAULT_TRAINER")
+    parser.add_argument("--language", choices=tuple(LANGUAGES), default=None,
+                        help="trainer language; defaults to DEFAULT_TRAINER")
+    parser.add_argument("--id", type=trainer_id_argument, metavar="TID[:SID]", default=None,
+                        help="decimal trainer ID, optionally followed by decimal secret ID")
+    parser.add_argument("--card-flag-id", type=lambda v: int(v, 0), metavar="N", default=None,
+                        help="the Wonder Card flag id our trainer card claims in the Union Room "
+                             "card exchange. A console holding the card with that id arms its own "
+                             "card counters, so a trade or cable-club battle with us increments "
+                             "them [union_room.c:1777]; default 0, which arms nothing")
+
+
+def profile_from_overrides(*, ot=None, version=None, language=None, trainer_id=None,
+                           card_flag_id=None, base=DEFAULT_TRAINER):
+    changes = {}
+    if card_flag_id is not None:
+        changes["card_flag_id"] = card_flag_id
+    if ot is not None:
+        changes["name"] = ot
+    if version is not None:
+        changes["version"] = version
+    if language is not None:
+        changes["language"] = language
+    if trainer_id is not None:
+        tid, sid = trainer_id
+        changes["tid"] = tid
+        if sid is not None:
+            changes["sid"] = sid
+    return replace(base, **changes)

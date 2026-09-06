@@ -1,4 +1,4 @@
-# frlg-ldn-trade
+# pokeldn
 
 A computer speaking Nintendo Switch local wireless (LDN) to Pokémon games running on a real
 Switch / Switch 2.
@@ -10,11 +10,11 @@ Two kinds of target, sharing one wireless layer:
   the project has gone deepest.
 - **Native Switch titles** — starting with **Brilliant Diamond / Shining Pearl**. The LDN side is
   proven (a Linux box holds a seat in a real Union Room session); Pia's payloads are still
-  encrypted. See [the BDSP notes](https://decryptu.github.io/frlg-ldn-trade/bdsp.html).
+  encrypted. See [the BDSP notes](https://decryptu.github.io/pokeldn/bdsp.html).
 
-The repository keeps its original name, and so do the `frlgsim` package and the `frlg*` entry
+The repository keeps its original name, and so do the `pokeldn` package and the `frlg*` entry
 points, because renaming them would churn every import and test for no functional gain. Read
-`frlgsim` as "the package", not as "FireRed only" — the LDN and Pia layers in it are
+`pokeldn` as "the package", not as "FireRed only" — the LDN and Pia layers in it are
 game-independent.
 
 ---
@@ -36,7 +36,7 @@ This demo was recorded using the **ALFA AWUS036ACHM**. The RZ616 is half as fast
   visiting Battle Tower trainer
 - Union Room: greetings, trading-board trades, live chat, and full link battles
 - Native code on the console through the gift link: reading and writing its save, mapping its ROM,
-  and calling its own functions. See [the documentation site](https://decryptu.github.io/frlg-ldn-trade/)
+  and calling its own functions. See [the documentation site](https://decryptu.github.io/pokeldn/)
 - Native Switch titles: LDN discovery and association against Brilliant Diamond / Shining Pearl, the
   Pia 5.x packet format, and an offline toolkit for reading a retail title's own code
 
@@ -76,11 +76,11 @@ contain this project's adapter compatibility fixes.
 | [`bin/`](bin) | the things you run against a console. FireRed/LeafGreen: `frlgmg_host.py` (Mystery Gift, Wonder News and native code), `frlgmg_client.py` (receive a card from a console), `frlgtrade_host.py` (trade and Union Room host), `frlgtrade.py` (trade joiner). Native titles: `bdsp_join.py` (associate and take a seat), `bdsp_pia_probe.py` (hold the seat and speak Pia) |
 | [`tools/`](tools) | offline helpers: `dump_read.py` (decode a save dump), plus the radio diagnostics `ldn_scan.py`, `sniff.py`, `joyspot_probe.py`, `ldn_debug_report.sh` |
 | [`tools/switch/`](tools/switch) | reading a retail Switch title's own code, all offline: `nso_read.py`, `nso_relocs.py`, `rtti_names.py`, `arm64_xref.py`, `arm64_dis.py` |
-| [`frlgsim/`](frlgsim) | the package everything above is made of: the LDN/Pia transport, the RFU link, the Mystery Gift server and client, the payload builders |
-| [`asm/`](asm) | ARM sources for the payloads the console runs (`scripts/gen_buffer_scripts.py` assembles them into `frlgsim/buffer_payloads.py`) |
+| [`pokeldn/`](pokeldn) | the package everything above is made of: the LDN/Pia transport, the RFU link, the Mystery Gift server and client, the payload builders |
+| [`asm/`](asm) | ARM sources for the payloads the console runs (`scripts/gen_buffer_scripts.py` assembles them into `pokeldn/frlg/rom/buffer_payloads.py`) |
 | [`scripts/`](scripts) | setup, deployment and code generation - not things you point at a console |
 | [`config/`](config) | host profiles (`host.toml`, and `host.local.toml` for this machine) |
-| [`docs/`](docs) | the protocol findings, each with its decomp citations; published at [decryptu.github.io/frlg-ldn-trade](https://decryptu.github.io/frlg-ldn-trade/) |
+| [`docs/`](docs) | the protocol findings, each with its decomp citations; published at [decryptu.github.io/pokeldn](https://decryptu.github.io/pokeldn/) |
 | [`tests/`](tests) | `python -m pytest tests/ -q` |
 | [`vendor/`](vendor) | the bundled LDN implementation and the mt7601u AP-mode driver |
 
@@ -205,7 +205,7 @@ do not match the proven profile.
 ### Trainer identity
 
 All three entry points start from `DEFAULT_TRAINER` in
-[`frlgsim/config.py`](frlgsim/config.py). Use `--ot`, `--version`, and `--id` for per-run overrides.
+[`pokeldn/config.py`](pokeldn/config.py). Use `--ot`, `--version`, and `--id` for per-run overrides.
 The ID format is decimal `TID[:SID]`:
 
 ```bash

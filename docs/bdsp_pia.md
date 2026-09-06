@@ -17,7 +17,7 @@ size across hundreds of packets says this is one fixed-shape periodic announceme
 conversation.
 
 The header is Pia 5.27-5.45 - version byte `0x89`, so encrypted, version 9 - and the layout is on
-[The Pia layer](pia.md). `frlgsim/pia5.py` parses and rebuilds it; against 674 captured packets it
+[The Pia layer](pia.md). `pokeldn/ldn/pia5.py` parses and rebuilds it; against 674 captured packets it
 round-trips byte-identically.
 
     32ab9864 89 00000000 11bac90d 0000 00 f5a83bd383ce712d 59baa5cbc320cb56 <144 bytes>

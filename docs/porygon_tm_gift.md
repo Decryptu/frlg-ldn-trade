@@ -44,9 +44,9 @@ Because this is an ordinary composed gift, it is also available to the `.bin` ex
 injector:
 
 ```bash
-./.venv/bin/python -m frlgsim.gift_to_bin --gift porygon-tm-gift
+./.venv/bin/python -m pokeldn.frlg.gift.gift_to_bin --gift porygon-tm-gift
 
-./.venv/bin/python -m frlgsim.save_inject \
+./.venv/bin/python -m pokeldn.frlg.save.save_inject \
   input.sav --out output.sav --gift porygon-tm-gift
 ```
 

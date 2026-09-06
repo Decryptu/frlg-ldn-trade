@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Deterministic Stage 2.4 tests for the host Pia Reliable state machine."""
 
-from frlgsim import reliable
+from pokeldn.ldn import reliable
 
 
 def _payloads(deliveries):

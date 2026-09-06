@@ -1,6 +1,6 @@
 """The ROM addresses read off the console, and the checks that keep them honest.
 
-Nothing in frlgsim/rom_map.py is inferred from the decomp's English rev-10 build. These tests hold
+Nothing in pokeldn/frlg/rom/rom_map.py is inferred from the decomp's English rev-10 build. These tests hold
 the map to the evidence: the two dumps that produced it are in scratchpad/ (gitignored, so the tests
 that need them skip when they are absent), and the internal consistency is checked either way.
 """
@@ -12,7 +12,7 @@ import pytest
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import rom_map, special_names  # noqa: E402
+from pokeldn.frlg.rom import rom_map, special_names  # noqa: E402
 
 
 SCRATCH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scratchpad")
@@ -271,7 +271,7 @@ def test_the_easy_chat_region_has_its_own_delta_and_it_is_not_the_one_below_it()
     """lg167 carried -0x24 up from gSpeciesInfo to sEasyChatGroups and found nothing - the
     prediction failed. The region's real delta is -0x1C4, uniform across the table and all 18
     word-list pointers lg169 read [lg168 found the table by bs16's 0x00450045 fingerprint]."""
-    from frlgsim import easychat_french_words
+    from pokeldn.frlg.text import easychat_french_words
     assert rom_map.leafgreen("sEasyChatGroups") == 0x083E353C
     assert rom_map.leafgreen_guess(0x083E3700) == 0x083E353C
     for _run, firered_address, _words in easychat_french_words.GROUPS.values():
@@ -283,7 +283,7 @@ def test_the_easy_chat_region_has_its_own_delta_and_it_is_not_the_one_below_it()
 def test_the_french_vocabulary_itself_transfers_because_a_console_said_so():
     """lg170 read LeafGreen's group 1 with string-gather: 26/26 words identical to bs20's FireRed
     reading, same slots, same order. The counts matching was evidence; this is the confirmation."""
-    from frlgsim import easychat_french_words
+    from pokeldn.frlg.text import easychat_french_words
     _run, _address, words = easychat_french_words.GROUPS[1]
     assert len(words) == 26
     assert words[0] == "CE SERA TOI" and words[25] == "ARGENT"

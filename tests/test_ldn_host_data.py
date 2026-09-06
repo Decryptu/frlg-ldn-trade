@@ -12,7 +12,7 @@ sys.path.insert(0, VENDORED_LDN)
 
 import ldn
 from ldn import wlan
-from frlgsim.transport import HostTransport
+from pokeldn.ldn.transport import HostTransport
 
 
 def test_ldn_import_resolves_to_the_tracked_vendored_package():

@@ -1,7 +1,8 @@
 from dataclasses import FrozenInstanceError
 
 import frlgtrade
-from frlgsim import config, linkplayer
+from pokeldn import config
+from pokeldn.frlg.link import linkplayer
 
 
 def test_default_profile_is_completed_and_matches_configured_identity():
@@ -78,7 +79,7 @@ def test_latin_languages_are_offered_with_their_decomp_values():
 def test_accented_names_survive_the_charmap_round_trip():
     """encode() drops unknown characters, so before the accented range was added a French OT name
     went on the wire mangled: "Zoe(acute)" -> "Zo". Names are what the console displays for us."""
-    from frlgsim import charmap
+    from pokeldn.frlg.text import charmap
     for name in ("Zoé", "Éloïse", "Jürgen", "Muñoz", "Grüße", "José", "Renaud"):
         encoded = charmap.encode(name, width=8, pad=0x00)
         assert charmap.decode(encoded) == name, name
@@ -87,7 +88,7 @@ def test_accented_names_survive_the_charmap_round_trip():
 def test_charmap_never_maps_the_terminator_to_a_glyph():
     """charmap.txt maps 0xFF to '$', but 0xFF is our EOS and fixed-width pad. Mapping it would
     corrupt every name field."""
-    from frlgsim import charmap
+    from pokeldn.frlg.text import charmap
     assert charmap.EOS == 0xFF and charmap.PAD == 0xFF
     assert 0xFF not in charmap._DEC
     assert "$" not in charmap._ENC
@@ -96,7 +97,7 @@ def test_charmap_never_maps_the_terminator_to_a_glyph():
 def test_language_override_reaches_the_linkplayer_wire_byte():
     """The dict is useless unless --language can select it and it lands in the struct the console
     actually reads (LinkPlayer[26:28])."""
-    from frlgsim import linkplayer
+    from pokeldn.frlg.link import linkplayer
     for name, code in config.LANGUAGES.items():
         profile = config.profile_from_overrides(ot="Zoé", language=name)
         wire = profile.to_link_player().pack()

@@ -39,13 +39,13 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import (  # noqa: E402
-    beacon, gbaframe, host_mystery_gift, linkplayer, mg_script, mg_server, ni,
-    mg_link, reliable, rfu, stamp_rally, wonder_card, wonder_news,
-)
-from frlgsim import mystery_gift as mg  # noqa: E402
-from frlgsim.host_session import HostSession  # noqa: E402
-from frlgsim.rfu_leader import DISCONNECTED  # noqa: E402
+from pokeldn.frlg.gift import host_mystery_gift, mg_link, mg_script, mg_server, stamp_rally, wonder_card, wonder_news  # noqa: E402
+from pokeldn.frlg.link import linkplayer  # noqa: E402
+from pokeldn.gba import gbaframe, ni, rfu  # noqa: E402
+from pokeldn.ldn import beacon, reliable  # noqa: E402
+from pokeldn.frlg.gift import mystery_gift as mg  # noqa: E402
+from pokeldn.frlg.link.host_session import HostSession  # noqa: E402
+from pokeldn.gba.rfu_leader import DISCONNECTED  # noqa: E402
 from tests.test_mystery_gift_flow import ConsoleClientModel  # noqa: E402
 
 # The console model's identity, so both halves of the link agree.  Its
