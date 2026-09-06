@@ -519,11 +519,15 @@ LEAFGREEN = {
 # upward on faith and found nothing, which is what exposed them.
 LEAFGREEN_DELTA_SEGMENTS = (
     # (low, high, delta, evidence): the delta is measured at both ends of each span
-    (0x08000000, 0x08071FC4, 0x00, "lg176b vs bs68b, 42 paired hits; lg184-lg187 carried it up "
-     "from 0x0805359C with four needles from bs92/bs103/bs105, lg189 the control"),
-    (0x0807D238, 0x080CE36C, -0x2C, "lg176b vs bs68b, 2 paired hits; lg161 vs bs13, 4 more"),
-    (0x080EBA14, 0x0813E8CC, -0x28, "lg176b vs bs68b, 9 paired hits; lg161 vs bs13, 5 more"),
-    (0x08148C74, 0x0824CDFC, -0x24, "lg176b vs bs68b, 3 paired hits; lg160, lg161-vs-bs13, lg165"),
+    (0x08000000, 0x0807AF04, 0x00, "lg176b vs bs68b, 42 paired hits; lg184-lg187 carried it up "
+     "from 0x0805359C with four needles from bs92/bs103/bs105, lg189 the control; session 42 "
+     "carried it from 0x08071FC4 with 1225 paired call sites"),
+    (0x0807D238, 0x080D4404, -0x2C, "lg176b vs bs68b, 2 paired hits; lg161 vs bs13, 4 more; "
+     "session 42 carried the top up from 0x080CE36C, 283 paired call sites"),
+    (0x080EBA14, 0x08143604, -0x28, "lg176b vs bs68b, 9 paired hits; lg161 vs bs13, 5 more; "
+     "session 42 carried the top up from 0x0813E8CC, 36 paired call sites"),
+    (0x081484CC, 0x0824CDFC, -0x24, "lg176b vs bs68b, 3 paired hits; lg160, lg161-vs-bs13, lg165; "
+     "session 42 carried the bottom down from 0x08148C74, 24 paired call sites"),
     # A segment NOBODY HAD SEEN, and it is why 0x0824CDFC..0x083BEE74 looked like one 1.5 MB gap:
     # the delta does not go -0x24 straight to -0x1C4, it stops at -0x20 for more than a megabyte on
     # the way. bs121/lg192, 13 paired sites over two addresses far apart, with a -0x24 control and
@@ -589,10 +593,13 @@ G_SONG_TABLE = 0x084975BC           # struct Song[347], {const u32 *header; u16 
 # NOT located to the byte; halving one of these needs a needle known to sit inside it.
 LEAFGREEN_DELTA_BOUNDARIES = (
     # (from_delta, to_delta, low, high, evidence)
-    (0x00, -0x2C, 0x08071FC4, 0x0807D238, "lg184-lg187 below, lg161/bs13/lg189 above; was "
-     "0x0805359C, narrowed 25x"),
-    (-0x2C, -0x28, 0x080CE36C, 0x080EBA14, "lg176b vs bs68b, both ends"),
-    (-0x28, -0x24, 0x0813E8CC, 0x08148C74, "lg176b/bs68b below, lg160 above"),
+    (0x00, -0x2C, 0x0807AF04, 0x0807D238, "lg184-lg187 below, lg161/bs13/lg189 above; was "
+     "0x0805359C, then 0x08071FC4; session 42 took the low end to the last call site that did "
+     "NOT move, 8.8 KB left"),
+    (-0x2C, -0x28, 0x080D4404, 0x080EBA14, "lg176b vs bs68b, both ends; session 42's paired call "
+     "sites carried the low end up from 0x080CE36C"),
+    (-0x28, -0x24, 0x08143604, 0x081484CC, "lg176b/bs68b below, lg160 above; session 42 moved BOTH "
+     "ends inward with paired call sites, 40.9 KB -> 19.7 KB"),
     # This one was never written down, though both its ends were measured: gSpeciesInfo is the top
     # of the -0x24 segment (lg176b/bs68b) and sEasyChatGroups the bottom of -0x1C4 (lg169).
     (-0x24, -0x20, 0x0824CDFC, 0x08265950, "lg176b/bs68b below at gSpeciesInfo, bs121/lg192 "

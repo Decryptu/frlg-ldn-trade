@@ -217,8 +217,9 @@ padding values, so those two reads are not the same thing and neither has been c
 
 ## What is left
 
-- **The three low boundaries are bracketed but not located.** Halving one needs a needle known to
-  sit inside that span; nothing needs it yet.
+- **The three low boundaries are bracketed but not located**, and session 42's paired call sites
+  narrowed all three without a run - the first to 8.8 KB. Halving one further needs a needle known
+  to sit inside that span, or another window dumped on both cartridges; nothing needs it yet.
 - **0x0841463E .. 0x0847DCF8 is the gap now**, 422 KB. It was 2163 KB this morning. The delta goes
   from −0x1C4 to −0x12D8 across it, a difference of 0x1114.
 - **0x0824CDFC .. 0x083BEE74 is the other one**, 1480 KB, from gSpeciesInfo upwards, where the delta
@@ -226,6 +227,52 @@ padding values, so those two reads are not the same thing and neither has been c
   never written down; it is in `LEAFGREEN_DELTA_BOUNDARIES` now.
 - **Nothing between 0x086803FC and the end of the data has been measured**, though bs118 read
   gSongTable and its song headers reach 0x086ABE68, so the data runs at least that far.
+
+## Session 42: every call in a shared window is a delta point, and 1592 were already on disk
+
+lg169 made this measurement without ever naming it: **a pointer dumped off both consoles is a delta
+point at wherever it points.** Sessions 40 and 41 read the LITERAL POOLS that way - 27 paired words
+carried both ends of the -0x1C4 segment, 13 more found the -0x20 segment nobody had seen. What
+nothing had read is the other pointer in every one of those windows. **A `bl` is a relative call**,
+so the same instruction on the two cartridges resolves to two different addresses, and their
+difference is the delta AT THE TARGET. A 16 KB window of handlers holds 834 of them.
+
+`tools/cartridge_pair.py` reads both kinds out of every window this project holds on both
+cartridges. **No run was spent: the dumps were already on disk**, taken for other reasons.
+
+| pair | what it was dumped for | paired call sites | paired pool words |
+|---|---|---|---|
+| bs120 / lg191 | the warp and battle-start specials | 734 | 168 |
+| bs121 / lg192 | the field script-command table | 834 | 92 |
+| bs117 / lg190 | m4a's pool, to find gSongTable | 24 | 11 |
+
+**WHAT SAYS THE PAIRING IS REAL.** Every site pairs - 734 of 734, 834 of 834 - and the deltas come
+out QUANTISED: four values per window, no outliers, nothing "nearly". A window placed wrongly does
+not do that, and the first version of this tool proved it by computing the LeafGreen offsets off the
+FireRed base and answering with 64 different deltas, none of them repeated.
+
+**Two confirmations from runs that knew nothing about the method.** The pairing puts LeafGreen's
+`AddBagItem` at 0x0809DA44, which is exactly where lg189 measured it with a needle, and `Random` at
+0x080486B0, where lg162 read it out of a literal pool.
+
+Three of the six boundaries move, and one of them a long way:
+
+| boundary | was | now |
+|---|---|---|
+| 0 -> -0x2C | 0x08071FC4..0x0807D238, 44.6 KB | **0x0807AF04..0x0807D238, 8.8 KB** |
+| -0x2C -> -0x28 | 0x080CE36C..0x080EBA14, 117.7 KB | 0x080D4404..0x080EBA14, 93.5 KB |
+| -0x28 -> -0x24 | 0x0813E8CC..0x08148C74, 40.9 KB | **0x08143604..0x081484CC, 19.7 KB** |
+
+0x0807AF04 is the highest call site that did NOT move and 0x0807E068 the lowest that moved by -0x2C;
+the recorded 0x0807D238 from lg189 is tighter than the second, so the bracket keeps it. The
+-0x28 -> -0x24 boundary moved at BOTH ends, which one needle never does.
+
+**And the pairing is a table of LeafGreen addresses, not only a delta map.**
+`frlgsim/leafgreen_twins.py` holds all 738 distinct pairs, each one read off its own cartridge:
+`leafgreen_twins.leafgreen(address)` answers exactly where it has a pair and falls back to
+`rom_map.leafgreen_guess` - which applies the segment delta and refuses inside a boundary -
+everywhere else. About 200 of them are functions this project can name, so the item and money block
+that lg184-lg189 left "predicted by segment" is measured now.
 
 ## bs117/lg190: a literal pool is a pointer table, and a free one
 
@@ -350,4 +397,6 @@ narrowing. Everything below it is the same address on both cartridges:
 - the `_call_via_r0` veneer `ScrCmd_special` and `ScrCmd_callnative` call through
 
 `rom_map.SHARED_WITH_LEAFGREEN_THROUGH` is the boundary; `LEAFGREEN_ADD_BAG_ITEM` is 0x0809DA44.
-The rest of the item and money block is -0x2C by segment, predicted.
+The rest of the item and money block was -0x2C by segment, predicted - session 42's paired call
+sites measured it, and `frlgsim/leafgreen_twins.py` is where those addresses are. The delta-0
+segment reaches 0x0807AF04 now, not 0x08071FC4.
