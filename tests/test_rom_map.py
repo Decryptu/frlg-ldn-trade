@@ -237,17 +237,20 @@ def test_the_high_segment_was_measured_without_knowing_a_symbol_up_there():
     assert rom_map.leafgreen_guess(0x086003E0) - 0x086003E0 == -0x12D8
     # It is its own segment, far from the Easy Chat region's -0x1C4 and not reachable from it.
     assert rom_map.leafgreen_guess(0x083E3700) - 0x083E3700 == -0x1C4
-    # And the span between them is a gap: more boundaries are in there and none is located.
+    # bs117/lg190 carried its low end down to the m4a tables, so 0x08500000 is now INSIDE it.
+    assert rom_map.leafgreen_guess(0x08500000) - 0x08500000 == -0x12D8
+    # The span that is still a gap is below them, and leafgreen_guess must refuse in there.
     with pytest.raises(ValueError, match="gap between measured segments"):
-        rom_map.leafgreen_guess(0x08500000)
+        rom_map.leafgreen_guess(0x08400000)
 
 
 def test_every_leafgreen_boundary_sits_between_the_segments_it_joins():
     """A boundary is the span between the last paired hit at one delta and the first at the next, so
-    the table and the segments are two readings of one measurement and must agree. Three boundaries
-    are bracketed and none is located to the byte."""
+    the table and the segments are two readings of one measurement and must agree. Five boundaries
+    are bracketed and none is located to the byte - and there is one boundary for every join between
+    consecutive segments, which is what catches a segment narrowed without its boundary following."""
     segments = rom_map.LEAFGREEN_DELTA_SEGMENTS
-    assert len(rom_map.LEAFGREEN_DELTA_BOUNDARIES) == 3
+    assert len(rom_map.LEAFGREEN_DELTA_BOUNDARIES) == len(segments) - 1
     for index, (before, after, low, high, evidence) in enumerate(
             rom_map.LEAFGREEN_DELTA_BOUNDARIES):
         assert low < high, f"boundary {index} is not a span"

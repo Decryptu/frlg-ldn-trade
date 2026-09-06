@@ -216,10 +216,57 @@ padding values, so those two reads are not the same thing and neither has been c
 
 - **The three low boundaries are bracketed but not located.** Halving one needs a needle known to
   sit inside that span; nothing needs it yet.
-- **0x083E3700 .. 0x086003E0 is a gap, and a big one.** The delta goes from −0x1C4 to −0x12D8
-  across it, a difference of 0x1114, so there are many boundaries in there and none is located. The
-  make-a-needle method above costs two runs per point and would bisect it.
-- **Nothing between 0x086803FC and the end of the data has been measured.**
+- **0x083E3700 .. 0x0847DCF8 is the gap now**, 617 KB, down from 2163. The delta goes from
+  −0x1C4 to −0x12D8 across it, a difference of 0x1114. See "A literal pool is a pointer table"
+  below for what closed the other three quarters.
+- **0x0824CDFC .. 0x083DE528 is the other one**, 1.6 MB, from gSpeciesInfo up to sEasyChatGroups,
+  where the delta goes −0x24 to −0x1C4. Both its ends were measured long ago and the boundary
+  itself was simply never written down; it is in `LEAFGREEN_DELTA_BOUNDARIES` now.
+- **Nothing between 0x086803FC and the end of the data has been measured**, though bs118 read
+  gSongTable and its song headers reach 0x086ABE68, so the data runs at least that far.
+
+## bs117/lg190: a literal pool is a pointer table, and a free one
+
+Bisecting a 2.2 MB gap with the make-a-needle method costs two runs a point and about 42 runs to
+close. A POINTER TABLE dumped off both consoles is far better value - it pairs entry for entry, and
+every entry is a delta measurement at wherever it points. lg169 already did this without naming it,
+getting 18 points from the Easy Chat word-list pointers.
+
+A **literal pool** is the same thing for free, and it reaches places no table indexes. Every
+compiled function keeps the addresses it touches in a pool immediately after its body, so a 1 KB
+window of code is a few dozen pointers to wherever that code works. The trick is placing the same
+window on both cartridges, and that is the part which usually costs a run - except where the CODE
+sits in a segment whose delta is already known.
+
+m4a is exactly that case. Its code is in `lib_text`, whose start bs110 measured at 0x081DE188, and
+lib_text is inside the −0x24 segment - so the same window on LeafGreen is at −0x24 exactly, with
+no scan and no search. m4a is also the right code to pick: it works on the sound data, which lives
+at the top of the ROM, in the gap.
+
+bs117 dumped 0x081DF200 on FireRed and lg190 dumped 0x081DF1DC on LeafGreen. The two pools line up
+word for word - 24 each, 13 identical, which are the RAM addresses and the constants - and every
+one of the five that is a cartridge pointer moved by the same amount:
+
+| FireRed | LeafGreen | delta |
+|---|---|---|
+| 0x0847DCF8 | 0x0847CA20 | −0x12D8 |
+| 0x0847DDAC | 0x0847CAD4 | −0x12D8 |
+| 0x0847DF10 | 0x0847CC38 | −0x12D8 |
+| 0x0849758C (`gMPlayTable`) | 0x084962B4 | −0x12D8 |
+| 0x084975BC (`gSongTable`) | 0x084962E4 | −0x12D8 |
+
+Five points, not one - lg167 is what one costs. The −0x12D8 segment used to start at 0x086003E0;
+it starts at 0x0847DCF8 now, and the gap below it is 3.5 times smaller for two runs.
+
+**The pair proves its own alignment.** gMPlayTable and gSongTable came back 0x30 apart on BOTH
+cartridges, and 0x30 is four `struct MusicPlayer` of twelve bytes, which is exactly what
+`sound/music_player_table.inc` holds. A window read at the wrong offset does not produce that.
+
+What did NOT work, and is worth recording so it is not tried again: gSongTable looked like the ideal
+spreader - 347 entries of `{header, ms, me}` pointing into the largest blob in the ROM. bs118 dumped
+it and the song HEADERS turn out to be packed together, 122 of them inside 9 KB. The pointers do not
+spread, so the table measures one place, not many. A graphics pointer table would be the next thing
+to try; the literal-pool trick above got there first and cost less.
 
 ## lg184-lg189: the script layer is the same on both cartridges
 

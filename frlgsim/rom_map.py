@@ -487,7 +487,8 @@ LEAFGREEN_DELTA_SEGMENTS = (
     (0x080EBA14, 0x0813E8CC, -0x28, "lg176b vs bs68b, 9 paired hits; lg161 vs bs13, 5 more"),
     (0x08148C74, 0x0824CDFC, -0x24, "lg176b vs bs68b, 3 paired hits; lg160, lg161-vs-bs13, lg165"),
     (0x083DE528, 0x083E3700, -0x1C4, "lg169: 18 word-list pointers and the table, all -0x1C4"),
-    (0x086003E0, 0x086803FC, -0x12D8, "bs69/lg178 and bs72/lg179, two points 0x80000 apart"),
+    (0x0847DCF8, 0x086803FC, -0x12D8, "bs69/lg178 and bs72/lg179 two points 0x80000 apart at the "
+     "top; bs117/lg190 carried the LOW end down from 0x086003E0 with five paired m4a pool words"),
 )
 
 # THE HIGH SEGMENT, and how it was measured without knowing a single symbol up there. Dump 1 KB off
@@ -499,7 +500,26 @@ LEAFGREEN_DELTA_SEGMENTS = (
 # point - one point would have been the mistake lg167 already paid for.
 #
 # FireRed's ROM data ENDS between 0x08680400 and 0x08800000: bs71 read all 0xFF at 0x08800000 and
-# bs70 all 0x00 at 0x08E00000, while 0x08680000 is high-entropy data.
+# bs70 all 0x00 at 0x08E00000, while 0x08680000 is high-entropy data. bs118 read gSongTable and its
+# headers point to 0x086A9930..0x086ABE68, so the data runs at least that far.
+
+# THE LOW END OF THAT SEGMENT, bs117/lg190, and the cheapest paired measurement this project has
+# made. A pointer table dumped off both consoles pairs entry for entry (lg169 did it with 18 Easy
+# Chat word-list pointers); a LITERAL POOL does the same thing for free, and reaches places no
+# table indexes. m4a's code is in lib_text, whose start bs110 measured at 0x081DE188, and lib_text
+# is inside the -0x24 segment - so the SAME window on LeafGreen is at -0x24 exactly, no scan and no
+# search. bs117 dumped 0x081DF200 on FireRed and lg190 0x081DF1DC on LeafGreen; the two pools line
+# up word for word (13 of 24 identical, which are the RAM addresses and the constants), and the
+# five that are cartridge pointers all move by the same -0x12D8:
+#
+#   0x0847DCF8 -> 0x0847CA20      0x0847DDAC -> 0x0847CAD4     0x0847DF10 -> 0x0847CC38
+#   0x0849758C -> 0x084962B4      0x084975BC -> 0x084962E4      (gMPlayTable, gSongTable)
+#
+# gMPlayTable and gSongTable are 0x30 apart, which is 4 music players of 12 bytes
+# [decomp:include/gba/m4a_internal.h:352, sound/music_player_table.inc], so the pair proves its own
+# alignment. FIVE points, not one - lg167 is what one costs.
+G_MPLAY_TABLE = 0x0849758C          # struct MusicPlayer[4]
+G_SONG_TABLE = 0x084975BC           # struct Song[347], {const u32 *header; u16 ms; u16 me}
 
 # WHERE EACH BOUNDARY IS, which is the other half of the same measurement. lg176b scanned LeafGreen
 # for ITS gSpeciesInfo (0x0824CDD8) and bs68b scanned FireRed for ITS OWN (0x0824CDFC), each over
@@ -515,6 +535,12 @@ LEAFGREEN_DELTA_BOUNDARIES = (
      "0x0805359C, narrowed 25x"),
     (-0x2C, -0x28, 0x080CE36C, 0x080EBA14, "lg176b vs bs68b, both ends"),
     (-0x28, -0x24, 0x0813E8CC, 0x08148C74, "lg176b/bs68b below, lg160 above"),
+    # This one was never written down, though both its ends were measured: gSpeciesInfo is the top
+    # of the -0x24 segment (lg176b/bs68b) and sEasyChatGroups the bottom of -0x1C4 (lg169).
+    (-0x24, -0x1C4, 0x0824CDFC, 0x083DE528, "lg176b/bs68b below at gSpeciesInfo, lg169 above at "
+     "sEasyChatGroups; 1.6 MB and no point inside it"),
+    (-0x1C4, -0x12D8, 0x083E3700, 0x0847DCF8, "lg169 below; bs117/lg190 above, narrowed 3.5x "
+     "from 0x086003E0 by five paired m4a literal-pool words"),
 )
 
 def leafgreen_guess(firered_address):

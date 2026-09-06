@@ -168,3 +168,41 @@ def test_get_lead_mon_index_is_the_body_four_lead_mon_specials_share():
         assert special_names.SPECIALS[index] in (
             "GetLeadMonFriendship", "LeadMonHasEffortRibbon",
             "GiveLeadMonEffortRibbon", "AreLeadMonEVsMaxedOut")
+
+
+def test_the_high_leafgreen_segment_reaches_down_to_the_m4a_tables():
+    """bs117/lg190. The -0x12D8 segment used to start at 0x086003E0; five paired literal-pool words
+    from the same m4a window on each console carried it down to 0x0847DCF8, which is a 3.5x
+    narrowing of the last big gap for two runs."""
+    low, high, delta, _evidence = [seg for seg in rom_map.LEAFGREEN_DELTA_SEGMENTS
+                                   if seg[2] == -0x12D8][0]
+    assert (low, high) == (0x0847DCF8, 0x086803FC)
+    for firered, leafgreen in ((0x0847DCF8, 0x0847CA20), (0x0847DDAC, 0x0847CAD4),
+                               (0x0847DF10, 0x0847CC38), (0x0849758C, 0x084962B4),
+                               (0x084975BC, 0x084962E4)):
+        assert leafgreen - firered == delta
+        assert rom_map.leafgreen_guess(firered) == leafgreen
+
+
+def test_the_two_sound_tables_are_four_music_players_apart():
+    """What proves the pair's alignment without a second run: struct MusicPlayer is 12 bytes and
+    music_player_table.inc has four of them, so gSongTable must sit exactly 0x30 above gMPlayTable
+    on BOTH cartridges. It does."""
+    assert rom_map.G_SONG_TABLE - rom_map.G_MPLAY_TABLE == 4 * 12
+    assert (rom_map.leafgreen_guess(rom_map.G_SONG_TABLE)
+            - rom_map.leafgreen_guess(rom_map.G_MPLAY_TABLE)) == 4 * 12
+
+
+def test_the_gap_that_is_left_is_the_one_the_boundary_table_names():
+    """A boundary that has been bracketed is not a boundary that has been found. The remaining span
+    is where -0x1C4 becomes -0x12D8, and `leafgreen_guess` must still REFUSE inside it rather than
+    interpolate."""
+    boundary = [b for b in rom_map.LEAFGREEN_DELTA_BOUNDARIES if b[:2] == (-0x1C4, -0x12D8)][0]
+    _from, _to, low, high = boundary[:4]
+    assert (low, high) == (0x083E3700, 0x0847DCF8)
+    for inside in (low + 1, (low + high) // 2, high - 1):
+        try:
+            rom_map.leafgreen_guess(inside)
+        except ValueError:
+            continue
+        raise AssertionError(f"0x{inside:08X} is in a gap and must not be guessed at")
