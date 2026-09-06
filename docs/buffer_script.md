@@ -1295,6 +1295,56 @@ are most of its meaning. bs115 and bs116 then closed the list gStdScripts had le
 `0 addresses wanted and not held`. Every one of the ten standard scripts is now read off the console
 end to end, code and text, with nothing outstanding.
 
+## bs119: MG_LINK_BUFFER_SIZE caps a MESSAGE, not a session
+
+Every dump this project had ever taken was 1024 bytes, because `MGL_Receive` rejects anything past
+`MG_LINK_BUFFER_SIZE` outright [decomp:src/mystery_gift_link.c:102] and a session sent one. The
+first half of that is true. The second half was an assumption, and it cost 81 joins' worth of plan.
+
+The client does not execute a command, it executes a SCRIPT of them, out of its 1024-byte receive
+buffer [decomp:src/mystery_gift_client.c:140]. The three that produce a dump -
+
+    CLI_LOAD_TOSS_RESPONSE -> CLI_RUN_BUFFER_SCRIPT -> CLI_SEND_LOADED
+
+- can appear in it as many times as it has room for. At 8 bytes a command and three fixed commands
+around the loop, that is 41 passes; `mg_script.MAX_DUMP_BLOCKS` holds it at 32, because a session
+that dies halfway loses every block in it.
+
+**What the payload cannot do is remember anything.** `CLI_RUN_BUFFER_SCRIPT` memcpys `recvBuffer`
+over `gDecompressionBuffer` on EVERY pass [:238], so the image is restored each time and a cursor
+kept inside it would never advance. What survives is what the payload is handed a POINTER to:
+`client->param`, the return channel [:275]. So `asm/memory-dump-multi.s` keeps the block index
+there, and each pass sends `base + index * 1024` and hands the next index on.
+
+It has to self-initialise, because nothing in the client script sets `param` before the first pass
+and its value there is not ours. A magic in the high half is the check: if `param` does not carry
+`0x5A5A0000`, this is pass zero. `test_the_multi_dump_cursor_starts_over_from_a_param_that_is_not_ours`
+feeds it four kinds of junk.
+
+bs119 spent one join on `--dump-address 0x080CE550 --dump-blocks 16`: **sixteen kilobytes in
+57 seconds**, blocks arriving about 2.5 s apart, and the console none the wiser.
+
+**The run checked itself.** Block 0 was aimed at 0x080CE550, which bs114 had already dumped the old
+way in a session of its own - and the two came back byte for byte identical, with all sixteen blocks
+distinct. A new path that merely looks like the proven one is not the proven one, and this is what
+told the difference.
+
+What it does to the plan for `gSpecials`, with 199 bodies still unread:
+
+| how a join is spent | joins to read them all |
+|---|---|
+| 1 KB, the old way | 81 |
+| 16 KB, sixteen blocks | 34 |
+| 32 KB, the ceiling | 22 |
+
+`--dump-blocks 1` returns `CLIENT_SCRIPT_DUMP_MEMORY` itself, byte for byte, so the path that has
+run on hardware a hundred times is untouched.
+
+TRAP, and it is the one this payload introduces: the readability guard has to cover the WHOLE span.
+A base clear of `gRngValue` says nothing about the sixteenth block, and MGL_Send CRCs one frame and
+sends the next, so a dump that crosses a region which moves kills the link mid transmission
+(lg172, lg173). `build_memory_dump_multi` takes `blocks` for that reason alone.
+
 ## What is left
 
 1. **Which function to call next.** Answered at bs82/bs84/bs85: `frlgsim/scrcmd_names.HANDLERS`

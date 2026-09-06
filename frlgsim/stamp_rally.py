@@ -69,6 +69,10 @@ class MysteryGiftDistribution:
     # Set when the payload repoints the console's outgoing message: how many bytes of console
     # memory MG_LINKID_RESPONSE will carry instead of the usual 4.
     buffer_dump_size: int | None = None
+    # memory-dump-multi only: how many blocks the client script asks for, and where the first one
+    # starts. MG_LINK_BUFFER_SIZE caps a MESSAGE, not a session [mg_script.MAX_DUMP_BLOCKS].
+    buffer_dump_blocks: int = 1
+    buffer_dump_address: int = 0
     # The payloads whose answer is a structure rather than a region (memory-scan's hit table,
     # rng-trace's samples): the script's name, so the log decodes what came back.
     buffer_decode: str | None = None

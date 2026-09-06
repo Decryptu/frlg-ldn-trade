@@ -422,3 +422,29 @@ def test_tracer_writes_jsonl(tmp_path=None):
     assert kinds == ["udp_out", "advert", "summary"]
     assert all(r["rec"] == "trace" and "ts" in r for r in recs)
     assert recs[0]["hex"] == "5c00" and recs[2]["counts"]["advert"] == 1
+
+
+def test_a_multi_block_client_script_is_the_single_block_one_repeated():
+    """One block must stay byte-for-byte the script that has run on hardware a hundred times: a new
+    path that merely looks like the proven one is not the proven one."""
+    from frlgsim import mg_script
+    assert mg_script.client_script_dump_memory(1) == mg_script.CLIENT_SCRIPT_DUMP_MEMORY
+    two = mg_script.client_script_dump_memory(2)
+    one = mg_script.CLIENT_SCRIPT_DUMP_MEMORY
+    # Three commands more, and they are the same three the single-block script already has.
+    assert len(two) == len(one) + 3 * 8
+    assert two[:8] == one[:8]                  # CLI_RECV MG_LINKID_RAM_SCRIPT
+    assert two[-16:] == one[-16:]              # CLI_RECV CLIENT_SCRIPT, CLI_COPY_RECV
+    assert two[8:32] == one[8:32] * 1 + two[8:32][24:]
+
+
+def test_a_client_script_that_would_not_fit_the_recv_buffer_is_refused():
+    """The console runs the script straight out of its 1024-byte recv buffer, so a script past that
+    reads stale bytes as commands."""
+    import pytest
+    from frlgsim import mg_script
+    assert len(mg_script.client_script_dump_memory(mg_script.MAX_DUMP_BLOCKS)) <= 1024
+    with pytest.raises(ValueError, match="blocks"):
+        mg_script.client_script_dump_memory(mg_script.MAX_DUMP_BLOCKS + 1)
+    with pytest.raises(ValueError, match="blocks"):
+        mg_script.client_script_dump_memory(0)

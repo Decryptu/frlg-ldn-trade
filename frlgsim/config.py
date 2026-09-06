@@ -5,8 +5,8 @@ from pathlib import Path
 import tomllib
 from typing import Any, Mapping
 
-from . import (beacon, buffer_script, charmap, gift_composer, gift_registry, linkplayer, ni,
-               rom_map, stamp_rally, uroom_chat, wonder_card, wonder_news)
+from . import (beacon, buffer_script, charmap, gift_composer, gift_registry, linkplayer,
+               mg_script, ni, rom_map, stamp_rally, uroom_chat, wonder_card, wonder_news)
 
 
 VERSIONS = {
@@ -553,6 +553,7 @@ class BufferScriptPayload:
     dump_block: str = buffer_script.SAVE_BLOCK_2
     dump_offset: int = 0
     dump_size: int = buffer_script.MAX_BUFFER_SCRIPT_SIZE
+    dump_blocks: int = 1
     # save-write only: the bytes to put into the save block, and the override for the guard that
     # keeps a write inside the region the game never reads.
     write_data: bytes | None = None
@@ -618,13 +619,20 @@ class BufferScriptPayload:
             raise ValueError(f"buffer script must be one of {', '.join(choices)}")
         if not self._expect_explicit:
             object.__setattr__(self, "expect", self.spec.expect)
-        if self.script == buffer_script.MEMORY_DUMP:
+        if self.script in (buffer_script.MEMORY_DUMP, buffer_script.MEMORY_DUMP_MULTI):
             if self.dump_address is None:
-                raise ValueError(
-                    f"{buffer_script.MEMORY_DUMP} needs an address to read from")
+                raise ValueError(f"{self.script} needs an address to read from")
         elif self.dump_address is not None:
             raise ValueError(
-                f"an address to dump is only meaningful with {buffer_script.MEMORY_DUMP}")
+                f"an address to dump is only meaningful with {buffer_script.MEMORY_DUMP} "
+                f"and {buffer_script.MEMORY_DUMP_MULTI}")
+        if self.dump_blocks != 1 and self.script != buffer_script.MEMORY_DUMP_MULTI:
+            raise ValueError(
+                f"more than one block per session is only {buffer_script.MEMORY_DUMP_MULTI}; "
+                "every other payload answers once")
+        if not 1 <= self.dump_blocks <= mg_script.MAX_DUMP_BLOCKS:
+            raise ValueError(
+                f"a session carries 1..{mg_script.MAX_DUMP_BLOCKS} blocks, got {self.dump_blocks}")
         if self.script not in (buffer_script.SAVE_DUMP, buffer_script.SAVE_WRITE) \
                 and self.dump_offset:
             raise ValueError(
@@ -736,6 +744,9 @@ class BufferScriptPayload:
     def build_code(self):
         if self.script == buffer_script.MEMORY_DUMP:
             return buffer_script.build_memory_dump(self.dump_address, self.dump_size)
+        if self.script == buffer_script.MEMORY_DUMP_MULTI:
+            return buffer_script.build_memory_dump_multi(
+                self.dump_address, self.dump_size, self.dump_blocks)
         if self.script == buffer_script.SAVE_DUMP:
             return buffer_script.build_save_dump(
                 self.dump_block, self.dump_offset, self.dump_size)
@@ -785,6 +796,8 @@ class BufferScriptPayload:
         return MysteryGiftDistribution(
             None, None, buffer_code=self.build_code(), buffer_expect=self.expect,
             buffer_dump_size=self.dump_size if self.is_dump else None,
+            buffer_dump_blocks=self.dump_blocks,
+            buffer_dump_address=self.dump_address or 0,
             buffer_decode=(self.script if self.script in buffer_script.DECODED_SCRIPTS
                            else None))
 

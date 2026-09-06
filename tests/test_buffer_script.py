@@ -2215,6 +2215,7 @@ def test_a_call_that_passes_fewer_arguments_leaves_the_stack_slots_it_did_not_se
 
 _MINIMAL_ARGS = {
     "memory-dump": {"dump_address": 0x0201C000},
+    "memory-dump-multi": {"dump_address": 0x0201C000, "dump_blocks": 4},
     "create-mon": {"create_mon_species": 59, "create_mon_level": 30},
     "memory-scan": {"scan_word": 0x41C64E6D},
     "table-scan": {"table_delta": 2},
@@ -2541,3 +2542,67 @@ def test_a_dump_that_overlaps_grngvalue_is_refused_offline():
     # Immediately past it is fine - that is how the save-block pointers beside it get read.
     buffer_script.build_memory_dump(rom_map.GRNG_VALUE + 4, 32)
     buffer_script.build_memory_dump(rom_map.GRNG_VALUE - 32, 32)
+
+
+# --- memory-dump-multi: several blocks in one session ---------------------------------------------
+
+def test_the_multi_dump_operands_are_where_we_patch_them():
+    """Proven by running it, not by counting instructions - which is what caught the three offsets
+    being written down 0x10 too low the first time."""
+    run = buffer_script.emulate(buffer_script.build_memory_dump_multi(0x03001234, 512))
+
+    assert run.done
+    assert run.client.send_buffer == 0x03001234
+    assert run.client.send_size == 512
+    assert run.client.send_repointed
+
+
+def test_the_multi_dump_cursor_advances_a_block_per_pass():
+    """The whole point. CLI_RUN_BUFFER_SCRIPT memcpys recvBuffer over gDecompressionBuffer on every
+    pass [decomp:src/mystery_gift_client.c:238], so the image is identical each time and the only
+    thing that can differ is client->param - which is what the payload keeps its cursor in."""
+    code = buffer_script.build_memory_dump_multi(0x08100000, 1024)
+    memory = {0x08100000 + i * 1024: bytes([i]) * 1024 for i in range(4)}
+    param = 0
+    for i in range(4):
+        run = buffer_script.emulate(code, param=param, memory=memory)
+        assert run.done
+        assert run.client.send_buffer == 0x08100000 + i * 1024
+        assert run.pending_send == bytes([i]) * 1024
+        param = run.client.param
+
+
+def test_the_multi_dump_cursor_starts_over_from_a_param_that_is_not_ours():
+    """Nothing in the client script sets param before the first pass, so its value there is not
+    ours to assume. The magic in the high half is what makes pass zero recognisable."""
+    code = buffer_script.build_memory_dump_multi(0x08100000, 1024)
+    for junk in (0, 0xDEADBEEF, 0xFFFFFFFF, 1, 0x5A5A0000 - 1, 0x5A5B0000):
+        run = buffer_script.emulate(code, param=junk)
+        assert run.client.send_buffer == 0x08100000, f"param {junk:#x} did not start at block 0"
+        assert run.client.param == buffer_script.DUMP_MULTI_MAGIC | 1
+    # And a param that DOES carry the magic is a continuation, not junk - including the last one.
+    resumed = buffer_script.emulate(code, param=buffer_script.DUMP_MULTI_MAGIC | 0xFF)
+    assert resumed.client.send_buffer == 0x08100000 + 0xFF * 1024
+
+
+def test_the_multi_dump_payload_is_in_the_lists_it_cannot_see():
+    """The standing trap: a payload has to be added to DUMP_SCRIPTS and PATCHED_SPANS by hand, and
+    a dump payload missing from them logs as 'unknown buffer script' and answers nothing."""
+    assert buffer_script.MEMORY_DUMP_MULTI in buffer_script.DUMP_SCRIPTS
+    assert buffer_script.MEMORY_DUMP_MULTI in buffer_script.PATCHED_SPANS
+    assert buffer_script.MEMORY_DUMP_MULTI in buffer_script.SCRIPT_REGISTRY
+    built = buffer_script.build_memory_dump_multi(0x08123456, 1024)
+    assert buffer_script.describe(built).startswith(buffer_script.MEMORY_DUMP_MULTI)
+
+
+def test_the_multi_dump_guard_covers_the_whole_span_not_the_first_block():
+    """gRngValue advances two turns a frame, and MGL_Send CRCs one frame and sends the next, so a
+    dump that crosses it kills the link mid transmission (lg172, lg173). A BASE clear of it says
+    nothing about the sixteenth block, which is the whole difference this payload introduces."""
+    # A base four kilobytes below gRngValue: fine alone, fatal once the span reaches it.
+    base = (rom_map.GRNG_VALUE - 4096) & ~1
+    assert buffer_script.describe(
+        buffer_script.build_memory_dump_multi(base, 1024, blocks=1)
+    ).startswith(buffer_script.MEMORY_DUMP_MULTI)
+    with pytest.raises(buffer_script.BufferScriptError, match="gRngValue"):
+        buffer_script.build_memory_dump_multi(base, 1024, blocks=8)

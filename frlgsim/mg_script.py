@@ -507,3 +507,44 @@ CLIENT_SCRIPT_DUMP_MEMORY = client_script(
     (CLI_RECV, MG_LINKID_CLIENT_SCRIPT),
     CLI_COPY_RECV,
 )
+
+
+# MG_LINK_BUFFER_SIZE caps a MESSAGE, not a session, and the three commands above that produce one
+# block can appear as many times as the script has room for. Each pass runs the SAME payload image -
+# CLI_RUN_BUFFER_SCRIPT memcpys recvBuffer over gDecompressionBuffer every time
+# [decomp:src/mystery_gift_client.c:238] - so what makes the passes differ is the cursor the payload
+# keeps in client->param. asm/memory-dump-multi.s.
+#
+# The ceiling is the recv buffer the script runs out of: 1024 bytes at 8 bytes a command is 128, and
+# the three fixed commands around the loop leave 125 for it, so 41 blocks. Held at 32 because a
+# session that dies halfway loses every block in it, and 32 KB is already 32 runs of the old shape.
+MAX_DUMP_BLOCKS = 32
+
+
+def client_script_dump_memory(blocks=1):
+    """-> the client script that pulls `blocks` consecutive kilobytes in ONE session.
+
+    With `blocks` 1 this is CLIENT_SCRIPT_DUMP_MEMORY exactly, which is what keeps the single-block
+    path the one that has run on hardware a hundred times rather than a new one that looks like it.
+    """
+    blocks = int(blocks)
+    if not 1 <= blocks <= MAX_DUMP_BLOCKS:
+        raise ValueError(f"a session carries 1..{MAX_DUMP_BLOCKS} blocks, asked for {blocks}")
+    if blocks == 1:
+        return CLIENT_SCRIPT_DUMP_MEMORY
+    body = []
+    for _ in range(blocks):
+        # The order is the whole trick: the InitSend arms the message FIRST, the payload then
+        # repoints link->sendBuffer and link->sendSize, and CLI_SEND_LOADED transmits from wherever
+        # it now points. Swapped, the payload patches fields the InitSend overwrites.
+        body += [CLI_LOAD_TOSS_RESPONSE, CLI_RUN_BUFFER_SCRIPT, CLI_SEND_LOADED]
+    script = client_script(
+        (CLI_RECV, MG_LINKID_RAM_SCRIPT),
+        *body,
+        (CLI_RECV, MG_LINKID_CLIENT_SCRIPT),
+        CLI_COPY_RECV,
+    )
+    if len(script) > 1024:
+        raise ValueError(f"{blocks} blocks is a {len(script)}-byte client script; the console runs "
+                         "it out of a 1024-byte recv buffer")
+    return script

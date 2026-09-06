@@ -99,6 +99,7 @@ class BufferScriptSpec:
 
 
 MEMORY_DUMP = "memory-dump"
+MEMORY_DUMP_MULTI = "memory-dump-multi"
 SAVE_DUMP = "save-dump"
 ANCHORS = "anchors"
 SAVE_WRITE = "save-write"
@@ -184,6 +185,23 @@ SAVE_SCRATCH = {
 # by emulating a patched payload rather than by trusting these numbers.
 DUMP_TARGET_OFFSET = 0x18
 DUMP_SIZE_OFFSET = 0x1C
+
+# --- memory-dump-multi: several blocks in ONE session ---------------------------------------------
+# MG_LINK_BUFFER_SIZE caps a MESSAGE, not a session. The client runs a script of commands, and
+# CLI_LOAD_TOSS_RESPONSE -> CLI_RUN_BUFFER_SCRIPT -> CLI_SEND_LOADED can appear in it repeatedly
+# [decomp:src/mystery_gift_client.c:140]; each pass sends another block. The payload cannot keep the
+# block index itself, because CLI_RUN_BUFFER_SCRIPT memcpys recvBuffer over gDecompressionBuffer on
+# EVERY pass [:238] and restores our image; it keeps it in client->param, which we are handed a
+# pointer to. asm/memory-dump-multi.s. The three offsets are the literal pool after 17 instructions,
+# and test_the_multi_dump_operands_are_where_we_patch_them EMULATES a patched payload rather than
+# trusting that count - which is what caught them being written down 0x10 too low.
+DUMP_MULTI_MAGIC_OFFSET = 0x44
+DUMP_MULTI_BASE_OFFSET = 0x48
+DUMP_MULTI_SIZE_OFFSET = 0x4C
+DUMP_MULTI_MAGIC = 0x5A5A0000
+# The cursor is one byte of param and each block is MAX_BUFFER_SCRIPT_SIZE, so this is the ceiling
+# the PAYLOAD imposes. The client script imposes a smaller one; see mg_script.MAX_DUMP_BLOCKS.
+MAX_DUMP_MULTI_BLOCKS = 0x100
 
 # --- memory-scan: searching instead of reading ---------------------------------------------------
 # Client_RunBufferScript ends the call only when the payload returns 1 and is reached once a frame
@@ -1513,6 +1531,11 @@ SCRIPT_REGISTRY = {
         "read out any region of the console's memory by repointing the console's own outgoing "
         "message at it (needs --dump-address; reads only, writes nothing)",
         None),
+    MEMORY_DUMP_MULTI: BufferScriptSpec(
+        MEMORY_DUMP_MULTI,
+        "the same, but SEVERAL consecutive blocks in one session (--dump-address --dump-blocks N): "
+        "the client script runs the payload once per block and each pass sends the next kilobyte",
+        None),
     SAVE_WRITE: BufferScriptSpec(
         SAVE_WRITE,
         "write bytes into a save block and read the same region back in the same run; the console "
@@ -1663,6 +1686,32 @@ def _refuse_a_moving_region(address, size):
                 "through the 4-byte channel instead of the block.")
 
 
+def build_memory_dump_multi(address, size=MAX_BUFFER_SCRIPT_SIZE, blocks=1):
+    """The multi-block dump payload, patched with the BASE address and the per-block length.
+
+    How many blocks come back is the CLIENT SCRIPT's business, not the payload's: the payload sends
+    whichever block the cursor in `client->param` names and advances it, so the same image serves
+    every pass. `mg_script.client_script_dump_memory(blocks)` is what decides the count. `blocks`
+    is passed here only so the readability guard covers the WHOLE span - a base that is readable
+    says nothing about the kilobyte sixteen blocks later, and CalcCRC16WithTable would walk it.
+    """
+    address = int(address)
+    size = int(size)
+    blocks = int(blocks)
+    if not 0 < size <= MAX_BUFFER_SCRIPT_SIZE:
+        raise BufferScriptError(
+            f"a block is 1..{MAX_BUFFER_SCRIPT_SIZE} bytes (MG_LINK_BUFFER_SIZE), got {size}")
+    if not 0 <= address <= 0xFFFFFFFF:
+        raise BufferScriptError(f"0x{address:X} is not a 32-bit address")
+    if address % 2:
+        raise BufferScriptError(f"0x{address:X} is not halfword aligned")
+    _refuse_a_moving_region(address, size * blocks)
+    code = bytearray(payload(MEMORY_DUMP_MULTI))
+    code[DUMP_MULTI_BASE_OFFSET:DUMP_MULTI_BASE_OFFSET + 4] = address.to_bytes(4, "little")
+    code[DUMP_MULTI_SIZE_OFFSET:DUMP_MULTI_SIZE_OFFSET + 4] = size.to_bytes(4, "little")
+    return bytes(code)
+
+
 def build_memory_dump(address, size=MAX_BUFFER_SCRIPT_SIZE):
     """The memory-dump payload with its target address and length patched in.
 
@@ -1698,8 +1747,8 @@ def script_choices():
 # lost to exactly that: table-scan ran on the console and found its table, and the host asked for
 # 4 bytes because a new payload had been added to neither list. A new payload goes in here.
 DUMP_SCRIPTS = frozenset({
-    MEMORY_DUMP, SAVE_DUMP, ANCHORS, SAVE_WRITE, MEMORY_SCAN, TABLE_SCAN, RNG_TRACE,
-    STRING_GATHER, CREATE_MON, CALL, CALL_CHAIN,
+    MEMORY_DUMP, MEMORY_DUMP_MULTI, SAVE_DUMP, ANCHORS, SAVE_WRITE, MEMORY_SCAN, TABLE_SCAN,
+    RNG_TRACE, STRING_GATHER, CREATE_MON, CALL, CALL_CHAIN,
 })
 DECODED_SCRIPTS = frozenset({
     MEMORY_SCAN, TABLE_SCAN, RNG_TRACE, STRING_GATHER, CREATE_MON, CALL, CALL_CHAIN,
@@ -1719,6 +1768,7 @@ def format_script_help():
 # operands are the only thing that differs, and they are exactly what the builders change.
 PATCHED_SPANS = {
     MEMORY_DUMP: ((DUMP_TARGET_OFFSET, 8),),
+    MEMORY_DUMP_MULTI: ((DUMP_MULTI_BASE_OFFSET, 8),),
     SAVE_DUMP: ((SAVE_DUMP_WHICH_OFFSET, 12),),
     SAVE_WRITE: ((SAVE_WRITE_WHICH_OFFSET, MAX_BUFFER_SCRIPT_SIZE),),
     RNG_TRACE: ((TRACE_ADDRESS_OFFSET,

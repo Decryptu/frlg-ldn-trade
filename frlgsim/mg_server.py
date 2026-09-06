@@ -431,6 +431,28 @@ SCRIPT_DUMP_MEMORY = (
     (SVR_GOTO, _SCRIPT_BUFFER_FAILURE),
 )
 
+
+def script_dump_memory(blocks=1):
+    """-> the host script for a dump of `blocks` consecutive kilobytes in ONE session.
+
+    The client script sends one message per block, so the host waits for one per block too. Each
+    arrives on MG_LINKID_RESPONSE exactly as the single-block dump's does, and SVR_READ_BUFFER_DUMP
+    appends rather than replaces - so what the session ends holding is the whole region, in order.
+    """
+    if blocks == 1:
+        return SCRIPT_DUMP_MEMORY
+    return (
+        *_GAME_DATA_PREFIX,
+        (SVR_LOAD_CLIENT_SCRIPT, mg_script.client_script_dump_memory(blocks)),
+        (SVR_SEND,),
+        (SVR_LOAD_BUFFER_SCRIPT,),
+        (SVR_SEND,),
+        *[step for _ in range(blocks)
+          for step in ((SVR_RECV, MG_LINKID_RESPONSE), (SVR_READ_BUFFER_DUMP,))],
+        (SVR_GOTO_IF_EQ, True, _SCRIPT_BUFFER_SUCCESS),
+        (SVR_GOTO, _SCRIPT_BUFFER_FAILURE),
+    )
+
 SCRIPT_RUN_BUFFER_SCRIPT = (
     *_GAME_DATA_PREFIX,
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_RUN_BUFFER),
@@ -503,6 +525,7 @@ class MysteryGiftServer:
     def __init__(self, card=None, ram_script=None, *, news=None, stamp=None,
                  activation_script=None, install_activation_script=None, trainer=None,
                  mevent=None, buffer_code=None, buffer_expect=None, buffer_dump_size=None,
+                 buffer_dump_blocks=1, buffer_dump_address=0,
                  buffer_decode=None,
                  buffer_success_message=None, buffer_failure_message=None,
                  questionnaire=None, denied_message=None, expect_console=None,
@@ -598,6 +621,14 @@ class MysteryGiftServer:
                     "a buffer script runs on its own: no card, news, stamp rally, visiting "
                     "trainer or Mystery Event script in the same session")
         self.buffer_dump_size = None if buffer_dump_size is None else int(buffer_dump_size)
+        # How many blocks the client script will send, and where the first one starts. Only
+        # memory-dump-multi uses either; every other payload answers once.
+        self.buffer_dump_blocks = int(buffer_dump_blocks)
+        self.buffer_dump_address = int(buffer_dump_address)
+        if not 1 <= self.buffer_dump_blocks <= mg_script.MAX_DUMP_BLOCKS:
+            raise MysteryGiftServerError(
+                f"a session carries 1..{mg_script.MAX_DUMP_BLOCKS} blocks, got "
+                f"{self.buffer_dump_blocks}")
         if self.buffer_dump_size is not None:
             if self.buffer_code is None:
                 raise MysteryGiftServerError(
@@ -661,6 +692,9 @@ class MysteryGiftServer:
         self.buffer_status = None
         self.buffer_matched = None
         self.buffer_dump = None
+        # One entry per block that arrived. The single-block dump leaves exactly one, so
+        # `buffer_dump` stays what it has always been and every reader of it is unchanged.
+        self.buffer_blocks = []
         self.is_stamp_distribution = self.stamp is not None
         self.is_trainer_distribution = self.trainer is not None
         self.is_news_distribution = self.news is not None
@@ -677,7 +711,8 @@ class MysteryGiftServer:
         elif self.is_mevent_distribution:
             self.script = SCRIPT_SEND_MYSTERY_EVENT
         elif self.is_buffer_distribution:
-            self.script = (SCRIPT_DUMP_MEMORY if self.buffer_dump_size is not None
+            self.script = (script_dump_memory(self.buffer_dump_blocks)
+                           if self.buffer_dump_size is not None
                            else SCRIPT_RUN_BUFFER_SCRIPT)
         else:
             self.script = SCRIPT_SEND_WONDER_CARD
@@ -953,15 +988,30 @@ class MysteryGiftServer:
                                       "a 7-character player name overwrote it")
 
     def _do_svr_read_buffer_dump(self):
-        """What came back is the region itself, not the 4-byte return channel."""
-        self.buffer_dump = bytes(self._received)
-        self.buffer_matched = len(self.buffer_dump) == self.buffer_dump_size
-        self.param = self.buffer_matched
-        self.trace.append(("buffer_dump", len(self.buffer_dump)))
-        if not self.buffer_matched:
-            self.info(f"Buffer script dump: {len(self.buffer_dump)} bytes, expected "
-                      f"{self.buffer_dump_size}; the payload did not repoint the send")
+        """What came back is the region itself, not the 4-byte return channel.
+
+        With --dump-blocks this runs once per block and APPENDS, so the session ends holding the
+        whole region. Each block is checked on its own: a short one means the payload did not
+        repoint that pass's send, and the blocks before it are still good bytes."""
+        block = bytes(self._received)
+        matched = len(block) == self.buffer_dump_size
+        if matched:
+            self.buffer_blocks.append(block)
+        self.buffer_dump = b"".join(self.buffer_blocks) if self.buffer_blocks else block
+        self.buffer_matched = matched and len(self.buffer_blocks) == self.buffer_dump_blocks
+        self.param = matched
+        self.trace.append(("buffer_dump", len(block)))
+        if not matched:
+            self.info(f"Buffer script dump: block {len(self.buffer_blocks) + 1} came back "
+                      f"{len(block)} bytes, expected {self.buffer_dump_size}; the payload did not "
+                      "repoint the send")
             return
+        if self.buffer_dump_blocks > 1:
+            self.info(f"Buffer script dump: block {len(self.buffer_blocks)}"
+                      f"/{self.buffer_dump_blocks}, {len(block)} bytes, "
+                      f"0x{self.buffer_dump_address + (len(self.buffer_blocks) - 1) * self.buffer_dump_size:08X}")
+            if len(self.buffer_blocks) < self.buffer_dump_blocks:
+                return
         head = self.buffer_dump[:16].hex()
         self.info(f"Buffer script dump: {len(self.buffer_dump)} bytes of console memory, "
                   f"head {head}")
