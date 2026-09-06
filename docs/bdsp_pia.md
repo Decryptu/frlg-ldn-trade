@@ -31,25 +31,61 @@ after it.
 Read out of `nn::pia::local::LocalProtocol` - the **LDN** implementation, which is the one a Union
 Room session uses:
 
-    seed  = a session value held by LocalProtocol
+    seed  = a u32 session value held at LocalProtocol+0x5b0
     state = for i in 1..4:  prev = ((prev ^ (prev >> 30)) * 0x6C078965 + i)
     rnd   = four consecutive xorshift128 draws (shifts 11, 8, 19) -> 16 bytes, little-endian
-    key   = AES-128-ECB(game key).encrypt(rnd)
+    key   = AES-128-ECB(game key at LocalProtocol+0x5bc).encrypt(rnd)
 
 and that key is then installed into the transport, where a further HMAC step can re-key from it.
 
-## What is missing
+## The game key, measured
 
-**The 16-byte game key.** It is held at `LocalProtocol+0x5bc` and handed in by
-`nn::pia::local::LocalMatchMeshLayerController` from its setting object, guarded by a check that it
-is not sixteen zero bytes. It is **not** derived from the LDN passphrase - that string's only
-destination is `nn::ldn::CreateNetwork` - and it is not a literal anywhere in the executable or in
-the IL2CPP metadata.
+**`cryptoKeyDataSeed = 9918bd0f dcfa6577 9918bd0f dcfa6577`** - one eight-byte pattern, twice.
 
-The most likely home is a Unity asset in romfs: the game's own settings class,
-`INL1.IlcaNetSessionSetting`, has a `[Serializable]` field named **`cryptoKeyDataSeed`** of type
-`byte[]`, sitting immediately beside its `wirelessCryptoKey` string. `[Serializable]` Unity fields
-are configured from assets, not code, which is exactly why no literal key appears in the binary.
+It is read off the cartridge, and it proves itself. `INL1.IlcaNetSessionSetting` is a plain
+`[Serializable]` class rather than a Unity asset, so its defaults come from its **constructor**:
+
+    IlcaNetSessionSetting..ctor
+      byte[16] cryptoKeyDataSeed  <- RuntimeHelpers.InitializeArray(array, fieldHandle)
+      string   wirelessCryptoKey  <- the "WirelessStrongCryptoKey2021" literal
+      ulong    localCommunicationId = 0x0100000011d90000
+
+The field handle resolves to `<PrivateImplementationDetails>.33F804682DF9E210AABDC4D939CBCD380EC7517F`,
+and **a C# compiler names those fields after the SHA-1 of their own initial data**. So reading the
+blob out of the metadata's field-default-value table and hashing it back to that name is a closed
+loop: SHA-1 of the sixteen bytes above IS `33F804...7517F`. The `localCommunicationId` in the same
+constructor is BDSP's, which is what says it is the right constructor.
+
+This is why five sessions of searching missed it. An `InitializeArray` blob lives in
+`global-metadata.dat`'s field-default-value section, not in code and not in an asset, so neither a
+scan of the executables nor a scan of the 4.2 GB RomFS could find it.
+
+### The NintendoClients wiki row is wrong for this game
+
+    measured   9918bd0f dcfa6577 9918bd0f dcfa6577
+    wiki       9900bd0c dcfa6563 9918bd0f c7fa6577
+
+Four bytes differ. The wiki value is a garbled transcription of the same underlying pattern, not a
+different key and not a different version: its sixteen bytes appear **nowhere** in the game's
+executables or in any of the 16,630 files of its RomFS. Treat that row as unverified.
+
+## What is still missing
+
+**The GCM nonce construction.** With the measured key in hand the capture still does not
+authenticate, and the seed is no longer a suspect: a sweep of all 2^32 session-parameter values,
+against six captured packets and both twelve-byte IV layouts, produced nothing. What is read so far:
+
+- the per-packet crypto is `nn::pia::common::Packet::Header::vfunc3` - encrypt and decrypt are two
+  entries into one function, and both take a `{u32 type; void* iv; u32 ivlen; void* key; u32 keylen}`
+  parameter struct built by the caller;
+- the IV is **twelve bytes**, and the key is sixteen at `PacketWriter+0xc` / `PacketReader+0xc`;
+- the plaintext is memset to `0xFF` and then overwritten by a shorter payload, so the tail of the
+  last block is padding - which is a free known-plaintext oracle, and is what makes a 2^32 sweep
+  cost minutes instead of hours;
+- the eight-byte header nonce is a **monotonic 64-bit counter**, written big-endian to `header+0x1b`,
+  which is what the wire always showed;
+- the IV buffer is filled by a virtual call on an object held at `PacketWriter+0x948`, passed in as
+  the third argument of `PacketWriter::Initialize`. Naming that object's class is the open thread.
 
 ## What was ruled out, with evidence
 
@@ -66,6 +102,9 @@ Recorded because each cost real time:
   found by its S-box.
 - **MD5 and SHA-1 are not the reduction.** Both are imported but every call site is in the game's
   own code, nowhere near Pia.
+- **The seed is not the missing input.** Every one of the 2^32 possible session parameters was
+  tried with the measured game key; none authenticates a packet. Whatever is still wrong is in the
+  nonce or in what reaches `LocalProtocol+0x5bc`, not in the seed.
 - **Passive decryption may be the wrong goal anyway.** This project did not solve FireRed by
   decrypting its traffic from outside; it joined and spoke the protocol, and the keys fell out. The
   seat is already held.

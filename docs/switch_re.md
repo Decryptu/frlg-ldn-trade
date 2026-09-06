@@ -28,8 +28,12 @@ and the trick is never to materialise the rest:
 
 For a file inside romfs, skip hactool entirely: NCA sections are AES-128-CTR under the decrypted
 title key, with the counter formed from the section's own CTR value and `offset >> 4` big-endian.
-Decrypt the RomFS header off the share, walk the file metadata, and pull the one file you want.
-**The RomFS header's size field reading back as `0x50` is the proof the counter is right.**
+CTR is seekable, so any range decrypts on its own and nothing has to be extracted at all -
+`tools/switch/romfs_read.py` walks, greps and single-file-extracts a 4.2 GB RomFS straight off the
+share, with the container never copied and no disk spent. **The RomFS header's size field reading
+back as `0x50` is the proof the counter is right**, and the reader raises rather than parse a header
+that says anything else - a wrong key, a wrong section offset and a wrong counter all land there
+first.
 
 Traps: a `prod.keys` with malformed lines (34 hex digits instead of 32) aborts hactool on the first
 one; filter to 32/64-digit values first. And hactool segfaults on `--listromfs` against a sparse
@@ -55,10 +59,31 @@ That last point decided a question that days of guessing had not: whether a capt
 came from the LDN derivation or the LAN one. The two implementations are near-identical in shape and
 live in `LocalProtocol` and `LanProtocol` respectively, and only the class names distinguish them.
 
+## A constant that is in none of the places you would scan
+
+A `[Serializable]` C# class is not necessarily an asset. If it is a plain class rather than a
+`ScriptableObject`, its defaults are written by its **constructor**, and a constant `byte[]` there is
+not built element by element - the compiler emits `RuntimeHelpers.InitializeArray` against a static
+field of `<PrivateImplementationDetails>`. That field's bytes live in `global-metadata.dat`'s
+field-default-value table, so:
+
+- scanning the executables finds nothing (the bytes are not in code),
+- scanning romfs finds nothing (they are not in an asset),
+- and Il2CppDumper's own tables do not carry the value either.
+
+The route in is the ADRP/LDR pair in the constructor: it names a metadata-usage slot, the slot
+resolves to `Field$<PrivateImplementationDetails>.<HEX>`, and **that hex IS the SHA-1 of the initial
+data** - a C# compiler names those fields after their own contents. So the value can be pulled out of
+the metadata by field name and then *verified by hashing it back*, which makes the read self-proving
+rather than a guess. Session 45 got BDSP's 16-byte Pia game key this way after five sessions of
+scans had come up empty, and the same loop closes any `[Serializable]` constant in any IL2CPP title.
+
 ## The tools
 
 All offline, none needs a console:
 
+    tools/switch/romfs_read.py   walk, grep and single-file-extract a RomFS in place, off the
+                                 encrypted container; nothing is unpacked and no disk is spent
     tools/switch/nso_read.py     decompress an NSO's three segments (pure-Python LZ4 block
                                  decoder) and lay them at their memory offsets, so a file offset
                                  IS an address
@@ -73,3 +98,9 @@ A caution on the reference material: published tables of packet formats and key 
 worth having, but where they conflict with the title's own code, the code wins. Prose that says a
 game "encrypts the SSID **or** random values seeded with the session parameter" is describing two
 different implementations, and only the binary says which one a given capture used.
+
+The same caution applies to published *values*. A table of per-game keys is a transcription, and a
+transcription can be wrong in a way that looks right: BDSP's published Pia game key differs from the
+measured one in four bytes out of sixteen while keeping its shape, which is indistinguishable from
+correct until you read the game. Where a constant can be verified against the binary - a SHA-1-named
+field is the ideal case - verify it, and treat the table as a hint about where to look.
