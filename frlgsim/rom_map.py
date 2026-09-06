@@ -506,6 +506,12 @@ LEAFGREEN_DELTA_SEGMENTS = (
     (0x0807D238, 0x080CE36C, -0x2C, "lg176b vs bs68b, 2 paired hits; lg161 vs bs13, 4 more"),
     (0x080EBA14, 0x0813E8CC, -0x28, "lg176b vs bs68b, 9 paired hits; lg161 vs bs13, 5 more"),
     (0x08148C74, 0x0824CDFC, -0x24, "lg176b vs bs68b, 3 paired hits; lg160, lg161-vs-bs13, lg165"),
+    # A segment NOBODY HAD SEEN, and it is why 0x0824CDFC..0x083BEE74 looked like one 1.5 MB gap:
+    # the delta does not go -0x24 straight to -0x1C4, it stops at -0x20 for more than a megabyte on
+    # the way. bs121/lg192, 13 paired sites over two addresses far apart, with a -0x24 control and
+    # a -0x1C4 control in the SAME run.
+    (0x08265950, 0x0839F83C, -0x20, "bs121/lg192: 13 paired literal-pool sites, two points "
+     "1256 KB apart, both -0x20; 0x0823E514 read -0x24 and 0x083D6BDC -0x1C4 in the same pairing"),
     (0x083BEE74, 0x0841463E, -0x1C4, "lg169: 18 word-list pointers and the table; bs120/lg191 "
      "carried BOTH ends out with 27 paired literal-pool words, from 0x083DE528..0x083E3700"),
     (0x0847DCF8, 0x086803FC, -0x12D8, "bs69/lg178 and bs72/lg179 two points 0x80000 apart at the "
@@ -571,8 +577,10 @@ LEAFGREEN_DELTA_BOUNDARIES = (
     (-0x28, -0x24, 0x0813E8CC, 0x08148C74, "lg176b/bs68b below, lg160 above"),
     # This one was never written down, though both its ends were measured: gSpeciesInfo is the top
     # of the -0x24 segment (lg176b/bs68b) and sEasyChatGroups the bottom of -0x1C4 (lg169).
-    (-0x24, -0x1C4, 0x0824CDFC, 0x083BEE74, "lg176b/bs68b below at gSpeciesInfo; bs120/lg191 "
-     "above, from 0x083DE528"),
+    (-0x24, -0x20, 0x0824CDFC, 0x08265950, "lg176b/bs68b below at gSpeciesInfo, bs121/lg192 "
+     "above; LeafGreen gains four bytes in here"),
+    (-0x20, -0x1C4, 0x0839F83C, 0x083BEE74, "bs121/lg192 below, bs120/lg191 above; what was one "
+     "1480 KB gap is these two, 98 KB and 125 KB, once -0x20 was found in the middle of it"),
     (-0x1C4, -0x12D8, 0x0841463E, 0x0847DCF8, "bs120/lg191 below, from 0x083E3700; bs117/lg190 "
      "above, from 0x086003E0. 2163 KB this morning, 421 now"),
 )

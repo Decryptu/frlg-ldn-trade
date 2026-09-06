@@ -258,3 +258,36 @@ def test_no_boundary_is_wider_than_the_evidence_that_brackets_it():
             except ValueError:
                 continue
             raise AssertionError(f"0x{inside:08X} is inside a boundary and was guessed at")
+
+
+def test_there_is_a_minus_0x20_segment_between_the_species_table_and_easy_chat():
+    """bs121/lg192. Nobody had seen it, and it is WHY 0x0824CDFC..0x083BEE74 looked like one 1.5 MB
+    gap: the delta does not go -0x24 straight to -0x1C4, it sits at -0x20 for 1256 KB on the way.
+    Two points that far apart at one delta is a segment; one point is lg167's mistake."""
+    low, high, delta, _e = [seg for seg in rom_map.LEAFGREEN_DELTA_SEGMENTS if seg[2] == -0x20][0]
+    assert (low, high) == (0x08265950, 0x0839F83C)
+    assert high - low > 1024 * 1024, "one point pretending to be a segment"
+    assert rom_map.leafgreen_guess(0x08265950) == 0x08265950 - 0x20
+    assert rom_map.leafgreen_guess(0x0839F83C) == 0x0839F83C - 0x20
+    # Both controls came out of the SAME pairing, on either side of the new segment.
+    assert rom_map.leafgreen_guess(0x0823E514) == 0x0823E514 - 0x24
+    assert rom_map.leafgreen_guess(0x083D6BDC) == 0x083D6BDC - 0x1C4
+
+
+def test_the_four_low_segments_step_by_exactly_four_bytes():
+    """CORROBORATION for -0x20, from a direction bs121/lg192 knew nothing about. The deltas do NOT
+    simply grow along the link order - the four low segments are -0x2C, -0x28, -0x24 and -0x20,
+    each four bytes LESS divergent than the one below it. -0x20 continues that run exactly, which
+    is not what a pairing read at the wrong offset produces."""
+    low = [d for _lo, _hi, d, _e in rom_map.LEAFGREEN_DELTA_SEGMENTS if -0x2C <= d < 0]
+    assert low == [-0x2C, -0x28, -0x24, -0x20]
+    assert all(b - a == 4 for a, b in zip(low, low[1:]))
+
+
+def test_the_segments_are_in_address_order_and_never_overlap():
+    """Two segments claiming the same address means one of them is measured wrong, and
+    leafgreen_guess would answer with whichever came first."""
+    bounds = [(lo, hi) for lo, hi, _d, _e in rom_map.LEAFGREEN_DELTA_SEGMENTS]
+    assert bounds == sorted(bounds), "segments must be in address order"
+    for (_lo, hi), (nlo, _nhi) in zip(bounds, bounds[1:]):
+        assert hi < nlo, "two segments overlap: one of them is measured wrong"

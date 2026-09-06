@@ -205,8 +205,11 @@ Each scan returned **exactly one match** in a 2 MB window, so neither address is
 in this page already: a single carried-forward delta predicted a place and the dump came back empty.
 One point here would have been that mistake again, and it would have looked just as convincing.
 
-So there is a fifth segment at −0x12D8, and the divergence really does keep growing along the link
-order: −0x24 at the species table, −0x1C4 at Easy Chat, −0x12D8 at 6 MB.
+So there is a fifth segment at −0x12D8, and the divergence keeps growing at the big jumps: −0x24 at
+the species table, −0x1C4 at Easy Chat, −0x12D8 at 6 MB. It does NOT grow monotonically, though,
+and that is worth knowing before reading a new measurement as a mistake: the four LOW segments run
+−0x2C, −0x28, −0x24, −0x20, each four bytes LESS divergent than the one below it. bs121/lg192 found
+the −0x20 one, and it continues that run exactly.
 
 Incidentally, **FireRed's ROM data ends between 0x08680400 and 0x08800000**: bs71 read all 0xFF at
 0x08800000 and bs70 all 0x00 at 0x08E00000, while 0x08680000 is high-entropy data. Two different
@@ -286,6 +289,32 @@ from lg167 was to use two points and a control; a 16 KB pool hands you twenty-se
 **One needle moves one end of a segment. Twenty-seven moved both.** The −0x1C4 segment was
 0x083DE528..0x083E3700, 21 KB, known from lg169's Easy Chat pointers. It is 0x083BEE74..0x0841463E
 now, and the two gaps either side shrank to 1480 KB and 422 KB.
+
+### bs121/lg192: a segment nobody had seen, and why the gap looked so big
+
+The remaining 1480 KB gap ran from gSpeciesInfo up to where bs120/lg191 had just put the −0x1C4
+segment's floor. bs121 had dumped 0x0806DBD4 on FireRed an hour earlier to close the field
+script-command table, and that window sits in the delta-0 segment - so LeafGreen's copy is at the
+SAME address, and lg192 cost one join with nothing to compute.
+
+288 sites paired by code offset, 216 identical, and three groups:
+
+| FireRed | delta | what it is |
+|---|---|---|
+| 0x08265950 and 0x0839F83C | **−0x20** | 13 sites, two points 1256 KB apart |
+| 0x0823E514, 0x0823F6C8 | −0x24 | inside the measured −0x24 segment: a control |
+| 0x083D6BDC | −0x1C4 | inside the segment lg191 had just measured: a second control |
+
+**There is a −0x20 segment, and it is why that gap looked like one big unknown.** The delta does not
+go −0x24 straight to −0x1C4; it stops at −0x20 for more than a megabyte on the way. Two points that
+far apart at one delta is a segment by this project's own rule, and both controls landed in the same
+pairing, on either side of it.
+
+Corroboration arrived from a direction the run knew nothing about: the four low segments now read
+−0x2C, −0x28, −0x24, −0x20, stepping by exactly four bytes each time. −0x20 continues that run, which
+is not what a pairing read at the wrong offset produces.
+
+What was one 1480 KB gap is now two, of 99 KB and 126 KB.
 
 What did NOT work, and is worth recording so it is not tried again: gSongTable looked like the ideal
 spreader - 347 entries of `{header, ms, me}` pointing into the largest blob in the ROM. bs118 dumped
