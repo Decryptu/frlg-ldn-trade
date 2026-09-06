@@ -146,3 +146,19 @@ def test_the_twins_are_rom_addresses():
     assert leafgreen_twins.TWIN_COUNT >= 700
     assert all(ROM_START <= ours < ROM_END and ROM_START <= theirs < ROM_END
                for ours, theirs in leafgreen_twins.TWINS.items())
+
+
+def test_a_leafgreen_view_of_a_table_is_moved_to_where_leafgreen_keeps_it():
+    """Every table this project holds was read off FireRed. Reading a LeafGreen dump against those
+    addresses is coherent in the delta-0 region and quietly wrong above it - the entry, the body and
+    the names all have to move. An entry inside a BOUNDARY has no measured address on the other
+    cartridge and is dropped rather than read at a guess."""
+    from rom_functions import deduplicate, known_names, on_leafgreen, tables
+    entries = deduplicate(tables()["specials"])
+    moved, names = on_leafgreen(entries, known_names())
+    assert len(moved) < len(entries)                     # the ones inside a boundary are gone
+    by_label = dict(moved)
+    # Below the split the two cartridges agree, and above it the entry moves by its own delta.
+    assert by_label["CalculatePlayerPartyCount [131]"] == 0x08044338
+    assert by_label["HealPlayerParty [0]"] == 0x080A3A64 - 0x2C
+    assert names[rom_map.LEAFGREEN_ADD_BAG_ITEM] == "AddBagItem"

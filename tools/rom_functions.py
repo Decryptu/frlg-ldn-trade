@@ -25,7 +25,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from frlgsim import rom_map, scrcmd, scrcmd_names, special_names, thumb, worker_names
+from frlgsim import (leafgreen_twins, rom_map, scrcmd, scrcmd_names, special_names, thumb,
+                     worker_names)
 from script_read import every_dump
 
 ROM_START, ROM_END = 0x08000000, 0x0A000000
@@ -109,6 +110,28 @@ def windows(missing, window, limit):
     return out
 
 
+def on_leafgreen(entries, names):
+    """-> (entries, names) moved to where the OTHER cartridge keeps them.
+
+    Every table this project holds was read off FireRed, so a LeafGreen dump read against those
+    addresses is only coherent in the delta-0 region and quietly wrong above it. `leafgreen_twins`
+    is where each address was MEASURED - the same instruction resolved on both cartridges - and
+    `leafgreen()` falls back to the segment delta, which is measured too. An entry inside a boundary
+    has neither and is DROPPED rather than read at a guess."""
+    moved_entries, moved_names = [], {}
+    for label, address in entries:
+        try:
+            moved_entries.append((label, leafgreen_twins.leafgreen(address) & ~1))
+        except ValueError:
+            continue
+    for address, name in names.items():
+        try:
+            moved_names[leafgreen_twins.leafgreen(address) & ~1] = name
+        except ValueError:
+            continue
+    return moved_entries, moved_names
+
+
 def plan(missing, window, limit):
     """-> ready-made `--dump-address` lines, densest window first."""
     chosen = windows(missing, window, limit)
@@ -172,6 +195,8 @@ def main():
     groups = sorted(tables()) if args.table == "all" else [args.table]
     for group in groups:
         entries = deduplicate(tables()[group])
+        if args.console == "leafgreen":
+            entries, names = on_leafgreen(entries, names)
         held = [(label, address) for label, address in entries if address in memory]
         missing = {address: label for label, address in entries if address not in memory}
         print(f"\n=== {group}: {len(entries)} distinct bodies, {len(held)} held in "

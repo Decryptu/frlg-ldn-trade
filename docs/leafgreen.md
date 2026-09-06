@@ -267,6 +267,14 @@ Three of the six boundaries move, and one of them a long way:
 the recorded 0x0807D238 from lg189 is tighter than the second, so the bracket keeps it. The
 -0x28 -> -0x24 boundary moved at BOTH ends, which one needle never does.
 
+**A LeafGreen dump can be read as a table now.** Every table this project holds was read off
+FireRed, so reading LeafGreen's dumps against those addresses is coherent below the split and
+quietly wrong above it. `tools/rom_functions.py --console leafgreen` moves the whole view - the
+entries, the bodies and the names - through the measured twins, and DROPS an entry whose address
+falls inside a boundary rather than reading it at a guess. 184 of the 213 field bodies and 33 of the
+252 placeable specials come back, with three unnamed call targets in the field table: the same three
+FireRed has, at LeafGreen's addresses. LeafGreen's bodies call the twins of what FireRed's call.
+
 **And the pairing is a table of LeafGreen addresses, not only a delta map.**
 `frlgsim/leafgreen_twins.py` holds all 738 distinct pairs, each one read off its own cartridge:
 `leafgreen_twins.leafgreen(address)` answers exactly where it has a pair and falls back to
