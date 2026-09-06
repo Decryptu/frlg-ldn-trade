@@ -234,3 +234,60 @@ def test_the_location_lands_the_variable_id_where_the_console_reads_it():
     assert struct.unpack_from(">I", loc, rest + 0x0E)[0] == 0x2B7F4C11   # the one that matters
     assert struct.unpack_from(">I", loc, rest + 0x12)[0] == 0x32669AEA
     assert len(loc) == rest + 0x1A == 40
+
+
+def test_the_station_ack_is_eight_bytes_and_names_its_id():
+    ack = stp.build_ack(0x17CAD56C)
+    assert len(ack) == 8
+    assert ack == bytes([stp.ACK, 0, 0, 0]) + struct.pack(">I", 0x17CAD56C)
+    assert stp.parse_ack(ack) == 0x17CAD56C
+    with pytest.raises(ValueError):
+        stp.parse_ack(bytes([stp.CONNECTION_REQUEST, 0, 0, 0, 0, 0, 0, 1]))
+    with pytest.raises(ValueError):
+        stp.parse_ack(bytes([stp.ACK, 0, 0]))
+
+
+def _accepted(protocols=((0x14, 2), (0x18, 3)), names=("Trainer",)):
+    """An accepted connection response shaped the way the console builds one."""
+    host = stp.station_location("169.254.14.1", 12345, 0xEB9B2220F1480000, 0x2A1F29, 0x597BC2A3)
+    body = bytearray([stp.CONNECTION_RESPONSE, stp.RESULT_ACCEPTED, stp.PLATFORM_SWITCH])
+    body += struct.pack(">Q", 0x1249A221D8580000) + struct.pack(">I", 0x2B7F4C11)
+    body += bytes([len(protocols)])
+    for p, v in protocols:
+        body += bytes([p, v])
+    body += struct.pack(">H", len(host)) + host
+    body += b"\0" * 32 + struct.pack(">I", 0xCC972106)
+    body += bytes([1, 1, len(names)])
+    for n in names:
+        body += stp.player_info(n)
+    body += struct.pack(">I", 0x17CAD56C)
+    return bytes(body)
+
+
+def test_an_acceptance_reads_back_the_whole_handshake():
+    d = stp.parse_connection_response(_accepted())
+    assert d["result"] == stp.RESULT_ACCEPTED and d["result_name"] == "accepted"
+    assert d["protocols"] == [(0x14, 2), (0x18, 3)]
+    assert d["location"]["private"] == ("169.254.14.1", 12345)
+    assert d["location"]["constant_id"] == 0xEB9B2220F1480000
+    assert d["location"]["variable_id"] == 0x2A1F29
+    assert d["network_id"] == 0xCC972106
+    assert d["player_names"] == ["Trainer"]
+    assert d["ack_id"] == 0x17CAD56C
+
+
+def test_a_location_whose_sizes_are_illegal_is_refused_not_misread():
+    """The sp25-sp32 bug, from the reading side: size 4 must raise, never parse to something."""
+    bad = bytearray(stp.station_location("169.254.14.1", 12345, 1, 2, 3))
+    bad[0] = bad[1] = 4
+    with pytest.raises(ValueError):
+        stp.parse_station_location(bytes(bad))
+
+
+def test_a_two_byte_address_is_a_port_with_no_address():
+    """What the console itself sends: public size 2, which is a port and nothing else."""
+    host = bytearray(stp.station_location("169.254.14.1", 12345, 1, 2, 3))
+    trimmed = bytes([2, 6]) + b"\0\0" + bytes(host[8:])
+    d = stp.parse_station_location(trimmed)
+    assert d["public"] == (None, 0)
+    assert d["private"] == ("169.254.14.1", 12345)

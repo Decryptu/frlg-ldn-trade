@@ -306,23 +306,99 @@ class VersionSearch:
         self.pending = (self.lo + self.hi) // 2
 
 
-def parse_connection_response(data):
-    """-> dict. The 5.27-5.45 denial is fifteen bytes and the console builds one at 0x01550190.
+def build_ack(ack_id):
+    """The station protocol's own ack, eight bytes - the console builds one at 0x0154fa2c.
 
-    An acceptance is longer and carries the whole station location back; only the head is read here,
-    because the head is what says which of the two this is.
+    A connection response is retransmitted every 500 ms until this comes back, so it is what turns
+    an acceptance into a finished handshake rather than a message the console keeps repeating.
+    """
+    return bytes([ACK, 0, 0, 0]) + struct.pack(">I", ack_id & 0xFFFFFFFF)
+
+
+def parse_ack(data):
+    """-> the ack id an 0x05 message acknowledges."""
+    if len(data) < 8 or data[0] != ACK:
+        raise ValueError(f"not an eight-byte station protocol ack: {data[:8].hex()}")
+    return struct.unpack_from(">I", data, 4)[0]
+
+
+def parse_station_location(loc):
+    """-> dict, by the console's own deserializer (main.bin 0x015a3aac).
+
+    The two size bytes decide where everything else starts, which is the whole trap: they count the
+    PORT as well as the address, so only 2, 6 and 18 are legal, and a location whose sizes are
+    wrong is silently left unparsed by a caller that discards the error.
+    """
+    if len(loc) < 4 or loc[0] not in INET_SIZES or loc[1] not in INET_SIZES:
+        raise ValueError(f"address sizes {loc[:2].hex()} are not two of {INET_SIZES}")
+    rest = 2 + loc[0] + loc[1]
+    if len(loc) < rest + 0x1A:
+        raise ValueError(f"a station location is {rest + 0x1A} bytes here, got {len(loc)}")
+
+    def address(off, size):
+        if size < 6:
+            return None, struct.unpack_from(">H", loc, off + size - 2)[0]
+        return (".".join(str(b) for b in loc[off:off + 4]),
+                struct.unpack_from(">H", loc, off + 4)[0])
+
+    public = address(2, loc[0])
+    private = address(2 + loc[0], loc[1])
+    return {
+        "public": public, "private": private,
+        "relay": (".".join(str(b) for b in loc[rest:rest + 4]),
+                  struct.unpack_from(">H", loc, rest + 4)[0]),
+        "constant_id": struct.unpack_from(">Q", loc, rest + 0x06)[0],
+        "variable_id": struct.unpack_from(">I", loc, rest + 0x0E)[0],
+        "service_variable_id": struct.unpack_from(">I", loc, rest + 0x12)[0],
+        "nat_flags": loc[rest + 0x16], "nat_location": loc[rest + 0x17],
+        "probeinit": loc[rest + 0x18], "private_available": loc[rest + 0x19],
+    }
+
+
+def parse_connection_response(data):
+    """-> dict. A denial is fifteen bytes (the console builds one at 0x01550190); an acceptance
+    carries the console's whole side of the handshake and is read in full here.
+
+    An accepted response is the most informative message this project has ever had out of a native
+    title: the host's complete protocol list with versions, its station location, its ids, the
+    network id, the player's name, and the ack id that finishes the handshake.
     """
     if len(data) < 2:
         raise ValueError(f"a connection response is at least two bytes, got {len(data)}")
     if data[0] != CONNECTION_RESPONSE:
         raise ValueError(f"message type {data[0]:#04x}, expected {CONNECTION_RESPONSE:#04x}")
     out = {"result": data[1], "result_name": RESULT_NAMES.get(data[1], "?"), "size": len(data)}
-    if data[1] != RESULT_ACCEPTED and len(data) >= 15:
-        out["constant_id"] = struct.unpack_from(">Q", data, 3)[0]
-        out["variable_id"] = struct.unpack_from(">I", data, 11)[0]
-    elif data[1] == RESULT_ACCEPTED and len(data) >= 15:
-        out["constant_id"] = struct.unpack_from(">Q", data, 3)[0]
-        out["variable_id"] = struct.unpack_from(">I", data, 11)[0]
+    if data[1] != RESULT_ACCEPTED:
+        if len(data) >= 15:
+            out["constant_id"] = struct.unpack_from(">Q", data, 3)[0]
+            out["variable_id"] = struct.unpack_from(">I", data, 11)[0]
+        return out
+
+    out["platform"] = data[2]
+    out["target_constant_id"] = struct.unpack_from(">Q", data, 3)[0]
+    out["target_variable_id"] = struct.unpack_from(">I", data, 11)[0]
+    n = data[15]
+    off = 16
+    out["protocols"] = [(data[off + 2 * i], data[off + 2 * i + 1]) for i in range(n)]
+    off += 2 * n
+    size = struct.unpack_from(">H", data, off)[0]
+    off += 2
+    out["location"] = parse_station_location(data[off:off + size])
+    off += size
+    out["token"] = data[off:off + 32]
+    off += 32
+    out["network_id"] = struct.unpack_from(">I", data, off)[0]
+    off += 4
+    out["players"], out["participants"], infos = data[off], data[off + 1], data[off + 2]
+    off += 3
+    names = []
+    for _ in range(infos):
+        info = data[off:off + 0xC3]
+        off += 0xC3
+        if len(info) >= 0x51:
+            names.append(info[1:0x51].split(b"\0")[0].decode("utf-8", "replace"))
+    out["player_names"] = names
+    out["ack_id"] = struct.unpack_from(">I", data, len(data) - 4)[0]
     return out
 
 

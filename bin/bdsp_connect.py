@@ -32,7 +32,7 @@ if os.path.isdir(BUNDLED):
 
 import trio, ldn
 from pokeldn.bdsp import COMM_ID, PASSPHRASE, PIA_PORT, session_keys
-from pokeldn.ldn import local_protocol as lp, station_protocol as stp
+from pokeldn.ldn import local_protocol as lp, mesh_protocol as mp, station_protocol as stp
 from pokeldn.ldn.pia5 import (PiaHeader5, is_pia5, ciphertext, gcm_iv, ldn_nonce_crc,
                               build_message, pad_payload, parse_messages, encrypt_payload,
                               decrypt_payload)
@@ -126,7 +126,7 @@ async def main_async(args):
         t0 = time.monotonic()
         st = {"seq": None, "host_var": None, "host_constant_seen": None, "last_update": None,
               "updates": 0, "phase": "listen", "replies": [], "waiter": None, "reply": None,
-              "result": None}
+              "reply_payload": None, "result": None}
 
         def decode(data, addr, now):
             h = PiaHeader5.parse(data)
@@ -170,6 +170,20 @@ async def main_async(args):
                             print(f"[rx] t={now:6.2f} update session seq={us.sequence_id} "
                                   f"host_var={us.host_variable_id:#010x} "
                                   f"host_constant={st['host_constant_seen']:#018x}")
+                    elif m.protocol == mp.PROTOCOL:
+                        kind, name = mp.parse_message(m.payload)
+                        st["replies"].append((now, st["phase"], m.payload.hex()))
+                        st["reply"] = ("mesh", kind)
+                        st["reply_payload"] = m.payload
+                        if st["waiter"] is not None:
+                            st["waiter"].set()
+                        print(f"\n[rx] t={now:6.2f} *** MESH PROTOCOL {name} "
+                              f"({len(m.payload)} B), phase {st['phase']} ***")
+                        if kind == mp.JOIN_RESPONSE:
+                            print(f"[rx]     {mp.parse_join_response(m.payload)}")
+                        print(f"[rx]     {m.payload.hex()}\n")
+                        record(rec="mesh_protocol", t=now, phase=st["phase"], kind=kind,
+                               payload=m.payload.hex())
                     elif m.protocol == stp.PROTOCOL:
                         kind, rest = stp.parse_message(m.payload)
                         st["replies"].append((now, st["phase"], m.payload.hex()))
@@ -177,6 +191,7 @@ async def main_async(args):
                         result = (m.payload[1] if kind == stp.CONNECTION_RESPONSE
                                   and len(m.payload) > 1 else None)
                         st["reply"] = (kind, result)
+                        st["reply_payload"] = m.payload
                         if st["waiter"] is not None:
                             st["waiter"].set()
                         print(f"\n[rx] t={now:6.2f} *** STATION PROTOCOL, type {kind} "
@@ -286,7 +301,54 @@ async def main_async(args):
                     print(f"[tx]   attempt {attempt}: {name}")
                     record(rec="connect", attempt=attempt, result=got)
                     if got == stp.RESULT_ACCEPTED:
-                        print("[cx] *** ACCEPTED INTO THE MESH ***")
+                        print("\n[cx] *** ACCEPTED INTO THE MESH ***")
+                        d = stp.parse_connection_response(st["reply_payload"])
+                        record(rec="accepted", response=st["reply_payload"].hex())
+                        print(f"[cx] the host's {len(d['protocols'])} protocols: "
+                              + ", ".join(f"{p:#04x}v{v}" for p, v in d["protocols"]))
+                        print(f"[cx] host location {d['location']['private']} "
+                              f"constant={d['location']['constant_id']:#018x} "
+                              f"variable={d['location']['variable_id']:#010x}")
+                        print(f"[cx] network id {d['network_id']:#010x}  "
+                              f"players {d['players']}  {d['player_names']}")
+                        # a connection response is repeated every 500 ms until it is acknowledged,
+                        # so this is what turns an acceptance into a finished handshake
+                        print(f"[cx] acking the acceptance, ack id {d['ack_id']:#010x}")
+                        for _ in range(args.ack_repeats):
+                            sock.sendto(wrap(keys, our_mac, args.src_var, dst_var, next_nonce(),
+                                             stp.build_ack(d["ack_id"]), stp.PROTOCOL,
+                                             port=stp.PORT_UNRELIABLE), (dst_ip, PIA_PORT))
+                            record(rec="tx_station_ack", t=time.monotonic() - t0,
+                                   ack_id=d["ack_id"])
+                            await trio.sleep(0.25)
+                        st["phase"] = "station-connected"
+                        print("[cx] station handshake closed")
+                        if not args.join:
+                            print("[cx] listening for what the mesh says next")
+                            break
+                        # THE MESH JOIN. Six bytes, station index 253 - "not in a mesh yet" -
+                        # retransmitted every 500 ms; Pia gives up after ten seconds.
+                        print(f"\n[tx] --- mesh join request (protocol {mp.PROTOCOL:#04x} v3)")
+                        for attempt in range(args.join):
+                            st["phase"] = f"join#{attempt}"
+                            st["reply"] = None
+                            st["reply_payload"] = None
+                            st["waiter"] = trio.Event()
+                            req = mp.build_join_request(attempt + 1)
+                            sock.sendto(wrap(keys, our_mac, args.src_var, dst_var, next_nonce(),
+                                             req, mp.PROTOCOL, port=mp.PORT_UNRELIABLE),
+                                        (dst_ip, PIA_PORT))
+                            record(rec="tx_join", t=time.monotonic() - t0, attempt=attempt,
+                                   request=req.hex())
+                            with trio.move_on_after(2.0):
+                                await st["waiter"].wait()
+                            st["waiter"] = None
+                            if st["reply_payload"] is None:
+                                print(f"[tx]   join {attempt}: silence")
+                                continue
+                            print(f"[tx]   join {attempt}: answered")
+                            break
+                        st["phase"] = "joined"
                         break
                     await trio.sleep(args.connect_gap)
                 st["phase"] = "after"
@@ -422,6 +484,10 @@ def main():
     ap.add_argument("--connect", type=int, default=0, metavar="N",
                     help="send N well-formed connection requests and report what comes back")
     ap.add_argument("--connect-gap", type=float, default=2.0)
+    ap.add_argument("--join", type=int, default=0, metavar="N",
+                    help="after the station handshake, send up to N mesh join requests")
+    ap.add_argument("--ack-repeats", type=int, default=3,
+                    help="how many times to ack the acceptance; the console repeats it until acked")
     ap.add_argument("--sweep-ids", action="store_true",
                     help="probe all 256 protocol ids, not only the ones the wiki names")
     ap.add_argument("--ids", default=None, help="a comma-separated list of ids to probe instead")
