@@ -12,10 +12,10 @@ Two kinds of target, sharing one wireless layer:
   proven (a Linux box holds a seat in a real Union Room session); Pia's payloads are still
   encrypted. See [the BDSP notes](https://decryptu.github.io/pokeldn/bdsp.html).
 
-The repository keeps its original name, and so do the `pokeldn` package and the `frlg*` entry
-points, because renaming them would churn every import and test for no functional gain. Read
-`pokeldn` as "the package", not as "FireRed only" — the LDN and Pia layers in it are
-game-independent.
+The package is layered by what a module is true of, so the game-independent part is visible from
+the import line: `pokeldn.ldn` is the wireless layer every Switch title shares, `pokeldn.gba` is the
+GBA wireless adapter's protocol that a GBA title speaks on top of it, and `pokeldn.frlg` is
+FireRed/LeafGreen itself. Entry points are named for the game they drive.
 
 ---
 
@@ -74,9 +74,10 @@ contain this project's adapter compatibility fixes.
 | | |
 |---|---|
 | [`bin/`](bin) | the things you run against a console. FireRed/LeafGreen: `frlg_mg_host.py` (Mystery Gift, Wonder News and native code), `frlg_mg_client.py` (receive a card from a console), `frlg_trade_host.py` (trade and Union Room host), `frlg_trade_join.py` (trade joiner). Native titles: `bdsp_join.py` (associate and take a seat), `bdsp_pia_probe.py` (hold the seat and speak Pia) |
-| [`tools/`](tools) | offline helpers: `dump_read.py` (decode a save dump), plus the radio diagnostics `ldn_scan.py`, `sniff.py`, `joyspot_probe.py`, `ldn_debug_report.sh` |
+| [`tools/ldn/`](tools/ldn) | the radio, for any target: `ldn_scan.py`, `sniff.py`, `joyspot_probe.py`, `ldn_debug_report.sh` |
+| [`tools/frlg/`](tools/frlg) | reading what a FireRed console sent back, all offline: `dump_read.py` (a save dump), `script_read.py`, `rom_functions.py`, `cartridge_pair.py`, `game_data_read.py` |
 | [`tools/switch/`](tools/switch) | reading a retail Switch title's own code, all offline: `nso_read.py`, `nso_relocs.py`, `rtti_names.py`, `arm64_xref.py`, `arm64_dis.py` |
-| [`pokeldn/`](pokeldn) | the package everything above is made of: the LDN/Pia transport, the RFU link, the Mystery Gift server and client, the payload builders |
+| [`pokeldn/`](pokeldn) | the package everything above is made of, layered by what a module is true of: `ldn/` the wireless layer, `gba/` the GBA link above it, `frlg/` the game (`.link`, `.gift`, `.rom`, `.save`, `.text`) |
 | [`asm/`](asm) | ARM sources for the payloads the console runs (`scripts/gen_buffer_scripts.py` assembles them into `pokeldn/frlg/rom/buffer_payloads.py`) |
 | [`scripts/`](scripts) | setup, deployment and code generation - not things you point at a console |
 | [`config/`](config) | host profiles (`host.toml`, and `host.local.toml` for this machine) |

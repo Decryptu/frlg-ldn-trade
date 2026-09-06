@@ -8,7 +8,7 @@ import sys
 
 
 # The pokeldn package and vendor/ are at the repo root, one level up from tools/.
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, PROJECT_ROOT)
 BUNDLED_LDN = os.path.join(PROJECT_ROOT, 'vendor', 'LDN')
 if os.path.isdir(BUNDLED_LDN):

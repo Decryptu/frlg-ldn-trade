@@ -31,7 +31,7 @@ import collections
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pokeldn.frlg.rom import rom_map, thumb, worker_names
 from rom_functions import known_names

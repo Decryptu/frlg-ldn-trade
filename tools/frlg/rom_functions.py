@@ -23,7 +23,7 @@ import argparse
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from pokeldn.frlg.rom import leafgreen_twins, rom_map, scrcmd, scrcmd_names, special_names, thumb, worker_names
 from script_read import every_dump

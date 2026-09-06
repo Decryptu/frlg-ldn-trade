@@ -1,5 +1,10 @@
+import os
 import re
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 import frlg_mg_host
 import frlg_trade_join
@@ -109,3 +114,27 @@ def test_the_site_base_url_matches_the_repository():
     config = (DOCS / "_config.yml").read_text(encoding="utf-8")
     assert "baseurl: /pokeldn" in config
     assert "https://github.com/Decryptu/pokeldn" in config
+
+
+# --- the launchers ------------------------------------------------------------------------
+#
+# Every file in bin/ and tools/ puts the repo root on sys.path ITSELF, derived from its own
+# __file__, so that it runs from anywhere without the venv or PYTHONPATH being set up. The
+# test suite cannot see a mistake there, because conftest.py has already put those paths on
+# sys.path for the tests - which is exactly how moving the tools one directory deeper left
+# all seven of them unable to import the package while 1088 tests passed.
+
+def _standalone(script):
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    return subprocess.run([sys.executable, script, "--help"],
+                          capture_output=True, text=True, env=env, cwd=Path.cwd(), timeout=120)
+
+
+@pytest.mark.parametrize("script", sorted(
+    str(p) for d in ("bin", "tools") for p in Path(d).rglob("*.py") if "__pycache__" not in str(p)))
+def test_every_launcher_finds_the_package_without_help_from_the_test_harness(script):
+    result = _standalone(script)
+    assert "No module named 'pokeldn'" not in result.stderr, \
+        f"{script} cannot import the package on its own: {result.stderr.strip().splitlines()[-1]}"
+    assert "No module named 'ldn'" not in result.stderr, \
+        f"{script} cannot reach vendor/LDN on its own"
