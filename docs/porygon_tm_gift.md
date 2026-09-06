@@ -1,6 +1,6 @@
 ---
 title: Porygon TM gift
-parent: Mystery Gift
+parent: FireRed and LeafGreen: Mystery Gift
 nav_order: 5
 ---
 

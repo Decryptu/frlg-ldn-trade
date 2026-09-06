@@ -1,6 +1,6 @@
 ---
 title: LeafGreen
-parent: Inside the console
+parent: FireRed and LeafGreen: inside the console
 nav_order: 6
 ---
 

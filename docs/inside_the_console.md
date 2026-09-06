@@ -1,6 +1,6 @@
 ---
-title: Inside the console
-nav_order: 4
+title: FireRed and LeafGreen: inside the console
+nav_order: 5
 has_children: true
 ---
 

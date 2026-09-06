@@ -1,6 +1,6 @@
 ---
 title: Distributing a gift
-parent: Mystery Gift
+parent: FireRed and LeafGreen: Mystery Gift
 nav_order: 1
 ---
 

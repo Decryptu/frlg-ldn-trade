@@ -1,6 +1,6 @@
 ---
 title: Hardware and setup
-nav_order: 5
+nav_order: 8
 has_children: true
 ---
 

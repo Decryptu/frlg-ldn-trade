@@ -1,6 +1,6 @@
 ---
 title: What the gift link can still carry
-parent: Mystery Gift
+parent: FireRed and LeafGreen: Mystery Gift
 nav_order: 7
 ---
 

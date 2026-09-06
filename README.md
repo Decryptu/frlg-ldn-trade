@@ -1,6 +1,21 @@
 # frlg-ldn-trade
 
-A proof-of-concept demonstrating that it is indeed possible for a computer to interact with Gen 3 Pokémon games running on Switch/Switch 2 via local wireless (LDN).
+A computer speaking Nintendo Switch local wireless (LDN) to Pokémon games running on a real
+Switch / Switch 2.
+
+Two kinds of target, sharing one wireless layer:
+
+- **FireRed and LeafGreen** — a GBA ROM inside the Switch's emulator. Trading, Mystery Gift, Union
+  Room battles and native code on the console all work end to end on retail hardware. This is where
+  the project has gone deepest.
+- **Native Switch titles** — starting with **Brilliant Diamond / Shining Pearl**. The LDN side is
+  proven (a Linux box holds a seat in a real Union Room session); Pia's payloads are still
+  encrypted. See [the BDSP notes](https://decryptu.github.io/frlg-ldn-trade/bdsp.html).
+
+The repository keeps its original name, and so do the `frlgsim` package and the `frlg*` entry
+points, because renaming them would churn every import and test for no functional gain. Read
+`frlgsim` as "the package", not as "FireRed only" — the LDN and Pia layers in it are
+game-independent.
 
 ---
 
@@ -22,6 +37,8 @@ This demo was recorded using the **ALFA AWUS036ACHM**. The RZ616 is half as fast
 - Union Room: greetings, trading-board trades, live chat, and full link battles
 - Native code on the console through the gift link: reading and writing its save, mapping its ROM,
   and calling its own functions. See [the documentation site](https://decryptu.github.io/frlg-ldn-trade/)
+- Native Switch titles: LDN discovery and association against Brilliant Diamond / Shining Pearl, the
+  Pia 5.x packet format, and an offline toolkit for reading a retail title's own code
 
 ## Requirements
 - Linux
@@ -56,8 +73,9 @@ contain this project's adapter compatibility fixes.
 
 | | |
 |---|---|
-| [`bin/`](bin) | the four things you run against a console: `frlgmg_host.py` (Mystery Gift, Wonder News and native code), `frlgmg_client.py` (receive a card from a console), `frlgtrade_host.py` (trade and Union Room host), `frlgtrade.py` (trade joiner) |
+| [`bin/`](bin) | the things you run against a console. FireRed/LeafGreen: `frlgmg_host.py` (Mystery Gift, Wonder News and native code), `frlgmg_client.py` (receive a card from a console), `frlgtrade_host.py` (trade and Union Room host), `frlgtrade.py` (trade joiner). Native titles: `bdsp_join.py` (associate and take a seat), `bdsp_pia_probe.py` (hold the seat and speak Pia) |
 | [`tools/`](tools) | offline helpers: `dump_read.py` (decode a save dump), plus the radio diagnostics `ldn_scan.py`, `sniff.py`, `joyspot_probe.py`, `ldn_debug_report.sh` |
+| [`tools/switch/`](tools/switch) | reading a retail Switch title's own code, all offline: `nso_read.py`, `nso_relocs.py`, `rtti_names.py`, `arm64_xref.py`, `arm64_dis.py` |
 | [`frlgsim/`](frlgsim) | the package everything above is made of: the LDN/Pia transport, the RFU link, the Mystery Gift server and client, the payload builders |
 | [`asm/`](asm) | ARM sources for the payloads the console runs (`scripts/gen_buffer_scripts.py` assembles them into `frlgsim/buffer_payloads.py`) |
 | [`scripts/`](scripts) | setup, deployment and code generation - not things you point at a console |
@@ -316,6 +334,30 @@ flow, timing ownership, trainer propagation, and shutdown sequence.
    **CANCEL** and confirm **YES**.
 6. Allow the automated room exit and disconnect to finish. The received Pokémon is saved as
    `output.pk3` (or the path passed to `--out`).
+
+### Native Switch titles: join a Brilliant Diamond / Shining Pearl session
+
+Discovery needs only `prod.keys`; association additionally needs the title's LDN passphrase, which
+`bin/bdsp_join.py` already carries for BDSP.
+
+On the console: any Pokémon Center → 2F → the left attendant → the plain "yes" (not the password or
+group option), and wait in the Union Room. Then:
+
+```bash
+# see the session without joining it
+sudo -E ./.venv/bin/python tools/ldn_scan.py --channels 1,6,11,36,40,44,48 --dwell 0.8
+
+# associate and hold a seat, logging everything the advertisement says
+sudo -E ./.venv/bin/python bin/bdsp_join.py --channels 6 --hold 90
+```
+
+A successful join prints the participant table with the console as participant 0 and this machine as
+participant 1, each with an IP the console assigned. **Nothing happens on the console's screen, and
+that is expected** — LDN association is below the game, so the game has not seen the joiner.
+
+`bin/bdsp_pia_probe.py` holds the seat and sends Pia datagrams on UDP 12345. The console currently
+ignores unauthenticated Pia; see the docs for what is known about its session key and what is still
+missing.
 
 ## Credits
 - [kinnay](https://github.com/kinnay) - For the [LDN library](https://github.com/kinnay/LDN) this is built upon, and the excellent [NintendoClients Wiki](https://github.com/kinnay/NintendoClients/wiki)

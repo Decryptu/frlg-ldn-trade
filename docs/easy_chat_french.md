@@ -1,6 +1,6 @@
 ---
 title: The French Easy Chat vocabulary
-parent: Inside the console
+parent: FireRed and LeafGreen: inside the console
 nav_order: 3
 ---
 

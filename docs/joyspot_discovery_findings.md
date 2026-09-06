@@ -1,6 +1,6 @@
 ---
 title: JoySpot discovery
-parent: The link protocol
+parent: The wireless layer
 nav_order: 3
 ---
 

@@ -1,6 +1,6 @@
 ---
-title: The link protocol
-nav_order: 2
+title: FireRed and LeafGreen: the link protocol
+nav_order: 3
 has_children: true
 ---
 

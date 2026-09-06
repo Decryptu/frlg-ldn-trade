@@ -1,6 +1,6 @@
 ---
-title: Mystery Gift
-nav_order: 3
+title: FireRed and LeafGreen: Mystery Gift
+nav_order: 4
 has_children: true
 ---
 

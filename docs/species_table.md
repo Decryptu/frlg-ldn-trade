@@ -1,6 +1,6 @@
 ---
 title: The species table, and the first function worth calling
-parent: Inside the console
+parent: FireRed and LeafGreen: inside the console
 nav_order: 4
 ---
 

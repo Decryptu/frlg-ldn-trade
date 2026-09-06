@@ -1,6 +1,6 @@
 ---
 title: Composing gifts
-parent: Mystery Gift
+parent: FireRed and LeafGreen: Mystery Gift
 nav_order: 2
 ---
 

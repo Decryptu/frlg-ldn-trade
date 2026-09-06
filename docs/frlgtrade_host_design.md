@@ -1,6 +1,6 @@
 ---
 title: Trade-host design
-parent: The link protocol
+parent: FireRed and LeafGreen: the link protocol
 nav_order: 2
 ---
 

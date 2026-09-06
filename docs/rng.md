@@ -1,6 +1,6 @@
 ---
 title: The random number generator
-parent: Inside the console
+parent: FireRed and LeafGreen: inside the console
 nav_order: 5
 ---
 

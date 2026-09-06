@@ -1,6 +1,6 @@
 ---
 title: Stamp rally
-parent: Mystery Gift
+parent: FireRed and LeafGreen: Mystery Gift
 nav_order: 4
 ---
 

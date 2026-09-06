@@ -1,6 +1,6 @@
 ---
 title: The Mystery Event VM
-parent: Inside the console
+parent: FireRed and LeafGreen: inside the console
 nav_order: 1
 ---
 

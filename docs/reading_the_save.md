@@ -1,6 +1,6 @@
 ---
 title: Reading the save (trainer ID, secret ID, IVs)
-parent: Inside the console
+parent: FireRed and LeafGreen: inside the console
 nav_order: 7
 ---
 

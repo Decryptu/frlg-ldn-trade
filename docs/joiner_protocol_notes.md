@@ -1,6 +1,6 @@
 ---
 title: Console protocol notes
-parent: The link protocol
+parent: FireRed and LeafGreen: the link protocol
 nav_order: 1
 ---
 

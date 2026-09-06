@@ -1,8 +1,8 @@
 title: frlg-ldn-trade
 description: >-
   Reverse-engineering notes for speaking Nintendo Switch local wireless (LDN) to
-  Pokemon FireRed/LeafGreen: the link protocol, the host design, and the
-  Mystery Gift distributor.
+  Pokemon games: the wireless layer, FireRed/LeafGreen's link protocol and Mystery
+  Gift distributor, and native Switch titles.
 
 url: https://decryptu.github.io
 baseurl: /frlg-ldn-trade

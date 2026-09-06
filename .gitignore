@@ -2,6 +2,7 @@
 # scratchpad/, .venv/, captures and notes out of the repository by default.
 /*/
 !/frlgsim/
+!/bin/
 !/tests/
 !/tools/
 !/docs/
