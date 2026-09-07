@@ -474,6 +474,27 @@ async def main_async(args):
             print(f"\n[tx] t={now:6.2f} *** IT ASKED TO TALK - answered "
                   f"NetDataTalkReserveResultData at seq {seq}: {reply.hex(' ')} ***\n")
             record(rec="talk_answered", t=now, seq=seq, reply=reply.hex())
+            # AND WHATEVER THE RUN WANTS TO SAY NEXT. The console parks in TalkState GREETING and
+            # waits to be advanced; which message does it is not decided by anything readable, so
+            # this is the sweep handle. One --after-talk is one message, in order, on the reliable
+            # stream, at the sequence id the console is asking for at the time.
+            for spec in args.after_talk:
+                await trio.sleep(args.after_talk_gap)
+                data_id, _, body_hex = spec.partition(":")
+                payload = room.build(int(data_id, 0), bytes.fromhex(body_hex))
+                seq = st["their_ack_id"]
+                if not seq:
+                    record(rec="after_talk_no_seq", t=now, spec=spec)
+                    continue
+                m = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                     | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                     seq, len(payload), lowest_pending=seq) + payload)
+                sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), m,
+                                 rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+                now2 = time.monotonic() - t0
+                print(f"[tx] t={now2:6.2f}   after-talk {room.name(payload[0])} at seq {seq}: "
+                      f"{payload.hex(' ')}")
+                record(rec="after_talk_sent", t=now2, spec=spec, seq=seq, message=payload.hex())
 
         async def answer_the_request(message, now, via="reliable"):
             """Answer a NetRequestData with the message it names, ON THE PROTOCOL IT ARRIVED ON.
@@ -1088,6 +1109,14 @@ def main():
                     help="answer the console's NetRequestData with the message it names. It has "
                          "asked for data id 0x23 in every capture since the first join and has "
                          "never been answered; this is the probe, so arm it on its own")
+    ap.add_argument("--after-talk", action="append", default=[], metavar="ID:HEX",
+                    help="after answering the talk reservation, send this game message on the "
+                         "reliable stream - `0x08:00` is NetDataSelectData{index: 0}. Repeatable, "
+                         "sent in order. The console parks in TalkState GREETING and waits to be "
+                         "advanced, and which message does it is not readable offline: this is the "
+                         "sweep handle")
+    ap.add_argument("--after-talk-gap", type=float, default=0.6, metavar="S",
+                    help="seconds between the talk answer and each --after-talk message")
     ap.add_argument("--answer-talk", action=argparse.BooleanOptionalAction, default=False,
                     help="answer a NetDataTalkReserveData with a NetDataTalkReserveResultData. "
                          "sp70 left it unanswered and the player's character froze")

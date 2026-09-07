@@ -307,10 +307,23 @@ to be advanced. The messages that would advance it are `NetDataSelectData{index}
 `NetDataTransitionData{transitionType, isRecruitment}` (0x07). The `NetDataTalkCancelEndData` at the
 end is the B press.
 
-**Two things are UNKNOWN and must not be written down as settled.** `IsCanTalk` was sent as **0** in
-sp71 and the greeting ran anyway, so that field does not mean "refuse" in any way this project has
-established. And the name the game showed is not one we sent - no `NetPlayerNameData` and no trainer
-card went out in that run - so where it comes from is unmeasured.
+**`IsCanTalk` decides whether the conversation survives, and `0` is the value that keeps it alive.**
+Four runs, one variable at a time:
+
+| `IsCanTalk` | what follows the answer | what the screen does |
+|---|---|---|
+| 0 | nothing | the greeting runs and parks on "one second!" |
+| 1 | nothing | "sorry, I have other plans" and the chat closes |
+| 1 | `NetDataSelectData{0}` | the same refusal |
+| 1 | `NetDataSelectData{1}` | the same refusal |
+
+So the name reads backwards from its behaviour: a **1** is what makes the character decline. It also
+means the two runs that swept the select index never tested the select at all - they were refusing
+before it could matter, and the index is unmeasured rather than shown not to matter.
+
+**One thing is UNKNOWN and must not be written down as settled.** The name the game showed is not
+one we sent - no `NetPlayerNameData` and no trainer card went out in that run - so where it comes
+from is unmeasured.
 
 ### The trainer card is the card, not the character
 
