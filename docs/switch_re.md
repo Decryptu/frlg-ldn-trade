@@ -1,6 +1,6 @@
 ---
 title: Reverse-engineering a Switch title
-nav_order: 5
+nav_order: 6
 ---
 
 # Reverse-engineering a Switch title
@@ -172,6 +172,10 @@ is an ADRP/ADD pair - which is `arm64_xref.py`'s question, not the branch scanne
 
 All offline, none needs a console:
 
+    tools/switch/xci_read.py     walk an XCI's HFS0 partitions (or an NSP's PFS0), decrypt every
+                                 NCA header in place and print the title id, key generation, each
+                                 section's offset, counter and key; --exefs N lists the exefs and
+                                 --extract pulls one file (the `main` NSO) out of a 13 GB image
     tools/switch/romfs_read.py   walk, grep and single-file-extract a RomFS in place, off the
                                  encrypted container; nothing is unpacked and no disk is spent
     tools/switch/nso_read.py     decompress an NSO's three segments (pure-Python LZ4 block
@@ -180,6 +184,10 @@ All offline, none needs a console:
     tools/switch/nso_relocs.py   MOD0 -> dynamic -> relocations; NSO vtable slots are empty in the
                                  static image and filled at load time, so "who points at this
                                  function" is a relocation question, not a pointer scan
+    tools/switch/nso_imports.py  the same table's JUMP_SLOT/GLOB_DAT half: imported symbol -> the
+                                 GOT slot that holds it, which is how a call into nnSdk
+                                 (nn::ldn::CreateNetwork, say) is found in a module that only
+                                 references it through a PLT stub
     tools/switch/rtti_names.py   type_info + vtables -> class and virtual-method names
     tools/switch/arm64_xref.py   ADRP(+ADD|+LDR) cross-references, BL call graph, function starts
     tools/switch/arm64_dis.py    capstone window disassembly
