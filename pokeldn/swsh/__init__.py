@@ -5,12 +5,12 @@ game key, its Pia protocol version and the shape of its header. Pia and LDN them
 `pokeldn.ldn` and carry no game's constants. Like `bdsp`, this sits directly on `ldn` with no link
 layer of its own - there is no `gba` beneath it.
 
-Nothing here has been on the air yet. `docs/swsh.md` says what is FACT, what is deduced and what is
-still open.
+Session 55 put it on the air: we took a seat in a retail Sword's LDN session and its Pia traffic
+decrypts. `docs/swsh.md` says what is FACT, what is deduced and what is still open.
 """
 
-from pokeldn.swsh.session import (GAME_KEY, PASSPHRASE, PIA_HEADER_SIZE, PIA_PORT, PIA_TAG_SIZE,
-                                  PIA_VERSION, session_key)
+from pokeldn.swsh.session import (COMM_ID, GAME_KEY, PASSPHRASE, PIA_HEADER_SIZE, PIA_PORT,
+                                  PIA_TAG_SIZE, PIA_VERSION, packet_iv, session_key, session_keys)
 
-__all__ = ["GAME_KEY", "PASSPHRASE", "PIA_HEADER_SIZE", "PIA_PORT", "PIA_TAG_SIZE", "PIA_VERSION",
-           "session_key"]
+__all__ = ["COMM_ID", "GAME_KEY", "PASSPHRASE", "PIA_HEADER_SIZE", "PIA_PORT", "PIA_TAG_SIZE",
+           "PIA_VERSION", "packet_iv", "session_key", "session_keys"]

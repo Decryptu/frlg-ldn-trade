@@ -82,7 +82,7 @@ The same object holds the `NetworkConfig`'s intent at **+0xB8** (the local commu
 and **+0xC0**. `nn::pia::local::LdnBackgroundProcessJob` validates the length as **16..64** before
 any of this runs, which is the same range `docs/ldn.md` records.
 
-## Pia here is version 4, and we have never spoken it
+## Pia here is version 4, and it decrypts
 
 `docs/pia.md` had two bands, 6.32+ (version byte 15/16) and 5.27-5.45 (version byte 9). Sword and
 Shield are **neither**: their header carries **4**, and the header is a different shape.
@@ -101,10 +101,10 @@ and three validators that each check `(byte & 0x7f) == 4`. **BDSP's binary has t
 validators against 9**, which is what makes this a comparison rather than a guess - see
 `docs/pia.md` "The version-4 header".
 
-So neither `pia_connect.py` nor `pia5.py` applies as it stands, and a third module is what talking
-to this console will need. The session-key derivation is a separate question: `nn::pia::local` and
-`nn::pia::lan` are both present and named here, so the same class-name test that settled it for BDSP
-settles it here.
+So neither `pia_connect.py` nor `pia5.py` parses this header as it stands. **But the header is the
+whole difference.** Underneath it, version 4 is 5.27's LDN family exactly - same session key, same
+IV, same message framing - which is why `pokeldn/ldn/pia4.py` is fifty lines rather than a second
+stack. See "What the console says" below, and `docs/pia.md` "The version-4 header".
 
 ## Mystery Gift has a local branch
 
@@ -230,29 +230,63 @@ the id read off any local-wireless feature is the id the gift path uses too.
 instruction (`mov w2, #0x40`) rather than the length of a wiki string. If raw fails, the reading is
 what to doubt last.
 
-Above LDN there is nothing to run: version 4 has no transport in this repository. `pokeldn.swsh`
-holds the constants and the one derivation that IS shared with BDSP - the LDN session key, whose
-copy at `0x017ab010` is instruction-for-instruction `pokeldn.ldn.pia5.ldn_session_key`: seed an
-xorshift128 with the recurrence around `0x6C078965`, take four draws into consecutive words, and
-AES-128-ECB them under the game key that Pia keeps at `LocalProtocol+0x4d4` (its setter is at
-`0x017ab750`, and what it copies is exactly the `{u32 enabled; u8 key[16]}` the game built).
+**A seat was taken on 2026-09-07 (sw01).** The passphrase read out of the binary associates with a
+retail Sword on the first reading tried, `raw`, 64 bytes. Association is about one in two, the same
+coin flip BDSP has - a `ConnectionError: Connect failed with status code 1` is a retry, not a
+finding - and the console's advertisement disappears within a minute or so of the seat being
+released, so the player has to re-open the trade screen between runs.
 
-That settles which of the two families applies. `nn::pia::local` and `nn::pia::lan` are both present
-and named in this binary, and it is the **local** one - the LDN row of `docs/pia.md`'s table - that
-holds this code.
+The seat is an LDN seat and the console's screen does not react to it. What reacts is the air: from
+the moment we associate, the console broadcasts Pia to `169.254.x.255:12345` about ten times a
+second, and the derivation below reads it.
+
+## What the console says
+
+`pokeldn.swsh.session_keys` turns the advertisement into the keys, and it is BDSP's derivation with
+one difference - **no version substitution**, because the game key here is a literal:
+
+    session key   = ldn_session_key(GAME_KEY, application_data[12:16] little-endian)
+    IV            = crc32(application_data[0:4] || the sender's MAC)[0:3] || source id || nonce
+    tag           = sixteen bytes, checked in full
+
+FACT, sw01: **484 of 484 packets authenticated**, source id 0 on every one. The session parameter
+and the network id both move per session - a run against the wrong session's advertisement fails on
+every packet, which is exactly what happened here for an hour before the two were matched up.
+
+The payload is 5.27's presence-flagged message framing plus one field: a **24-byte** message header
+rather than 16, body `size` bytes big-endian at offset 2, padded to a multiple of four, 0xFF to the
+end of the packet. That arithmetic accounts for every payload in the capture exactly.
+
+What it is saying, ten times a second, is a station announcement that already contains us:
+
+    a9fe0e01 3039 ... 00      169.254.14.1:12345   station 0, the console
+    a9fe0e02 3039 ... 01      169.254.14.2:12345   station 1, the seat we took
+
+so the console has put our station in its own mesh table before anything of ours has spoken Pia.
+`pokeldn.ldn.pia4` parses and builds the header; `tests/test_pia4.py` holds two of the packets as a
+golden vector, and a sixteen-byte tag makes them impossible to satisfy by accident.
 
 ## Open questions
 
 - **The two unnamed header fields**, the byte at 0x05 and the halfword at 0x06. What writes them is
   `0x017beb74`/`0x017beb78`; what they mean is a deduction until a capture agrees.
-- **What seeds the session key.** The derivation is settled; its input is not. `0x0179bff0` ->
-  `0x01774f40` caches a value computed from `LocalProtocol+0x80`, and whether that is the
-  advertisement's session parameter the way BDSP's is has not been read.
-- **The local communication id and version.** Held at the Pia object's +0xB8 and +0xC0, filled at
-  runtime from an object in `.bss` rather than a literal. Reachable from a scan of the console's own
-  advertisement without reading any more code.
+- ANSWERED, sw01. **What seeds the session key** is the advertisement's session parameter, twelve
+  bytes in, little-endian - BDSP's offset exactly. The code at `0x0179bff0` -> `0x01774f40` computes
+  a seed a different way (AES-GCM over the session's own two 64-bit values, keyed by them), so
+  reading that path is what to do if a session ever turns up whose key this does not derive; for a
+  console hosting a local trade, the advertisement is enough.
+- ANSWERED, sw01. **The local communication id** is `0x0100ABF008968000` and the version is 4, scene
+  60001, app version 7, read off the advertisement. That id is **Sword's**, and the binary this
+  project reads is Shield - the first place the pair are known to differ.
 - **What `StateReceiveLocal` actually sends**, and whether the console hosts or scans on that
   screen. A scan answers the second half in one run.
-- **Sword against Shield.** Everything above is read off Shield. The passphrase, the game key, the
-  Pia version and the Mystery Gift states are game code, not per-version data, so they should be
-  identical; association against the console is what proves it.
+- **Sword against Shield.** Everything read off the binary is Shield's; the console is Sword. The
+  passphrase, the game key and the Pia version are now measured to hold across the pair - they
+  associated and decrypted - and the local communication id is measured NOT to. Mystery Gift's
+  states are still Shield-only readings.
+- **The message header's presence bits.** 24 bytes is measured; which presence bit owns the extra
+  eight-byte field is not, because every packet in the capture carries the same presence byte
+  (0x7f). A capture with a second message shape separates them.
+- **What protocol 0x24 is.** Every message in sw01 carries it, with flags 0x09 and a zero
+  destination. BDSP's protocol ids are in `docs/bdsp_pia.md`; whether this is the same numbering has
+  not been checked.

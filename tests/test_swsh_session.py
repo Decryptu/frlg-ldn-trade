@@ -9,8 +9,8 @@ the findings.
 import pytest
 
 from pokeldn.ldn.pia5 import ldn_session_key
-from pokeldn.swsh import (GAME_KEY, PASSPHRASE, PIA_HEADER_SIZE, PIA_PORT, PIA_TAG_SIZE,
-                          PIA_VERSION, session_key)
+from pokeldn.swsh import (COMM_ID, GAME_KEY, PASSPHRASE, PIA_HEADER_SIZE, PIA_PORT, PIA_TAG_SIZE,
+                          PIA_VERSION, session_key, session_keys)
 
 
 def test_the_passphrase_is_sixty_four_bytes_used_raw():
@@ -39,7 +39,8 @@ def test_the_game_key_is_a_literal_not_a_derivation():
 
 
 def test_the_pia_version_is_a_third_band():
-    # 6.32+ is 15/16 and 5.27-5.45 is 9. Four is neither, which is why there is no transport here.
+    # 6.32+ is 15/16 and 5.27-5.45 is 9. Four is neither - but the crypto underneath turned out to
+    # be 5.27's exactly, so the band costs a header (`pokeldn.ldn.pia4`) and not a stack.
     assert PIA_VERSION == 4
     assert PIA_VERSION not in (9, 15, 16)
 
@@ -62,3 +63,29 @@ def test_the_session_key_is_the_same_derivation_bdsp_uses():
 def test_a_game_key_of_the_wrong_length_is_refused():
     with pytest.raises(ValueError):
         session_key(1, game_key=b"short")
+
+
+def test_the_advertisement_carries_the_seed_twelve_bytes_in():
+    """sw01's own advertisement, and the key that authenticated all 484 of its packets."""
+    class _Net:
+        application_data = bytes.fromhex("0330112400000000051800008b718ac6")
+
+    k = session_keys(_Net())
+    assert k.session_param == 0xC68A718B
+    assert k.network_id_le.hex() == "03301124"
+    assert k.session_key.hex() == "e421f24ecd7166e3e13dc7ea8c379dd9"
+    assert k.game_key == GAME_KEY          # a literal: the advertisement contributes the seed only
+
+
+def test_a_short_advertisement_is_refused_rather_than_read_past():
+    class _Net:
+        application_data = b"\x01\x02\x03"
+
+    with pytest.raises(ValueError):
+        session_keys(_Net())
+
+
+def test_the_local_communication_id_is_swords_not_shields():
+    # Read off the advertisement (session 55). The binary this project reads is a SHIELD image, so
+    # nothing about this id can be assumed to hold for the other cartridge.
+    assert COMM_ID == 0x0100ABF008968000

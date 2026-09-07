@@ -63,11 +63,20 @@ exactly 8 bytes at the nonce and 16 at the tag, and three validators
 same three validators against **9** and the same initializer writing 9, which is what makes the
 comparison a reading rather than a guess.
 
-DEDUCTION, not yet confirmed on the wire: that the byte at 0x05 is a destination station index and
+DEDUCTION, not yet separated on the wire: that the byte at 0x05 is a destination station index and
 the halfword at 0x06 a session or protocol id. What writes them is `0x017beb74`/`0x017beb78`, which
-takes the byte from its caller and the halfword from a session object. Where 5.27-5.45 spends
-eleven bytes on a 4-byte destination id, a 4-byte source id, a 2-byte packet id and a footer size,
-version 4 spends three - which is what an older Pia in a smaller mesh looks like.
+takes the byte from its caller and the halfword from a session object. Both were zero in all 484
+packets of sw01, so the capture agrees with the widths and says nothing about the meanings. Where
+5.27-5.45 spends eleven bytes on a 4-byte destination id, a 4-byte source id, a 2-byte packet id
+and a footer size, version 4 spends three - which is what an older Pia in a smaller mesh looks like.
+
+**AND UNDERNEATH THE HEADER IT IS 5.27.** Measured against a retail Sword, sw01, 484 of 484 packets
+authenticated: the session key is `ldn_session_key` over the advertisement's session parameter at
+offset 12, the IV is `gcm_iv` unchanged - three bytes of the station CRC, a source-id byte, then the
+header's own nonce - and the message framing is the same presence-flagged walk with one extra
+eight-byte field, so a message header is 24 bytes rather than 16. The version byte buys a header
+(`pokeldn/ldn/pia4.py`), not a protocol stack. Reading "a third band" as "a third implementation"
+is the mistake this paragraph exists to prevent.
 
 ## Two families of session key
 

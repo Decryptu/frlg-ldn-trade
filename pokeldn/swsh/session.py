@@ -12,11 +12,16 @@ addresses behind each value. Two of these differ from BDSP in a way that matters
     speak to a console until a version-4 header exists, so this module deliberately stops at the
     constants and the one derivation that IS shared.
 
-What is NOT here, because it has not been read: the local communication id (filled at runtime from
-.bss, so a scan is what answers it) and the value that seeds the session key.
+BOTH OF THE OPEN ITEMS ARE CLOSED, on hardware, session 55. The local communication id is
+0x0100ABF008968000, read off a Sword's own advertisement - SWORD, so the id here is not the Shield
+cartridge the binary was read from. And the value that seeds the session key is where BDSP keeps
+it, twelve bytes into the application data, little-endian: 484 packets, all authenticated.
 """
 
-from pokeldn.ldn.pia5 import ldn_session_key
+import struct
+from dataclasses import dataclass
+
+from pokeldn.ldn.pia5 import gcm_iv, ldn_nonce_crc, ldn_session_key
 
 # The LDN passphrase, 64 bytes used RAW. main.bin 0x203ff04, handed to Pia's
 # LdnCreateSessionSetting with a literal `mov w2, #0x40` at 0x006c3ec8 - so the length is the
@@ -59,3 +64,52 @@ def session_key(seed, game_key=GAME_KEY):
     capture says what that is, this function takes the seed rather than an advertisement.
     """
     return ldn_session_key(game_key, seed)
+
+
+# Sword's local communication id, read off its advertisement (session 55). Shield's will differ -
+# this is the SWORD title id, and the cartridge the binary was read from is Shield.
+COMM_ID = 0x0100ABF008968000
+
+# Where the advertisement keeps what the derivation needs. The SAME offsets as BDSP, which is not
+# an assumption: the seed at 12 is what authenticated all 484 packets of sw01, and the network id at
+# 0 is what makes their IVs come out right.
+NETWORK_ID_OFF = 0
+SESSION_PARAM_OFF = 12
+
+
+@dataclass
+class SessionKeys:
+    session_key: bytes
+    game_key: bytes
+    network_id_le: bytes
+    session_param: int
+
+    def __repr__(self):
+        return (f"SessionKeys(session={self.session_key.hex()} game={self.game_key.hex()} "
+                f"network_id_le={self.network_id_le.hex()} param={self.session_param:#010x})")
+
+
+def session_keys(net, game_key=GAME_KEY):
+    """-> SessionKeys, from a scanned network. `net` needs `application_data`.
+
+    NO VERSION SUBSTITUTION. BDSP builds its game key by replacing four bytes of a
+    cryptoKeyDataSeed with the local communication version; Sword/Shield hands Pia the same sixteen
+    ASCII bytes at every call site, so the key is the literal and the advertisement contributes the
+    seed alone.
+    """
+    app = bytes(getattr(net, "application_data", b"") or b"")
+    if len(app) < SESSION_PARAM_OFF + 4:
+        raise ValueError(f"application data is {len(app)} bytes, need at least "
+                         f"{SESSION_PARAM_OFF + 4}")
+    param = struct.unpack_from("<I", app, SESSION_PARAM_OFF)[0]
+    return SessionKeys(ldn_session_key(game_key, param), bytes(game_key),
+                       app[NETWORK_ID_OFF:NETWORK_ID_OFF + 4], param)
+
+
+def packet_iv(keys, source_mac, nonce8, source_id=0):
+    """The twelve-byte GCM IV for a version-4 packet - `pia5`'s construction, unchanged.
+
+    Three bytes of crc32(network id || the sender's MAC), then a byte of source id, then the
+    packet's own nonce. Measured: every packet a Sword sent us came out with source_id 0.
+    """
+    return gcm_iv(ldn_nonce_crc(keys.network_id_le, source_mac), source_id, nonce8)

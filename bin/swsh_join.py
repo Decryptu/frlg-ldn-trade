@@ -190,8 +190,11 @@ def main(argv=None):
             trio.run(attempt)
             print(f"[swsh] PASSPHRASE READING THAT WORKS: {label} ({len(pw)} B)")
             return 0
-        except Exception as e:
+        except BaseException as e:
             print(f"[swsh] {label} failed: {type(e).__name__}: {e}")
+            for sub in getattr(e, "exceptions", ()) or ():
+                print(f"[swsh]   caused by: {type(sub).__name__}: {sub}")
+            import traceback; traceback.print_exc()
             cleanup_stale()
     print("[swsh] association failed - the passphrase reading is the thing to doubt last, "
           "it came out of the instruction that sets its length")
