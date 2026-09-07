@@ -564,6 +564,34 @@ reaches someone who is *not* its OT. That is the case the handler fields exist f
 **And the save window is reproducible.** WAIT_READYOK to the first `NetDataReturnSelectData` was
 28.9 s in sp92 and 28.3 s in sp93. Two completed trades, same shape.
 
+### The block order, and a bug that waited nine runs for its input
+
+A PB8's four 80-byte blocks are permuted by `sv = (EC >> 13) & 31`. Two things about that were
+wrong here until session 54, and one Pokemon hid both.
+
+**The table has to be 32 long, not 24.** There are 24 orderings and a 5-bit index; PKHeX's
+`PokeCrypto.BlockPosition` writes entries 24-31 as duplicates of 0-7 and says so in a comment.
+Ours stopped at 24, so `BLOCK_ORDER[(ec >> 13) & 31]` raised `IndexError` the first time a Pokemon
+arrived with sv >= 24.
+
+**And the order is applied directly, not inverted.** `BlockPosition[sv]` is the read order for
+DECRYPTION; only PKHeX's encrypt path goes through `BlockPositionInvert`. `decrypt` here inverted it
+first, which is wrong for any permutation that is not its own inverse.
+
+**Why nine runs of hardware never noticed.** Every PB8 the project had ever decoded was sp82's
+Zubat or a copy of it, and its EC gives sv=21, ordering `(3, 1, 2, 0)` - **self-inverse**. The extra
+inversion was a no-op on the only input we had. sp97's third trade was a Keunotor at sv=28,
+`(0, 2, 3, 1)`, which is not, and it decoded to a Bidoof with no moves, no ball, language 0 and its
+own species name sitting in the trainer field. Corrected, the same bytes read as species 399,
+nickname 'Keunotor', OT 'Gurvan', ball 4, language 3, moves 33/45/111/205 - Tackle, Growl, Defense
+Curl, Rollout, which is what a Bidoof knows.
+
+**THE CHECKSUM CANNOT CATCH THIS, and the claim that it could was wrong.** It is the 16-bit sum of
+the decrypted body, and permuting whole 80-byte blocks does not change a sum of 16-bit words -
+addition commutes. It verifies the LCG stream and says nothing whatever about block order. It
+agreed, every time, for nine runs. What catches a wrong order is reading the fields back and asking
+whether a Pokemon came out.
+
 ### The disconnect penalty, and what it proves
 
 Dropping out mid-trade earns "vous ne pouvez pas faire d'echange en reseau pour le moment", and the

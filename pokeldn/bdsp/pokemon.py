@@ -12,10 +12,12 @@ An LCG (`seed = seed * 0x41C64E6D + 0x6073`, high half of each step) XORs every 
 0x08 to the end, and the four blocks are then permuted by `(EC >> 13) & 31` into one of the 24
 orderings of four things.
 
-THE CHECKSUM IS WHAT MAKES THIS SAFE TO BUILD. It is stored in the clear and is the 16-bit sum of
-the DECRYPTED body, so a decryption that is wrong in any way - key, order, offset, length - cannot
-produce a match, and a Pokemon we assemble ourselves is verified by decoding it back before it ever
-reaches a console. `docs/bdsp.md`.
+THE CHECKSUM IS WHAT MAKES THIS SAFE TO BUILD - BUT IT DOES NOT CHECK EVERYTHING. It is stored in
+the clear and is the 16-bit sum of the DECRYPTED body, so a wrong LCG stream cannot produce a match.
+It says NOTHING about the block order: permuting whole 80-byte blocks leaves a sum of 16-bit words
+untouched, because addition commutes. Session 54 shipped a block-order bug for nine runs behind a
+checksum that agreed every time. What catches a wrong order is reading the fields and seeing whether
+a Pokemon comes out. `docs/bdsp.md`.
 
 SIZE_STORED is 328 and that is exactly what the message carried, so a trade sends the stored form
 and not the party form (which is longer and holds the battle stats).
@@ -26,13 +28,29 @@ SIZE_STORED = 328
 BLOCK_SIZE = 80
 HEADER_SIZE = 8
 
-# the 24 orderings of four blocks, indexed by (EC >> 13) & 31
+# The orderings of four blocks, indexed by (EC >> 13) & 31.
+#
+# THAT INDEX IS 0..31 AND THERE ARE ONLY 24 ORDERINGS, so the table has to be 32 long: entries
+# 24-31 REPEAT 0-7. PKHeX's `PokeCrypto.BlockPosition` is written exactly this way and says why in
+# a comment - "duplicates of 0-7 to eliminate modulus (32 => 24)" - and its first 24 rows are ours,
+# row for row. `BLOCK_ORDER[sv % 24]` is the same function; the repeat is kept because it is what
+# the game does and what every other implementation looks like.
+#
+# sp97 is why this is not a footnote. Every Pokemon this project had ever decoded - sp82's Zubat,
+# through nine runs - happened to have an encryption constant with sv < 24, so a 24-long table
+# worked for months. The third trade of sp97 was a Keunotor whose EC put sv >= 24, `decrypt` raised
+# IndexError inside the trade answer, and the console sat on "veuillez patienter" while we never
+# replied. A lookup table one entry short of its index range is a bug that waits for its input.
 BLOCK_ORDER = (
     (0, 1, 2, 3), (0, 1, 3, 2), (0, 2, 1, 3), (0, 3, 1, 2), (0, 2, 3, 1), (0, 3, 2, 1),
     (1, 0, 2, 3), (1, 0, 3, 2), (2, 0, 1, 3), (3, 0, 1, 2), (2, 0, 3, 1), (3, 0, 2, 1),
     (1, 2, 0, 3), (1, 3, 0, 2), (2, 1, 0, 3), (3, 1, 0, 2), (2, 3, 0, 1), (3, 2, 0, 1),
     (1, 2, 3, 0), (1, 3, 2, 0), (2, 1, 3, 0), (3, 1, 2, 0), (2, 3, 1, 0), (3, 2, 1, 0),
+    # 24-31: the duplicates
+    (0, 1, 2, 3), (0, 1, 3, 2), (0, 2, 1, 3), (0, 3, 1, 2), (0, 2, 3, 1), (0, 3, 2, 1),
+    (1, 0, 2, 3), (1, 0, 3, 2),
 )
+assert len(BLOCK_ORDER) == 32, "the index is 5 bits; the table has to cover all of it"
 
 # offsets into the DECRYPTED, UNSHUFFLED body.
 #
@@ -92,10 +110,15 @@ def _crypt(data, seed):
 
 
 def _permute(data, order):
+    """-> data with its four blocks reordered, `order[i]` naming the block that becomes block i."""
     out = bytearray(data[:HEADER_SIZE])
     for src in order:
         out += data[HEADER_SIZE + src * BLOCK_SIZE: HEADER_SIZE + (src + 1) * BLOCK_SIZE]
     return bytes(out)
+
+
+def _invert(order):
+    return tuple(order.index(block) for block in range(4))
 
 
 def checksum(plain):
@@ -109,10 +132,21 @@ def decrypt(raw):
     if len(raw) != SIZE_STORED:
         raise ValueError(f"{len(raw)} bytes, expected {SIZE_STORED}")
     ec = struct.unpack_from("<I", raw, 0)[0]
-    order = BLOCK_ORDER[(ec >> 13) & 31]
-    # `order` says where each block went, so reading them back inverts it
-    inverse = tuple(order.index(block) for block in range(4))
-    plain = _permute(_crypt(raw, ec), inverse)
+    # BLOCK_ORDER[sv] IS THE READ ORDER FOR DECRYPTION, APPLIED DIRECTLY. It is not "where each
+    # block went", and inverting it here - which this function did until session 54 - is wrong for
+    # any sv whose permutation is not its own inverse.
+    #
+    # THAT BUG SURVIVED NINE RUNS BECAUSE OF ONE POKEMON. Every PB8 this project had decoded came
+    # from sp82's Zubat, EC giving sv=21 and the ordering (3, 1, 2, 0), which IS self-inverse - so
+    # the extra inversion was a no-op and the checksum agreed. sp97's Keunotor is sv=28,
+    # (0, 2, 3, 1), which is not, and it decoded to a Bidoof with no moves, no ball and its species
+    # name in the trainer field. PKHeX's `PokeCrypto.DecryptArray` uses BlockPosition[sv] directly
+    # and only its ENCRYPT path goes through BlockPositionInvert; this now matches.
+    #
+    # AND THE CHECKSUM CANNOT CATCH THIS. It is a sum of 16-bit words over the whole body, and
+    # permuting whole 80-byte blocks does not change a sum - addition commutes. It verifies the LCG
+    # stream and nothing about the block order. The module docstring said otherwise; it was wrong.
+    plain = _permute(_crypt(raw, ec), BLOCK_ORDER[(ec >> 13) & 31])
     want = struct.unpack_from("<H", raw, 6)[0]
     got = checksum(plain)
     if got != want:
@@ -127,7 +161,7 @@ def encrypt(plain):
     body = bytearray(plain)
     struct.pack_into("<H", body, 6, checksum(body))
     ec = struct.unpack_from("<I", body, 0)[0]
-    return _crypt(_permute(bytes(body), BLOCK_ORDER[(ec >> 13) & 31]), ec)
+    return _crypt(_permute(bytes(body), _invert(BLOCK_ORDER[(ec >> 13) & 31])), ec)
 
 
 def _text(plain, offset):

@@ -47,6 +47,34 @@ def test_a_corrupted_body_is_refused_by_its_own_checksum():
         pokemon.decrypt(bytes(raw))
 
 
+def test_a_block_order_that_is_not_its_own_inverse_still_round_trips():
+    """sp97 is the run this test exists for.
+
+    Every PB8 the project had decoded came from one Pokemon, whose EC gave sv=21 and the ordering
+    (3, 1, 2, 0) - SELF-INVERSE, so decrypt inverting the order was a no-op and nothing complained
+    for nine runs. A Keunotor at sv=28, (0, 2, 3, 1), decoded to a Bidoof with no moves and its
+    species name in the trainer field. The checksum agreed both times and always will: it is a sum
+    over the body, and permuting whole blocks does not change a sum.
+    """
+    def sv_of(ec):
+        return (ec >> 13) & 31
+
+    self_inverse = [ec for ec in range(0, 1 << 20, 0x2000)
+                    if pokemon.BLOCK_ORDER[sv_of(ec)] == pokemon._invert(pokemon.BLOCK_ORDER[sv_of(ec)])]
+    assert self_inverse, "the old bug needs at least one of these to have hidden behind"
+
+    for ec in range(0, 1 << 20, 0x2000):                      # every one of the 32 sv values
+        raw = pokemon.encrypt(a_body(ec=ec))
+        r = pokemon.read(raw)
+        assert (r["nickname"], r["ot_name"]) == ("Nosferapti", "Gurvan"), \
+            f"sv={sv_of(ec)} put the names in the wrong blocks"
+        assert r["species"] == 41
+
+    # and the table covers the whole 5-bit index, with 24-31 repeating 0-7 as PKHeX writes it
+    assert len(pokemon.BLOCK_ORDER) == 32
+    assert pokemon.BLOCK_ORDER[24:] == pokemon.BLOCK_ORDER[:8]
+
+
 def test_the_block_order_follows_the_encryption_constant():
     """(EC >> 13) & 31 picks one of 24 orderings, so two ECs shuffle the same body differently."""
     body = bytearray(a_body())
