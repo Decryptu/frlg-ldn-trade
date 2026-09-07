@@ -174,7 +174,11 @@ from nine with no exceptions either way. `bin/bdsp_connect.py` prints it as a ve
 readable without anyone watching the television.
 
 `StateData` is `byte state, byte isRecruiment` - two blittable bytes - so the answer is buildable
-today, and `room.answer()` already returns it.
+today, and `room.answer()` already returns it. The `state` byte is an `OpcState.OnlineState`, 23
+values from `NONE` to `_NULL`, and `OpcState.IsCanTalkState()` reads that same field - so the
+avatars that "cannot be talked to" may simply be characters whose state has never been reported.
+The neutral answer is `NONE`, which is what a character standing still is; the `RECRUITMENT_*`
+values are what a player advertising itself for a battle or a trade sends.
 
 **So one of the two messages the console has been repeating at us for every run of this project is a
 question addressed to us, and nothing we have ever sent has answered it.** Building the answer from

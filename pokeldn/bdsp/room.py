@@ -188,8 +188,32 @@ def build_match_wait(is_waiting=False):
     return build_fields(MATCH_WAIT, 1 if is_waiting else 0)
 
 
-def build_state(state=0, is_recruitment=0):
-    """`StateData`: what the character is doing, and whether it is recruiting."""
+# `StateData.state` is an `OpcState.OnlineState` [opendpr:Assets/Scripts/OpcState.cs] - a short
+# enum, copied rather than generated because nothing in the message table references it by type.
+# NONE is what a character standing still is; the RECRUITMENT_* values are what a player advertising
+# itself for a battle or a trade sends, and `OpcState.IsCanTalkState()` reads this field, so it is
+# what decides whether the game lets the player talk to an avatar at all.
+STATE_NONE = 0
+STATE_RECRUITMENT_BATTLE = 3
+STATE_RECRUITMENT_TRADE = 4
+STATE_RECRUITMENT_RECORD = 5
+STATE_RECRUITMENT_GREETINGS = 6
+STATE_RECRUITMENT_BALL_DECORATION = 7
+STATE_COMMUNICATE = 8
+STATE_NAMES = {0: "NONE", 1: "DIG_FOSILL", 2: "SECRETBASE_ACTION", 3: "RECRUITMENT_BATTLE",
+               4: "RECRUITMENT_TRADE", 5: "RECRUITMENT_RECORD", 6: "RECRUITMENT_GREETINGS",
+               7: "RECRUITMENT_BALL_DECORATION", 8: "COMMUNICATE", 9: "LIKES", 10: "CROSS",
+               11: "EXCLAMATION", 12: "TOGETHER", 13: "GET", 14: "NOW_DIG_FOSILE", 15: "NOW_MENU",
+               16: "NOW_BATTLE", 17: "NOW_BATTLE_UNION", 18: "NOW_TRADE", 19: "NOW_RECORD",
+               20: "NOW_GREETINGS", 21: "NOW_BALL_DECORATION", 22: "_NULL"}
+
+
+def build_state(state=STATE_NONE, is_recruitment=0):
+    """`StateData`: what the character is doing, and whether it is recruiting.
+
+    THE DEFAULT IS THE NEUTRAL ANSWER - a character standing in the room doing nothing. It is what
+    a request for 0x04 is answered with until there is a reason to say anything else.
+    """
     return build_fields(STATE, state & 0xFF, is_recruitment & 0xFF)
 
 
