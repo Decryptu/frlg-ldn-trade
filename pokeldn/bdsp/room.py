@@ -307,6 +307,43 @@ TRADE_STATE_START_WRITE_SAVE = 7
 TRADE_STATE_WRITEING_SAVE = 8
 
 
+TRADE_STATE_NAMES = {
+    TRADE_STATE_NONE: "NONE", TRADE_STATE_INIT: "INIT", TRADE_STATE_WAIT: "WAIT",
+    TRADE_STATE_SEND_POKE: "SEND_POKE", TRADE_STATE_WAIT_POKE: "WAIT_POKE",
+    TRADE_STATE_SEND_READYOK: "SEND_READYOK", TRADE_STATE_WAIT_READYOK: "WAIT_READYOK",
+    TRADE_STATE_START_WRITE_SAVE: "START_WRITE_SAVE", TRADE_STATE_WRITEING_SAVE: "WRITEING_SAVE",
+    9: "END_SAVE", 10: "END", 11: "ERROR",
+}
+
+
+def mirror_trade_state(their_state):
+    """-> the state to claim back, so that THEIR machine advances.
+
+    `TradeParentStateModel$$StateProc` [main.bin 0x1cd1790] switches on `currentState - 2` through
+    a ten-entry table at 0x3b8d50b, and every case advances on something WE control:
+
+        2 WAIT          targetState == WAIT          -> 3 SEND_POKE
+        3 SEND_POKE     sends its own Pokemon        -> 4 WAIT_POKE
+        4 WAIT_POKE     targetPokeData is non-null   -> 5 SEND_READYOK   (our NetTradePokeData)
+        5 SEND_READYOK  tradeParent == PARENT        -> 6 WAIT_READYOK
+        6 WAIT_READYOK  waitRndTime runs out AND targetIsTradeReadyOk   -> 7 START_WRITE_SAVE
+        7 START_WRITE_SAVE  WriteSaveData -> ReplacePoke                -> 8 WRITEING_SAVE
+        8 WRITEING_SAVE     CheckReplacePokeData                        -> 10 END
+       10 END          PlayerSave, close the window, currentState = 0
+
+    So INIT is answered with WAIT rather than echoed: `ReciveState`'s INIT case sets their state to
+    WAIT and records ours as `targetState` in the same call, so a WAIT here saves the round trip
+    that an echo would cost. From SEND_READYOK on, the value stops mattering and only the ARRIVAL
+    does - state 6 sets `targetIsTradeReadyOk` for any message that reaches it - so it is held at
+    SEND_READYOK rather than chasing states we cannot be in.
+    """
+    if their_state <= TRADE_STATE_INIT:
+        return TRADE_STATE_WAIT
+    if their_state >= TRADE_STATE_SEND_READYOK:
+        return TRADE_STATE_SEND_READYOK
+    return their_state
+
+
 def build_trade_ready_ok(trade_state=TRADE_STATE_WAIT, is_trade_ok=0):
     """"I am ready" - AND IT IS THE MESSAGE THAT LETS THE CONSOLE WRITE ITS SAVE.
 

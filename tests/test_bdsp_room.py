@@ -277,3 +277,22 @@ def test_the_ready_ok_is_the_only_trade_message_that_needs_a_flag_of_its_own():
     assert '"--complete-trade", action=argparse.BooleanOptionalAction, default=False' in source
     assert "WRITES THE CONSOLE'S SAVE" in source
     assert "if not args.complete_trade:" in source
+
+
+def test_the_security_phase_answer_mirrors_the_state_that_advances_theirs():
+    """StateProc advances on `targetState`, so what we claim decides whether it moves at all."""
+    m = room.mirror_trade_state
+    # INIT is answered with WAIT, not echoed: ReciveState's INIT case records ours in the same
+    # call that moves theirs to WAIT, so WAIT saves the round trip an echo would cost
+    assert m(room.TRADE_STATE_NONE) == room.TRADE_STATE_WAIT
+    assert m(room.TRADE_STATE_INIT) == room.TRADE_STATE_WAIT
+    assert m(room.TRADE_STATE_WAIT) == room.TRADE_STATE_WAIT
+    assert m(room.TRADE_STATE_SEND_POKE) == room.TRADE_STATE_SEND_POKE
+    assert m(room.TRADE_STATE_WAIT_POKE) == room.TRADE_STATE_WAIT_POKE
+    # from SEND_READYOK on only the arrival matters, so it stops chasing
+    for theirs in (5, 6, 7, 8, 9, 10):
+        assert m(theirs) == room.TRADE_STATE_SEND_READYOK
+    # and the security answer sets the byte the console's receiver gates on
+    assert room.build_trade_ready_ok(room.TRADE_STATE_WAIT, is_trade_ok=1) \
+        == bytes.fromhex("2100020102")
+    assert room.TRADE_STATE_NAMES[room.TRADE_STATE_START_WRITE_SAVE] == "START_WRITE_SAVE"

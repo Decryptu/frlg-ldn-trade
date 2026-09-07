@@ -141,7 +141,8 @@ async def main_async(args):
               "reserves_sent": 0, "reserve_results": 0, "match_wait_sent": 0,
               "reserve_accepted": False, "room_done": False, "their_traner": None,
               "their_poke": None, "our_poke": None, "trade_replies": 0, "check_oks": 0,
-              "their_ready_ok": None, "ready_oks_sent": 0, "their_security_state": None}
+              "their_ready_ok": None, "ready_oks_sent": 0, "their_security_state": None,
+              "our_security_state": 0, "repeater": False}
 
         # BUILD WHAT WE WILL OFFER BEFORE THE RADIO IS TOUCHED. A template that will not load, or
         # a nickname that will not fit, must fail here and not halfway through a trade on a real
@@ -1095,17 +1096,30 @@ async def main_async(args):
                 record(rec="their_check_ok", t=now, payload=payload.hex())
                 reply = room.build_fields(room.TRADE_POKE_CHECK_OK, 1)
                 label = "our check-ok"
+            elif g["data_id"] == room.TRADE_READY_OK and (g.get("fields") or {}).get("isTradeOk"):
+                # THE SECURITY PHASE, AND IT IS A DIFFERENT MACHINE FROM THE HANDSHAKE ABOVE.
+                # `TradeSecurityController$$ReciveState` [0x1cd2ff0] drops anything whose isTradeOk
+                # is not 1, so the console only ever hears an answer that sets that byte - sp88 sent
+                # three with a zero in it and the player sat waiting for all of them.
+                their = (g.get("fields") or {})["tradeState"]
+                st["their_security_state"] = their
+                print(f"\n[rx] t={now:6.2f} *** SECURITY PHASE: their state "
+                      f"{room.TRADE_STATE_NAMES.get(their, their)} ***")
+                record(rec="their_security_state", t=now, state=their)
+                if not args.complete_trade:
+                    record(rec="security_state_declined", t=now)
+                    return
+                st["our_security_state"] = room.mirror_trade_state(their)
+                reply = room.build_trade_ready_ok(st["our_security_state"], is_trade_ok=1)
+                st["ready_oks_sent"] += 1
+                label = (f"our state {room.TRADE_STATE_NAMES.get(st['our_security_state'])} "
+                         f"(theirs {room.TRADE_STATE_NAMES.get(their)})")
             elif g["data_id"] == room.TRADE_READY_OK:
                 # THE LAST MESSAGE, AND THE ONE THAT LETS THE CONSOLE WRITE ITS SAVE. Answering it
                 # with tradeState=WAIT satisfies the second half of
                 # `<WaitBoxWindowComplete>d__24`'s condition, the manager moves to SECURIY_TRADE,
                 # and `TradeStateModel$$InitState` calls `PlayerSave`. Off unless --complete-trade.
                 st["their_ready_ok"] = g.get("fields")
-                if (g.get("fields") or {}).get("isTradeOk"):
-                    # isTradeOk = 1 is the SECURITY PHASE talking: `TradeSecurityController$$
-                    # ReciveState` drops any message whose first byte is not 1, and the console
-                    # only starts sending 1 once it has a TradeStateModel. sp88 saw {1, 1} - INIT.
-                    st["their_security_state"] = (g["fields"] or {}).get("tradeState")
                 print(f"\n[rx] t={now:6.2f} *** THEIR READY-OK: {st['their_ready_ok']} ***")
                 record(rec="their_ready_ok", t=now, fields=st["their_ready_ok"])
                 if not args.complete_trade:
@@ -1141,6 +1155,11 @@ async def main_async(args):
                     return
                 reply = room.build_trade_poke(st["our_poke"])
                 label = "our Pokemon"
+            send_trade_message(reply, label, now)
+
+        def send_trade_message(reply, label, now):
+            """Put one game message into the console's reliable window. Shared by the answers and
+            by the repeater, which needs the sequence id as it stands at the moment it fires."""
             seq = st["their_ack_id"]
             if not seq:
                 record(rec="trade_reply_no_seq", t=now, label=label)
@@ -1153,6 +1172,24 @@ async def main_async(args):
             st["trade_replies"] += 1
             print(f"[tx] t={now:6.2f} *** SENT {label} at seq {seq} ({len(reply)} B) ***\n")
             record(rec="trade_reply", t=now, label=label, seq=seq, length=len(reply))
+
+        async def repeat_the_security_state():
+            """Say our state again every second, once the security phase has started.
+
+            ONE ANSWER PER MESSAGE IS NOT ENOUGH. `TradeParentStateModel$$StateProc`'s
+            WAIT_READYOK case only leaves that state when `targetIsTradeReadyOk` is set, and
+            `TradeSecurityController$$ReciveState` sets it when a message ARRIVES while the console
+            is in state 6 - a window it enters on its own clock (`waitRndTime` counts down first).
+            Nothing we send in reply to something else is guaranteed to land inside it.
+            """
+            while True:
+                await trio.sleep(args.security_repeat)
+                if st["their_security_state"] is None or not st["our_security_state"]:
+                    continue
+                now = time.monotonic() - t0
+                send_trade_message(
+                    room.build_trade_ready_ok(st["our_security_state"], is_trade_ok=1),
+                    f"repeat state {room.TRADE_STATE_NAMES.get(st['our_security_state'])}", now)
 
         def note_their_state(fields, now):
             """The console broadcasts its OWN OpcState, and an emote is visible in it.
@@ -1311,6 +1348,8 @@ async def main_async(args):
                     nursery.start_soon(keep_saying_match_wait)
                 if args.initiate_talk:
                     nursery.start_soon(initiate_the_talk)
+                if args.complete_trade:
+                    nursery.start_soon(repeat_the_security_state)
 
         print(f"\n[cx] {st['updates']} update session(s), {len(st['replies'])} station-protocol "
               f"reply/replies")
@@ -1428,6 +1467,10 @@ def main():
                          "UnionTradeManager to SECURIY_TRADE, and TradeStateModel$$InitState calls "
                          "PlayerSave. The Pokemon the player picked leaves their box and ours takes "
                          "its place. Needs --trade-reply. ASK THE USER FIRST")
+    ap.add_argument("--security-repeat", type=float, default=1.0, metavar="S",
+                    help="seconds between repeats of our security-phase state. The console's "
+                         "WAIT_READYOK only ends when a message ARRIVES inside it, and it enters "
+                         "that state on its own countdown, so the answer has to keep coming")
     ap.add_argument("--trade-template", metavar="FILE",
                     help="a 328-byte PB8 to offer, edited by --trade-species and friends. 328 "
                          "bytes hold much more than this project has identified, so what we send "
