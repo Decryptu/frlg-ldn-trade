@@ -177,9 +177,9 @@ def test_the_high_leafgreen_segment_reaches_down_to_the_m4a_tables():
     narrowing of the last big gap for two runs."""
     low, high, delta, _evidence = [seg for seg in rom_map.LEAFGREEN_DELTA_SEGMENTS
                                    if seg[2] == -0x12D8][0]
-    # Session 48 carried the low end down again, and from a direction the m4a pools knew nothing
-    # about: bs128/lg194 dumped 0x0847DC00 on both cartridges and 690 of 728 bytes match at -0x12D8.
-    assert (low, high) == (0x0847DC00, 0x086803FC)
+    # Session 48 carried the low end down 138 KB further, from a direction the m4a pools knew
+    # nothing about: bs129/lg195 read -0x12D8 at four paired blocks, two of them 884 of 884 bytes.
+    assert (low, high) == (0x0845F000, 0x086803FC)
     for firered, leafgreen in ((0x0847DCF8, 0x0847CA20), (0x0847DDAC, 0x0847CAD4),
                                (0x0847DF10, 0x0847CC38), (0x0849758C, 0x084962B4),
                                (0x084975BC, 0x084962E4)):
@@ -204,7 +204,7 @@ def test_the_gap_that_is_left_is_the_one_the_boundary_table_names():
     # is the same lesson -0x20 taught in session 42. What is left is the span either side of it.
     boundary = [b for b in rom_map.LEAFGREEN_DELTA_BOUNDARIES if b[:2] == (-0x1C4, -0x124C)][0]
     _from, _to, low, high = boundary[:4]
-    assert (low, high) == (0x0843ABF0, 0x08442800)
+    assert (low, high) == (0x0843AFFF, 0x08442800)
     for inside in (low + 1, (low + high) // 2, high - 1):
         try:
             rom_map.leafgreen_guess(inside)
@@ -246,7 +246,7 @@ def test_the_easy_chat_segment_reaches_out_both_ways_after_bs120_lg191():
     0x083DE528..0x083E3700, 21 KB, and 0x083BEE74..0x0841463E after bs120/lg191. Session 48's
     paired scattered blocks moved both ends again, to a boundary either side rather than a pool."""
     low, high, delta, _e = [seg for seg in rom_map.LEAFGREEN_DELTA_SEGMENTS if seg[2] == -0x1C4][0]
-    assert (low, high) == (0x083B8000, 0x0843ABF0)
+    assert (low, high) == (0x083B8000, 0x0843AFFF)
     assert rom_map.leafgreen_guess(0x083BEE74) == 0x083BEE74 - 0x1C4
     assert rom_map.leafgreen_guess(0x0841463E) == 0x0841463E - 0x1C4
     # The control that rode along: 0x082370FC is inside the measured -0x24 segment, and lg191 read

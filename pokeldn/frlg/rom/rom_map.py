@@ -549,16 +549,20 @@ LEAFGREEN_DELTA_SEGMENTS = (
      "was 0x081484CC..0x0824CDFC"),
     (0x08251DAD, 0x083B7B47, -0x20, "bs128/lg194 at 0x08251C00 read the step 31 bytes wide; "
      "bs127/lg193 at 0x083B7800 above. Session 42 found this segment; this is its extent"),
-    (0x083B8000, 0x0843ABF0, -0x1C4, "bs128/lg194 at 0x083B8000 matches -0x1C4 from its first "
-     "window, and at 0x0843A800 to its last"),
-    # A SECOND SEGMENT NOBODY HAD SEEN, and it is the same lesson as -0x20: what looked like one
-    # step from -0x1C4 to -0x12D8 across 421 KB is two. bs128/lg194 at 0x08442800 matches at
-    # -0x124C over 436 bytes, all 436 of them, against the LeafGreen block a page below it.
+    (0x083B8000, 0x0843AFFF, -0x1C4, "bs128/lg194 at 0x083B8000 matches -0x1C4 from its first "
+     "window; bs129/lg195 at 0x0843AC00, 888 of 888 bytes, is the highest point that does"),
+    # TWO SEGMENTS NOBODY HAD SEEN, and it is the same lesson as -0x20 twice over: what was read as
+    # one step from -0x1C4 to -0x12D8 across 421 KB is THREE. Each is separated from its neighbours
+    # by a clean margin - at 0x08442800 the -0x124C reading is 436 of 436 where -0x1240 is 6.9% and
+    # -0x12D8 is 2.7% - so a repeating graphics pattern matching at two shifts is ruled out by the
+    # numbers rather than by assumption.
     (0x08442800, 0x08442BFF, -0x124C, "bs128/lg194: FireRed 0x08442800 against LeafGreen "
-     "0x08441800, 436 of 436 bytes at -0x124C. One point - the segment's extent is NOT measured"),
-    (0x0847DC00, 0x086803FC, -0x12D8, "bs128/lg194 at 0x0847DC00, 690 of 728 bytes, which is the "
-     "first reading of this delta that did not come from the m4a pools; bs69/lg178, bs72/lg179 and "
-     "bs117/lg190 above"),
+     "0x08441800, 436 of 436 bytes. ONE POINT - the segment's extent is not measured"),
+    (0x08447000, 0x0844F3FF, -0x1240, "bs129/lg195: 900/1012 at 0x08447000 and 980/1012 at "
+     "0x0844F000, two points 32 KB apart, each with the other two deltas under 23%"),
+    (0x0845F000, 0x086803FC, -0x12D8, "bs129/lg195: 0x0845F000, 0x08467000, 0x0846F000 and "
+     "0x08477000, two of them 884 of 884 bytes; bs128/lg194 at 0x0847DC00; bs69/lg178, bs72/lg179 "
+     "and bs117/lg190 above. The first readings of this delta not taken off the m4a pools"),
 )
 
 # THE HIGH SEGMENT, and how it was measured without knowing a single symbol up there. Dump 1 KB off
@@ -632,11 +636,12 @@ LEAFGREEN_DELTA_BOUNDARIES = (
     (-0x20, -0x1C4, 0x083B7B47, 0x083B8000, "bs127/lg193 at 0x083B7800 below, bs128/lg194 at "
      "0x083B8000 above; 0x083B7C00 matches NEITHER delta, which is the divergence itself. Was "
      "125.6 KB"),
-    (-0x1C4, -0x124C, 0x0843ABF0, 0x08442800, "bs128/lg194: -0x1C4 to the last window of "
-     "0x0843A800, and 0x0843C800 onwards matches nothing at any shift a 1 KB block can see"),
-    (-0x124C, -0x12D8, 0x08442BFF, 0x0847DC00, "bs128/lg194: the two ends are single points and "
-     "everything between them is graphics that does not correspond - the pair of cartridges holds "
-     "different bytes there, so no delta is readable, not merely unmeasured"),
+    (-0x1C4, -0x124C, 0x0843AFFF, 0x08442800, "bs129/lg195: -0x1C4 to the last window of "
+     "0x0843AC00, and 0x0843B400 onwards matches nothing at any shift a paired block can see"),
+    (-0x124C, -0x1240, 0x08442BFF, 0x08447000, "bs128/lg194 below, bs129/lg195 above"),
+    (-0x1240, -0x12D8, 0x0844F3FF, 0x0845F000, "bs129/lg195 either side; 0x08457000 in the middle "
+     "reads 74.7% at -0x1240 against 57.3% at -0x124C, which is graphics resembling itself and not "
+     "a verdict"),
 )
 
 def leafgreen_guess(firered_address):

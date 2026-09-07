@@ -434,16 +434,22 @@ window that still matches at the old delta, and the first that matches at the ne
 | `-0x28 -> -0x24` | 19.7 KB | **90 B**, 0x081480CE..0x08148128 | `mystery_gift.o` |
 | `-0x24 -> -0x20` | 98.8 KB | **31 B**, 0x08251D8E..0x08251DAD | `pokemon.o` rodata |
 | `-0x20 -> -0x1c4` | 125.6 KB | **1209 B**, 0x083B7B47..0x083B8000 | `title_screen.o` rodata |
-| `-0x1c4 -> -0x124c` | (unknown) | 8 KB, 0x0843ABF0..0x08442800 | graphics |
-| `-0x124c -> -0x12d8` | (unknown) | 238 KB, 0x08442BFF..0x0847DC00 | graphics |
+| `-0x1c4 -> -0x124c` | (unknown) | 30 KB, 0x0843AFFF..0x08442800 | graphics |
+| `-0x124c -> -0x1240` | (unknown) | 17 KB, 0x08442BFF..0x08447000 | graphics |
+| `-0x1240 -> -0x12d8` | (unknown) | 63 KB, 0x0844F3FF..0x0845F000 | graphics |
 
 346 KB of unmeasured boundary became **2036 bytes** across the five code steps, and every one of the
 272 specials now has a LeafGreen address - none falls inside a boundary any more.
 
-**A SECOND SEGMENT NOBODY HAD SEEN: -0x124C.** What was read as one step from -0x1C4 to -0x12D8
-across 421 KB is two. bs128/lg194's FireRed block at 0x08442800 matches the LeafGreen block a page
-below it at **-0x124C**, 436 of 436 bytes. That is the same lesson `-0x20` taught in session 42, and
-it is now twice: a wide gap between two deltas is not evidence that the delta steps once.
+**TWO SEGMENTS NOBODY HAD SEEN: -0x124C and -0x1240.** What was read as one step from -0x1C4 to
+-0x12D8 across 421 KB is **three**. bs128/lg194's FireRed block at 0x08442800 matches the LeafGreen
+block a page below it at -0x124C, 436 of 436 bytes; bs129/lg195 then read -0x1240 at two points 32 KB
+apart and -0x12D8 at four more. That is the lesson `-0x20` taught in session 42, now three times
+over: **a wide gap between two deltas is not evidence that the delta steps once.**
+
+Graphics can resemble itself, so each reading was checked against its neighbours rather than taken
+on its own. At 0x08442800: -0x124C is 436/436, -0x1240 is 6.9%, -0x12D8 is 2.7%. At 0x08457000 the
+best is 74.7% against 57.3% for the next candidate, and that one is recorded as **not a verdict**.
 
 **Where it stops, and why it is not a matter of more runs.** Above 0x0843C800 the two cartridges hold
 *different bytes*, not the same bytes somewhere else - version-specific graphics. No shift matches at
