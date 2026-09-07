@@ -15,6 +15,12 @@ The join request is six bytes and says almost nothing: a type, the station index
 "not in a mesh yet", and an ack id. It is retransmitted every 500 ms until acknowledged, and Pia
 gives up after ten seconds. The response carries the whole mesh - every station's location and
 index, possibly split across fragments.
+
+**A MESH MESSAGE IS ACKNOWLEDGED ON THE STATION PROTOCOL, NOT ON THIS ONE.** The wiki's type table
+has no ack, and BDSP's own code has no builder for one: the mesh's handlers read the ack id and then
+hand it to a MeshStationProtocol method, so what goes on the air is the station protocol's eight-byte
+type-5 ack on protocol 0x14. `ack_for()` is that rule; `docs/bdsp_pia.md` "Acking a mesh message"
+carries the addresses.
 """
 
 import struct
@@ -53,13 +59,42 @@ STATION_INDEX_INVALID = 253       # a console that has not joined a mesh yet
 STATION_INDEX_HOST = 254
 STATION_INDEX_BROADCAST = 255
 
-STATION_INFO_SIZE = 68            # 5.31-5.45: a 64-byte location, an index, three bytes of pad
+STATION_INFO_SIZE = 68            # 5.31-5.45: a 64-byte location, an index, a join order, a pad
 LOCATION_FIELD = 64
+ACK_PROTOCOL = stp.PROTOCOL       # 0x14 - a mesh message is acked on the STATION protocol
 
 
 def build_join_request(ack_id, station_index=STATION_INDEX_INVALID):
     """Six bytes. 253 is what a station that is not yet in a mesh calls itself."""
     return bytes([JOIN_REQUEST, station_index & 0xFF]) + struct.pack(">I", ack_id & 0xFFFFFFFF)
+
+
+def read_ack_id(data):
+    """-> the ack id a mesh message carries, which is its LAST four bytes, big-endian.
+
+    BDSP's own reader is four instructions (main.bin 0x01542db8): `size - 4` with a borrow check,
+    then a big-endian load at that offset. A message shorter than four bytes acks nothing and
+    answers 0, which is what an unacknowledged type looks like from the same call.
+    """
+    if len(data) < 4:
+        return 0
+    return struct.unpack_from(">I", data, len(data) - 4)[0]
+
+
+def ack_for(data):
+    """-> (protocol, payload) that acknowledges a mesh message, or None if it carries no ack id.
+
+    The mesh protocol never acks with a mesh message. Every one of the four sites that acknowledges
+    one (main.bin 0x0154b790, 0x0154b868, 0x0154b984, 0x0154b9a4 - the join request and the join
+    response handlers) reads the ack id with 0x01542db8 and calls 0x01550324, a MeshStationProtocol
+    method that builds the same eight bytes as `station_protocol.build_ack` and sends them on that
+    object - the one whose field 0x120 holds the 10000 ms its constructor writes, which is what says
+    which protocol object it is. So the reply to a join response is `05 00 00 00 <ack id>` on 0x14.
+    """
+    kind = data[0] if data else None
+    if kind not in (JOIN_REQUEST, JOIN_RESPONSE) or len(data) < 4:
+        return None
+    return ACK_PROTOCOL, stp.build_ack(read_ack_id(data))
 
 
 def parse_join_response(data):
@@ -93,7 +128,8 @@ def parse_join_response(data):
         if off + STATION_INFO_SIZE > len(data):
             break
         blob = data[off:off + STATION_INFO_SIZE]
-        entry = {"station_index": blob[LOCATION_FIELD]}
+        entry = {"station_index": blob[LOCATION_FIELD],
+                 "join_order": struct.unpack_from(">H", blob, LOCATION_FIELD + 1)[0]}
         try:
             entry["location"] = stp.parse_station_location(blob[:LOCATION_FIELD])
         except ValueError as exc:
@@ -101,7 +137,7 @@ def parse_join_response(data):
         infos.append(entry)
         off += STATION_INFO_SIZE
     out["station_info"] = infos
-    out["ack_id"] = struct.unpack_from(">I", data, len(data) - 4)[0]
+    out["ack_id"] = read_ack_id(data)
     return out
 
 

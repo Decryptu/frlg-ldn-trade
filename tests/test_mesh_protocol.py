@@ -70,3 +70,48 @@ def test_the_type_table_names_what_a_capture_will_hold():
     assert mp.parse_message(bytes([mp.UPDATE_MESH]))[1] == "UPDATE_MESH"
     assert mp.parse_message(bytes([mp.KICKOUT_NOTICE]))[1] == "KICKOUT_NOTICE"
     assert mp.parse_message(bytes([0x7E]))[1].startswith("unknown")
+
+
+# The sp35 join response, off the console, byte for byte out of scratchpad/sp35_pia.jsonl. Eleven
+# identical copies arrived 500 ms apart because nothing acknowledged it.
+SP35_JOIN_RESPONSE = bytes.fromhex(
+    "0202000101000200080008000000000002060000a9fe0e013039000000000000eb9b2220f148"
+    "0000002a1f29597bc2a30000000100000000000000000000000000000000000000000000000000"
+    "000000000000000606a9fe0e023039a9fe0e0230390000000000001249a221d85800002b7f4c11"
+    "32669aea050100010000000000000000000000000000000000000000000000000100010017cad56f")
+
+
+def test_the_ack_id_is_the_last_four_bytes_big_endian():
+    assert mp.read_ack_id(SP35_JOIN_RESPONSE) == 0x17CAD56F
+    assert mp.read_ack_id(mp.build_join_request(7)) == 7      # the last four of six
+    assert mp.read_ack_id(b"\x02\x00\x00") == 0          # 0x01542db8's borrow check answers 0
+
+
+def test_a_mesh_message_is_acked_on_the_station_protocol_not_the_mesh_one():
+    proto, payload = mp.ack_for(SP35_JOIN_RESPONSE)
+    assert proto == stp.PROTOCOL == 0x14                 # NOT mp.PROTOCOL
+    assert payload == bytes.fromhex("050000_0017cad56f".replace("_", ""))
+    assert payload == stp.build_ack(0x17CAD56F)
+    assert len(payload) == 8                             # main.bin 0x01550324 sends w3 = 8
+
+
+def test_only_the_two_acked_types_produce_an_ack():
+    assert mp.ack_for(mp.build_join_request(3))[0] == stp.PROTOCOL
+    assert mp.ack_for(bytes([mp.UPDATE_MESH, 0, 0, 0, 0])) is None
+    assert mp.ack_for(bytes([mp.DUMMY_ACK, 0, 0, 0])) is None
+    assert mp.ack_for(b"") is None
+
+
+def test_the_real_join_response_reads_back_as_the_mesh_the_console_named():
+    out = mp.parse_join_response(SP35_JOIN_RESPONSE)
+    assert out["stations"] == 2 and out["host_index"] == 0 and out["our_index"] == 1
+    assert out["fragments"] == 1 and out["entries"] == 2 and out["update_counter"] == 0
+    assert (out["max_active"], out["max_buffer"], out["max_total"]) == (8, 0, 8)
+    assert out["ack_id"] == 0x17CAD56F
+    host, us = out["station_info"]
+    assert host["station_index"] == 0 and host["join_order"] == 0
+    assert us["station_index"] == 1 and us["join_order"] == 1
+    assert host["location"]["private"] == ("169.254.14.1", 12345)
+    assert host["location"]["constant_id"] == 0xEB9B2220F1480000
+    assert us["location"]["private"] == ("169.254.14.2", 12345)
+    assert us["location"]["variable_id"] == 0x2B7F4C11

@@ -346,6 +346,69 @@ the count measured a number we could not see. An id it does not register expects
 version of 1 is a guaranteed verdict, and bisection then reads any protocol's version. Neither
 needed one of the console's protocols to be known in advance.
 
+## Acking a mesh message, read off the console
+
+The join response carries an ack id and the host repeats it every 500 ms until it is acknowledged -
+sp35 caught eleven identical copies. Nothing in the Mesh Protocol acks it: there is no builder for
+type 0x22 or 0x23 anywhere in this binary, and all four sites that acknowledge a mesh message do the
+same two calls.
+
+| address | what |
+|---|---|
+| `0x01542db8` | read the ack id: `size - 4` with a borrow check, then a big-endian load |
+| `0x01550324` | send the ack - eight bytes `05 00 00 00 <ack id>`, `mov w3, #8` |
+| `0x0154b790`, `0x0154b868` | the join REQUEST handler, host side |
+| `0x0154b984`, `0x0154b9a4` | the join RESPONSE handler - the one this project needs |
+
+`0x01550324` is a method of the object at `session + 0xa0`, and that object is the
+**MeshStationProtocol**: its field `0x120` holds the `0x2710` its constructor writes at
+`0x0154e614`, which is what tells the two protocol objects apart - `MeshProtocol`'s constructor
+zeroes the same offset. So the reply to a mesh join response goes out on protocol **0x14**.
+
+The join response handler is identified by the pointer it reads at `MeshProtocol + 0x128`, which
+`JoinMeshJob` stores through `0x0154e5c4` immediately after sending the join request at
+`0x0155cb8c`.
+
+The sp35 response, byte for byte, is a test fixture in `tests/test_mesh_protocol.py`: two stations,
+host index 0, our index 1, `max_active` 8, update counter 0, join orders 0 and 1, ack id
+`0x17cad56f`.
+
+## The RTT protocol, on this console
+
+| address | what |
+|---|---|
+| `0x015ada10` / `0x015ada18` | the protocol id `0x58` and version `3`, straight out of the vtable |
+| `0x015adab4` | the message size: `mov w0, #0xd` |
+| `0x015ada24` / `0x015ad54c` | serialise and parse - u8, big-endian u64, big-endian u32 |
+| `0x015acd90` | the update: broadcast a request, then drain what came back |
+| `0x015ad024` | build the answer - kind 1, the timestamp copied across, the requester's id |
+| `0x015ad000` | the target check, and it accepts 0 without comparing anything |
+| `0x015ad058` | what an answer is worth: `(now - echoed) / ticks per ms` into a nine-sample ring |
+
+sp35 caught thirteen of them, every one a request with `target` 0 and a **410 ms** gap (median 0.410,
+min 0.408, max 0.411) - while the period constant behind `0x015ace54` reads 500 in both of its two
+settings, which is a gap not yet closed. The timestamps advance at about 31.36 MHz.
+
+## The reliable protocol, and the two messages the game sent
+
+Within a second of the join the console sent two messages on 0x7c, addressed to us by station
+bitmap `0x2`, and repeated both 3.1 s later because nothing acknowledged them:
+
+    0f 00 0014 0001 0001 00  01 00 11 08 00 31 5a 00 5a 61 1f c1 ca d3 81 32 e7 dd b8 40
+    07 00 0004 0002 0001 00  12 00 01 23
+
+Both parse exactly against the 5.29-5.43 window in `docs/pia.md`: flags `0x0f` is application data,
+message start, message end and is-initialized; `0x07` is the same without is-initialized. Stream 0,
+sequence ids 1 and 2, lowest pending 1, no destination bits, payloads of 20 and 4 bytes. **Those
+payloads are the game.**
+
+The reliable protocol's version 3 pins Pia to **5.31-5.43**, which is narrower than the mesh
+protocol's version 3 (5.30-5.45). Taken together the library is 5.31-5.43.
+
+The message flags in the Pia header are **0x01** on 0x14, 0x18, 0x58 and 0x7c, and 0x11 only on the
+local protocol (0x24) - session 46's "0x11 for all four message types" was about the local
+protocol's own four. 0x11 has been accepted on 0x14 and 0x18 all the same.
+
 ## What result 7 was
 
 Before the fix, a well-formed-looking request came back **result 7** every time - internal error

@@ -100,6 +100,77 @@ The plaintext is padded with `0xFF` to a multiple of 16 before encryption, and o
 eight bytes** of the GCM tag go on the wire. The 0xFF padding is useful beyond parsing: it is free
 known-plaintext, so a candidate key can be tested with one AES block instead of a whole GHASH.
 
+## Joining a mesh: 0x14, 0x18, and where the ack lives
+
+A Pia 5.x station reaches a mesh through three protocols in order - the Local Protocol's update
+session (0x24), the Mesh Station Protocol's connection request (0x14), and the Mesh Protocol's join
+request (0x18) - and every one of them retransmits every 500 ms until it is acknowledged.
+
+**A mesh message is acknowledged on the STATION protocol.** The Mesh Protocol's type table has no
+ack in it and a 5.31-5.43 binary has no builder for one: each of the four sites that acknowledges a
+mesh message reads the ack id and then calls a `MeshStationProtocol` method, so what goes on the air
+is the station protocol's eight-byte type-5 ack on **0x14** - `05 00 00 00` and the ack id,
+big-endian. The ack id itself is the **last four bytes of the message**, whatever its length; the
+console's own reader is `size - 4` with a borrow check, and answers 0 for anything shorter than
+four bytes.
+
+`pokeldn/ldn/mesh_protocol.ack_for()` is that rule in one call, and `docs/bdsp_pia.md` carries the
+addresses it was read at.
+
+The 5.31-5.45 station info entry is 68 bytes: a 64-byte station location, the station index, and a
+**big-endian halfword join order** - the wiki calls the last two bytes padding for 5.27-5.29 and
+names the join order only from 5.31, and a real capture has 0 for the host and 1 for the station
+that joined after it.
+
+## The RTT protocol (0x58)
+
+The host starts timing a station the moment it is in the mesh, and there is no wiki page for this
+protocol at all. A message is thirteen bytes and always thirteen:
+
+    u8   kind        0 = request, 1 = response; anything else is dropped
+    u64  timestamp   big-endian, the sender's own clock
+    u32  target      big-endian, whose reply this is - and **zero is accepted by everyone**
+
+The host broadcasts a request every ~410 ms with `target` 0. A station answers with kind 1 and the
+**timestamp echoed unchanged**; the receiver's first test on the target field is `if zero, accept`,
+so an answer needs no id it has not been told. What the host does with it is
+`(now - echoed) / ticks per ms` into a nine-sample ring per station, whose median becomes that
+station's RTT once the ring is full.
+
+**Nothing in this protocol drops a station for staying silent.** A station that never answers simply
+never gets a sample - which is worth knowing before spending a run on the theory that it does.
+
+## The reliable sliding window (0x7c, and everything above it)
+
+Pia 5.29-5.43 wraps a reliable message like this, and the payload of a reliable message on 0x7c is
+the game's own data:
+
+    0x0  1  flags     1 application data, 2 message start, 4 message end, 8 is initialized,
+                      16 zlib, 32 reset, 64 reset ack
+    0x1  1  stream id
+    0x2  2  payload size, big-endian
+    0x4  2  sequence id, big-endian
+    0x6  2  lowest sequence id pending ack, big-endian
+    0x8  1  number of destination bits (N)
+    0x9  4 * ceil(N / 32)  destination bitmap words, big-endian
+            payload
+
+**The header is 9 or 13 bytes, not the wiki's 8 or 12** - the wiki's own field list runs through
+offset 0x8, and the binary's `GetSize` is `9 + (((N + 0x1f) >> 3) & 0x3c)`. And N is refused at
+**0x20 or more**, where the wiki says "may not be higher than 32". A payload of 0x5a1 or more is
+refused too.
+
+When the application-data flag is clear the payload is a bulk acknowledgement, and the 5.29-5.43
+shape is not the 5.18 one the wiki gives. It is two bytes and then `n` entries of **21**:
+
+    0x0  1   not yet read - neither the constructor nor the one-entry builder writes it
+    0x1  1   entry count, refused at 0x21 or more
+    0x2  21 * n  entries: u8 stream id, u16be ack id, u16be (the window's own field 0x50),
+                 16-byte acknowledgement mask
+
+`pokeldn/ldn/reliable5.py` is the 5.29-5.43 window; `pokeldn/ldn/reliable.py` is the 6.32 one and
+has a different header. Do not read one while holding the other.
+
 ## Before reverse-engineering any of this again
 
 The reference material is searchable, and searching it is minutes against days.
