@@ -521,15 +521,20 @@ completed trade, and the console repeated it **78 times, once a second, until ou
 it is waiting on an answer we do not yet build. By its name it offers the select window again, i.e.
 a second trade inside the same association.
 
-#### What was traded, and what that proves
+#### What was traded, and it is a Pokemon we built
 
-The template was `sp82_zubat.pb8` - the Pokemon sp82 captured from this same console - so it went
-straight back. sp92's `their_poke.pb8` and that file share a sha1 and differ in zero of 328 bytes,
-and sp91 and sp92 decode identically: species 41, OT Gurvan, pid 2329222868, IVs (8, 0, 23, 12, 10,
-10). **So a PB8 we send is re-encrypted, stored in a retail save, offered back and returns
-bit-identical** - a stronger check on the encoding than any test in `tests/`. It also means this
-first completed trade put nothing foreign in the player's game; proving a Pokemon we *built* can
-enter a retail save needs a completing run with a template that is not theirs.
+Both runs logged `offering species 41, 'PKCAMP', OT 'Gurvan'`: the template was sp82's own capture
+from this console, but `pokemon.build_from` rewrote the nickname before the radio was touched, so
+what the player received is **not** the Zubat they gave. It is that Zubat with a field of ours in
+it, re-encrypted and re-checksummed by us, and the console took it through `check-ok`, the security
+phase and `ReplacePoke` without complaint. **So a PB8 this project assembles is accepted into a
+retail save.** That is the claim sp82 and sp87 could not make.
+
+What the console offered is a separate fact and a duller one: sp82, sp91 and sp92's captures share
+a sha1, differ in zero of 328 bytes and decode to pid 2329222868 - the player picked the same Zubat
+out of the same box three times. **It is not a round trip**; nothing we sent has ever come back to
+us. Whether that mon can still be offered now that sp92 traded it away is the cheap thing to check
+on the next run.
 
 ### The disconnect penalty, and what it proves
 
