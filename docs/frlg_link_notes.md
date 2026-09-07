@@ -199,6 +199,29 @@ host runs: finalized at 2.84 s and left at 2.98 s; finalized at 3.86 s and lived
 never wall. Everything decodable on the wire was identical between a delivered run and a walled one
 up to the deauth.
 
+**IT IS GONE, and the record says so without a single run being spent on it.** Counting the wall's
+signature - a run log that ends within six seconds of its join line - over every log on disk
+(`scratchpad/wall_scan.py`), against the population the 40-60% was quoted over, runs where the
+console ASSOCIATED:
+
+| | associations | walled |
+|---|---|---|
+| before 2026-09-04 | 215 | **78 (36.3%)** |
+| since 2026-09-04 | 211 | **0** |
+| since the last wall of all, u05 | 232 | **0** |
+
+**And it answers the question that was going to cost eight runs: the beacon was not what fixed it.**
+26 of those clean associations - u06 through u31 - ran on the OLD beacon, before the element set was
+corrected. Every run type's last wall is earlier than that fix: fr37 on 09-02, h1s on 09-02, lg135
+on 09-03 morning, u05 on 09-03 afternoon. An A/B against the old beacons would have been measuring a
+difference the record already rules out.
+
+What is NOT settled is which change did stop it. The type 5 unicast was necessary and not sufficient
+- the walls ran on for another day after it, and this page said as much at the time. The last
+candidate before the Union Room path went clean is the NI_START keepalive, three minutes before u06,
+which arrived with the reading that the console's D follows five parent frames it left unanswered.
+A machine-side change is not excluded. The negative result does not depend on the positive one.
+
 Two causes were found, in order:
 
 1. **The Pia type 5 Update Session was broadcast only.** The console receives ~1 in 5 of our
