@@ -135,6 +135,23 @@ against the table settles both at once. `12 0001 23` is `NetRequestData`, whose 
 is the console answering its own question: `NetDataIsMatchWaitData{isMatchWait = 0}`, "I am not
 waiting to be matched".
 
+**Counted over every capture this project holds, that request is by a long way the commonest thing
+the console says.** Four of the 65 message types have ever been on the air, and the receiver drops
+our own looped-back broadcasts before recording, so all of these are the console talking:
+
+| id | class | reliable | unreliable | size | runs |
+|---|---|---|---|---|---|
+| 0x01 | `NetJoinData` | 2070 | 0 | 17 | 19 |
+| 0x02 | `NetPosData` | 0 | 60 | 72 | 5 |
+| 0x12 | `NetRequestData` | 4333 | 55 | 1 | 19 |
+| 0x23 | `NetDataIsMatchWaitData` | 229 | 0 | 1 | 13 |
+
+**Not one payload in the whole archive fails to be a well-formed game message** - every one declares
+a length that exactly accounts for its bytes - which is the framing confirmed over six thousand-odd
+messages and nineteen runs from a direction that is not the source. And `NetPosData` shows what a
+capture can settle that source cannot: its struct is an array, so it is one of the twelve with no
+decidable layout, and yet 72 bytes is 12 points of 6 and nothing else divides.
+
 **So one of the two messages the console has been repeating at us for every run of this project is a
 question addressed to us, and nothing we have ever sent has answered it.** Building the answer from
 the table reproduces the console's own four bytes exactly, which is the check that the reading is
