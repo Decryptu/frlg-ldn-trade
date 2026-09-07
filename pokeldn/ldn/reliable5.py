@@ -7,7 +7,7 @@ not reach for one while reading the other. This module is the 5.29-5.43 wrapper,
 THE MESSAGE HEADER (parse main.bin 0x0159756c, build 0x01597364, size 0x015977f0):
 
     0x0  1  flags                      the FLAG_* bits below
-    0x1  1  stream id
+    0x1  1  stream id                  AND, on a RESET, a COUNTER - see below
     0x2  2  payload size, big-endian   refused at 0x5a1 or more
     0x4  2  sequence id, big-endian
     0x6  2  lowest sequence id pending ack, big-endian
@@ -35,6 +35,24 @@ size 0x0159716c = `2 + 21 * n`):
 
 The wiki's "Ack Data" is the 5.18 shape (19-byte entries, always 32 of them). 5.29-5.43 carries an
 explicit count and one more halfword per entry.
+
+**THE BYTE AT 0x1 IS NOT ONLY A STREAM ID.** On a message carrying FLAG_RESET the handler
+(main.bin 0x0159f9b4) reads it as a reset COUNTER and requires it to be exactly one more than the
+value it holds for that station: `stream_id == record[0x1e]` is rejected outright at 0x0159fa24 and
+`stream_id != record[0x1e] + 1` at 0x0159fa4c. A reset numbered 0 against a stored 0 is therefore
+thrown away in silence - which is what sp41 and sp42 sent, five framings each, while the framing was
+never the thing being measured. Before any of that the handler needs `record[0x1f]` non-zero, an
+active-station flag we do not set.
+
+**THE ACK, MEASURED OFF THE CONSOLE (sp44).** Sending the console application data made it answer,
+and its answer is the shape no amount of reading the builder had settled:
+
+    00 00 0017 ffff 0003 00   00 01   00 0002 0001  00 * 16
+
+a header with **no flags at all**, stream 0, **sequence id 0xFFFF** - a control message carries no
+sequence of its own - and the lowest id it is still waiting on; then the payload, whose first byte
+is **0** and whose entry acknowledges `ack_id = highest received + 1` with the halfword before the
+mask holding `ack_id - 1`. That is the reply to two application messages of ours, sequence 0 and 1.
 
 `docs/bdsp_pia.md` "The reliable protocol".
 """
@@ -138,6 +156,26 @@ def parse_ack_payload(data):
                         "mask": data[off + 5:off + 21]})
         off += ACK_ENTRY_SIZE
     return {"unknown0": data[0], "count": count, "entries": entries}
+
+
+ACK_SEQUENCE = 0xFFFF             # a control message has no sequence of its own
+
+
+def build_ack_message(ack_id, stream_id=0, field_0x50=None, mask=b"", lowest_pending=None,
+                      unknown0=0):
+    """A whole bulk-acknowledgement message, header and payload, as sp44 caught the console send it.
+
+    `ack_id` is one MORE than the highest sequence id received - the console answered our sequence 0
+    and 1 with an ack id of 2. The halfword before the mask carried `ack_id - 1` in that same
+    message, so it defaults here to exactly that.
+    """
+    if field_0x50 is None:
+        field_0x50 = max(0, ack_id - 1)
+    body = build_ack_payload([{"stream_id": stream_id, "ack_id": ack_id,
+                               "field_0x50": field_0x50, "mask": mask}], unknown0=unknown0)
+    return build_header(0, ACK_SEQUENCE, len(body),
+                        lowest_pending=ack_id if lowest_pending is None else lowest_pending,
+                        stream_id=stream_id) + body
 
 
 def build_ack_payload(entries, unknown0=0):

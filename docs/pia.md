@@ -176,10 +176,24 @@ refused too.
 When the application-data flag is clear the payload is a bulk acknowledgement, and the 5.29-5.43
 shape is not the 5.18 one the wiki gives. It is two bytes and then `n` entries of **21**:
 
-    0x0  1   not yet read - neither the constructor nor the one-entry builder writes it
+    0x0  1   a bitfield; 0 in the only ack ever captured. Its bit 0 sets a flag on the receiver
     0x1  1   entry count, refused at 0x21 or more
-    0x2  21 * n  entries: u8 stream id, u16be ack id, u16be (the window's own field 0x50),
-                 16-byte acknowledgement mask
+    0x2  21 * n  entries: u8 stream id, u16be ack id, u16be `ack id - 1`, 16-byte ack mask
+
+**The whole ack message, measured off a console rather than reasoned about:**
+
+    00 00 0017 ffff 0003 00   00 01   00 0002 0001  00 * 16
+
+No flags at all, stream 0, **sequence id 0xFFFF** - a control message carries no sequence of its own
+- and the lowest id the sender is still waiting on. `ack id` is one MORE than the highest sequence
+received. That is a real console's answer to two application messages, sequence 0 and 1, and
+`pokeldn/ldn/reliable5.build_ack_message()` reproduces it byte for byte.
+
+**HOW TO GET A WINDOW TO TALK, and it is the method not the answer:** four runs swept an ack against
+silence - the two unread bytes, then five framings, then the reset counter - and every one of them
+was judging a "no". A window that accepts APPLICATION DATA has to acknowledge it, so **send data and
+read the acknowledgement**: one probe, sweeping only the sequence id, and the console hands over
+every field the binary would not spell out. Sequence 0 drew nothing and sequence 1 drew the ack.
 
 `pokeldn/ldn/reliable5.py` is the 5.29-5.43 window; `pokeldn/ldn/reliable.py` is the 6.32 one and
 has a different header. Do not read one while holding the other.

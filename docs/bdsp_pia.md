@@ -447,6 +447,31 @@ radio stays clean, and three scans across all three channels find nothing. Leavi
 re-entering brings it back, on a new channel, ssid and session parameter - all of which the key
 derivation handles live.
 
+## The reliable protocol is closed, both directions (sp44, sp45)
+
+**sp44: the console acknowledged our application data.** A message with flags
+`APPLICATION_DATA|START|END|INITIALIZED`, stream 0, sequence **1**, four bytes of payload, in the
+plain broadcast framing everything else already works in. Sequence 0 drew nothing; sequence 1 drew
+
+    00 00 0017 ffff 0003 00   00 01   00 0002 0001  00 * 16
+
+which is the bulk ack, and it hands over every field reading the builder had failed to settle: the
+header's flags are **zero**, its sequence id is **0xFFFF**, the payload's first byte is **0**, and
+the halfword before the mask is `ack id - 1`.
+
+**sp45: acking the console's own data stops it.** `build_ack_message(highest received + 1)` went out
+once and the retransmission ended - **zero** reliable messages for the remaining 110 s, against 1726
+in sp44 and 835 in sp43. The 5-byte unreliable keepalive carried on, so the link was live and the
+console had simply been answered.
+
+**THE LESSON, and it is worth more than the result.** sp40-sp43 spent four runs sweeping an ack -
+the two unread bytes, five framings, then the reset counter - and every single reading was a
+silence. Nothing was learned from any of them because nothing could be: the probe had no positive
+answer. Sending DATA instead has one, because a sliding window that accepts an application message
+*must* acknowledge it. One probe, sweeping only the sequence id, replaced the whole search. This is
+session 46's rule again - **check whether the target says yes some other way** - and the cost of
+ignoring it was four hardware runs.
+
 ## What result 7 was
 
 Before the fix, a well-formed-looking request came back **result 7** every time - internal error

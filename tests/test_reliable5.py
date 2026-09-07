@@ -82,3 +82,26 @@ def test_a_message_without_the_application_flag_is_an_ack():
     out = rl.parse(msg)
     assert out["is_ack"] is True
     assert rl.parse_ack_payload(out["payload"])["entries"][0]["ack_id"] == 2
+
+
+# The console's own bulk acknowledgement, sp44: what it sent back after we put two application
+# messages (sequence 0 and 1) into its reliable window. This is the only ack anyone has captured.
+SP44_ACK = bytes.fromhex(
+    "00000017ffff0003000001000002000100000000000000000000000000000000")
+
+
+def test_the_captured_ack_reads_back_the_way_the_console_built_it():
+    out = rl.parse(SP44_ACK)
+    assert out["is_ack"] is True and out["flags"] == 0 and out["flag_names"] == []
+    assert out["sequence_id"] == rl.ACK_SEQUENCE == 0xFFFF   # a control message has no sequence
+    assert out["lowest_pending"] == 3 and out["payload_size"] == 23
+    body = rl.parse_ack_payload(out["payload"])
+    assert body == {"unknown0": 0, "count": 1,
+                    "entries": [{"stream_id": 0, "ack_id": 2, "field_0x50": 1, "mask": bytes(16)}]}
+
+
+def test_build_ack_message_reproduces_it_byte_for_byte():
+    assert rl.build_ack_message(2, lowest_pending=3) == SP44_ACK
+    # the halfword before the mask defaults to ack_id - 1, which is what the console sent
+    assert rl.parse_ack_payload(rl.parse(rl.build_ack_message(9))["payload"]
+                                )["entries"][0]["field_0x50"] == 8
