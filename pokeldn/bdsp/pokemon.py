@@ -87,7 +87,16 @@ OFF_MOVES = 0x72                      # 4 x u16
 OFF_MOVE_PP = 0x7A                    # 4 x u8
 OFF_MOVE_PP_UPS = 0x7E                # 4 x u8
 OFF_RELEARN = 0x82                    # 4 x u16
+OFF_HT_NAME = 0xA8                    # HandlingTrainerName, 26 bytes like the others. PKHeX's
+                                      # `IsUntraded` IS `Data[0xA8] == 0`: an empty handler name is
+                                      # what "never been traded" looks like. sp99 watched a Pokemon
+                                      # cross that line.
+OFF_HT_LANGUAGE = 0xC3
 OFF_CURRENT_HANDLER = 0xC4            # 0 = the original trainer still holds it
+OFF_HT_ID = 0xC6                      # PKHeX writes this one `// unused?`, and sp99 says it is:
+                                      # the console filled in name, language, handler and
+                                      # friendship on a traded Pokemon AND LEFT THIS ZERO.
+OFF_HT_FRIENDSHIP = 0xC8
 OFF_VERSION = 0xDE
 OFF_LANGUAGE = 0xE2
 OFF_OT_FRIENDSHIP = 0x112
@@ -197,6 +206,12 @@ def read(raw):
         "move_pp": tuple(plain[OFF_MOVE_PP:OFF_MOVE_PP + 4]),
         "relearn": struct.unpack_from("<4H", plain, OFF_RELEARN),
         "current_handler": plain[OFF_CURRENT_HANDLER],
+        "ht_name": _text(plain, OFF_HT_NAME),
+        "ht_language": plain[OFF_HT_LANGUAGE],
+        "ht_id": u16(OFF_HT_ID),
+        "ht_friendship": plain[OFF_HT_FRIENDSHIP],
+        # what PKHeX calls IsUntraded, and it is a real question about a real Pokemon
+        "is_untraded": plain[OFF_HT_NAME] == 0 and plain[OFF_HT_NAME + 1] == 0,
         "version": plain[OFF_VERSION],
         "language": plain[OFF_LANGUAGE],
         "ot_friendship": plain[OFF_OT_FRIENDSHIP],
@@ -225,7 +240,7 @@ def build_from(template_raw, **fields):
         nature, form, evs (6), ivs (6), nickname, ot_name, encryption_constant,
         is_nicknamed, is_egg, gender, moves (4), move_pp (4), move_pp_ups (4), relearn (4),
         current_handler, version, language, ot_friendship, met_date (3), egg_location,
-        met_location, ball, met_level, ot_gender
+        met_location, ball, met_level, ot_gender, ht_name, ht_language, ht_id, ht_friendship
 
     Passing `nickname` sets is_nicknamed as a side effect, because a name the flag does not enable
     is a name the console never draws.
@@ -295,6 +310,14 @@ def build_from(template_raw, **fields):
             struct.pack_into("<4H", plain, OFF_RELEARN, *value)
         elif key == "current_handler":
             plain[OFF_CURRENT_HANDLER] = value & 0xFF
+        elif key == "ht_name":
+            text(OFF_HT_NAME, value)
+        elif key == "ht_language":
+            plain[OFF_HT_LANGUAGE] = value & 0xFF
+        elif key == "ht_id":
+            u16(OFF_HT_ID, value)
+        elif key == "ht_friendship":
+            plain[OFF_HT_FRIENDSHIP] = value & 0xFF
         elif key == "version":
             plain[OFF_VERSION] = value & 0xFF
         elif key == "language":

@@ -199,3 +199,25 @@ def test_the_field_at_0x18_varies_between_sessions_and_is_not_asserted_to_be_zer
     # what does NOT vary is the identity, and that is the part the Pokemon corroborates
     assert sp82["trainer_id"] == sp83["trainer_id"] == 44466
     assert sp82["secret_id"] == sp83["secret_id"] == 4080
+
+
+def test_the_handler_block_is_readable_and_settable():
+    """sp99 gave a console a Pokemon whose OT was not the player and asked for it back.
+
+    Eleven bytes changed: the handler name at 0xA8, language at 0xC3, CurrentHandler at 0xC4,
+    friendship at 0xC8, and the checksum. 0xC6 - which PKHeX carries as `// unused?` - stayed zero
+    while everything around it was written, so it is unused in BDSP.
+    """
+    # a_body's filler is a byte pattern, not zeros, so an untraded Pokemon has to be made one:
+    # IsUntraded is literally "the handler name field is empty".
+    template = pokemon.encrypt(a_body())
+    template = pokemon.build_from(template, ht_name="")
+    assert pokemon.read(template)["is_untraded"] is True
+
+    traded = pokemon.build_from(template, ht_name="Gurvan", ht_language=3,
+                                current_handler=1, ht_friendship=50)
+    r = pokemon.read(traded)
+    assert (r["ht_name"], r["ht_language"], r["current_handler"], r["ht_friendship"]) \
+        == ("Gurvan", 3, 1, 50)
+    assert r["is_untraded"] is False
+    assert r["ot_name"] == "Gurvan", "the OT is not the handler and must not move"

@@ -556,13 +556,54 @@ received Pokemon or only when the name differs from the species name; one run wi
 the species name separates those.
 
 **Everything else survived byte for byte.** 326 of 328 unchanged: not the handler, not friendship,
-not the met date or location, not the moves or PP. A trade in BDSP stores what it is given. Note
-the one caveat before generalising - the receiving player here IS the original trainer, `ot_name`
-'Gurvan' and `current_handler` 0, so this run cannot say what the game writes when a Pokemon
-reaches someone who is *not* its OT. That is the case the handler fields exist for.
+not the met date or location, not the moves or PP. A trade in BDSP stores what it is given - WHEN
+the receiver is the Pokemon's own original trainer, which is the case here (`ot_name` 'Gurvan',
+`current_handler` 0). sp99 tested the other case and it is not the same; see below.
 
 **And the save window is reproducible.** WAIT_READYOK to the first `NetDataReturnSelectData` was
 28.9 s in sp92 and 28.3 s in sp93. Two completed trades, same shape.
+
+### A Pokemon whose trainer is not the player, and the handler block
+
+sp99 offered a Bidoof built with `ot_name` 'PkCamp', tid 13337, sid 42424 and the nickname 'LINUX'
+- the first Pokemon this project has traded whose original trainer is NOT the receiving player -
+and the player traded it straight back. **Eleven bytes changed:**
+
+    0x0A8..0x0B2   00 -> 47 75 72 76 61 6e     HandlingTrainerName, UTF-16LE: "Gurvan"
+    0x0C3          00 -> 03                    HandlingTrainerLanguage, French
+    0x0C4          00 -> 01                    CurrentHandler
+    0x0C8          00 -> 32                    HandlingTrainerFriendship, 50
+    0x006..0x007   the checksum, following them
+
+So the game writes a handler record only when the receiver is not the OT, and `ot_name` itself is
+never touched - 'PkCamp' went out and 'PkCamp' came back. This is the case sp93 could not reach and
+the reason its "stores what it is given" needed a caveat.
+
+**0xC6 STAYED ZERO, AND THAT IS A RESULT.** PKHeX carries `HandlingTrainerID` at 0xC6 with a
+literal `// unused?` comment. The console wrote the handler's name, language, flag and friendship
+and left 0xC6 alone, so in BDSP it is unused - a hardware answer to an open question in the
+reference we read the offsets out of.
+
+**AND `IsUntraded` IS A FIELD, NOT AN INFERENCE.** PKHeX defines it as `Data[0xA8] == 0` - an empty
+handler name. sp99 watched a Pokemon cross that line: `is_untraded` True on the way out, False on
+the way back.
+
+### Cloning: the console's own duplicate check catches it
+
+Every Zubat this project offered was built from sp82's capture of the player's own Zubat, so it
+carried **the same PID, 2329222868**, as one already in their boxes. After several such trades the
+game refused to trade that Pokemon at all: *"Un probleme avec votre Pokemon rend tout echange
+impossible."* opendpr names the machinery - `PokeDupeChecker` with `CheckDuplicate`,
+`IsDuplicatedPokemonParam(pp0, List<PokemonParam>)`, `UpdateIllegalFlagAll` and, tellingly,
+`IsLocalKoukanPokemonParam` (*koukan* = trade), a check aimed specifically at locally-traded
+Pokemon. Every body is stubbed, and **`PokeDupeChecker` is not in `dump_base` either** - like
+`NetDataReturnSelectData` it is a 1.3.0 addition, so there is no code to read.
+
+HYPOTHESIS, from the names and one observation: a locally traded Pokemon that duplicates one the
+save already holds gets an illegal flag, and a flagged Pokemon cannot be traded. NOT a permanent
+loss - the player released it, and `ClearIllegalFlagAll` exists. **The practical rule: never build
+an offer from a capture of the same console's own Pokemon without changing the PID.** sp99's Bidoof
+avoided it by being built from a Pokemon that had already left their box, with a fresh tid/sid.
 
 ### The block order, and a bug that waited nine runs for its input
 
