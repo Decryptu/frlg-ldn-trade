@@ -117,3 +117,38 @@ def test_the_real_footer_packet_authenticates_once_the_footer_is_off():
     assert msgs[0].protocol == 0x68                        # the unreliable protocol: the game
     assert msgs[0].destination == 0xFFFFFFFF
     assert msgs[0].payload == bytes.fromhex("0400020000")
+
+
+# sp46: the moment we put positions of our own into the Union Room, the console started answering
+# with COMPRESSED messages - 31 bytes of zlib around a 32-byte reliable ack. Read raw, those 31
+# bytes parse into a header claiming a payload of 0x6260, which is the trap this guards.
+SP46_COMPRESSED_MESSAGE = bytes.fromhex(
+    "7f21001f7c0000000000000000000002"      # presence 0x7f, flags 0x21, 31 B, 0x7c, dest bitmap 2
+    "484b62606010ffff9f819f81819181410008d100000000ffff03003d510246")
+
+
+def test_a_zlib_message_is_decompressed_and_says_so():
+    from pokeldn.ldn import pia5
+    msgs = pia5.parse_messages(SP46_COMPRESSED_MESSAGE)
+    assert len(msgs) == 1
+    m = msgs[0]
+    assert m.message_flags == 0x21                       # bitmap destination | zlib
+    assert m.message_flags & pia5.MESSAGE_FLAG_ZLIB
+    assert m.protocol == 0x7C and m.destination == 2
+    assert m.compressed is True
+    assert len(m.payload) == 32                          # 31 compressed bytes became 32
+    assert m.payload.hex().startswith("00000017ffff000f")
+
+
+def test_an_uncompressed_message_is_left_alone():
+    from pokeldn.ldn import pia5
+    raw = pia5.build_message(b"\x01\x02\x03\x04", protocol=0x7C, message_flags=0x01, destination=2)
+    m = pia5.parse_messages(raw)[0]
+    assert m.compressed is False and m.payload == b"\x01\x02\x03\x04"
+
+
+def test_a_zlib_flag_over_bytes_that_are_not_zlib_leaves_the_payload_alone():
+    from pokeldn.ldn import pia5
+    raw = pia5.build_message(b"not zlib", protocol=0x7C, message_flags=0x21, destination=2)
+    m = pia5.parse_messages(raw)[0]
+    assert m.compressed is False and m.payload == b"not zlib"

@@ -31,7 +31,7 @@ if os.path.isdir(BUNDLED):
     sys.path.insert(0, BUNDLED)
 
 import trio, ldn
-from pokeldn.bdsp import COMM_ID, PASSPHRASE, PIA_PORT, session_keys
+from pokeldn.bdsp import COMM_ID, PASSPHRASE, PIA_PORT, room, session_keys
 from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mp, reliable5 as rl,
                         rtt_protocol as rtt, station_protocol as stp)
 from pokeldn.ldn.pia5 import (PiaHeader5, is_pia5, ciphertext, gcm_iv, ldn_nonce_crc,
@@ -134,7 +134,8 @@ async def main_async(args):
               "join_responses": 0, "last_join_response": None, "join_response": None,
               "rtt_requests": 0, "rtt_answers": 0, "reliable": 0, "unreliable": 0,
               "join_acks": 0, "dst_ip": bcast, "dst_var": 0,
-              "rel_max_seq": 0, "rel_streams": set(), "rel_control": []}
+              "rel_max_seq": 0, "rel_streams": set(), "rel_control": [],
+              "rel_handshaken": False, "rel_acks": 0, "their_position": None}
 
         nonce = int.from_bytes(os.urandom(8), "big")
 
@@ -274,6 +275,19 @@ async def main_async(args):
                         if d["flags"] & rl.FLAG_APPLICATION_DATA:
                             st["rel_max_seq"] = max(st["rel_max_seq"], d["sequence_id"])
                             st["rel_streams"].add(d["stream_id"])
+                            if room.is_position(d["payload"]):
+                                st["their_position"] = room.parse_position(d["payload"])
+                                print(f"[rx] t={now:6.2f} THEIR POSITION "
+                                      f"{st['their_position']['x']:.2f}, "
+                                      f"{st['their_position']['z']:.2f} "
+                                      f"facing {st['their_position']['angle']}")
+                            if args.reliable_auto_ack and st["rel_handshaken"]:
+                                ack = rl.build_ack_message(st["rel_max_seq"] + 1,
+                                                           stream_id=d["stream_id"])
+                                sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"],
+                                                 next_nonce(), ack, rl.PROTOCOL, port=rl.PORT),
+                                            (st["dst_ip"], PIA_PORT))
+                                st["rel_acks"] += 1
                         else:
                             # a control message - reset, reset ack or a bulk ack. THIS is the
                             # positive signal: an answer, not the absence of one
@@ -361,10 +375,40 @@ async def main_async(args):
                         if d["is_ack"] and len(d["payload"]) >= 2:
                             print(f"[cx]     {rl.parse_ack_payload(d['payload'])}")
                     print("\n[tx] --- and now its own data, acked back in the same shape")
-                    await ack_the_console()
+                    ok = await ack_the_console()
+                    st["rel_handshaken"] = ok
+                    if ok and args.room_walk:
+                        await walk_the_room(seq + 1)
                     return
 
             print("[cx] the data probe was never answered; not acking blind")
+
+        async def walk_the_room(seq):
+            """Put a position of OUR OWN into the room, and see whether the game draws it.
+
+            Everything until now has been below the game. A position message is the first thing this
+            project has sent that the GAME could act on, so the signal is the console's SCREEN, not
+            the capture. It walks a small square around wherever the console's own avatar last was,
+            so anything that appears is next to the player rather than across the room.
+            """
+            here = st["their_position"] or {"x": 0.0, "z": 0.0}
+            print(f"\n[tx] --- WALKING: {args.room_walk} positions around "
+                  f"({here['x']:.2f}, {here['z']:.2f}). WATCH THE CONSOLE'S SCREEN.")
+            steps = [(1.0, 0.0, 90), (0.0, 1.0, 180), (-1.0, 0.0, 270), (0.0, -1.0, 0)]
+            for i in range(args.room_walk):
+                dx, dz, angle = steps[i % len(steps)]
+                payload = room.build_position(here["x"] + dx, 0.0, here["z"] + dz, angle=angle)
+                msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                       | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                       seq + i, len(payload), lowest_pending=seq + i) + payload)
+                st["phase"] = f"walk {seq + i}"
+                sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
+                                 rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+                record(rec="tx_position", t=time.monotonic() - t0, seq=seq + i,
+                       x=here["x"] + dx, z=here["z"] + dz, angle=angle, message=msg.hex())
+                print(f"[tx]   position seq={seq + i}: "
+                      f"({here['x'] + dx:.2f}, {here['z'] + dz:.2f}) facing {angle}")
+                await trio.sleep(args.room_walk_gap)
 
         async def ack_the_console(stream_id=0):
             """Ack the console's own reliable data, in the shape it acked ours with (sp44)."""
@@ -659,6 +703,8 @@ async def main_async(args):
         print(f"[cx] reliable messages {st['reliable']} "
               f"(a repeat means it is still waiting to be acked)")
         print(f"[cx] unreliable messages {st['unreliable']} - the game's live state")
+        print(f"[cx] reliable acks sent {st['rel_acks']}, their last position "
+              f"{st['their_position']}")
         record(rec="counters", join_responses=st["join_responses"],
                join_acks=st["join_acks"], rtt_requests=st["rtt_requests"],
                rtt_answers=st["rtt_answers"], reliable=st["reliable"],
@@ -708,6 +754,12 @@ def main():
     ap.add_argument("--reliable-ack", action=argparse.BooleanOptionalAction, default=False,
                     help="after the join, sweep the bulk acknowledgement until the console's "
                          "reliable retransmission stops")
+    ap.add_argument("--room-walk", type=int, default=0, metavar="N",
+                    help="after the reliable handshake, send N position messages of our own and "
+                         "watch the console's screen")
+    ap.add_argument("--room-walk-gap", type=float, default=1.0)
+    ap.add_argument("--reliable-auto-ack", action=argparse.BooleanOptionalAction, default=True,
+                    help="acknowledge the console's reliable data as it arrives")
     ap.add_argument("--reliable-sweep", type=int, default=8,
                     help="how many values of the byte at offset 1 to try")
     ap.add_argument("--reliable-ack-wait", type=float, default=1.5,

@@ -167,14 +167,23 @@ def ldn_nonce_crc(network_id_le, source_mac):
     return zlib.crc32(bytes(network_id_le) + bytes(source_mac)) & 0xFFFFFFFF
 
 
+MESSAGE_FLAG_DESTINATION_BITMAP = 0x01
+MESSAGE_FLAG_RELAY_ONE = 0x02
+MESSAGE_FLAG_RELAY_MANY = 0x04
+MESSAGE_FLAG_WAS_RELAYED = 0x08
+MESSAGE_FLAG_NO_BUNDLING = 0x10
+MESSAGE_FLAG_ZLIB = 0x20          # 5.27-5.45: the PAYLOAD is zlib compressed
+
+
 class Pia5Message:
     """One message out of a decrypted Pia 5.27-5.45 packet."""
 
-    __slots__ = ("message_flags", "protocol", "port", "destination", "payload")
+    __slots__ = ("message_flags", "protocol", "port", "destination", "payload", "compressed")
 
-    def __init__(self, message_flags, protocol, port, destination, payload):
+    def __init__(self, message_flags, protocol, port, destination, payload, compressed=False):
         self.message_flags, self.protocol = message_flags, protocol
         self.port, self.destination, self.payload = port, destination, payload
+        self.compressed = compressed
 
     def __repr__(self):
         return (f"Pia5Message(proto={self.protocol} port={self.port} "
@@ -220,7 +229,18 @@ def parse_messages(plaintext):
             destination = struct.unpack_from(">Q", plaintext, off)[0]; off += 8
         if size > len(plaintext) - off:
             break
-        out.append(Pia5Message(flags, protocol, port, destination, plaintext[off:off + size]))
+        body = plaintext[off:off + size]
+        compressed = False
+        # message flag 0x20 says the PAYLOAD is zlib compressed, and BDSP turns it on as soon as
+        # there is anything worth compressing - sp46's answer to our position messages was 31 bytes
+        # of zlib around a 32-byte reliable ack. Read raw, one of those parses into a well-formed
+        # LOOKING header full of nonsense, so decompress here and let `compressed` say it happened.
+        if flags & MESSAGE_FLAG_ZLIB and body:
+            try:
+                body, compressed = zlib.decompress(body), True
+            except zlib.error:
+                pass
+        out.append(Pia5Message(flags, protocol, port, destination, body, compressed))
         off += size
         off += -off % 4
     return out

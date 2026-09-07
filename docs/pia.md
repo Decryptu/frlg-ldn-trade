@@ -100,6 +100,19 @@ The plaintext is padded with `0xFF` to a multiple of 16 before encryption, and o
 eight bytes** of the GCM tag go on the wire. The 0xFF padding is useful beyond parsing: it is free
 known-plaintext, so a candidate key can be tested with one AES block instead of a whole GHASH.
 
+## A message payload can be zlib compressed, and nothing says so but one flag
+
+Message flag **0x20** in 5.27-5.45 means the message's PAYLOAD is a zlib stream. It is not a
+per-protocol setting and it is not negotiated: BDSP switched it on mid-session, the moment there was
+anything worth compressing - sp46's answer to a position message was 31 bytes of zlib around a
+32-byte reliable ack.
+
+This is the same trap as the footer below, and worse, because it does not fail loudly. Read raw,
+those 31 bytes parse into a header claiming a payload of `0x6260` - a well-formed-LOOKING message
+full of nonsense. Check the flag, decompress, and carry a `compressed` marker so a log line says
+which it was. `pokeldn/ldn/pia5.parse_messages()` does. A zlib stream is easy to recognise by hand
+too: the first two bytes as a big-endian halfword are a multiple of 31.
+
 ## The footer is not part of the ciphertext
 
 A packet sent to more than one console at once carries a **footer**: one big-endian halfword per
