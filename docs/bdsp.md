@@ -518,10 +518,18 @@ FIRST READING, WRONG, AND WORTH KEEPING: "the seconds carry it, so about 30 minu
 minute wrap considered and the hour wrap not, from the same disassembly, and a player sat through it.
 A non-monotonic counter has no "typical" wait - work the worst case.
 
-Nothing else in the check is time-shaped, so raising any field clears it: a console clock moved
-forward by **31** years does it in one field, and 30 is not enough because the comparison is strict
-(`cset w0, mi`). Moving the clock back restores the penalty, because only `SecondSave` zeroes the
-counter - so the clock has to stay forward until a trade completes.
+Nothing else in the check is time-shaped, so raising a field on the console's own clock clears it -
+but **the amount has to survive the same non-monotonicity**. `Hour+Minute+Second` spans 0..141, so
+between the arming and the check it can fall by as much as 141, and a stable gain has to beat
+`30 + 141`: **a year moved forward by 172 or more always clears it**, a smaller one only clears it
+if the time of day happens to cooperate. A console set forward by 31 years was still refused on
+hardware, which is this same arithmetic caught a second time. Moving the clock back restores the
+penalty, because only `SecondSave` zeroes the counter - so it has to stay forward until a trade
+completes.
+
+SECOND WRONG READING, and it is the SAME error: "+31 in one field, since the comparison is strict".
+Both mistakes came from treating a sum of calendar fields as a clock. It is not one, and every
+statement about how long it lasts has to carry the worst case of every field that can fall.
 
 ## The pages
 
