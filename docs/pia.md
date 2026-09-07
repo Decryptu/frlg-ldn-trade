@@ -78,6 +78,38 @@ eight-byte field, so a message header is 24 bytes rather than 16. The version by
 (`pokeldn/ldn/pia4.py`), not a protocol stack. Reading "a third band" as "a third implementation"
 is the mistake this paragraph exists to prevent.
 
+### Which presence bit owns which field
+
+FACT, read off the game's own code and no longer a deduction from one message shape. The header size
+is computed inline at **eighteen** sites in the Pia band, always the same five conditional adds over
+a base of one - the presence byte itself:
+
+    ldrb w9, [x?, #0x38]      the presence byte
+    tst w9, #1    -> +1       message flags
+    tst w9, #2    -> +2       payload size, big-endian
+    tst w9, #4    -> +4       protocol id and a 3-byte port
+    tst w9, #8    -> +8       destination
+    tst w9, #0x10 -> +8       THE EXTRA FIELD: the sender's station constant id
+
+1 + 1 + 2 + 4 + 8 + 8 = 24, which is why a presence byte of 0x7F produces a 24-byte header: **bits
+0x20 and 0x40 add nothing**, exactly as 5.27's 0x7F adds nothing past 0x0F. `0x017c5e24` is the site
+inside MeshStationProtocol; `0x01785d1c`, `0x017a71b4`, `0x0184bf8c` and fourteen more are the same
+five adds inlined elsewhere.
+
+And the eight bytes are the sender's constant id - `station_protocol.ldn_constant_id` over its MAC.
+Two independent fields agree in sw01: the message header's source and the Local Protocol update
+session's own `host_constant_id`, which is the same integer written the other way round (the Pia
+message header is big-endian, the Local Protocol's body little-endian).
+
+### Sending one
+
+sw02, session 56: a version-4 packet built by `pia4.build_packet` and sent from our seat was
+accepted by a retail Sword. The console had been broadcasting its update session ten times a second
+for six seconds; **its last one came 13 ms after our first ack and it went silent for the rest of
+the run**. sw03 is the control - the same packet with a sequence id the console never sent - and it
+answered with 261 update sessions and never stopped. The station byte and the IV's source-id byte
+were both 0, mirroring what the console sends.
+
 ## Two families of session key
 
 The session key is not one algorithm. Pia carries a separate implementation per network type, and

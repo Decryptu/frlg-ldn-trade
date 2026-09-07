@@ -266,6 +266,36 @@ so the console has put our station in its own mesh table before anything of ours
 `pokeldn.ldn.pia4` parses and builds the header; `tests/test_pia4.py` holds two of the packets as a
 golden vector, and a sixteen-byte tag makes them impossible to satisfy by accident.
 
+## Answering it, and the console going quiet
+
+FACT, sw02/sw03 (session 56). The console's announcement is **Pia's Local Protocol, protocol 0x24,
+the same one BDSP speaks** - `pokeldn.ldn.local_protocol` reads Sword's field for field with no
+change: version 1, message type 0x11, 0x30 fixed bytes, eight nine-byte seats, then the
+host-migration byte. Seat 0 is the console at ranking 0 and seat 1 is us at ranking 1, and
+`allow_participating` is true. Sword's Pia agrees with BDSP's on the protocol numbers too, read off
+the `GetProtocolId` vfuncs rather than the wire: `0x017c8460` returns 0x14 (MeshStationProtocol) and
+`0x017c4280` returns 0x18 (MeshProtocol).
+
+A host repeats that update session until every station acknowledges it, so the 0x21 ack is the
+cheapest possible first packet out: the pass signal is the rebroadcast STOPPING, and it needs
+nothing on the console's screen and nothing above Pia.
+
+    sw02   ack seq 2, the sequence the console sent    44 update sessions, then its last one
+                                                       13 ms after our first ack, then SILENCE
+                                                       for the remaining 26 s
+    sw03   ack seq 3, a sequence it never sent         261 update sessions, 148 acks, never stopped
+
+One run would have proved nothing - a console that stops advertising on its own looks identical.
+The control is what makes sw02 a measurement: the two runs differ in one field of one message, and
+that field is inside the encrypted payload, so the console decrypted our packet, walked the message
+header, dispatched on protocol 0x24 and compared the sequence id. `bin/swsh_connect.py`,
+`--seq-delta` is the control.
+
+The station byte at header 0x05 and the IV's source-id byte were both 0, mirroring the console's
+own; `--station-sweep` walks other readings if one is ever needed. What we send is built by
+`pia4.build_message` / `pia4.build_packet`, and `tests/test_pia4.py` checks it against the console's
+own bytes: given the console's values it reproduces the console's 24-byte header exactly.
+
 ## Open questions
 
 - **The two unnamed header fields**, the byte at 0x05 and the halfword at 0x06. What writes them is
@@ -284,9 +314,14 @@ golden vector, and a sixteen-byte tag makes them impossible to satisfy by accide
   passphrase, the game key and the Pia version are now measured to hold across the pair - they
   associated and decrypted - and the local communication id is measured NOT to. Mystery Gift's
   states are still Shield-only readings.
-- **The message header's presence bits.** 24 bytes is measured; which presence bit owns the extra
-  eight-byte field is not, because every packet in the capture carries the same presence byte
-  (0x7f). A capture with a second message shape separates them.
-- **What protocol 0x24 is.** Every message in sw01 carries it, with flags 0x09 and a zero
-  destination. BDSP's protocol ids are in `docs/bdsp_pia.md`; whether this is the same numbering has
-  not been checked.
+- ANSWERED, session 56, offline. **The message header's presence bits.** Bit 0x10 owns the extra
+  eight-byte field and bits 0x20/0x40 own nothing, read off the size arithmetic the library inlines
+  at eighteen sites (`docs/pia.md` "Which presence bit owns which field"). No second message shape
+  was needed - the capture could not have separated them, and the code states it outright.
+- ANSWERED, sw02/sw03. **What protocol 0x24 is**: Pia's Local Protocol, BDSP's numbering exactly,
+  and the console acts on what we send it there.
+- **The Mesh Station Protocol (0x14) request.** The ack is bookkeeping; 0x14 is the layer a station
+  actually joins on, and it is where BDSP got its first reply. Sword registers the protocol under
+  the same id, but its request layout has not been read off this binary yet - the loop at
+  `0x0185c5c0` reads a 32-entry table of `{u8, u16be, u64be, u64be}` = 19 bytes each and is a
+  station table, not the request.

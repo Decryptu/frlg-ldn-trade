@@ -93,3 +93,81 @@ def test_every_message_header_in_the_capture_held_the_same_constants():
         assert header[1] == 0x09                   # message flags
         assert header[4] == 0x24                   # protocol
         assert header[8:16] == b"\0" * 8           # destination, broadcast
+
+
+# --- What we send back. Session 56. ------------------------------------------------------------
+#
+# There is no capture of a version-4 packet LEAVING this machine, so the only offline checks
+# available are these two: our builder reproduces the console's own bytes when handed the console's
+# own values, and a packet we build decrypts under the derivation the console would use on it.
+
+from pokeldn.ldn import local_protocol as lp, station_protocol as stp
+
+CONSOLE_CONSTANT = stp.ldn_constant_id(CONSOLE_MAC)
+OUR_MAC = bytes.fromhex("7e5f4c3b2a19")
+
+
+def test_the_console_constant_id_is_what_its_message_header_carries():
+    """Two independent fields agree: the update session's host_constant_id and the message
+    header's eight-byte source, both `ldn_constant_id` over the scanned MAC - and they disagree
+    about byte order, the header big-endian and the Local Protocol's body little-endian."""
+    plain = _decrypt(STATION_ANNOUNCE)
+    header, body = pia4.parse_messages(plain)[0]
+    assert pia4.parse_message_header(header)["source"] == CONSOLE_CONSTANT \
+        == 0xEB9B2220F1480000
+    assert int.from_bytes(lp.parse_update_session(body).host_constant_id, "little") \
+        == CONSOLE_CONSTANT
+
+
+def test_our_builder_reproduces_the_consoles_own_message_header():
+    console = pia4.parse_messages(_decrypt(STATION_ANNOUNCE))[0]
+    built = pia4.build_message(console[1], protocol=0x24, source=CONSOLE_CONSTANT)
+    assert built[:pia4.MESSAGE_HEADER_SIZE] == console[0]
+
+
+def test_the_announcement_is_the_local_protocols_update_session():
+    """Protocol 0x24 is Pia's Local Protocol here too - BDSP's parser reads Sword's field for
+    field, which is what says the ack is the right thing to answer with."""
+    body = pia4.parse_messages(_decrypt(STATION_ANNOUNCE))[0][1]
+    us = lp.parse_update_session(body)
+    assert us.sequence_id == 2 and us.allow_participating
+    assert [(n.ip, n.port, n.ranking) for n in us.occupied] == [
+        ("169.254.14.1", 12345, 0), ("169.254.14.2", 12345, 1)]
+
+
+def test_a_packet_we_build_decrypts_the_way_the_console_would_read_it():
+    """End to end, with the run's own derivation on both sides: ack -> message -> packet ->
+    the receiver's IV -> the ack's sequence id back out."""
+    keys = session_keys(_Net())
+    our_constant = stp.ldn_constant_id(OUR_MAC)
+    for station in (0, 1):
+        nonce8 = bytes([station]) * 8
+        body = pia4.build_message(lp.build_ack(2), protocol=lp.PROTOCOL, source=our_constant)
+        packet = pia4.build_packet(keys.session_key,
+                                   packet_iv(keys, OUR_MAC, nonce8, source_id=station),
+                                   body, station=station, nonce8=nonce8)
+
+        h = pia4.PiaHeader4.parse(packet)              # now read it as the console would
+        assert h.station == station and h.version == 4 and h.encrypted
+        plain = pia4.decrypt_payload(keys.session_key,
+                                     packet_iv(keys, OUR_MAC, h.nonce8, source_id=h.station),
+                                     pia4.ciphertext(packet), h.tag)
+        assert plain is not None and len(plain) % 16 == 0
+        header, payload = pia4.parse_messages(plain)[0]
+        fields = pia4.parse_message_header(header)
+        assert fields["protocol"] == lp.PROTOCOL == 0x24
+        assert fields["flags"] == 0x09 and fields["present"] == 0x7F
+        assert fields["destination"] == 0 and fields["source"] == our_constant
+        assert lp.parse_ack(payload) == 2
+
+
+def test_the_tag_refuses_a_packet_built_under_the_wrong_station_byte():
+    """The IV's source id follows the header byte, so a receiver reading 0 cannot verify a packet
+    built with 1 - which is what makes the sweep readable rather than ambiguous."""
+    keys = session_keys(_Net())
+    nonce8 = b"\x11" * 8
+    body = pia4.build_message(lp.build_ack(2), protocol=lp.PROTOCOL, source=0)
+    packet = pia4.build_packet(keys.session_key, packet_iv(keys, OUR_MAC, nonce8, source_id=1),
+                               body, station=1, nonce8=nonce8)
+    assert pia4.decrypt_payload(keys.session_key, packet_iv(keys, OUR_MAC, nonce8, source_id=0),
+                                pia4.ciphertext(packet), pia4.PiaHeader4.parse(packet).tag) is None

@@ -38,7 +38,9 @@ FLAG_ENCRYPTED = 0x80
 MESSAGE_HEADER_SIZE = 24
 
 __all__ = ["MAGIC", "VERSION", "HEADER_SIZE", "TAG_SIZE", "MESSAGE_HEADER_SIZE", "PiaHeader4",
-           "ciphertext", "is_pia4", "gcm_iv", "ldn_session_key", "parse_messages5"]
+           "ciphertext", "is_pia4", "gcm_iv", "ldn_session_key", "parse_messages5",
+           "ALL_FIELDS_PRESENT", "MESSAGE_FLAGS", "build_message", "parse_message_header",
+           "pad_payload", "encrypt_payload", "decrypt_payload", "build_packet"]
 
 
 class PiaHeader4:
@@ -101,3 +103,91 @@ def parse_messages(plaintext):
                     plaintext[off + MESSAGE_HEADER_SIZE:end]))
         off = end + (-end % 4)
     return out
+
+
+# --- Building one. Session 56: the first version-4 packet OUT. ---------------------------------
+#
+# Every field below is MIRRORED from what a retail Sword broadcast at us, not chosen. sw01's 484
+# packets all carry the same message header constants (`tests/test_pia4.py` asserts them), and
+# `build_message` reproduces the console's own 24 bytes exactly when handed the console's own
+# values - which is the only offline check available for a header we have never sent.
+#
+# The extra eight-byte field is the sender's STATION CONSTANT ID: the console's message header
+# reads eb9b2220f1480000, which is `station_protocol.ldn_constant_id` over the MAC the scan
+# recorded for it, and the same value the Local Protocol's own update session carries as
+# `host_constant_id`. Two independent fields agreeing is what makes this a FACT rather than a guess
+# about a field full of MAC-shaped bytes.
+#
+# AND THE TWO FIELDS DISAGREE ABOUT BYTE ORDER, which is `local_protocol`'s own trap seen from the
+# other side: the Pia message header is BIG-endian, so the id is `>Q` here, while the Local
+# Protocol's body is LITTLE-endian and its copy of the same id reads 000048f120229beb.
+
+ALL_FIELDS_PRESENT = 0x7F         # what the console emits; bits above 0x08 add no field we can see
+MESSAGE_FLAGS = 0x09              # the console's own, on every message in sw01
+SOURCE_OFF = 16                   # inside the message header, after the eight-byte destination
+
+
+def build_message(payload, protocol, source, port=0, message_flags=MESSAGE_FLAGS, destination=0):
+    """One version-4 message, padded to four bytes - the shape sw01 measured.
+
+    `source` is this station's constant id as an integer - `station_protocol.ldn_constant_id` over
+    its MAC - big-endian like every other field of this header.
+    """
+    payload = bytes(payload)
+    out = (bytes([ALL_FIELDS_PRESENT, message_flags & 0xFF]) + struct.pack(">H", len(payload))
+           + bytes([protocol & 0xFF]) + (port & 0xFFFFFF).to_bytes(3, "big")
+           + struct.pack(">Q", destination) + struct.pack(">Q", source))
+    out += payload
+    return out + b"\x00" * (-len(out) % 4)
+
+
+def parse_message_header(header):
+    """-> dict of the 24 bytes, so a capture can be read field by field."""
+    if len(header) != MESSAGE_HEADER_SIZE:
+        raise ValueError(f"a version-4 message header is {MESSAGE_HEADER_SIZE} bytes")
+    return {"present": header[0], "flags": header[1],
+            "size": struct.unpack_from(">H", header, 2)[0],
+            "protocol": header[4], "port": int.from_bytes(header[5:8], "big"),
+            "destination": struct.unpack_from(">Q", header, 8)[0],
+            "source": struct.unpack_from(">Q", header, SOURCE_OFF)[0]}
+
+
+def pad_payload(plaintext):
+    """0xFF-pad to a multiple of sixteen, exactly as 5.27 does - and as sw01 measures.
+
+    The station announcement is 24 + 121 = 145 bytes, padded to 148 as a message and then to 160 as
+    a packet, and 160 is what the ciphertext length is. So version 4 pads the same way even though
+    GCM needs no block alignment.
+    """
+    return bytes(plaintext) + b"\xff" * (-len(plaintext) % 16)
+
+
+def encrypt_payload(session_key, iv, plaintext):
+    """-> (ciphertext, 16-byte tag). Version 4 keeps the WHOLE tag; 5.27-5.45 truncates to eight."""
+    from Crypto.Cipher import AES
+
+    return AES.new(bytes(session_key), AES.MODE_GCM, nonce=bytes(iv),
+                   mac_len=TAG_SIZE).encrypt_and_digest(bytes(plaintext))
+
+
+def decrypt_payload(session_key, iv, ct, tag):
+    """-> plaintext, or None if the tag does not verify. Sixteen bytes of tag is the oracle."""
+    from Crypto.Cipher import AES
+
+    try:
+        return AES.new(bytes(session_key), AES.MODE_GCM, nonce=bytes(iv),
+                       mac_len=TAG_SIZE).decrypt_and_verify(bytes(ct), bytes(tag))
+    except ValueError:
+        return None
+
+
+def build_packet(session_key, iv, plaintext, station=0, session_id=0, nonce8=b"\0" * 8):
+    """A whole version-4 packet: header, ciphertext, sixteen-byte tag in the header.
+
+    UNKNOWN, and the thing to sweep if the console ignores us: the byte at 0x05 and the halfword at
+    0x06. The console sends 0 in both on every packet of sw01, so 0 is what we send first - but a
+    field we have only ever seen one value of cannot be said to mean anything yet.
+    """
+    ct, tag = encrypt_payload(session_key, iv, pad_payload(plaintext))
+    return PiaHeader4(station=station, session_id=session_id, nonce8=nonce8, tag=tag,
+                      encrypted=True).pack() + ct
