@@ -30,15 +30,28 @@ the default model with no name, no collision and no dialogue.
 `NetPosData` messages: two avatars appeared and one of them moved across the room until it stopped
 at a wall. Spawning and moving a player in a retail game's Union Room, from a Linux box, is done.
 
+**And a join the transport accepts is not a join the game acts on.** Four runs sent exactly one
+join each and all four were acknowledged on the first try; one produced a character and three
+produced nothing. sp57 had measured the rate without anyone noticing - fifteen joins, two
+characters - so a single join is roughly a one-in-eight shot, and a run built on one cannot support
+a comparison. Burst them.
+
 **How a message lands.** The reliable sequence id is shared with the console's OWN sends, and
 anything below the number its acknowledgement names is discarded in silence. The proof is
 arithmetic: one run's ack sat at 13, twenty messages went out numbered 1 to 20, and exactly the
 eight from 13 up became avatars. Read the id fresh immediately before each send.
 
-**What the screen said and the capture could not.** The twelve points in a `NetPosData` message are
-meant to span the movement since the last one - sending twelve near-identical points makes the
-avatar stutter. A character that stops receiving position updates is dropped after about twenty
-seconds, so the one being moved was properly owned while the crowd that never moved was not.
+**How fast a player walks, measured off the console's own messages.** Over eighty of them, a
+`NetPosData` arrives every 0.410 s and spans 0.935 units - 2.28 units a second. This project's walks
+sent 0.1 units every 0.35 s, an eighth of that, which is the whole of what the screen kept showing
+as a stutter: twelve points crossing a tiny distance, then a pause. Those two numbers are the
+defaults now.
+
+**A moved character belongs to the station that moved it.** It is cleaned up when that station
+leaves the mesh, while the ones that never moved leak and stay until the game is restarted - seen
+twice. What is **not** established is a timeout: session 47 recorded a moved character vanishing
+seconds after the movement stopped, and two later runs in that same configuration kept theirs for
+159 seconds. One observation, not reproduced.
 
 **One avatar appears per message, because every message was a JOIN.** `UnionOpcManager` calls
 `CreateCharacter(joinData)` on each one, so forty joins are forty arrivals and the game is behaving
@@ -181,7 +194,22 @@ The neutral answer is `NONE`, which is what a character standing still is; the `
 values are what a player advertising itself for a battle or a trade sends.
 
 **So one of the two messages the console has been repeating at us for every run of this project is a
-question addressed to us, and nothing we have ever sent has answered it.** Building the answer from
+question addressed to us, and nothing had ever answered it.**
+
+### It was answered, and nothing happened
+
+sp63 and sp64 are the same run with one variable moved - the same fifteen joins, the same fourteen
+state requests at the same times, the same walk - and one answered nineteen requests while the other
+answered none. **They came out identical.** Both drew avatars; both left the walked character
+standing through 159 seconds of silence; in both, she went only when our station left the mesh.
+
+The match-wait request behaves the same way. It stops being asked at t = 9.4 in every run that
+acknowledges the reliable window, answered or not; the run that did **not** acknowledge it was asked
+487 times in 75 seconds. It is the acknowledgement that stops the asking, not the answer.
+
+So: the answers are accepted by the transport, land on the right stream with the right bytes, and
+have no effect anything can see. Whether the game reads them at all is unknown. It is written down
+here so the probe is not run a second time. Building the answer from
 the table reproduces the console's own four bytes exactly, which is the check that the reading is
 right before any run is spent on it. `bin/bdsp_connect.py --answer-requests` sends it; the counter
 to read afterwards is whether the request keeps being asked.

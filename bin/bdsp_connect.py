@@ -578,8 +578,13 @@ async def main_async(args):
                     await trio.sleep(0.4)
                 print(f"\n[tx]   --- now moving whatever is standing there, to the RIGHT")
                 for i in range(60):
-                    x = x0 + 0.1 * i
-                    body = room.build_pos([(x + 0.008 * k, z0, 90) for k in range(12)])
+                    # AT THE CONSOLE'S OWN SPEED. Measured over 80 of its NetPosData messages, a
+                    # real player covers 0.93 units per message every 0.41 s; this used to send
+                    # 0.1 units every 0.35 s with the twelve points 0.008 apart, which is a ninth
+                    # of walking pace and is the whole of what the screen showed as a stutter.
+                    stride = args.room_walk_stride
+                    x, x_next = x0 + stride * i, x0 + stride * (i + 1)
+                    body = room.build_pos(room.pos_span((x, z0), (x_next, z0), 90))
                     sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(),
                                      body, UNRELIABLE_PROTOCOL, port=0,
                                      destination=0xFFFFFFFF, message_flags=rl.MESSAGE_FLAGS),
@@ -587,7 +592,7 @@ async def main_async(args):
                     record(rec="tx_pos", t=time.monotonic() - t0, x=x, z=z0, message=body.hex())
                     if i % 15 == 0:
                         print(f"[tx]     pos {i}: ({x:.2f}, {z0:.2f})")
-                    await trio.sleep(0.35)
+                    await trio.sleep(args.room_walk_period)
                 return
 
             if args.room_pattern == "move":
@@ -607,7 +612,8 @@ async def main_async(args):
                     # step, so the avatar crept through a twelfth of the way and then jumped the
                     # rest when the next message arrived. A message describes where the player HAS
                     # BEEN since the last one, so its points have to reach the next one's first.
-                    x, x_next = x0 + 0.15 * i, x0 + 0.15 * (i + 1)
+                    stride = args.room_walk_stride
+                    x, x_next = x0 + stride * i, x0 + stride * (i + 1)
                     pts = room.pos_span((x, z0), (x_next, z0), 90)
                     body = room.build_pos(pts)
                     sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(),
@@ -1010,6 +1016,14 @@ def main():
                     help="after the reliable handshake, send N position messages of our own and "
                          "watch the console's screen")
     ap.add_argument("--room-walk-gap", type=float, default=1.0)
+    ap.add_argument("--room-walk-period", type=float, default=room.POS_PERIOD,
+                    help="seconds between position messages in the burst pattern. The default is "
+                         "the console's own median gap; pass sp63's 0.35 to reproduce that run")
+    ap.add_argument("--room-walk-stride", type=float, default=room.POS_STRIDE,
+                    help="units one position message spans. The default is what a console's own "
+                         "walk measures (0.93 units every 0.41 s, over 80 of its messages); our "
+                         "first walks did 0.15 every 0.6 s, which is a ninth of a real player's "
+                         "speed and is the whole of the stutter")
     ap.add_argument("--answer-requests", action=argparse.BooleanOptionalAction, default=False,
                     help="answer the console's NetRequestData with the message it names. It has "
                          "asked for data id 0x23 in every capture since the first join and has "

@@ -63,6 +63,12 @@ PLAYER_NAME = 0x42                # NetPlayerNameData - a string, so the layout 
 JOIN_BODY_SIZE = 17
 POS_POINT_SIZE = 6
 POS_POINTS = 12                   # what a console puts in one message; 12 * 6 is the 0x48 captured
+
+# HOW A REAL PLAYER WALKS, measured over 80 of the console's own NetPosData messages. Our first
+# walks moved 0.15 units every 0.6 s - a ninth of this - which is the whole of sp57's and sp59's
+# "stutter": twelve points crossing a sixth of a step and then a pause. Match the console.
+POS_PERIOD = 0.41                 # seconds between messages; median gap, min 0.20 max 1.59
+POS_STRIDE = 0.93                 # units one message spans; median, max 2.60
 POS_SCALE = 0.05                  # PosData.pos: -posX * 0.05, posZ * 0.05
 POS_UNIT = 20.0                   # and the setter MULTIPLIES by 20 rather than dividing by 0.05 -
                                   # 10.35 / 0.05 truncates to 206 where 10.35 * 20 gives 207
