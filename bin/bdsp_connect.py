@@ -394,9 +394,17 @@ async def main_async(args):
             here = st["their_position"] or {"x": 0.0, "z": 0.0}
             print(f"\n[tx] --- WALKING: {args.room_walk} positions around "
                   f"({here['x']:.2f}, {here['z']:.2f}). WATCH THE CONSOLE'S SCREEN.")
-            steps = [(1.0, 0.0, 90), (0.0, 1.0, 180), (-1.0, 0.0, 270), (0.0, -1.0, 0)]
+            # sp47 put four avatars in the room from four distinct positions, so the next question
+            # is what the game thinks the IDENTITY is. A LINE answers it: one avatar walking says
+            # the identity is the station, a trail of them says it is the position.
+            square = [(1.0, 0.0, 90), (0.0, 1.0, 180), (-1.0, 0.0, 270), (0.0, -1.0, 0)]
             for i in range(args.room_walk):
-                dx, dz, angle = steps[i % len(steps)]
+                if args.room_pattern == "square":
+                    dx, dz, angle = square[i % len(square)]
+                elif args.room_pattern == "fixed":
+                    dx, dz, angle = 2.0, 0.0, 270
+                else:                                   # "line": step away, a quarter unit at a time
+                    dx, dz, angle = 1.0 + i * 0.25, 0.0, 90
                 payload = room.build_position(here["x"] + dx, 0.0, here["z"] + dz, angle=angle)
                 msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
                                        | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
@@ -758,6 +766,9 @@ def main():
                     help="after the reliable handshake, send N position messages of our own and "
                          "watch the console's screen")
     ap.add_argument("--room-walk-gap", type=float, default=1.0)
+    ap.add_argument("--room-pattern", choices=("square", "line", "fixed"), default="square",
+                    help="square spawns one avatar per corner; line and fixed ask whether the "
+                         "game's idea of identity is the station or the position")
     ap.add_argument("--reliable-auto-ack", action=argparse.BooleanOptionalAction, default=True,
                     help="acknowledge the console's reliable data as it arrives")
     ap.add_argument("--reliable-sweep", type=int, default=8,

@@ -22,9 +22,15 @@ stops it retransmitting. Nothing but `prod.keys` and the title's LDN passphrase 
 facing angle in degrees and three floats - and the unreliable stream carries a keepalive and a trail
 of recent positions while an avatar walks.
 
+**And the game draws what we send it.** Position messages of our own put avatars in the Union Room
+on a retail console - four of them from four corners, then twenty in a line through the walls. They
+are the default model with no name, no collision and no dialogue: the game renders a remote player's
+body but has no player record to hang it on, because **one avatar appears per position message** and
+nothing links them together.
+
 **Not yet done.** The **Session Protocol (0x94)**, which sits above the reliable transport, has
-never carried a byte to us: the game has not opened it. Nothing we have sent has changed anything on
-the console's screen, which is correct - everything so far is below the game's own layer.
+never carried a byte in any capture: the game has not opened it, and it is what would make those
+avatars one player instead of a crowd.
 
 ## What the room says
 
