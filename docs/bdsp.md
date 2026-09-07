@@ -422,7 +422,7 @@ bytes hold far more than the dozen fields identified here - met data, ribbons, h
 language byte - and none of it is zero on a console's own. What the game validates on receipt is
 unknown: it accepted a near-copy of its own Pokemon, which is not the same as accepting any.
 
-### Where it stops, and why: the gate is one byte, and it is ours
+### The gate is one byte, and it is ours
 
 `NetDataTradeReadyOkData` (0x21, `<BB` isTradeOk/tradeState) is not sent, and no option makes one.
 Reading the three handlers that a reply has to satisfy says exactly what it would do, and it is
@@ -482,8 +482,54 @@ passed through WaitSave - but the coroutine that phase runs,
 The save the box window is waiting *for* is `TradeStateModel.PlayerSave`, which needs a
 `TradeStateModel`, which needs the security phase, which needs our byte.
 
-So **no run in this project has written a console's save**, sp82 and sp87 included, and the line is
-not where the trade completes - it is the 0x21. Read offline, no run spent.
+That was read offline, no run spent, and **sp92 then sent the byte and the console did every one of
+those things** - see "The trade completes" below. Until then no run in this project had written a
+console's save, sp82 and sp87 included.
+
+### The trade completes, and the console writes its save
+
+sp92 answered the 0x21 and a retail Brilliant Diamond went the whole way. `TradeStateModel`'s own
+enum, walked in order, six states in 630 ms:
+
+    t=79.41  their READY-OK {isTradeOk 0, tradeState 2}  ->  OUR READY-OK
+    t=79.82  INIT          ->  WAIT
+    t=80.03  WAIT          ->  WAIT
+    t=80.05  SEND_POKE     ->  SEND_POKE, and our Pokemon
+    t=80.24  WAIT_POKE     ->  WAIT_POKE
+    t=80.44  SEND_READYOK  ->  SEND_READYOK
+    t=80.45  WAIT_READYOK  ->  SEND_READYOK
+    t=109.31 NetDataReturnSelectData
+
+**The 29 seconds between WAIT_READYOK and that last message are the trade, and nothing is asked of
+us in them.** The console sends fifteen game messages across that window and every one is
+`NetCharacterStateData` - no trade opcode at all. START_WRITE_SAVE, WRITEING_SAVE, the animation and
+`ReplacePoke` are entirely console-side. What a host must do there is simply not leave: a station
+that drops in this window drops the console mid-save, between `FirstSave` and `SecondSave`, which is
+exactly the state the penalty exists to punish.
+
+**Leaving WAIT_READYOK needs a message to arrive inside a window the console opens on its own
+clock** (`waitRndTime` counts down first), so nothing sent in reply to something else is guaranteed
+to land in it. The once-a-second repeat of our state is what covers it. FACT that the trade
+completed; DEDUCTION that the repeat is what tripped it.
+
+#### `NetDataReturnSelectData`, the message on the far side
+
+    data_id 69 (0x45)   payload 45 00 01 00   {'isReturnSelect': 0}
+
+The same `<id> 00 01 <value>` shape as the check-ok (`46 00 01 01`). It appears only after a
+completed trade, and the console repeated it **78 times, once a second, until our station left** -
+it is waiting on an answer we do not yet build. By its name it offers the select window again, i.e.
+a second trade inside the same association.
+
+#### What was traded, and what that proves
+
+The template was `sp82_zubat.pb8` - the Pokemon sp82 captured from this same console - so it went
+straight back. sp92's `their_poke.pb8` and that file share a sha1 and differ in zero of 328 bytes,
+and sp91 and sp92 decode identically: species 41, OT Gurvan, pid 2329222868, IVs (8, 0, 23, 12, 10,
+10). **So a PB8 we send is re-encrypted, stored in a retail save, offered back and returns
+bit-identical** - a stronger check on the encoding than any test in `tests/`. It also means this
+first completed trade put nothing foreign in the player's game; proving a Pokemon we *built* can
+enter a retail save needs a completing run with a template that is not theirs.
 
 ### The disconnect penalty, and what it proves
 
