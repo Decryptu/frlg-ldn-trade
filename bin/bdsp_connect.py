@@ -137,7 +137,9 @@ async def main_async(args):
               "rel_max_seq": 0, "rel_streams": set(), "rel_control": [],
               "rel_handshaken": False, "rel_acks": 0, "their_position": None, "their_ack_id": 0,
               "requests": 0, "request_answers": 0, "last_request": None, "talk_answers": 0,
-              "state_requests": 0}
+              "state_requests": 0, "their_state": None, "their_recruiting": 0,
+              "reserves_sent": 0, "reserve_results": 0, "match_wait_sent": 0,
+              "reserve_accepted": False, "room_done": False}
 
         nonce = int.from_bytes(os.urandom(8), "big")
 
@@ -313,6 +315,17 @@ async def main_async(args):
                                     st["state_requests"] += 1
                                 if args.answer_requests:
                                     await answer_the_request(g, now, via="reliable")
+                            if g and g["data_id"] == room.STATE and g.get("fields"):
+                                note_their_state(g["fields"], now)
+                            if g and g["data_id"] == room.TALK_RESERVE_RESULT and g.get("fields"):
+                                st["reserve_results"] += 1
+                                # IsCanTalk READS BACKWARDS: 0 accepts, 1 declines. sp79 was
+                                # answered 0 and sp80 answered 1, and sp80 sent its follow-up
+                                # anyway - two seconds later the game crashed.
+                                st["reserve_accepted"] = g["fields"].get("IsCanTalk") == 0
+                                print(f"\n[rx] t={now:6.2f} *** IT ANSWERED OUR APPROACH - "
+                                      f"NetDataTalkReserveResultData {g['fields']} ***\n")
+                                record(rec="reserve_result", t=now, fields=g["fields"])
                             if (g and g["data_id"] == room.TALK_RESERVE
                                     and args.answer_talk):
                                 # THE PLAYER PRESSED A ON OUR CHARACTER. sp70 got this message for
@@ -375,6 +388,8 @@ async def main_async(args):
                                     st["state_requests"] += 1
                                 if args.answer_requests:
                                     await answer_the_request(g, now, via="unreliable")
+                            if g["data_id"] == room.STATE and g.get("fields"):
+                                note_their_state(g["fields"], now)
                         else:
                             g = None
                         if st["unreliable"] <= 5 or st["unreliable"] % 25 == 0:
@@ -509,7 +524,8 @@ async def main_async(args):
             send, no retransmission - the console repeats the request, so a lost answer costs
             nothing and the next request is another chance.
             """
-            reply = room.answer(message, state=args.state, is_recruitment=args.recruiting)
+            reply = room.answer(message, state=args.state, is_recruitment=args.recruiting,
+                                match_wait=args.match_wait)
             wanted = message["fields"]["RequestDataID"]
             if reply is None:
                 print(f"[tx] t={now:6.2f} it asked for {room.name(wanted)} and this table cannot "
@@ -604,7 +620,12 @@ async def main_async(args):
                 # A BURST OF JOINS, ALL AT ONE SPOT, each at the sequence id the console is asking
                 # for. Whatever lands stacks in one place, so the screen shows one avatar rather
                 # than a crowd - and then the movement updates have something unambiguous to move.
-                x0, z0 = here["x"] + 2.0, here["z"]
+                x0, z0 = here["x"] + args.join_offset_x, here["z"] + args.join_offset_z
+                # AND WHERE, WHICH IS NOT FREE. The offset has always been +2.0 on x, which is one
+                # side of the player - so a player standing against the wall on that side gets a
+                # character spawned THROUGH it. sp80: the user watched ours appear out of bounds
+                # and the game crashed shortly after. There is no collision for us and no map here,
+                # so the offset is the run's to choose and the player should stand clear.
                 # WHO SHE IS, not where. `OpcManager.CreateCharaData(ANetData<JoinData>)` builds a
                 # CharaData{stationIndex, assetName, colorId, avatarId, sexId} out of THIS message:
                 # avatarId indexes `UnionCharacterTable.SheetSheet1{ID, AssetName}` and the asset
@@ -670,6 +691,7 @@ async def main_async(args):
                           f"{args.card_body}, gender {args.card_gender}, id "
                           f"{args.card_trainer_id}. WATCH HER APPEARANCE.")
                     await send_reliable(card, st["their_ack_id"], "trainer-card")
+                st["room_done"] = True
                 return
 
             if args.room_pattern == "move":
@@ -1014,10 +1036,145 @@ async def main_async(args):
 
             st["phase"] = "after"
 
+        def note_their_state(fields, now):
+            """The console broadcasts its OWN OpcState, and an emote is visible in it.
+
+            sp78: state 0 until the player opened the Y menu, `state 4 isRecruiment 1` while the
+            trade emote was up (t=74 and t=124), back to 0 when it came down. So the run can SEE
+            the console become approachable instead of being told.
+            """
+            was = st["their_state"]
+            st["their_state"] = fields
+            if fields.get("state") and fields != was:
+                st["their_recruiting"] += 1
+                print(f"\n[rx] t={now:6.2f} *** THE PLAYER IS ADVERTISING: {fields} - "
+                      f"their character is now approachable ***\n")
+                record(rec="their_state", t=now, fields=fields)
+            elif was and fields.get("state") == 0 and was.get("state"):
+                print(f"[rx] t={now:6.2f}   their emote came down ({fields})")
+                record(rec="their_state", t=now, fields=fields)
+
+        async def initiate_the_talk():
+            """WALK UP TO THEIR CHARACTER. The roles reversed: they advertise, we approach.
+
+            Picking an emote locks the player in place waiting to be interacted with, so when the
+            console is the recruiter nothing can happen until someone approaches it - and every run
+            to sp78 had us waiting to be approached instead. `UnionStateController$$SwitchTalkStateMine`
+            is the approacher's path and it is the one whose messages we have read.
+
+            Sent only once their broadcast state says they are advertising, so the run cannot spend
+            its approach on a player who is still walking around.
+            """
+            # OUR CHARACTER MUST EXIST FIRST. sp80 approached at t=11.02, while the fifteen
+            # joins were still going out, and was DECLINED - sp79 approached at t=57.21, after the
+            # walk, and was accepted. An approach from a station the game has not drawn yet is not
+            # the experiment.
+            while not st["room_done"]:
+                await trio.sleep(0.5)
+            while not st["their_recruiting"]:
+                await trio.sleep(0.5)
+            await trio.sleep(args.initiate_delay)
+            payload = room.build_talk_reserve()
+            print(f"\n[tx] --- APPROACHING THEIR CHARACTER: NetDataTalkReserveData "
+                  f"{payload.hex(' ')}, retransmitted until their ack covers it")
+            for attempt in range(args.initiate_tries):
+                seq = st["their_ack_id"]
+                if not seq:
+                    await trio.sleep(0.4)
+                    continue
+                msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                       | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                       seq, len(payload), lowest_pending=seq) + payload)
+                sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
+                                 rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+                st["reserves_sent"] += 1
+                now = time.monotonic() - t0
+                print(f"[tx] t={now:6.2f}   approach #{attempt + 1} at seq {seq}")
+                record(rec="talk_reserve_sent", t=now, seq=seq, attempt=attempt)
+                await trio.sleep(args.initiate_gap)
+                if st["reserve_results"]:
+                    print("[cx] they answered our approach")
+                    if not st["reserve_accepted"]:
+                        # A REFUSAL IS AN ANSWER, AND IT IS NOT A GO-AHEAD. IsCanTalk 1 is the
+                        # console declining; sp80 pushed a TalkData into a declined conversation
+                        # and the game crashed. Whatever else was wrong in that run, this path
+                        # must not be taken again.
+                        print("[cx] *** THEY DECLINED (IsCanTalk 1). Sending NOTHING further. ***")
+                        record(rec="approach_declined", t=time.monotonic() - t0)
+                        return
+                    # AND NOW THE INITIATOR'S OWN NEXT MESSAGE, if the run was given one.
+                    # sp76 sent TalkData{CHECK} as the RESPONDER and the console cancelled; CHECK
+                    # is what `UnionStateController$$SwitchTalkStateMine` builds, and that is the
+                    # path of the player who WALKED UP. sp79 put us in that role for the first
+                    # time, so the same message is now being sent by the side that sends it.
+                    for spec in args.after_approach:
+                        await trio.sleep(args.after_approach_gap)
+                        data_id, _, body_hex = spec.partition(":")
+                        payload = room.build(int(data_id, 0), bytes.fromhex(body_hex))
+                        # NetDataTalkData{talkState: CHECK} CRASHES THE CONSOLE. Its handler
+                        # `UnionStateController$$SwitchSpokenStateMine` sends talkState 0 down a
+                        # branch that reads systemController->msgWindow and, when that is null -
+                        # which it is for a player standing with an emote up - sets x19 = 0 and
+                        # dereferences it at 0x1fd5ec0 with no guard. sp80 and sp81 both died on it.
+                        if payload[0] == room.TALK and payload[3 + 1:3 + 5] == b"\x00\x00\x00\x00":
+                            print("[cx] *** REFUSING to send NetDataTalkData{talkState: CHECK} - "
+                                  "it is a null dereference in SwitchSpokenStateMine (sp80, sp81). "
+                                  "Use talkState GREETING (1). ***")
+                            record(rec="after_approach_refused", spec=spec, reason="talkstate_check")
+                            continue
+                        seq = st["their_ack_id"]
+                        if not seq:
+                            record(rec="after_approach_no_seq", spec=spec)
+                            continue
+                        m = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                             | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                             seq, len(payload), lowest_pending=seq) + payload)
+                        sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(),
+                                         m, rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+                        now2 = time.monotonic() - t0
+                        print(f"[tx] t={now2:6.2f}   after-approach {room.name(payload[0])} "
+                              f"at seq {seq}: {payload.hex(' ')}")
+                        record(rec="after_approach_sent", t=now2, spec=spec, seq=seq)
+                    return
+            print(f"[cx] {st['reserves_sent']} approaches, no NetDataTalkReserveResultData back")
+
+        async def keep_saying_match_wait():
+            """Repeat NetDataIsMatchWaitData{1} for the whole hold.
+
+            sp77 answered the console's REQUEST for 0x23 and that request comes once, between
+            t=8.4 and t=9.4, and never again. The player reaches the trade option in the Y menu
+            around a minute in, by which time an answer-only run is silent - and the flag the game
+            reads is a piece of live state, not a one-off reply. `StartMatch` is gated on
+            `cmp w23,#1` [main.bin 0x01fd56e4] behind two null checks on the
+            UnionFrontDeskTradeController, which exists only once the player has entered that flow,
+            so the message has to still be arriving THEN.
+            """
+            await trio.sleep(args.match_wait_period)
+            sent = 0
+            while True:
+                seq = st["their_ack_id"]
+                if seq:
+                    payload = room.build_match_wait(True)
+                    msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                           | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                           seq, len(payload), lowest_pending=seq) + payload)
+                    sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
+                                     rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+                    st["match_wait_sent"] = sent = sent + 1
+                    record(rec="match_wait_repeat", t=time.monotonic() - t0, seq=seq, n=sent)
+                    if sent % 10 == 1:
+                        print(f"[tx] t={time.monotonic() - t0:6.2f}   isMatchWait=1 #{sent} "
+                              f"at seq {seq}")
+                await trio.sleep(args.match_wait_period)
+
         with trio.move_on_after(args.hold):
             async with trio.open_nursery() as nursery:
                 nursery.start_soon(receiver)
                 nursery.start_soon(sender)
+                if args.match_wait and args.match_wait_period > 0:
+                    nursery.start_soon(keep_saying_match_wait)
+                if args.initiate_talk:
+                    nursery.start_soon(initiate_the_talk)
 
         print(f"\n[cx] {st['updates']} update session(s), {len(st['replies'])} station-protocol "
               f"reply/replies")
@@ -1025,6 +1182,9 @@ async def main_async(args):
         print(f"[cx] mesh join responses {st['join_responses']}, acked {st['join_acks']} "
               f"(a couple is an ack that landed; eighteen is sp36, unacked)")
         print(f"[cx] RTT requests {st['rtt_requests']}, answered {st['rtt_answers']}")
+        print(f"[cx] isMatchWait=1 repeats sent {st.get('match_wait_sent', 0)}")
+        print(f"[cx] their advertising state seen {st['their_recruiting']} time(s), "
+              f"approaches sent {st['reserves_sent']}, answered {st['reserve_results']}")
         print(f"[cx] reliable messages {st['reliable']} "
               f"(a repeat means it is still waiting to be acked)")
         print(f"[cx] unreliable messages {st['unreliable']} - the game's live state")
@@ -1109,6 +1269,42 @@ def main():
                     help="answer the console's NetRequestData with the message it names. It has "
                          "asked for data id 0x23 in every capture since the first join and has "
                          "never been answered; this is the probe, so arm it on its own")
+    ap.add_argument("--match-wait", action=argparse.BooleanOptionalAction, default=False,
+                    help="answer the console's request for NetDataIsMatchWaitData (0x23) with "
+                         "isMatchWait=1 instead of 0. ONE comparison in UnionRoomManager$$SetNetData "
+                         "gates the trade on it (`cmp w23, #1` at main.bin 0x01fd56e4, then "
+                         "UnionFrontDeskTradeController$$StartMatch); every run since session 46 has "
+                         "answered 0, which is a station declining to be matched")
+    ap.add_argument("--join-offset-x", type=float, default=2.0, metavar="U",
+                    help="where our character spawns relative to the console's own, on x. The "
+                         "default +2.0 is one fixed side, and a player standing against the wall "
+                         "on that side gets a character spawned out of bounds (sp80, followed by a "
+                         "crash). Negative puts it on the other side")
+    ap.add_argument("--join-offset-z", type=float, default=0.0, metavar="U",
+                    help="the same on z")
+    ap.add_argument("--initiate-talk", action=argparse.BooleanOptionalAction, default=False,
+                    help="APPROACH the console's character instead of waiting to be approached. "
+                         "Picking an emote locks a player in place waiting to be interacted with, "
+                         "so a recruiting console can only be reached by someone walking up to it. "
+                         "Waits for its broadcast state to say it is advertising, then sends "
+                         "NetDataTalkReserveData - the console's own bytes, 63 00 01 00")
+    ap.add_argument("--after-approach", action="append", default=[], metavar="ID:HEX",
+                    help="after THEY answer our approach, send this message - the initiator's own "
+                         "next one. `0x06:0000000000` is NetDataTalkData{sexId 0, CHECK}, which is "
+                         "what SwitchTalkStateMine builds. Repeatable, sent in order")
+    ap.add_argument("--after-approach-gap", type=float, default=1.0, metavar="S",
+                    help="seconds between the approach answer and each --after-approach message")
+    ap.add_argument("--initiate-delay", type=float, default=2.0, metavar="S",
+                    help="seconds to wait after the console starts advertising before approaching")
+    ap.add_argument("--initiate-tries", type=int, default=12, metavar="N",
+                    help="how many times to retransmit the approach before giving up")
+    ap.add_argument("--initiate-gap", type=float, default=1.0, metavar="S",
+                    help="seconds between approach retransmissions")
+    ap.add_argument("--match-wait-period", type=float, default=2.0, metavar="S",
+                    help="with --match-wait, ALSO send NetDataIsMatchWaitData{1} every S seconds "
+                         "for the whole hold (0 disables, leaving the answer-on-request of sp77). "
+                         "The console requests 0x23 once, at t=8.4-9.4, and the player reaches the "
+                         "trade option in the Y menu long after that")
     ap.add_argument("--after-talk", action="append", default=[], metavar="ID:HEX",
                     help="after answering the talk reservation, send this game message on the "
                          "reliable stream - `0x08:00` is NetDataSelectData{index: 0}. Repeatable, "

@@ -119,6 +119,39 @@ def test_the_two_repeated_small_messages_are_a_request_and_its_own_answer():
     assert room.answer(req) == SMALL_B
 
 
+def test_the_match_wait_answer_carries_the_value_the_trade_is_gated_on():
+    """isMatchWait is the ONE byte UnionRoomManager$$SetNetData compares against 1.
+
+    `cmp w23, #1; b.ne; bl UnionFrontDeskTradeController$$StartMatch` [main.bin 0x01fd56e4], and
+    w23 is `ldrb [received, #0x10]`. Every run from session 46 to sp76 answered 0, which is a
+    station declining to be matched - the console asked fifty sessions running and was told no.
+    """
+    req = room.parse(SMALL_A)
+    assert req["fields"]["RequestDataID"] == room.MATCH_WAIT
+    # the default is unchanged: it still reproduces the console's own bytes
+    assert room.answer(req) == SMALL_B
+    assert room.parse(room.answer(req))["fields"]["isMatchWait"] == 0
+    # and the value the gate wants is one flag away, same length, same id
+    waiting = room.answer(req, match_wait=True)
+    assert room.parse(waiting)["fields"]["isMatchWait"] == 1
+    assert waiting[0] == room.MATCH_WAIT and len(waiting) == len(SMALL_B)
+
+
+def test_the_approach_reproduces_the_console_s_own_talk_reserve_bytes():
+    """We approach THEM when they are the one advertising - the roles reversed.
+
+    Picking an emote locks a player in place waiting to be interacted with (the user, at the
+    console, sp78), so a recruiting console can only be reached by someone walking up to it.
+    NetDataTalkReserveData has no layout in the generated table, so the check that our approach is
+    well formed is the console's own bytes, seen in sp70 and sp76.
+    """
+    assert room.build_talk_reserve() == bytes.fromhex("63000100")
+    parsed = room.parse(room.build_talk_reserve())
+    assert parsed["name"] == "NetDataTalkReserveData"
+    assert parsed["data_id"] == room.TALK_RESERVE == 0x63
+    assert parsed["length"] == 1
+
+
 def test_a_payload_whose_struct_is_not_blittable_has_no_layout_and_says_so():
     # NetPlayerNameData carries a C# string and NetPosData an array; neither size is in the source
     for data_id in (room.PLAYER_NAME, room.POS):

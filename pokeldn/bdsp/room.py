@@ -58,6 +58,9 @@ STATE = 0x04                      # NetCharacterStateData
 TRAINER_CARD = 0x05               # NetDataTranerCardData
 REQUEST = 0x12                    # NetRequestData - "send me your <data id>"
 MATCH_WAIT = 0x23                 # NetDataIsMatchWaitData
+TALK = 0x06                       # NetDataTalkData{talkOpcSexId, talkState} - and talkState
+                                  # CHECK (0) is a NULL DEREFERENCE in the receiver unless a
+                                  # message window is already open. sp80/sp81 crashed on it.
 TALK_RESERVE = 0x63               # NetDataTalkReserveData - "I want to talk to your character"
 TALK_RESERVE_RESULT = 0x64        # NetDataTalkReserveResultData - and the answer that unblocks it
 PLAYER_NAME = 0x42                # NetPlayerNameData - a string, so the layout is NOT known
@@ -223,8 +226,36 @@ def build_request(requested_id):
     return build_fields(REQUEST, requested_id & 0xFF)
 
 
+def build_talk_reserve(body_byte=0):
+    """"I want to talk to your character" - the message the player who WALKS UP sends.
+
+    Every run to sp78 had our character advertising and the console's player approaching it, which
+    makes us the responder. The roles are the other way round when the CONSOLE puts an emote up:
+    picking one locks the player in place waiting to be interacted with, so the approach has to
+    come from us. This is that approach.
+
+    The console's own is `63 00 01 00` in sp70-sp76 - one body byte, zero - and `NetDataTalkReserveData`
+    is not in the generated FIELDS table (opendpr declares no layout for it), so this builds the
+    console's own bytes rather than packing a struct.
+    """
+    return build(TALK_RESERVE, bytes([body_byte & 0xFF]))
+
+
 def build_match_wait(is_waiting=False):
-    """The console's own repeated answer is 0 - "I am not waiting to be matched"."""
+    """The console's own repeated answer is 0 - "I am not waiting to be matched".
+
+    AND 1 IS THE ONLY VALUE THAT STARTS A TRADE. `UnionRoomManager$$SetNetData`'s branch for this
+    id ends in one comparison [main.bin 0x01fd56e4]:
+
+        ldrb w23, [x19, #0x10]      isMatchWait, off the received message
+        cmp  w23, #1
+        b.ne 0x1fd5704              anything but 1 skips the rest
+        bl   UnionFrontDeskTradeController$$StartMatch
+
+    The console has requested this id since the first join of session 46 and every run has answered
+    0 - a station saying it does not want to be matched. That is the `StateData{NONE, 0}` mistake
+    again: the right question, answered with a no-op. `docs/bdsp.md`.
+    """
     return build_fields(MATCH_WAIT, 1 if is_waiting else 0)
 
 
@@ -277,7 +308,7 @@ def build_emotion(emotion_id):
     return build_fields(EMOTION, emotion_id & 0xFF)
 
 
-def answer(message, state=STATE_NONE, is_recruitment=0):
+def answer(message, state=STATE_NONE, is_recruitment=0, match_wait=False):
     """-> the reply a NetRequestData asks for, when this module can build one, else None.
 
     The console has been asking for 0x23 since the first join and has never been answered. An
@@ -295,7 +326,7 @@ def answer(message, state=STATE_NONE, is_recruitment=0):
         return None
     wanted = message["fields"]["RequestDataID"]
     if wanted == MATCH_WAIT:
-        return build_match_wait(False)
+        return build_match_wait(match_wait)
     if wanted == STATE:
         return build_state(state, is_recruitment)
     if layout(wanted) is None:
