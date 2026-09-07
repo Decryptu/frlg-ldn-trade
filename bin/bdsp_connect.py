@@ -142,7 +142,7 @@ async def main_async(args):
               "reserve_accepted": False, "room_done": False, "their_traner": None,
               "their_poke": None, "our_poke": None, "trade_replies": 0, "check_oks": 0,
               "their_ready_ok": None, "ready_oks_sent": 0, "their_security_state": None,
-              "our_security_state": 0, "repeater": False}
+              "our_security_state": 0, "our_next_seq": 0}
 
         # BUILD WHAT WE WILL OFFER BEFORE THE RADIO IS TOUCHED. A template that will not load, or
         # a nickname that will not fit, must fail here and not halfway through a trade on a real
@@ -1160,10 +1160,16 @@ async def main_async(args):
         def send_trade_message(reply, label, now):
             """Put one game message into the console's reliable window. Shared by the answers and
             by the repeater, which needs the sequence id as it stands at the moment it fires."""
-            seq = st["their_ack_id"]
+            # OUR OWN SEQUENCE, NOT THEIRS. `their_ack_id` is the console's "next id I expect from
+            # you", so it only moves when it ACKS something - and two messages sent before that ack
+            # both carry it. sp89 sent our state and our Pokemon at seq 42 within the same 10 ms and
+            # the console kept the first and discarded the second as a retransmit, then sat in
+            # WAIT_POKE for 250 s while 250 repeats all went out at seq 343. One id per message.
+            seq = max(st["their_ack_id"], st["our_next_seq"])
             if not seq:
                 record(rec="trade_reply_no_seq", t=now, label=label)
                 return
+            st["our_next_seq"] = seq + 1
             msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
                                    | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
                                    seq, len(reply), lowest_pending=seq) + reply)
@@ -1185,6 +1191,10 @@ async def main_async(args):
             while True:
                 await trio.sleep(args.security_repeat)
                 if st["their_security_state"] is None or not st["our_security_state"]:
+                    continue
+                if st["their_ack_id"] < st["our_next_seq"]:
+                    # something we sent is still unacked; adding to it fills the window rather
+                    # than saying anything the console has not already been told
                     continue
                 now = time.monotonic() - t0
                 send_trade_message(
