@@ -141,7 +141,7 @@ async def main_async(args):
               "reserves_sent": 0, "reserve_results": 0, "match_wait_sent": 0,
               "reserve_accepted": False, "room_done": False, "their_traner": None,
               "their_poke": None, "our_poke": None, "trade_replies": 0, "check_oks": 0,
-              "their_ready_ok": None, "ready_oks_sent": 0}
+              "their_ready_ok": None, "ready_oks_sent": 0, "their_security_state": None}
 
         # BUILD WHAT WE WILL OFFER BEFORE THE RADIO IS TOUCHED. A template that will not load, or
         # a nickname that will not fit, must fail here and not halfway through a trade on a real
@@ -1101,6 +1101,11 @@ async def main_async(args):
                 # `<WaitBoxWindowComplete>d__24`'s condition, the manager moves to SECURIY_TRADE,
                 # and `TradeStateModel$$InitState` calls `PlayerSave`. Off unless --complete-trade.
                 st["their_ready_ok"] = g.get("fields")
+                if (g.get("fields") or {}).get("isTradeOk"):
+                    # isTradeOk = 1 is the SECURITY PHASE talking: `TradeSecurityController$$
+                    # ReciveState` drops any message whose first byte is not 1, and the console
+                    # only starts sending 1 once it has a TradeStateModel. sp88 saw {1, 1} - INIT.
+                    st["their_security_state"] = (g["fields"] or {}).get("tradeState")
                 print(f"\n[rx] t={now:6.2f} *** THEIR READY-OK: {st['their_ready_ok']} ***")
                 record(rec="their_ready_ok", t=now, fields=st["their_ready_ok"])
                 if not args.complete_trade:
@@ -1328,7 +1333,7 @@ async def main_async(args):
         print(f"[cx] trade replies sent {st['trade_replies']}, their check-oks {st['check_oks']}, "
               f"their ready-oks {'yes' if st['their_ready_ok'] else 'none'}, "
               f"our ready-oks {st['ready_oks_sent']}"
-              + (" - THE CONSOLE WROTE ITS SAVE" if st["ready_oks_sent"] else ""))
+              + (" - and it entered the security phase" if st["their_security_state"] else ""))
         # the verdict a capture can give on its own, without asking anyone to watch the screen
         print(f"[cx] requests for NetCharacterStateData {st['state_requests']} - "
               + ("THE GAME CREATED A CHARACTER FROM US" if st["state_requests"]
