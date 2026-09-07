@@ -110,6 +110,38 @@ the run**. sw03 is the control - the same packet with a sequence id the console 
 answered with 261 update sessions and never stopped. The station byte and the IV's source-id byte
 were both 0, mirroring what the console sends.
 
+## The version-4 Mesh Station Protocol, and why BDSP's offsets do not carry
+
+Protocol **0x14** on both bands - Sword's `GetProtocolId` is a one-instruction body at `0x017c8460`
+returning 0x14, and MeshProtocol's at `0x017c4280` returns 0x18, so the numbering is shared. The
+receive dispatcher is at `0x017c5f50`: it reads the message type from byte 0, subtracts one, bounds
+it at six and jumps through a seven-entry table at `0x02081804`. The seven types are 5.27's, in
+5.27's order - connection request, connection response, disconnection request, disconnection
+response, ack, relay connection request, relay connection response.
+
+**THE MESSAGE ITSELF IS NOT 5.27's.** The connection-request handler at `0x017c62a0` reads, in
+order:
+
+    [0]     message type            1
+    [1]     a byte compared against the station's own byte at +0x79
+    [2]     platform id             must be 9   (5.27-5.45 checks 4)
+    [3]     0 or 1, and anything higher is rejected outright; 1 means the request also
+            names a target variable id
+    [4]     target constant id      big-endian u64, compared against the console's own
+    [0xC]   target variable id      big-endian u32, checked ONLY when [3] is 1
+    [0x10]  protocol count          compared against the console's own count at +0x78
+    [0x11]  the protocol entries
+
+which is 5.27's layout **shifted one byte from offset 3 onwards**, plus the flag byte that causes
+the shift. `pokeldn/ldn/station_protocol.py` is the 5.27 reading (constant id at 3, variable id at
+0xB, count at 0xF) and sending it at a version-4 console would put every field one byte early. A
+protocol number that matches across versions says nothing about the message that travels on it.
+
+UNKNOWN, and what a version-4 connection request still needs before it can be built: the width of a
+protocol entry, and the station location that follows the list. `0x0185c5c0` is NOT it - that walks
+a 32-entry table of `{u8, u16 big-endian, u64 big-endian, u64 big-endian}`, 19 bytes each with a
+minimum message size of 0x260, which is a station table rather than a request.
+
 ## Two families of session key
 
 The session key is not one algorithm. Pia carries a separate implementation per network type, and

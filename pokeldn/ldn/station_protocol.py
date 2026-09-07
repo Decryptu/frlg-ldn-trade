@@ -36,6 +36,10 @@ the N that draws a reply is the console's own protocol count.
 import struct
 import zlib
 
+# EVERY OFFSET IN THIS MODULE IS PIA 5.27-5.45's. Sword/Shield registers the same protocol number
+# under Pia version 4 and its connection request is a DIFFERENT message: a flag byte at [3] shifts
+# the constant id to 4, the variable id to 0xC and the protocol count to 0x10. Building one from
+# here would put every field a byte early. `docs/pia.md` "The version-4 Mesh Station Protocol".
 PROTOCOL = 0x14                   # MeshStationProtocol, Pia 5.29-5.45
 PORT_UNRELIABLE = 0               # the reliable port has not been used by Pia since 5.6
 
