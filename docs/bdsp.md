@@ -152,6 +152,30 @@ messages and nineteen runs from a direction that is not the source. And `NetPosD
 capture can settle that source cannot: its struct is an array, so it is one of the twelve with no
 decidable layout, and yet 72 bytes is 12 points of 6 and nothing else divides.
 
+### The request that says the game made a character out of us
+
+The console asks for two different things, and the second one is a measurement nobody was reading:
+
+| asked for | times | in which runs |
+|---|---|---|
+| `NetDataIsMatchWaitData` (0x23) | 4333 | all nineteen |
+| `NetCharacterStateData` (0x04) | 55 | sp47, sp48, sp53, sp57 - and no others |
+
+Those four are **exactly** the runs where an avatar of ours appeared on the console's screen. Every
+run that sent game messages and drew nothing asked for 0x04 zero times, across 265 sends, and in all
+four positive runs the first 0x04 arrives after our first send. **When the game creates a character
+from a join, it asks the station that sent it for that character's state** - and no run has ever
+answered.
+
+That closes a gap this project had written down as permanent. Ack ids move for the console's own
+reasons, so every run judged on them was ambiguous and the screen was the only trustworthy signal;
+a request for 0x04 is a second trustworthy signal, it is in the capture, and it separates four runs
+from nine with no exceptions either way. `bin/bdsp_connect.py` prints it as a verdict, so a run is
+readable without anyone watching the television.
+
+`StateData` is `byte state, byte isRecruiment` - two blittable bytes - so the answer is buildable
+today, and `room.answer()` already returns it.
+
 **So one of the two messages the console has been repeating at us for every run of this project is a
 question addressed to us, and nothing we have ever sent has answered it.** Building the answer from
 the table reproduces the console's own four bytes exactly, which is the check that the reading is

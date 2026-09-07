@@ -136,7 +136,8 @@ async def main_async(args):
               "join_acks": 0, "dst_ip": bcast, "dst_var": 0,
               "rel_max_seq": 0, "rel_streams": set(), "rel_control": [],
               "rel_handshaken": False, "rel_acks": 0, "their_position": None, "their_ack_id": 0,
-              "requests": 0, "request_answers": 0, "last_request": None}
+              "requests": 0, "request_answers": 0, "last_request": None,
+              "state_requests": 0}
 
         nonce = int.from_bytes(os.urandom(8), "big")
 
@@ -298,6 +299,18 @@ async def main_async(args):
                                 # it answers itself. Nothing this project sent had ever answered it.
                                 st["requests"] += 1
                                 st["last_request"] = g["fields"]["RequestDataID"]
+                                if g["fields"]["RequestDataID"] == room.STATE:
+                                    # A REQUEST FOR NetCharacterStateData IS THE GAME SAYING IT
+                                    # CREATED A CHARACTER FROM US. Across thirteen runs that sent
+                                    # anything, the four where an avatar appeared on the screen all
+                                    # asked for it and the six where nothing appeared never did,
+                                    # over 265 sends. It is the first signal in the CAPTURE that
+                                    # says what previously only the screen could.
+                                    if not st["state_requests"]:
+                                        print(f"\n[rx] t={now:6.2f} *** IT ASKED FOR "
+                                              f"NetCharacterStateData - THE GAME HAS CREATED A "
+                                              f"CHARACTER FROM US ***\n")
+                                    st["state_requests"] += 1
                                 if args.answer_requests:
                                     await answer_the_request(g, now)
                             if args.reliable_auto_ack and st["rel_handshaken"]:
@@ -897,11 +910,16 @@ async def main_async(args):
         print(f"[cx] NetRequestData received {st['requests']}"
               + (f" (last for {room.name(st['last_request'])})" if st["last_request"] else "")
               + f", answered {st['request_answers']}")
+        # the verdict a capture can give on its own, without asking anyone to watch the screen
+        print(f"[cx] requests for NetCharacterStateData {st['state_requests']} - "
+              + ("THE GAME CREATED A CHARACTER FROM US" if st["state_requests"]
+                 else "nothing we sent became a character"))
         record(rec="counters", join_responses=st["join_responses"],
                join_acks=st["join_acks"], rtt_requests=st["rtt_requests"],
                rtt_answers=st["rtt_answers"], reliable=st["reliable"],
                unreliable=st["unreliable"], requests=st["requests"],
-               request_answers=st["request_answers"], last_request=st["last_request"])
+               request_answers=st["request_answers"], last_request=st["last_request"],
+               state_requests=st["state_requests"])
         if st["result"]:
             reg = st["result"]["registered"]
             print(f"[cx] the console said it registers {st['result']['count']} protocols, "
