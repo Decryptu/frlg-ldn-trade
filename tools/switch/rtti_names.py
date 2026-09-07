@@ -32,7 +32,10 @@ def demangle(n):
     return "::".join(parts) if parts else n
 
 
-def build(img, text_end):
+def build(img, text_end, rodata=None):
+    """`rodata` bounds the band the mangled names live in; without it, everything
+    above text_end is searched, which is right for any single-module image."""
+    lo, hi = rodata if rodata else (text_end, len(img))
     rel = relatives(img)
     by_slot = dict(rel)
     targets = collections.defaultdict(list)
@@ -42,7 +45,7 @@ def build(img, text_end):
     # a type_info: slot+8 holds the name pointer (a string), slot+0 the type_info vtable
     typeinfos = {}
     for s, a in rel:
-        if not (0x3E00000 <= a < 0x4000000):      # the rodata band holding mangled names
+        if not (lo <= a < hi):                    # the rodata band holding mangled names
             continue
         nm = cstr(img, a)
         if not nm or nm[0] not in "N123456789PK" or len(nm) < 5:
@@ -65,19 +68,42 @@ def build(img, text_end):
     return out, classes, typeinfos
 
 
-if __name__ == "__main__":
-    img = open(sys.argv[1], "rb").read()
-    tend = int(sys.argv[2], 0)
-    names, classes, tis = build(img, tend)
-    pia = {k: v for k, v in names.items() if v.startswith("nn::pia")}
-    print(f"{len(tis)} type_info records, {len(names)} named vfuncs, {len(pia)} of them nn::pia")
-    piacls = sorted({v.split("::vfunc")[0] for v in pia.values()})
-    print(f"{len(piacls)} nn::pia classes")
-    if len(sys.argv) > 3:
-        q = sys.argv[3].lower()
-        for c in piacls:
+def main(argv):
+    import argparse
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("image", help="the decompressed NSO, from nso_read.py")
+    ap.add_argument("text_end", type=lambda s: int(s, 0),
+                    help="end of .text; a vtable slot outside it is not a method")
+    ap.add_argument("query", nargs="?", help="only classes whose name contains this")
+    ap.add_argument("--rodata", help="LO:HI band the mangled names live in (default: above text)")
+    ap.add_argument("--prefix", default="nn::pia",
+                    help="the namespace to count and list; \"\" for every class")
+    ap.add_argument("--limit", type=int, default=40)
+    args = ap.parse_args(argv)
+
+    img = open(args.image, "rb").read()
+    band = None
+    if args.rodata:
+        lo, _, hi = args.rodata.partition(":")
+        band = (int(lo, 0), int(hi, 0))
+    names, classes, tis = build(img, args.text_end, band)
+    want = {k: v for k, v in names.items() if v.startswith(args.prefix)}
+    print(f"{len(tis)} type_info records, {len(names)} named vfuncs, "
+          f"{len(want)} of them {args.prefix or 'any'}")
+    cls = sorted({v.split("::vfunc")[0] for v in want.values()})
+    print(f"{len(cls)} {args.prefix or ''} classes")
+    if args.query:
+        q = args.query.lower()
+        for c in cls:
             if q in c.lower():
                 fns = sorted(set(classes[c]))
                 print(f"  {c}: {len(fns)} vfunc(s) {[hex(f) for f in fns[:10]]}")
     else:
-        for c in piacls[:40]: print("   " + c)
+        for c in cls[:args.limit]:
+            print("   " + c)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
