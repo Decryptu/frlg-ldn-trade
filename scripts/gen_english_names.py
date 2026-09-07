@@ -36,9 +36,48 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "tools", "frlg"))
 
 import english_build                                                          # noqa: E402
-from pokeldn.frlg.rom import worker_names                                     # noqa: E402
+from pokeldn.frlg.rom import thumb, worker_names                              # noqa: E402
+from script_read import every_dump                                            # noqa: E402
 
 OUT = os.path.join(ROOT, "pokeldn", "frlg", "rom", "english_names.py")
+
+
+def call_targets():
+    """-> every address the console's own code is seen to call, off the FireRed dumps."""
+    out = set()
+    for base, data in every_dump(os.path.join(ROOT, "scratchpad"), "firered"):
+        for _site, target in thumb.bl_targets(data, base, base, base + len(data)):
+            out.add(target & ~1)
+    return out
+
+
+def bracketed(runs, rom, named):
+    """-> {address: (name, offset)} for a call target BETWEEN two runs rather than inside one.
+
+    A weaker reading than NAMES and kept apart from it. The offset here is not measured at the
+    address, it is one of the two measured either side - so the check has to come from somewhere
+    else, and it does: the candidate must land EXACTLY on a function start, and only one of the two
+    may. An offset that is wrong by even two bytes lands mid-instruction, and the ones this finds
+    are the three libgcc helpers agbcc emits for a division nobody wrote (`__divsi3`, `__modsi3`,
+    `__umodsi3`) - which is what session 42 said the unnamed residue would turn out to be, from a
+    direction that knew nothing about any of this."""
+    out = {}
+    for address in sorted(call_targets()):
+        if address in named or english_build.offset_at(runs, address)[0] is not None:
+            continue
+        below = [r for r in runs if r[1] < address]
+        above = [r for r in runs if r[0] > address]
+        candidates = set()
+        if below:
+            candidates.add(max(below, key=lambda r: r[1])[2])
+        if above:
+            candidates.add(min(above, key=lambda r: r[0])[2])
+        hits = [(offset, rom.names_at(address + offset)[0])
+                for offset in sorted(candidates)
+                if (address + offset) in rom.code and rom.names_at(address + offset)]
+        if len(hits) == 1:
+            out[address] = (hits[0][1], hits[0][0])
+    return out
 
 HEADER = '''"""What the ENGLISH rev10 build calls a FRENCH address. Generated; do not edit by hand.
 
@@ -67,6 +106,14 @@ NAMES = {{
 {names}
 }}
 
+# WEAKER, and kept apart: a call target that falls BETWEEN two measured runs, named with one of the
+# two offsets either side of it. What stands in for the missing measurement is that the offset must
+# land exactly on a function start and only one of the two may - an offset wrong by two bytes lands
+# mid-instruction. {{address: (name, the offset used)}}.
+BRACKETED = {{
+{bracketed}
+}}
+
 
 def offset(address):
     """-> how far the English build is from this French address, or None outside every run."""
@@ -79,28 +126,46 @@ def offset(address):
 def name(address):
     """-> the English build's name for a French address, THUMB bit ignored, or None."""
     return NAMES.get(address & ~1)
+
+
+def bracketed_name(address):
+    """-> the weaker reading for an address between two runs, or None. See BRACKETED."""
+    entry = BRACKETED.get(address & ~1)
+    return entry[0] if entry else None
 '''
 
 
 def build():
+    """-> (offset runs, {French address: name}).
+
+    WHERE AN ADDRESS CARRIES SEVERAL NAMES, the one this project already uses wins. `GetBoxMonData2`
+    is `__attribute__((alias("GetBoxMonData3")))` [decomp:src/pokemon.c:3332] - one function, two
+    symbols, and writing down whichever `nm` printed first would put a second vocabulary for the
+    same address into the repository and read as a disagreement with `worker_names` for ever."""
     runs = english_build.merged_runs("firered")
     rom = english_build.english("firered")
+    ours = dict(worker_names.WORKERS)
     names = {}
     for low, high, value, _points, _source in runs:
         for address in rom.code:
             french = address - value
             if low <= french <= high:
-                names.setdefault(french, rom.symbols[address][0])
+                symbols = rom.symbols[address]
+                preferred = next((s for s in symbols if s == ours.get(french)), symbols[0])
+                names.setdefault(french, preferred)
     return runs, names
 
 
-def render(runs, names, control):
+def render(runs, names, control, weak):
     offsets = "\n".join(f"    (0x{low:08X}, 0x{high:08X}, {value:#x}, {points}),"
                         for low, high, value, points, _source in runs)
     lines = []
     for french, symbol in sorted(names.items()):
         lines.append(f"    0x{french:08X}: {symbol!r},")
-    return HEADER.format(control=control, offsets=offsets, names="\n".join(lines))
+    weak_lines = "\n".join(f"    0x{address:08X}: ({symbol!r}, {offset:#x}),"
+                            for address, (symbol, offset) in sorted(weak.items()))
+    return HEADER.format(control=control, offsets=offsets, names="\n".join(lines),
+                         bracketed=weak_lines)
 
 
 def main():
@@ -123,11 +188,13 @@ def main():
             print(f"  0x{address:08X}  ours {ours}  English {theirs}")
         return 1
     runs, names = build()
-    text = render(runs, names, len(agreed))
+    weak = bracketed(runs, english_build.english("firered"), names)
+    text = render(runs, names, len(agreed), weak)
     if args.report:
         print(f"control: {len(agreed)} agree, 0 disagree, {len(silent)} with no English symbol, "
               f"{len(uncovered)} outside the offset map")
-        print(f"{len(runs)} offset runs, {len(names)} French addresses named")
+        print(f"{len(runs)} offset runs, {len(names)} French addresses named, "
+              f"{len(weak)} more bracketed between two runs")
     if args.check:
         current = open(OUT).read() if os.path.exists(OUT) else ""
         if current != text:
@@ -137,7 +204,8 @@ def main():
         return 0
     with open(OUT, "w") as handle:
         handle.write(text)
-    print(f"wrote {OUT}: {len(names)} names from {len(runs)} measured offset runs")
+    print(f"wrote {OUT}: {len(names)} names from {len(runs)} measured offset runs, "
+          f"{len(weak)} bracketed")
     return 0
 
 

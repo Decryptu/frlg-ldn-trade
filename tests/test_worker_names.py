@@ -238,7 +238,10 @@ def test_the_shipped_table_is_what_this_decomp_and_these_dumps_still_say():
     calls, where = decomp_source.read_tree(sorted(decomp.glob("src/**/*.c")))
     memory = scrcmd.Memory(every_dump(str(scratchpad), "firered"))
     names = {address: gen_worker_names.entry_name(label)
-             for address, label in all_known_names(with_workers=False).items()
+             # with_english=False mirrors the generator: an English-build name is a deduction and
+                 # must not anchor the reading that produces worker_names.
+                 for address, label in all_known_names(with_workers=False,
+                                                      with_english=False).items()
              if gen_worker_names.entry_name(label) not in gen_worker_names.MARKERS}
     names.update(rom_map.DECOMP_NAMES)
     proposals, _corrections, _dropped = gen_worker_names.align(calls, memory, names, set(where))

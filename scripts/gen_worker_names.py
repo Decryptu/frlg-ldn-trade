@@ -367,7 +367,10 @@ def main():
         raise SystemExit(f"no {args.console} dumps under {args.scratchpad}")
     memory = scrcmd.Memory(segments)
     names = {address: entry_name(label)
-             for address, label in known_names(with_workers=False).items()
+             # with_english=False for the same reason as with_workers: a name deduced from the
+             # ENGLISH build is not evidence that the console's own body calls what the decomp says
+             # it calls, and feeding it back in would let one deduction anchor the next.
+             for address, label in known_names(with_workers=False, with_english=False).items()
              if entry_name(label) not in MARKERS}
     names.update(rom_map.DECOMP_NAMES)
 

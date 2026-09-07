@@ -25,7 +25,8 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from pokeldn.frlg.rom import leafgreen_twins, rom_map, scrcmd, scrcmd_names, special_names, thumb, worker_names
+from pokeldn.frlg.rom import (english_names, leafgreen_twins, rom_map, scrcmd, scrcmd_names,
+                              special_names, thumb, worker_names)
 from script_read import every_dump
 
 ROM_START, ROM_END = 0x08000000, 0x0A000000
@@ -53,12 +54,15 @@ def tables():
     }
 
 
-def known_names(with_workers=True):
+def known_names(with_workers=True, with_english=True):
     """-> {address: what this project calls it}, from every measured symbol and table.
 
     `with_workers` is False for the generator that WRITES `worker_names`: a name it produced last
     time is not evidence for producing it again, and a table this project can only regenerate from
-    its own output cannot be checked."""
+    its own output cannot be checked. `with_english` is False for the same reason and for one more:
+    a name out of the English build is a DEDUCTION, and it goes in LAST so that it can only fill a
+    hole, never overrule a body this console's own calls named. It is marked in the listing.
+    docs/frlg_english_build.md."""
     out = {}
     for name, value in vars(rom_map).items():
         if name.isupper() and isinstance(value, int) and ROM_START <= value < ROM_END:
@@ -73,6 +77,13 @@ def known_names(with_workers=True):
             continue
         for label, address in entries:
             out.setdefault(address, label)
+    if with_english:
+        for address, name in english_names.NAMES.items():
+            out.setdefault(address & ~1, f"{name} [english]")
+        # Weaker still, and marked as such: the offset was measured either side of the address and
+        # not at it. english_names.BRACKETED says what stands in for that.
+        for address, (name, _offset) in english_names.BRACKETED.items():
+            out.setdefault(address & ~1, f"{name} [english?]")
     return out
 
 
