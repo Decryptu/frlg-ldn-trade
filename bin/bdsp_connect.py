@@ -1101,6 +1101,18 @@ async def main_async(args):
                 # It arrives once a second and does not stop, so answering EVERY one would put 50+
                 # messages in the window for no reason; one answer is the experiment, and what the
                 # console does after it is the result.
+                # A COMPLETED TRADE ENDS THE SECURITY PHASE, AND THE REPEATER HAS TO KNOW.
+                # sp96: our_security_state was still SEND_READYOK after the first trade, so the
+                # repeater kept putting a 0x21 on the wire once a second - and in SELECT_WINDOW a
+                # 0x21 goes to TradeSelectPokeModel$$ReciveReadyOk, which writes targetTradeState.
+                # WaitBoxWindowComplete needs that to be WAIT(2); we held it at SEND_READYOK(5)
+                # for sixty seconds, the second trade could never leave the box window, and the
+                # console told the player WE had cancelled. This message is the end of the phase.
+                if st["our_security_state"] or st["their_security_state"] is not None:
+                    print(f"[cx]   trade complete - security phase over, repeater quiet")
+                    record(rec="security_phase_end", t=now)
+                st["our_security_state"] = 0
+                st["their_security_state"] = None
                 st["return_selects"] += 1
                 if not args.answer_return_select or st["return_selects"] > 1:
                     if st["return_selects"] == 2:
