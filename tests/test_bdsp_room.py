@@ -181,3 +181,15 @@ def test_the_state_a_character_reports_is_an_opendpr_enum():
     # and the neutral answer is the one a request gets until there is a reason to say otherwise
     assert room.build_state() == room.build_fields(room.STATE, room.STATE_NONE, 0)
     assert room.parse(room.build_state())["fields"] == {"state": 0, "isRecruiment": 0}
+
+
+def test_trainer_card_is_seventy_five_blittable_bytes():
+    """`NetDataTranerCardData` has no capture behind it - the layout is opendpr's alone."""
+    card = room.build_trainer_card(fashion_id=3, body_type=1, gender_id=1, trainer_id=41000)
+    parsed = room.parse(card)
+    assert parsed["data_id"] == room.TRAINER_CARD
+    assert parsed["length"] == 75 and not parsed["truncated"]
+    assert parsed["fields"]["fashionId"] == 3
+    assert parsed["fields"]["bodyType"] == 1
+    assert parsed["fields"]["genderid"] == 1
+    assert parsed["fields"]["cardData.tranerId"] == 41000

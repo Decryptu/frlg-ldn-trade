@@ -197,7 +197,12 @@ values are what a player advertising itself for a battle or a trade sends.
 **So one of the two messages the console has been repeating at us for every run of this project is a
 question addressed to us, and nothing had ever answered it.**
 
-### It was answered, and nothing happened
+### It was answered, and nothing happened - because the answer said nothing
+
+**Read the correction below before this section.** The finding is real and the runs were clean; what
+was wrong is the conclusion drawn from them. Both runs answered `StateData{NONE, 0}` - a character
+reporting that it is doing nothing - so the probe measured a well-formed no-op. The `state` byte is
+an enum, and the value that means something is not the one that was sent.
 
 sp63 and sp64 are the same run with one variable moved - the same fifteen joins, the same fourteen
 state requests at the same times, the same walk - and one answered nineteen requests while the other
@@ -238,6 +243,97 @@ Which makes the answer free of invention twice over: `room.build_state()` produc
 the exact five bytes the console broadcasts 853 times, and `room.build_match_wait(False)` produces
 the exact four the console answers itself with. Neither reply is anything the console has not
 already said.
+
+## The character is ours to choose, and the game will talk to her
+
+Everything above stops at "the game draws a body and has no record to hang on it". That reading is
+retired. There **is** a record, it is `OpcManager.CharaData`, we populate it, and once it says the
+right thing the game runs its own Union Room dialogue against it.
+
+### The model is a field in the join message
+
+`OpcManager.CreateCharaData(ANetData<JoinData>)` builds a
+`CharaData{stationIndex, assetName, colorId, avatarId, sexId}` out of the join we already send, and
+`avatarId` is what picks who appears:
+
+    NetJoinData.avatarId  ->  CreateCharaData  ->  CharaData.avatarId
+                          ->  UnionCharacterTable.SheetSheet1{ID, AssetName}
+                          ->  OpLoadCharacter("persons/field/" + assetName)
+
+`GetSexId(id)` and `GetNpcColorId(avatarId)` read the same value. Every run this project had ever
+done sent `avatarId = 8`, which is the whole reason every character it had ever created was the same
+girl. sp69 sent `0` and a boy in a blue cap appeared, with the sex changed as the binary predicts.
+`bin/bdsp_connect.py --join-avatar N`.
+
+### The state byte is what makes a character approachable
+
+`StateData.state` is `OpcState.OnlineState`:
+
+| value | name | value | name |
+|---|---|---|---|
+| 0 | `NONE` | 5 | `RECRUITMENT_RECORD` |
+| 1 | `DIG_FOSILL` | 6 | `RECRUITMENT_GREETINGS` |
+| 2 | `SECRETBASE_ACTION` | 7 | `RECRUITMENT_BALL_DECORATION` |
+| 3 | `RECRUITMENT_BATTLE` | 8 | `COMMUNICATE` |
+| 4 | `RECRUITMENT_TRADE` | | |
+
+`OpcController.ShowEmoticon(OnlineState)` and `GetEmoticonType(state)` read it, and the
+`RECRUITMENT_*` values are what put the speech bubble over a Union Room player advertising what they
+want. sp70 answered the console's standing request with `StateData{RECRUITMENT_TRADE, 1}` and the
+character showed a trade bubble on a retail console.
+
+**This is why the earlier probe read as a dead end.** sp63 and sp64 answered the same request with
+`StateData{NONE, 0}` and nothing happened, and that was written up as "answering does nothing". The
+message was right, the stream was right, the bytes were right, and the payload meant "I am doing
+nothing". A negative result measured with a no-op payload is not a negative result.
+
+### Pressing A on our character is a request, and it blocks on our answer
+
+With the bubble showing, the player walked up and pressed A, and the console sent a message no
+capture in this project had ever held:
+
+    t=37.47  us  ->  64 0003 00 01 04   NetDataTalkReserveResultData{IsCanTalk, IsRecruitment, emoticonStateType}
+    t=37.67  con ->  06 0005 00 01000000  NetDataTalkData{talkOpcSexId: 0, talkState: GREETING}
+    t=80.68  con ->  10 0002 01 04      NetDataTalkCancelEndData{IsRecruitment: 1, emoticonStateType: 4}
+
+`NetDataTalkReserveData` (0x63) is "I want to talk to your character". In sp70 nothing answered it
+and **the player's own character froze until the game was rebooted** - the talk is a
+request/response and the console blocks on ours. sp71 answered with `NetDataTalkReserveResultData`
+(0x64) and the game ran its whole greeting on screen: a Japanese greeting, a name, and an offer to
+trade, ending in "one second!" while it waits. The player can leave it with B; no reboot.
+
+`TalkState` is `{CHECK = 0, GREETING = 1, NONE = 2}`, so the console is parked in `GREETING` waiting
+to be advanced. The messages that would advance it are `NetDataSelectData{index}` (0x08) and
+`NetDataTransitionData{transitionType, isRecruitment}` (0x07). The `NetDataTalkCancelEndData` at the
+end is the B press.
+
+**Two things are UNKNOWN and must not be written down as settled.** `IsCanTalk` was sent as **0** in
+sp71 and the greeting ran anyway, so that field does not mean "refuse" in any way this project has
+established. And the name the game showed is not one we sent - no `NetPlayerNameData` and no trainer
+card went out in that run - so where it comes from is unmeasured.
+
+### The trainer card is the card, not the character
+
+`NetDataTranerCardData` (0x05) is 75 blittable bytes whose first fields are `fashionId`, `bodyType`
+and `genderid`, which reads like appearance and is not. `UnionOpcManager.CreateTranerCard()` builds
+the trainer-card UI - what you see when you look at another player's card - and nothing in it
+touches the field model. sp68 sent one, the console acknowledged it on the first try
+(`landed at seq 21`), and nothing on screen changed. The appearance lives in the join message.
+
+### A walk has to be at the console's own speed, and has to end in the room
+
+Over 80 of the console's own `NetPosData`: one message every 0.410 s spanning 0.935 units, which is
+2.28 units/s. Every run before sp65 sent 0.1 units every 0.35 s - an eighth of that - and the screen
+called it a stutter every time. At the console's own numbers the walk is smooth, confirmed on a
+retail console.
+
+The first run at that speed walked 60 messages, which is **55.8 units** and crosses the whole room:
+the character hit a wall, was pushed back by the game's own collision, moonwalked - facing held at
+the angle we sent while the position kept moving - and left through the far wall out of sight.
+`--room-walk-steps` bounds it; eight steps stops inside the room. Two things fall out of that: the
+game applies collision to a remote character's movement, and it takes our `rot_y` literally rather
+than deriving facing from the direction of travel. The player has no collision against our character
+at all.
 
 ## The pages
 

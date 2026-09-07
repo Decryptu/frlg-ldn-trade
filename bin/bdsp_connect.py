@@ -136,7 +136,7 @@ async def main_async(args):
               "join_acks": 0, "dst_ip": bcast, "dst_var": 0,
               "rel_max_seq": 0, "rel_streams": set(), "rel_control": [],
               "rel_handshaken": False, "rel_acks": 0, "their_position": None, "their_ack_id": 0,
-              "requests": 0, "request_answers": 0, "last_request": None,
+              "requests": 0, "request_answers": 0, "last_request": None, "talk_answers": 0,
               "state_requests": 0}
 
         nonce = int.from_bytes(os.urandom(8), "big")
@@ -313,6 +313,13 @@ async def main_async(args):
                                     st["state_requests"] += 1
                                 if args.answer_requests:
                                     await answer_the_request(g, now, via="reliable")
+                            if (g and g["data_id"] == room.TALK_RESERVE
+                                    and args.answer_talk):
+                                # THE PLAYER PRESSED A ON OUR CHARACTER. sp70 got this message for
+                                # the first time and answered nothing, and the player's own
+                                # character froze until the game was rebooted - the talk is a
+                                # request/response and the console blocks on ours.
+                                await answer_the_talk(now)
                             if args.reliable_auto_ack and st["rel_handshaken"]:
                                 ack = rl.build_ack_message(st["rel_max_seq"] + 1,
                                                            stream_id=d["stream_id"])
@@ -449,6 +456,25 @@ async def main_async(args):
 
             print("[cx] the data probe was never answered; not acking blind")
 
+        async def answer_the_talk(now):
+            """Answer a NetDataTalkReserveData, on the reliable stream it arrived on."""
+            reply = room.build_talk_reserve_result(can_talk=args.can_talk,
+                                                   is_recruitment=args.recruiting,
+                                                   emoticon_state=args.state)
+            seq = st["their_ack_id"]
+            if not seq:
+                record(rec="talk_unanswered_no_seq", t=now)
+                return
+            msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                   | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                   seq, len(reply), lowest_pending=seq) + reply)
+            sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
+                             rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+            st["talk_answers"] += 1
+            print(f"\n[tx] t={now:6.2f} *** IT ASKED TO TALK - answered "
+                  f"NetDataTalkReserveResultData at seq {seq}: {reply.hex(' ')} ***\n")
+            record(rec="talk_answered", t=now, seq=seq, reply=reply.hex())
+
         async def answer_the_request(message, now, via="reliable"):
             """Answer a NetRequestData with the message it names, ON THE PROTOCOL IT ARRIVED ON.
 
@@ -462,7 +488,7 @@ async def main_async(args):
             send, no retransmission - the console repeats the request, so a lost answer costs
             nothing and the next request is another chance.
             """
-            reply = room.answer(message)
+            reply = room.answer(message, state=args.state, is_recruitment=args.recruiting)
             wanted = message["fields"]["RequestDataID"]
             if reply is None:
                 print(f"[tx] t={now:6.2f} it asked for {room.name(wanted)} and this table cannot "
@@ -558,8 +584,16 @@ async def main_async(args):
                 # for. Whatever lands stacks in one place, so the screen shows one avatar rather
                 # than a crowd - and then the movement updates have something unambiguous to move.
                 x0, z0 = here["x"] + 2.0, here["z"]
-                join = room.build_join(x0, 0.0, z0, rot_y=90)
-                print(f"[tx]   {args.room_walk} joins, ALL at ({x0:.2f}, {z0:.2f})")
+                # WHO SHE IS, not where. `OpcManager.CreateCharaData(ANetData<JoinData>)` builds a
+                # CharaData{stationIndex, assetName, colorId, avatarId, sexId} out of THIS message:
+                # avatarId indexes `UnionCharacterTable.SheetSheet1{ID, AssetName}` and the asset
+                # name is what `OpLoadCharacter` loads from "persons/field/". GetSexId and
+                # GetNpcColorId hang off the same value. Every run this project has ever done sent
+                # avatar 8, which is why every character has been the same girl.
+                join = room.build_join(x0, 0.0, z0, rot_y=90,
+                                       avatar_id=args.join_avatar, color_id=args.join_color)
+                print(f"[tx]   {args.room_walk} joins, ALL at ({x0:.2f}, {z0:.2f}), "
+                      f"avatar {args.join_avatar} colour {args.join_color}")
                 for i in range(args.room_walk):
                     seq = st["their_ack_id"]
                     if not seq:
@@ -577,7 +611,11 @@ async def main_async(args):
                         print(f"[tx]     join {i} at seq {seq}")
                     await trio.sleep(0.4)
                 print(f"\n[tx]   --- now moving whatever is standing there, to the RIGHT")
-                for i in range(60):
+                # sp66 WALKED OUT OF THE ROOM. Sixty steps of 0.93 is 55.8 units, so the character
+                # crossed the floor, was pushed back by the game's own collision, moonwalked and
+                # left through the far wall - all of it off the only instrument there is, the
+                # screen. A walk has to END INSIDE THE ROOM to be watched.
+                for i in range(args.room_walk_steps):
                     # AT THE CONSOLE'S OWN SPEED. Measured over 80 of its NetPosData messages, a
                     # real player covers 0.93 units per message every 0.41 s; this used to send
                     # 0.1 units every 0.35 s with the twelve points 0.008 apart, which is a ninth
@@ -593,6 +631,24 @@ async def main_async(args):
                     if i % 15 == 0:
                         print(f"[tx]     pos {i}: ({x:.2f}, {z0:.2f})")
                     await trio.sleep(args.room_walk_period)
+
+                if args.send_card:
+                    # THE PROBE: the game draws a BODY for us and has no record to hang on it -
+                    # no name, no dialogue, the default model. `NetDataTranerCardData` is the
+                    # message that carries what a player LOOKS like (fashionId, bodyType,
+                    # genderid) and no console in this project's 42 captures has ever sent one,
+                    # so there is no template and the layout is opendpr's alone. It goes on the
+                    # RELIABLE stream, which is where a join goes, and it is retransmitted until
+                    # the console's ack covers it - so the capture says whether it LANDED
+                    # separately from whether the screen changed.
+                    card = room.build_trainer_card(fashion_id=args.card_fashion,
+                                                   body_type=args.card_body,
+                                                   gender_id=args.card_gender,
+                                                   trainer_id=args.card_trainer_id)
+                    print(f"\n[tx]   --- TRAINER CARD: fashion {args.card_fashion}, body "
+                          f"{args.card_body}, gender {args.card_gender}, id "
+                          f"{args.card_trainer_id}. WATCH HER APPEARANCE.")
+                    await send_reliable(card, st["their_ack_id"], "trainer-card")
                 return
 
             if args.room_pattern == "move":
@@ -1016,6 +1072,10 @@ def main():
                     help="after the reliable handshake, send N position messages of our own and "
                          "watch the console's screen")
     ap.add_argument("--room-walk-gap", type=float, default=1.0)
+    ap.add_argument("--room-walk-steps", type=int, default=60, metavar="N",
+                    help="position messages in the burst pattern's walk. At the console's own "
+                         "stride, 60 is 55.8 units and leaves the Union Room entirely (sp66); "
+                         "pass 8 for a walk that ends where the screen can still see it")
     ap.add_argument("--room-walk-period", type=float, default=room.POS_PERIOD,
                     help="seconds between position messages in the burst pattern. The default is "
                          "the console's own median gap; pass sp63's 0.35 to reproduce that run")
@@ -1028,6 +1088,35 @@ def main():
                     help="answer the console's NetRequestData with the message it names. It has "
                          "asked for data id 0x23 in every capture since the first join and has "
                          "never been answered; this is the probe, so arm it on its own")
+    ap.add_argument("--answer-talk", action=argparse.BooleanOptionalAction, default=False,
+                    help="answer a NetDataTalkReserveData with a NetDataTalkReserveResultData. "
+                         "sp70 left it unanswered and the player's character froze")
+    ap.add_argument("--can-talk", type=int, default=1, metavar="N",
+                    help="NetDataTalkReserveResultData.IsCanTalk - 1 accepts the talk, 0 refuses "
+                         "it. A refusal is the SAFE probe: it should release the player rather "
+                         "than open a flow we cannot hold up")
+    ap.add_argument("--state", type=int, default=room.STATE_NONE, metavar="N",
+                    help="the OpcState.OnlineState our character reports when the console asks "
+                         "for NetCharacterStateData. 0 NONE is what sp63/sp64 answered with and is "
+                         "a character doing nothing; 3 RECRUITMENT_BATTLE, 4 RECRUITMENT_TRADE, "
+                         "5 RECRUITMENT_RECORD, 6 RECRUITMENT_GREETINGS, 8 COMMUNICATE")
+    ap.add_argument("--recruiting", type=int, default=0, metavar="N",
+                    help="StateData.isRecruiment, the second byte of the same answer")
+    ap.add_argument("--join-avatar", type=int, default=8, metavar="N",
+                    help="NetJoinData.avatarId, which is what picks the MODEL: it indexes "
+                         "UnionCharacterTable and OpLoadCharacter loads that asset name. 8 is what "
+                         "every run before sp69 sent, and is the girl the screen keeps showing")
+    ap.add_argument("--join-color", type=int, default=0, metavar="N",
+                    help="NetJoinData.colorId. The game also derives one from the avatar id "
+                         "(OpcManager.GetNpcColorId), so this may not be the deciding field")
+    ap.add_argument("--send-card", action=argparse.BooleanOptionalAction, default=False,
+                    help="after the walk, send a NetDataTranerCardData for our own station. It is "
+                         "the message that says what a player LOOKS like, and the probe is whether "
+                         "the character the game drew for us changes on screen")
+    ap.add_argument("--card-fashion", type=int, default=3, metavar="N")
+    ap.add_argument("--card-body", type=int, default=1, metavar="N")
+    ap.add_argument("--card-gender", type=int, default=1, metavar="N")
+    ap.add_argument("--card-trainer-id", type=int, default=41000, metavar="N")
     ap.add_argument("--room-pattern", choices=("square", "line", "fixed", "move"), default="square",
                     help="square spawns one avatar per corner; line and fixed ask whether the "
                          "game's idea of identity is the station or the position")

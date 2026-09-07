@@ -58,6 +58,8 @@ STATE = 0x04                      # NetCharacterStateData
 TRAINER_CARD = 0x05               # NetDataTranerCardData
 REQUEST = 0x12                    # NetRequestData - "send me your <data id>"
 MATCH_WAIT = 0x23                 # NetDataIsMatchWaitData
+TALK_RESERVE = 0x63               # NetDataTalkReserveData - "I want to talk to your character"
+TALK_RESERVE_RESULT = 0x64        # NetDataTalkReserveResultData - and the answer that unblocks it
 PLAYER_NAME = 0x42                # NetPlayerNameData - a string, so the layout is NOT known
 
 JOIN_BODY_SIZE = 17
@@ -193,6 +195,29 @@ def pos_span(start, end, rot_y, points=POS_POINTS):
     return [(x0 + (x1 - x0) * i / last, z0 + (z1 - z0) * i / last, rot_y) for i in range(points)]
 
 
+def build_trainer_card(fashion_id=0, body_type=0, gender_id=0, lang_id=2, trainer_rank=1,
+                       trainer_id=0, money=0, zukan_count=0, play_time_hour=1, play_time_minute=0):
+    """`NetDataTranerCardData`: 75 blittable bytes of appearance and trainer card.
+
+    NO CONSOLE HAS EVER SENT ONE in this project's 42 captures - the only game messages any capture
+    holds are 0x01, 0x04, 0x12 and 0x23 - so there is no template and every byte here comes from
+    opendpr's field list rather than from the wire. The first four fields are the ones the screen
+    can answer: fashionId, bodyType, genderid and langId are what an avatar LOOKS like.
+    `docs/bdsp.md`.
+    """
+    return build_fields(TRAINER_CARD,
+                        fashion_id & 0xFF, body_type & 0xFF, gender_id & 0xFF, lang_id & 0xFF,
+                        trainer_rank & 0xFF,
+                        0,                                  # cardData.startTime, a long
+                        trainer_id & 0xFFFFFFFF, money & 0xFFFFFFFF, zukan_count & 0xFFFFFFFF,
+                        0, 0, 0, 0, 0,                      # style/beatiful/cute/clever/strong rank
+                        0, 0, 0, 0,                         # the four renshou streaks
+                        0,                                  # clearTime
+                        0,                                  # digFossilPlayCount, a short
+                        play_time_hour & 0xFFFF, play_time_minute & 0xFFFF,
+                        0, 0, 0, 0)                         # tagIndex, isZukanGet, cooking, statues
+
+
 def build_request(requested_id):
     """"Send me your <data id>." `RequestData.RequestDataID` is itself one of these ids."""
     return build_fields(REQUEST, requested_id & 0xFF)
@@ -232,16 +257,39 @@ def build_state(state=STATE_NONE, is_recruitment=0):
     return build_fields(STATE, state & 0xFF, is_recruitment & 0xFF)
 
 
+def build_talk_reserve_result(can_talk=1, is_recruitment=1, emoticon_state=STATE_NONE):
+    """`NetDataTalkReserveResultData`: the answer to a console asking to talk to our character.
+
+    sp70 IS WHERE THIS CAME FROM. A character reporting `StateData{RECRUITMENT_TRADE, 1}` showed a
+    speech bubble, the player pressed A on him, and the console sent `63 00 01 00` - a
+    `NetDataTalkReserveData`, a message no capture in this project had ever held. Nothing answered
+    it and THE PLAYER'S OWN CHARACTER FROZE until the game was rebooted: the talk is a
+    request/response and the console waits on ours.
+
+    `IsCanTalk` is the field that decides it. `emoticonStateType` is an `OpcState.OnlineState`,
+    the same enum `build_state` takes.
+    """
+    return build_fields(TALK_RESERVE_RESULT, can_talk & 0xFF, is_recruitment & 0xFF,
+                        emoticon_state & 0xFF)
+
+
 def build_emotion(emotion_id):
     return build_fields(EMOTION, emotion_id & 0xFF)
 
 
-def answer(message):
+def answer(message, state=STATE_NONE, is_recruitment=0):
     """-> the reply a NetRequestData asks for, when this module can build one, else None.
 
     The console has been asking for 0x23 since the first join and has never been answered. An
     answer is buildable whenever the requested id has a layout; a request for an OPAQUE one is
     named in the return so a caller can say what it could not answer.
+
+    THE STATE IS THE PART THAT MEANS SOMETHING. sp63 and sp64 answered the console's request for
+    0x04 and NOTHING CHANGED on screen, which was written down as "answering does nothing" - but
+    both answered `StateData{NONE, 0}`, which is the character saying it is doing nothing. `state`
+    is `OpcState.OnlineState`, and the RECRUITMENT_* values are what a Union Room player showing a
+    speech bubble is in: `OpcController.ShowEmoticon(OnlineState)` and `GetEmoticonType(state)`
+    both read it. A negative result measured with a no-op payload is not a negative result.
     """
     if message.get("data_id") != REQUEST or not message.get("fields"):
         return None
@@ -249,7 +297,7 @@ def answer(message):
     if wanted == MATCH_WAIT:
         return build_match_wait(False)
     if wanted == STATE:
-        return build_state()
+        return build_state(state, is_recruitment)
     if layout(wanted) is None:
         return None
     return build(wanted, bytes(struct.calcsize(layout(wanted))))
