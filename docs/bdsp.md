@@ -529,17 +529,40 @@ the bytes that went out are not the bytes that came in. The console re-checksumm
 `encrypt` did - and it took the result through `check-ok`, the security phase and `ReplacePoke`
 without complaint. **So a PB8 this project assembles is accepted into a retail save.**
 
-**But the player almost certainly saw 'Nosferapti'.** The name field is only drawn when
-`IsNicknamed` - IV32 bit 31, at 0x8C - is set, and the template had it clear, so sp92 changed a
-string the game does not read. A PB8 always carries a name, the species name if it was never
-renamed, which is why this is easy to get wrong. `build_from` sets the flag with the nickname now.
-The bytes landed; a *visible* edit landing is still untested, and it is one run away.
+**The name field is only drawn when `IsNicknamed` - IV32 bit 31, at 0x8C - is set**, and sp82's
+template had it clear, so sp92 sent a string with no flag to enable it. `build_from` sets the flag
+with the nickname now. But the console had already dealt with it: see the round trip below.
 
 What the console offered is a separate fact and a duller one: sp82, sp91 and sp92's captures share
 a sha1, differ in zero of 328 bytes and decode to pid 2329222868 - the player picked the same Zubat
 out of the same box three times. **It is not a round trip**; nothing we sent has ever come back to
 us. Whether that mon can still be offered now that sp92 traded it away is the cheap thing to check
 on the next run.
+
+#### The round trip: the console stores a traded Pokemon verbatim, and fixes its flag
+
+sp93 is the run that closes this, because the player offered back the Zubat sp92 had given them.
+`scratchpad/sp92_sent.pb8` is what we put on the air, reconstructed exactly; `their_poke.pb8` is
+what came out of their save two runs later. **Two bytes differ in the whole 328:**
+
+    0x08F   14 -> 94    IV32 bit 31, IsNicknamed: clear -> SET
+    0x007   2b -> ab    the checksum at 0x06, following that change
+
+**The console set `IsNicknamed` itself.** We sent 'PKCAMP' with the flag clear and the game turned
+it on. The name STRING is untouched - still our six characters, not something a player typed - so
+this is the game normalising a Pokemon on receipt, not a rename at a Name Rater. sp92's edit was
+therefore visible on the player's screen after all. UNKNOWN whether it sets the flag on every
+received Pokemon or only when the name differs from the species name; one run with a name equal to
+the species name separates those.
+
+**Everything else survived byte for byte.** 326 of 328 unchanged: not the handler, not friendship,
+not the met date or location, not the moves or PP. A trade in BDSP stores what it is given. Note
+the one caveat before generalising - the receiving player here IS the original trainer, `ot_name`
+'Gurvan' and `current_handler` 0, so this run cannot say what the game writes when a Pokemon
+reaches someone who is *not* its OT. That is the case the handler fields exist for.
+
+**And the save window is reproducible.** WAIT_READYOK to the first `NetDataReturnSelectData` was
+28.9 s in sp92 and 28.3 s in sp93. Two completed trades, same shape.
 
 ### The disconnect penalty, and what it proves
 
