@@ -11,8 +11,13 @@ sweep. If raw fails, that is a finding about the reading, not a reason to try pa
 
 THE LOCAL COMMUNICATION ID IS NOT KNOWN. It is filled at runtime from .bss rather than a literal,
 so this scans and reports EVERY network it sees and joins by --comm-id once you have read it off
-one run. `--scan-only` is the whole first hardware step: put the console on the screen under test
-and see what it advertises. docs/swsh.md.
+one run.
+
+POINT THE FIRST SCAN AT A SCREEN WHERE THE CONSOLE HOSTS - a Link Trade over local communication.
+The Mystery Gift local-wireless screen reads like a RECEIVER: the game's own French text has
+"Recherche de cadeau en cours..." and "Aucun cadeau n'a ete trouve", so on that screen the console
+is scanning and has no advertisement for us to read. The comm id is per application, so the id read
+off any local-wireless feature is the one the gift path uses. docs/swsh.md.
 """
 import argparse
 import json

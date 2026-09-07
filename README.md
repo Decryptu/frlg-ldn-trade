@@ -371,9 +371,14 @@ Sword/Shield's passphrase is read out of the game rather than taken from a table
 at runtime - so the first run is a scan that reports every network on the air:
 
 ```bash
-# on the console: Mystery Gift -> receive by local wireless, then
+# on the console: Y-Comm -> Link Trade over LOCAL communication, which puts it on the air
 sudo -E ./.venv/bin/python bin/swsh_join.py --scan-only
 ```
+
+Point the first scan at a screen where the console **hosts**. On the Mystery Gift local-wireless
+screen it looks like a receiver — the game's own text there is "Recherche de cadeau en cours…" and
+"Aucun cadeau n'a été trouvé" — so it is scanning and has nothing to advertise. The comm id is per
+application, so the id read off any local-wireless feature is the one the gift path uses.
 
 Everything each advertisement carries is written to `scratchpad/swsh_net_facts.json`. Once the id is
 known, `--comm-id <hex>` joins it. Above LDN there is nothing yet: Sword/Shield's Pia header carries

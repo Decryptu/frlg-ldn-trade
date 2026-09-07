@@ -128,6 +128,32 @@ The game also counts what it received by channel: the play-record keys are `fush
 `fushigi_serial` and **`fushigi_p2p`**, sitting beside `yy_battle_single_p2p` / `_net` in the same
 table. A record key per channel is a channel the game expects to use.
 
+And the menu is not a developer leftover - it is a line the player reads, in their own language.
+`/bin/message/French/common/mystery.dat` in the base game's RomFS, decoded, gives the whole receive
+menu:
+
+| line | text |
+|---|---|
+| 63 | `Via Internet` |
+| 64 | `Via un code ou mot de passe` |
+| **69** | **`Via communication sans fil locale`** |
+| 65 | `Voir vos Cadeaux Mystère` |
+
+with the top menu above it at 72-75 (`Recevoir un Cadeau Mystère`, the Wild Area news, the Poké Ball
+Plus, the Battle Stadium rewards).
+
+**DEDUCTION: on that screen the console SEARCHES, so a distributor hosts and we would be the host.**
+Line 42 is `Communication sans fil locale activée.`, exactly parallel to line 39's
+`Connexion à Internet activée.`; line 9 is `Recherche de cadeau en cours...` and line 11
+`Aucun cadeau n'a été trouvé.` That is a receiver scanning, not one advertising - which means
+`--scan-only` seeing nothing on that screen is the expected result and not a failure.
+
+The archive is the Gen 6/7/8 message container and `scratchpad/gfl_text.py` reads it. Its key was
+solved out of the file rather than looked up: every line ends in a `0x0000` terminator, so rotating
+the last ciphertext halfword back by three per character gives that line's starting key, and the
+values across lines came out an arithmetic sequence - `0x7C89 + line * 0x2983`, rotating left by 3
+within a line.
+
 UNKNOWN: what `StateReceiveLocal` actually speaks. **There is no static call path** from the
 Mystery Gift app to the LDN session setup - checked over the whole app to depth 10 with a
 function-level call graph. That is not evidence the branch is dead: the game reaches its network
@@ -177,6 +203,11 @@ the first run is a scan that writes every advertisement it sees to `scratchpad/s
 and names the ones this project already knows.
 
     sudo -E ./.venv/bin/python bin/swsh_join.py --scan-only
+
+**Point it at a screen where the console HOSTS, not at the Mystery Gift one.** A Link Trade over
+local communication puts the console on the air; the Mystery Gift local screen looks like a receiver
+searching, and a searching station has no advertisement to read. The comm id is per application, so
+the id read off any local-wireless feature is the id the gift path uses too.
 
 `--pw-mode` defaults to `raw` rather than to BDSP's sweep of readings, because the length here is an
 instruction (`mov w2, #0x40`) rather than the length of a wiki string. If raw fails, the reading is
