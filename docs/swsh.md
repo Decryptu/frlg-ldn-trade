@@ -195,6 +195,23 @@ names the middleware:
 through a GOT slot filled by a JUMP_SLOT relocation naming the symbol, so the slot is the thing to
 cross-reference, and its one PLT stub is the thing to count callers of.
 
+## A gift is a multiple of 0x2D0 bytes
+
+FACT, and it is the game checking rather than us measuring. At `0x00ff22d8` the Mystery Gift code
+divides a received length by **0x2D0** - as a reciprocal multiply, `umulh` then `lsr #7` - takes the
+remainder with `msub`, and **branches to the error path if it is non-zero**:
+
+    0x00ff22e4  umulh x8, x21, x8        ; x21 = the length
+    0x00ff22e8  lsr   x28, x8, #7        ; x28 = length / 0x2d0, the record COUNT
+    0x00ff22ec  mov   w8, #0x2d0
+    0x00ff22f0  msub  x8, x28, x8, x21   ; the remainder
+    0x00ff22f4  cbnz  x8, #0xff272c      ; not a whole number of records -> refuse
+
+So a gift payload is *n* records of 0x2D0 bytes and nothing else will be accepted. The same app
+allocates a 0x2D0 object at `0x00feba7c`, which is one record. 0x2D0 is the size PKHeX gives a Gen 8
+Wonder Card, so the two agree - but the number here came out of the game's own length check, which
+is the one that matters when we are the side building the payload.
+
 ## Taking a seat
 
 `bin/swsh_join.py` scans, reports and associates. It carries the passphrase above and nothing else
