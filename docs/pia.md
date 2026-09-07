@@ -137,10 +137,35 @@ the shift. `pokeldn/ldn/station_protocol.py` is the 5.27 reading (constant id at
 0xB, count at 0xF) and sending it at a version-4 console would put every field one byte early. A
 protocol number that matches across versions says nothing about the message that travels on it.
 
-UNKNOWN, and what a version-4 connection request still needs before it can be built: the width of a
-protocol entry, and the station location that follows the list. `0x0185c5c0` is NOT it - that walks
-a 32-entry table of `{u8, u16 big-endian, u64 big-endian, u64 big-endian}`, 19 bytes each with a
-minimum message size of 0x260, which is a station table rather than a request.
+There is no protocol list at all: everything from 0x11 is the sender's STATION LOCATION, written by
+one serializer call capped at 0x40 bytes, and the message is `0x11 + that`. The location is 5.27's
+unchanged - Sword's deserializer at `0x0185ee20` stores to +0x48, +0x60, +0x68, +0x70, +0x74 and
++0x78..+0x7b in the same order, and its address-size byte still admits only 2, 6 and 18
+(`(1 << size) & 0x40044`). So `station_protocol.station_location` builds one for version 4 unchanged,
+and the two bytes at [1] and [0x10] are a station location's own **nat flags** and **nat location**.
+
+### The platform byte is an instrument
+
+The handler checks the platform at `0x017c62e8`, ABOVE every other check, and a value that is not 9
+is not dropped - it tail-calls the connection-response sender at `0x017c6c30`, which allocates 17
+bytes and writes `[0] = 2`, `[1] = the result code`, `[2] = 9`, `[3] = 0`. Everything below the
+platform byte is silence on mismatch, so a deliberately wrong platform separates "our packet never
+reached the handler" from "it reached it and failed a later check".
+
+FACT, sw15: sent with platform 4 and otherwise unchanged, a retail Sword answered
+
+    02 02 09 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+
+17 bytes, connection response, result 2 (version too low), platform 9 - the sender's own reading
+back byte for byte, including the length. That is the first word a Sword has said to us above the
+Local Protocol, and it proves the whole path: our version-4 packet decrypts, its 24-byte message
+header is walked, protocol 0x14 dispatches, and the handler reads our byte at offset 2.
+
+WHAT IS STILL SILENT is the real request, platform 9: 96 of them across sw13 and sw14 (nat flags
+0-15 x nat location 0-3, four message-flag readings, two station bytes) drew nothing. The checks
+below the platform byte, in the order the handler makes them, are the flag at [3], the target
+constant id, the target variable id, the location parse, then the nat pair - and one of those is
+what a run has to find next.
 
 ## Two families of session key
 

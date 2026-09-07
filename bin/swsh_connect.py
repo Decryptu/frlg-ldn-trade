@@ -36,6 +36,8 @@ from pokeldn.ldn import local_protocol as lp, pia4, station4, station_protocol a
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.swsh import COMM_ID, PASSPHRASE, PIA_PORT, packet_iv, session_keys
 
+SCENE_ACCEPTING = 60001           # what sw01 recorded; kept for the log line, not a gate
+
 
 def _expand(spec):
     """"0-15" or "5,1,0" -> a list of strings, so a sweep and a single value are the same flag."""
@@ -70,13 +72,15 @@ def make_socket(ifname):
     return s
 
 
-def wrap(keys, our_mac, our_constant, nonce8, payload, protocol, station, port=0):
+def wrap(keys, our_mac, our_constant, nonce8, payload, protocol, station, port=0,
+         message_flags=pia4.MESSAGE_FLAGS):
     """A version-4 packet carrying one message, framed the way the console frames its own.
 
     The station byte goes in the header AND in the IV's source-id byte - the coupling 5.27 makes
     and the reason `--station` moves one knob rather than two.
     """
-    body = pia4.build_message(payload, protocol=protocol, source=our_constant, port=port)
+    body = pia4.build_message(payload, protocol=protocol, source=our_constant, port=port,
+                              message_flags=message_flags)
     iv = packet_iv(keys, our_mac, nonce8, source_id=station)
     return pia4.build_packet(keys.session_key, iv, body, station=station, nonce8=nonce8)
 
@@ -91,7 +95,7 @@ async def main_async(args):
     want = int(args.comm_id, 16) if args.comm_id else COMM_ID
     for n in nets:
         print(f"[cx] saw comm_id=0x{n.local_communication_id:016x} ch={n.channel} "
-              f"{n.num_participants}/{n.max_participants}")
+              f"scene={n.scene_id} {n.num_participants}/{n.max_participants}")
     net = next((n for n in nets if n.local_communication_id == want), None)
     if net is None:
         print("[cx] target not on the air - is the console on Y-Comm -> Link Trade -> local RIGHT "
@@ -101,7 +105,11 @@ async def main_async(args):
         print("[cx] the session is FULL, no seat to take")
         return 5
     keys = session_keys(net)
-    print(f"[cx] target ssid={net.ssid.hex()} ch={net.channel} app_version={net.app_version}")
+    print(f"[cx] target ssid={net.ssid.hex()} ch={net.channel} scene={net.scene_id} "
+          f"app_version={net.app_version}")
+    # The scene id is RECORDED, not acted on. sw01/sw02/sw03 associated against 60001 and a scan
+    # during the sw04-sw09 failures showed 65535, but no failing run's own advertisement was ever
+    # read, so what the field means here is UNKNOWN and nothing branches on it.
     print(f"[cx] {keys}")
 
     param = ldn.ConnectNetworkParam()
@@ -117,7 +125,7 @@ async def main_async(args):
             cap.flush()
 
     record(rec="target", comm_id=net.local_communication_id, channel=net.channel,
-           ssid=net.ssid.hex(),
+           scene_id=net.scene_id, ssid=net.ssid.hex(),
            application_data=bytes(getattr(net, "application_data", b"") or b"").hex(),
            session_key=keys.session_key.hex(), session_param=keys.session_param)
 
@@ -224,6 +232,7 @@ async def main_async(args):
                       "Nothing to answer; holding so the capture says so.")
                 return
             dst = host_ip if args.unicast else bcast
+            stopped = False
             for station in [int(s, 0) for s in args.station_sweep.split(",")]:
                 st["phase"], st["station"] = f"ack:station={station}", station
                 print(f"\n[tx] acking seq={st['seq'] + args.seq_delta} "
@@ -245,7 +254,12 @@ async def main_async(args):
                         print(f"\n[tx] *** THE REBROADCAST STOPPED *** ({quiet:.2f}s quiet, "
                               f"station byte {station}, {st['acks']} acks sent)")
                         st["phase"] = f"stopped:station={station}"
-                        return
+                        stopped = True
+                        break
+                if stopped:
+                    break                 # the ack landed; do NOT leave the sender, the sweep is
+                                          # what the association was spent on. sw10 returned here
+                                          # and threw a working seat away.
                 print(f"[tx] station byte {station}: the rebroadcast did not stop "
                       f"({st['updates']} update sessions so far)")
             if args.connect:
@@ -270,25 +284,38 @@ async def main_async(args):
             print(f"\n[tx] connection requests on 0x14 -> {host_ip}: target constant "
                   f"{target_constant:#018x} variable {target_var:#010x}, our variable id "
                   f"{variable_id:#010x}")
-            print(f"[tx] sweeping nat flags {flags} x nat location {locs} "
-                  f"({len(flags) * len(locs)} requests, {args.request_gap:.2f}s apart)")
-            for nl in locs:
-                for nf in flags:
-                    st["phase"] = f"connect:flags={nf},location={nl}"
-                    payload = station4.build_connection_request(
-                        target_constant, target_var, location, nat_flags=nf, nat_location=nl,
-                        with_variable_id=not args.no_variable_id)
-                    pkt = wrap(keys, our_mac, our_constant, next_nonce(), payload,
-                               station4.PROTOCOL, args.connect_station)
-                    sock.sendto(pkt, (host_ip, PIA_PORT))
-                    st["requests"] += 1
-                    record(rec="tx_request", t=time.monotonic() - t0, nat_flags=nf,
-                           nat_location=nl, request=payload.hex())
-                    await trio.sleep(args.request_gap)
-                    if st["station_replies"]:
-                        print(f"[tx] a 0x14 reply arrived at flags={nf} location={nl} - stopping "
-                              f"the sweep so the capture is unambiguous")
-                        return
+            print(f"[tx] sweeping platform {args.request_platform} x "
+                  f"message flags {args.request_flags} x station "
+                  f"{args.connect_station} x nat flags {flags} x nat location {locs}, "
+                  f"{args.request_gap:.2f}s apart")
+            platforms = [int(x, 0) for x in _expand(args.request_platform)]
+            framings = [int(x, 0) for x in _expand(args.request_flags)]
+            stations = [int(x, 0) for x in _expand(args.connect_station)]
+            for mf in framings:
+                for stn in stations:
+                    for pf in platforms:
+                      for nl in locs:
+                        for nf in flags:
+                            st["phase"] = (f"connect:platform={pf},msgflags={mf:#04x},"
+                                           f"station={stn},nat={nf}/{nl}")
+                            payload = station4.build_connection_request(
+                                target_constant, target_var, location, nat_flags=nf,
+                                nat_location=nl, platform=pf,
+                                with_variable_id=not args.no_variable_id)
+                            pkt = wrap(keys, our_mac, our_constant, next_nonce(), payload,
+                                       station4.PROTOCOL, stn, message_flags=mf)
+                            sock.sendto(pkt, (host_ip if args.request_unicast else bcast,
+                                              PIA_PORT))
+                            st["requests"] += 1
+                            record(rec="tx_request", t=time.monotonic() - t0, nat_flags=nf,
+                                   nat_location=nl, message_flags=mf, station=stn, platform=pf,
+                                   request=payload.hex())
+                            await trio.sleep(args.request_gap)
+                            if st["station_replies"]:
+                                print(f"[tx] a 0x14 reply arrived at platform={pf} "
+                                      f"msgflags={mf:#04x} station={stn} nat={nf}/{nl} - stopping "
+                                      f"the sweep so the capture is unambiguous")
+                                return
             print(f"[tx] {st['requests']} requests, no 0x14 reply. Silence is what a wrong "
                   f"constant id, a wrong count or a malformed location all look like.")
 
@@ -343,8 +370,20 @@ def build_parser():
     ap.add_argument("--nat-location", default="0-3", help="values for byte [0x10]")
     ap.add_argument("--request-gap", type=float, default=0.25,
                     help="seconds between requests; the console answered BDSP's in 40 ms")
-    ap.add_argument("--connect-station", type=int, default=0,
-                    help="the header byte at 0x05 for the requests, and their IV source id")
+    ap.add_argument("--connect-station", default="0",
+                    help="values for the header byte at 0x05 on the requests, and their IV source "
+                         "id; list or LO-HI")
+    ap.add_argument("--request-platform", default="9",
+                    help="values for the platform byte at [2]. 9 is the real one; ANY other value "
+                         "is answered with a connection response rather than dropped, which is the "
+                         "probe for whether our message reaches the 0x14 handler at all")
+    ap.add_argument("--request-flags", default="0x09",
+                    help="values for the MESSAGE flags byte. 0x09 is what the console puts on its "
+                         "own Local Protocol messages; BDSP's station requests carry 0x11")
+    ap.add_argument("--request-unicast", action="store_true", default=True,
+                    help="send the requests to the console rather than the broadcast address")
+    ap.add_argument("--request-broadcast", dest="request_unicast", action="store_false",
+                    help="send them to the broadcast address instead")
     ap.add_argument("--src-var", type=lambda s: int(s, 0), default=None,
                     help="our own station variable id; fresh random when omitted, because a reused "
                          "one is 'already one of my stations' on BDSP")

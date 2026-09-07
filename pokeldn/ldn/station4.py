@@ -69,7 +69,8 @@ __all__ = ["PROTOCOL", "PLATFORM_SWITCH", "HEADER_SIZE", "OFF_NAT_FLAGS", "OFF_P
 
 
 def build_connection_request(target_constant_id, target_variable_id, location,
-                             nat_flags=5, nat_location=1, with_variable_id=True, relay=False):
+                             nat_flags=5, nat_location=1, with_variable_id=True, relay=False,
+                             platform=PLATFORM_SWITCH):
     """One version-4 connection request. `location` is `station_protocol.station_location`.
 
     `nat_flags` goes to [1] and `nat_location` to [0x10] - the pair the console compares against its
@@ -83,7 +84,7 @@ def build_connection_request(target_constant_id, target_variable_id, location,
     out = bytearray(HEADER_SIZE)
     out[0] = RELAY_CONNECTION_REQUEST if relay else CONNECTION_REQUEST
     out[OFF_NAT_FLAGS] = nat_flags & 0xFF
-    out[OFF_PLATFORM] = PLATFORM_SWITCH
+    out[OFF_PLATFORM] = platform & 0xFF
     out[OFF_HAS_VARIABLE_ID] = 1 if with_variable_id else 0
     struct.pack_into(">Q", out, OFF_CONSTANT_ID, target_constant_id & ((1 << 64) - 1))
     struct.pack_into(">I", out, OFF_VARIABLE_ID, target_variable_id & 0xFFFFFFFF)
