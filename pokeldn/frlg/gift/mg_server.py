@@ -526,7 +526,7 @@ class MysteryGiftServer:
     def __init__(self, card=None, ram_script=None, *, news=None, stamp=None,
                  activation_script=None, install_activation_script=None, trainer=None,
                  mevent=None, buffer_code=None, buffer_expect=None, buffer_dump_size=None,
-                 buffer_dump_blocks=1, buffer_dump_address=0,
+                 buffer_dump_blocks=1, buffer_dump_address=0, buffer_dump_addresses=(),
                  buffer_decode=None,
                  buffer_success_message=None, buffer_failure_message=None,
                  questionnaire=None, denied_message=None, expect_console=None,
@@ -626,6 +626,11 @@ class MysteryGiftServer:
         # memory-dump-multi uses either; every other payload answers once.
         self.buffer_dump_blocks = int(buffer_dump_blocks)
         self.buffer_dump_address = int(buffer_dump_address)
+        # memory-dump-scatter carries a TABLE of bases, so a block's address is the table's entry
+        # and not `first + n * size`. bs127 printed the multi-dump arithmetic against a scattered
+        # payload and named 0x08083400 for bytes that came off 0x0847DC00: the dump file and its
+        # placement were right, the line above them was not.
+        self.buffer_dump_addresses = tuple(int(a) for a in buffer_dump_addresses)
         if not 1 <= self.buffer_dump_blocks <= mg_script.MAX_DUMP_BLOCKS:
             raise MysteryGiftServerError(
                 f"a session carries 1..{mg_script.MAX_DUMP_BLOCKS} blocks, got "
@@ -988,6 +993,14 @@ class MysteryGiftServer:
         return expected, 0xFFFFFF00, ("the trainer id from the game data, low byte excluded: "
                                       "a 7-character player name overwrote it")
 
+    def block_address(self, index):
+        """-> where block `index` was read from: the scatter table's entry, else base + n * size."""
+        if self.buffer_dump_addresses:
+            if index < len(self.buffer_dump_addresses):
+                return self.buffer_dump_addresses[index]
+            return self.buffer_dump_addresses[-1]
+        return self.buffer_dump_address + index * (self.buffer_dump_size or 0)
+
     def _do_svr_read_buffer_dump(self):
         """What came back is the region itself, not the 4-byte return channel.
 
@@ -1010,7 +1023,7 @@ class MysteryGiftServer:
         if self.buffer_dump_blocks > 1:
             self.info(f"Buffer script dump: block {len(self.buffer_blocks)}"
                       f"/{self.buffer_dump_blocks}, {len(block)} bytes, "
-                      f"0x{self.buffer_dump_address + (len(self.buffer_blocks) - 1) * self.buffer_dump_size:08X}")
+                      f"0x{self.block_address(len(self.buffer_blocks) - 1):08X}")
             if len(self.buffer_blocks) < self.buffer_dump_blocks:
                 return
         head = self.buffer_dump[:16].hex()

@@ -223,9 +223,11 @@ def test_the_leafgreen_delta_is_four_measured_segments_and_refuses_the_gaps():
                                (0x0815A3F4, 0x0815A3D0), (0x0815A630, 0x0815A60C)):
         assert rom_map.leafgreen_guess(firered) == leafgreen
     # A boundary is known to be in here and its position is not. Session 42's paired call sites
-    # moved all three brackets inward - 0x0807A000 and 0x08142000 are INSIDE a measured segment
-    # now - so these are three addresses that are still in a gap.
-    for gap in (0x0807C000, 0x080D8000, 0x08145000):
+    # moved all three brackets inward, and session 48's paired scattered blocks closed the five code
+    # boundaries to their divergent region - 31 bytes at the narrowest. What is left to refuse is
+    # that region itself, where the two cartridges hold DIFFERENT bytes and no delta describes
+    # anything, plus the two spans in the graphics that do not correspond at all.
+    for gap in (0x0807D000, 0x080DE300, 0x08148100, 0x08251D9A, 0x083B7D00, 0x08440000, 0x08460000):
         with pytest.raises(ValueError, match="gap between measured segments"):
             rom_map.leafgreen_guess(gap)
 

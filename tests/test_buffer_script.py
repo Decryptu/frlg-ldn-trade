@@ -2678,6 +2678,30 @@ def test_a_scattered_dump_carries_one_block_per_address_and_says_so():
                                       dump_address=0x08000000, dump_addresses=(0x08000000,))
 
 
+def test_a_scattered_block_is_logged_at_the_address_it_came_from():
+    """bs127 read 27 scattered kilobytes and the progress line named `first + n * 1024` for every
+    one of them - so the last block, which came off 0x0847DC00, was announced as 0x08083400. The
+    dump file and its placement were right and only the line was wrong, which is the kind of wrong
+    that is read back a session later as an address this project holds bytes for."""
+    addresses = (0x0807CC00, 0x080DE000, 0x0847DC00)
+    payload = configmod.BufferScriptPayload(
+        script=buffer_script.MEMORY_DUMP_SCATTER, dump_addresses=addresses)
+    distribution = payload.build_distribution()
+    assert distribution.buffer_dump_addresses == addresses
+    server = mg_server.MysteryGiftServer(
+        None, None, buffer_code=distribution.buffer_code,
+        buffer_dump_size=distribution.buffer_dump_size,
+        buffer_dump_blocks=distribution.buffer_dump_blocks,
+        buffer_dump_address=distribution.buffer_dump_address,
+        buffer_dump_addresses=distribution.buffer_dump_addresses)
+    assert [server.block_address(i) for i in range(3)] == list(addresses)
+    # memory-dump-multi is the other shape and keeps the arithmetic it always had.
+    contiguous = mg_server.MysteryGiftServer(
+        None, None, buffer_code=distribution.buffer_code, buffer_dump_size=1024,
+        buffer_dump_blocks=3, buffer_dump_address=0x08000000)
+    assert [contiguous.block_address(i) for i in range(3)] == [0x08000000, 0x08000400, 0x08000800]
+
+
 def test_a_scattered_dump_refuses_more_blocks_than_the_table_holds():
     too_many = tuple(0x08000000 + 0x1000 * i
                      for i in range(buffer_script.DUMP_SCATTER_TABLE_SLOTS + 1))

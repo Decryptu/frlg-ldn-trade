@@ -156,7 +156,11 @@ def test_a_leafgreen_view_of_a_table_is_moved_to_where_leafgreen_keeps_it():
     from rom_functions import deduplicate, known_names, on_leafgreen, tables
     entries = deduplicate(tables()["specials"])
     moved, names = on_leafgreen(entries, known_names())
-    assert len(moved) < len(entries)                     # the ones inside a boundary are gone
+    # Session 48: EVERY special moves now. The boundaries used to be kilobytes wide and swallowed
+    # entries; measured to between 31 and 644 bytes, not one of the 272 falls inside one.
+    assert len(moved) == len(entries)
+    with pytest.raises(ValueError, match="gap between measured segments"):
+        rom_map.leafgreen_guess(0x08148100)               # inside the -0x28 -> -0x24 divergence
     by_label = dict(moved)
     # Below the split the two cartridges agree, and above it the entry moves by its own delta.
     assert by_label["CalculatePlayerPartyCount [131]"] == 0x08044338

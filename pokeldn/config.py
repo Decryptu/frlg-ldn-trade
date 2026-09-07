@@ -819,6 +819,7 @@ class BufferScriptPayload:
             buffer_dump_blocks=self.dump_blocks,
             buffer_dump_address=(self.dump_address or
                                  (self.dump_addresses[0] if self.dump_addresses else 0)),
+            buffer_dump_addresses=tuple(self.dump_addresses or ()),
             buffer_decode=(self.script if self.script in buffer_script.DECODED_SCRIPTS
                            else None))
 

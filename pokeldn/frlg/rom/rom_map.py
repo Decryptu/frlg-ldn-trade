@@ -532,25 +532,33 @@ LEAFGREEN = {
 # upward on faith and found nothing, which is what exposed them.
 LEAFGREEN_DELTA_SEGMENTS = (
     # (low, high, delta, evidence): the delta is measured at both ends of each span
-    (0x08000000, 0x0807AF04, 0x00, "lg176b vs bs68b, 42 paired hits; lg184-lg187 carried it up "
-     "from 0x0805359C with four needles from bs92/bs103/bs105, lg189 the control; session 42 "
-     "carried it from 0x08071FC4 with 1225 paired call sites"),
-    (0x0807D238, 0x080D4404, -0x2C, "lg176b vs bs68b, 2 paired hits; lg161 vs bs13, 4 more; "
-     "session 42 carried the top up from 0x080CE36C, 283 paired call sites"),
-    (0x080EBA14, 0x08143604, -0x28, "lg176b vs bs68b, 9 paired hits; lg161 vs bs13, 5 more; "
-     "session 42 carried the top up from 0x0813E8CC, 36 paired call sites"),
-    (0x081484CC, 0x0824CDFC, -0x24, "lg176b vs bs68b, 3 paired hits; lg160, lg161-vs-bs13, lg165; "
-     "session 42 carried the bottom down from 0x08148C74, 24 paired call sites"),
-    # A segment NOBODY HAD SEEN, and it is why 0x0824CDFC..0x083BEE74 looked like one 1.5 MB gap:
-    # the delta does not go -0x24 straight to -0x1C4, it stops at -0x20 for more than a megabyte on
-    # the way. bs121/lg192, 13 paired sites over two addresses far apart, with a -0x24 control and
-    # a -0x1C4 control in the SAME run.
-    (0x08265950, 0x0839F83C, -0x20, "bs121/lg192: 13 paired literal-pool sites, two points "
-     "1256 KB apart, both -0x20; 0x0823E514 read -0x24 and 0x083D6BDC -0x1C4 in the same pairing"),
-    (0x083BEE74, 0x0841463E, -0x1C4, "lg169: 18 word-list pointers and the table; bs120/lg191 "
-     "carried BOTH ends out with 27 paired literal-pool words, from 0x083DE528..0x083E3700"),
-    (0x0847DCF8, 0x086803FC, -0x12D8, "bs69/lg178 and bs72/lg179 two points 0x80000 apart at the "
-     "top; bs117/lg190 carried the LOW end down from 0x086003E0 with five paired m4a pool words"),
+    #
+    # SESSION 48 REPLACED THE ENDS OF THE FIRST SIX. bs127/lg193 and bs128/lg194 dumped the SAME
+    # scattered addresses on both cartridges, and two blocks at one address read the delta off each
+    # other directly: if the delta is d the LeafGreen block holds the FireRed block shifted by d,
+    # and any |d| under a kilobyte leaves hundreds of bytes of overlap. No needle, no symbol, and no
+    # guess about where the twin is - which is what a bisection cannot do when the delta IS the
+    # unknown. docs/frlg_english_build.md.
+    (0x08000000, 0x0807CF68, 0x00, "bs127/lg193 block 0 read delta 0 to its last window; "
+     "lg176b/bs68b, lg184-lg187 and session 42's 1225 paired call sites below it"),
+    (0x0807D1EC, 0x080DE2E4, -0x2C, "bs128/lg194 at 0x0807D000 and bs127/lg193 at 0x080DE000, both "
+     "ends inside one block; was 0x0807D238..0x080D4404"),
+    (0x080DE322, 0x081480CE, -0x28, "bs127/lg193 at 0x080DE000 and 0x08148000, both boundaries "
+     "inside a block; was 0x080EBA14..0x08143604"),
+    (0x08148128, 0x08251D8E, -0x24, "bs127/lg193 at 0x08148000, bs128/lg194 at 0x08251C00; "
+     "was 0x081484CC..0x0824CDFC"),
+    (0x08251DAD, 0x083B7B47, -0x20, "bs128/lg194 at 0x08251C00 read the step 31 bytes wide; "
+     "bs127/lg193 at 0x083B7800 above. Session 42 found this segment; this is its extent"),
+    (0x083B8000, 0x0843ABF0, -0x1C4, "bs128/lg194 at 0x083B8000 matches -0x1C4 from its first "
+     "window, and at 0x0843A800 to its last"),
+    # A SECOND SEGMENT NOBODY HAD SEEN, and it is the same lesson as -0x20: what looked like one
+    # step from -0x1C4 to -0x12D8 across 421 KB is two. bs128/lg194 at 0x08442800 matches at
+    # -0x124C over 436 bytes, all 436 of them, against the LeafGreen block a page below it.
+    (0x08442800, 0x08442BFF, -0x124C, "bs128/lg194: FireRed 0x08442800 against LeafGreen "
+     "0x08441800, 436 of 436 bytes at -0x124C. One point - the segment's extent is NOT measured"),
+    (0x0847DC00, 0x086803FC, -0x12D8, "bs128/lg194 at 0x0847DC00, 690 of 728 bytes, which is the "
+     "first reading of this delta that did not come from the m4a pools; bs69/lg178, bs72/lg179 and "
+     "bs117/lg190 above"),
 )
 
 # THE HIGH SEGMENT, and how it was measured without knowing a single symbol up there. Dump 1 KB off
@@ -606,21 +614,29 @@ G_SONG_TABLE = 0x084975BC           # struct Song[347], {const u32 *header; u16 
 # NOT located to the byte; halving one of these needs a needle known to sit inside it.
 LEAFGREEN_DELTA_BOUNDARIES = (
     # (from_delta, to_delta, low, high, evidence)
-    (0x00, -0x2C, 0x0807AF04, 0x0807D238, "lg184-lg187 below, lg161/bs13/lg189 above; was "
-     "0x0805359C, then 0x08071FC4; session 42 took the low end to the last call site that did "
-     "NOT move, 8.8 KB left"),
-    (-0x2C, -0x28, 0x080D4404, 0x080EBA14, "lg176b vs bs68b, both ends; session 42's paired call "
-     "sites carried the low end up from 0x080CE36C"),
-    (-0x28, -0x24, 0x08143604, 0x081484CC, "lg176b/bs68b below, lg160 above; session 42 moved BOTH "
-     "ends inward with paired call sites, 40.9 KB -> 19.7 KB"),
-    # This one was never written down, though both its ends were measured: gSpeciesInfo is the top
-    # of the -0x24 segment (lg176b/bs68b) and sEasyChatGroups the bottom of -0x1C4 (lg169).
-    (-0x24, -0x20, 0x0824CDFC, 0x08265950, "lg176b/bs68b below at gSpeciesInfo, bs121/lg192 "
-     "above; LeafGreen gains four bytes in here"),
-    (-0x20, -0x1C4, 0x0839F83C, 0x083BEE74, "bs121/lg192 below, bs120/lg191 above; what was one "
-     "1480 KB gap is these two, 98 KB and 125 KB, once -0x20 was found in the middle of it"),
-    (-0x1C4, -0x12D8, 0x0841463E, 0x0847DCF8, "bs120/lg191 below, from 0x083E3700; bs117/lg190 "
-     "above, from 0x086003E0. 2163 KB this morning, 421 now"),
+    #
+    # WHAT A BOUNDARY IS, now that five of them are read to the byte: it is not a line, it is the
+    # DIVERGENT REGION itself - the version-specific code inside one object, where the two builds
+    # hold different bytes and no delta describes anything. The span below is that region, measured
+    # as the last window that still matches at the old delta and the first that matches at the new.
+    # The English build brackets the same five independently (docs/frlg_english_build.md) and lands
+    # inside every one of them, which is five agreements between two methods that share nothing.
+    (0x00, -0x2C, 0x0807CF68, 0x0807D1EC, "bs127/lg193 block 0 and bs128/lg194 at 0x0807D000; "
+     "644 bytes, inside title_screen.o's version-specific code. Was 8.8 KB"),
+    (-0x2C, -0x28, 0x080DE2E4, 0x080DE322, "bs127/lg193 at 0x080DE000, both sides in ONE block: "
+     "62 bytes, in mystery_event_script.o. Was 93.5 KB"),
+    (-0x28, -0x24, 0x081480CE, 0x08148128, "bs127/lg193 at 0x08148000, both sides in one block: "
+     "90 bytes, in mystery_gift.o. Was 19.7 KB"),
+    (-0x24, -0x20, 0x08251D8E, 0x08251DAD, "bs128/lg194 at 0x08251C00, both sides in one block: "
+     "31 bytes, in pokemon.o's rodata. Was 98.8 KB"),
+    (-0x20, -0x1C4, 0x083B7B47, 0x083B8000, "bs127/lg193 at 0x083B7800 below, bs128/lg194 at "
+     "0x083B8000 above; 0x083B7C00 matches NEITHER delta, which is the divergence itself. Was "
+     "125.6 KB"),
+    (-0x1C4, -0x124C, 0x0843ABF0, 0x08442800, "bs128/lg194: -0x1C4 to the last window of "
+     "0x0843A800, and 0x0843C800 onwards matches nothing at any shift a 1 KB block can see"),
+    (-0x124C, -0x12D8, 0x08442BFF, 0x0847DC00, "bs128/lg194: the two ends are single points and "
+     "everything between them is graphics that does not correspond - the pair of cartridges holds "
+     "different bytes there, so no delta is readable, not merely unmeasured"),
 )
 
 def leafgreen_guess(firered_address):

@@ -76,6 +76,7 @@ class HostMysteryGiftEngine:
                 "buffer_dump_size": distribution.buffer_dump_size,
                 "buffer_dump_blocks": distribution.buffer_dump_blocks,
                 "buffer_dump_address": distribution.buffer_dump_address,
+                "buffer_dump_addresses": distribution.buffer_dump_addresses,
                 "buffer_decode": distribution.buffer_decode,
             }
         else:

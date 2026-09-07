@@ -408,3 +408,48 @@ narrowing. Everything below it is the same address on both cartridges:
 The rest of the item and money block was -0x2C by segment, predicted - session 42's paired call
 sites measured it, and `pokeldn/frlg/rom/leafgreen_twins.py` is where those addresses are. The delta-0
 segment reaches 0x0807AF04 now, not 0x08071FC4.
+
+## Session 48: the map, measured, and a second segment nobody had seen
+
+Two joins on each cartridge closed it. The method is the whole of it, and it needs no needle, no
+symbol and no guess about where a twin is:
+
+**Dump both cartridges at the SAME address.** If the delta there is *d*, the LeafGreen block holds
+what the FireRed block holds shifted by *d*, and any *|d|* under a kilobyte leaves hundreds of bytes
+of overlap. Cross-correlating the two blocks reads *d* off directly. That is what a bisection could
+never do before, because aiming the LeafGreen dump at the twin needs the delta - the very thing being
+measured. `memory-dump-scatter` sends the same 27 addresses to both consoles and every block answers.
+
+    ./.venv/bin/python scratchpad/direct_delta.py       # the delta at each paired block
+    ./.venv/bin/python scratchpad/boundary_bytes.py     # and, inside a block, where it steps
+
+**A boundary is not a line: it is the divergent region itself.** Where the two builds hold
+version-specific code, no delta describes anything, and the span below is exactly that - the last
+window that still matches at the old delta, and the first that matches at the new one.
+
+| step | before | after | what it is |
+|---|---|---|---|
+| `0 -> -0x2c` | 8.8 KB | **644 B**, 0x0807CF68..0x0807D1EC | `title_screen.o` |
+| `-0x2c -> -0x28` | 93.5 KB | **62 B**, 0x080DE2E4..0x080DE322 | `mystery_event_script.o` |
+| `-0x28 -> -0x24` | 19.7 KB | **90 B**, 0x081480CE..0x08148128 | `mystery_gift.o` |
+| `-0x24 -> -0x20` | 98.8 KB | **31 B**, 0x08251D8E..0x08251DAD | `pokemon.o` rodata |
+| `-0x20 -> -0x1c4` | 125.6 KB | **1209 B**, 0x083B7B47..0x083B8000 | `title_screen.o` rodata |
+| `-0x1c4 -> -0x124c` | (unknown) | 8 KB, 0x0843ABF0..0x08442800 | graphics |
+| `-0x124c -> -0x12d8` | (unknown) | 238 KB, 0x08442BFF..0x0847DC00 | graphics |
+
+346 KB of unmeasured boundary became **2036 bytes** across the five code steps, and every one of the
+272 specials now has a LeafGreen address - none falls inside a boundary any more.
+
+**A SECOND SEGMENT NOBODY HAD SEEN: -0x124C.** What was read as one step from -0x1C4 to -0x12D8
+across 421 KB is two. bs128/lg194's FireRed block at 0x08442800 matches the LeafGreen block a page
+below it at **-0x124C**, 436 of 436 bytes. That is the same lesson `-0x20` taught in session 42, and
+it is now twice: a wide gap between two deltas is not evidence that the delta steps once.
+
+**Where it stops, and why it is not a matter of more runs.** Above 0x0843C800 the two cartridges hold
+*different bytes*, not the same bytes somewhere else - version-specific graphics. No shift matches at
+any offset a block can see, so the delta there is not unmeasured, it is undefined by content. The two
+single points at -0x124C and -0x12D8 are the ends of that region, not the ends of a segment.
+
+**The English build brackets the same five steps independently** and lands inside every one of them -
+five agreements between two methods that share nothing.
+[The English build as an instrument](frlg_english_build.md).

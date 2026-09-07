@@ -75,6 +75,10 @@ class MysteryGiftDistribution:
     # starts. MG_LINK_BUFFER_SIZE caps a MESSAGE, not a session [mg_script.MAX_DUMP_BLOCKS].
     buffer_dump_blocks: int = 1
     buffer_dump_address: int = 0
+    # memory-dump-scatter only: the TABLE of bases the payload carries, one per block. A scattered
+    # block's address is its entry here, not `first + n * size` - bs127 printed that arithmetic
+    # against a scattered run and named an address 4 MB from where the bytes came from.
+    buffer_dump_addresses: tuple = ()
     # The payloads whose answer is a structure rather than a region (memory-scan's hit table,
     # rng-trace's samples): the script's name, so the log decodes what came back.
     buffer_decode: str | None = None
