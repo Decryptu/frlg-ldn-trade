@@ -140,6 +140,34 @@ base metadata and decrypts 674 of 674 packets from the updated console. Somethin
 wire is verified whatever it was read from. What needs the right version is anything **structural**
 that a capture has not confirmed.
 
+## "Who calls this?" has to count `b` as well as `bl`
+
+Finding a known function's call sites in an ARM64 image needs no relocation table: `bl` is
+`100101` followed by a signed 26-bit word offset, so a linear scan over the image words answers it
+exactly. That is the right method, and it has one failure that is easy to miss.
+
+**A tail call is `b`, opcode `000101`.** A compiler emits one wherever the call is the last thing a
+method does, and a one-line C# forwarder - `void SendX(X d) => netData.SendReliableData(d, ...)` -
+is exactly that shape, so the *senders of a message* are the population most likely to be invisible
+to a BL-only scan. In BDSP, a scan that matched BL only reported **zero callers** for
+`ANetData<SelectData>$$SendReliableData` and `ANetData<TransitionData>$$SendReliableData`, which was
+written down as "the game never sends these". Counting both opcodes finds nine senders between
+them, every one a `b`, in the Union Room's context menus:
+
+    ANetData<SelectData>$$SendReliableData        UnionBattleContextMenu$$SendRuleSelectState + 1
+    ANetData<TransitionData>$$SendReliableData    UnionContextMenu$$SendTransitionData,
+                                                  UnionFrontDeskTradeController$$SendTransision,
+                                                  and five yes/no-window closures
+
+Three hardware runs were planned against the wrong reading. **A "0 callers" result is a claim about
+your scan before it is a claim about the game** - and the two opcodes differ in one bit, so there is
+no reason to scan for one of them.
+
+The other half of the same caution: a method with no callers of *either* kind is not dead. It may be
+a delegate. `TradeStateModel`'s `WriteSaveData`, `FirstSave` and `SendTradeState` have no branch to
+them anywhere in the image because the state machine registers them as `Action`s, and the reference
+is an ADRP/ADD pair - which is `arm64_xref.py`'s question, not the branch scanner's.
+
 ## The tools
 
 All offline, none needs a console:

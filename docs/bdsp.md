@@ -422,14 +422,68 @@ bytes hold far more than the dozen fields identified here - met data, ribbons, h
 language byte - and none of it is zero on a console's own. What the game validates on receipt is
 unknown: it accepted a near-copy of its own Pokemon, which is not the same as accepting any.
 
-### Where it stops, and why
+### Where it stops, and why: the gate is one byte, and it is ours
 
-`NetDataTradeReadyOkData` is not sent, and no option makes it. `TradeStateModel$$WriteSaveData`
-calls `ReplacePoke` after it, which would write the player's save - the first thing this project
-would have done that touches a cartridge. Whether the console *already* saves on entering a trade is
-unresolved: `NetTradePhase` runs `None, WaitSave, PlayerSelecting, ...`, so WaitSave precedes the
-box picker, but the save call is reached indirectly and has not been traced, and no capture shows a
-stall long enough to be one.
+`NetDataTradeReadyOkData` (0x21, `<BB` isTradeOk/tradeState) is not sent, and no option makes one.
+Reading the three handlers that a reply has to satisfy says exactly what it would do, and it is
+sharper than "the trade completes":
+
+    UnionTradeManager$$RecivePokeData          0x1dd2800   currentState == SELECT_WINDOW only
+    UnionTradeManager$$SetTargetTranerParam    0x1dd2130   TargetTranerParam{uint id, string name}
+    UnionTradeManager$$ReciveTradeReadyOkData  0x1dd2a70   the switch below
+
+`UnionTradeManager.currentState` is `TradeFlowState {NONE 0, SELECT_WINDOW 1, SECURIY_TRADE 2,
+PLAY_DEMO 3, END 4}` and it is the field at +0x88 that every one of them reads. A Pokemon we send is
+taken only in SELECT_WINDOW, stored as `tradeSelectModel.targetPokemonParam` with
+`isRecivePokeParam` set. A 0x21 is routed on the same field: in SELECT_WINDOW to
+`TradeSelectPokeModel$$ReciveReadyOk`, in SECURIY_TRADE to `TradeSecurityController$$ReciveState`
+(creating the controller if it is null), and anywhere else it is dropped.
+
+`ReciveReadyOk` is three instructions and they say which byte matters:
+
+    ldrb w8, [x1, #0x11]      the message's SECOND byte, tradeState
+    str  w8, [x0, #0x78]      TradeSelectPokeModel.targetTradeState
+    ret                       isTradeOk is never read
+
+The console then runs `UnionTradeManager.<WaitBoxWindowComplete>d__24`, and its whole condition is
+that **both** trade states are `WAIT`:
+
+    ldr w8, [x0, #0x74]   cmp w8, #2   b.ne  keep waiting     myTradeState
+    ldr w8, [x0, #0x78]   cmp w8, #2   b.ne  keep waiting     targetTradeState
+    str w8, [x20, #0x88]                                      currentState = SECURIY_TRADE
+    bl  TradeSelectPokeModel$$Clear
+    ... NetDataTradeReadyOkData$$.ctor; strb wzr, [x19, #0x11]; SendReliableData
+
+`myTradeState` is set to `WAIT` by the player's own `MyReadyOk`, which is what sp87 saw arrive as
+`{isTradeOk 0, tradeState 2}`. `targetTradeState` has one source in the whole game and it is our
+0x21. **The console cannot leave SELECT_WINDOW on its own**: it is parked waiting for one byte from
+us, and that byte is what moves it into the security phase.
+
+### The save, located
+
+Past that gate the flow is `TradeSecurityController` -> `CreateTradeStateModel` -> `TradeStateModel`,
+and it is `TradeStateModel` that owns the save. Its own state enum puts the save after the
+handshake, not before:
+
+    TradeStateModel.TradeState
+    NONE 0, INIT 1, WAIT 2, SEND_POKE 3, WAIT_POKE 4,
+    SEND_READYOK 5, WAIT_READYOK 6, START_WRITE_SAVE 7, WRITEING_SAVE 8
+
+and `TradeStateModel$$InitState` calls `PlayerSave` in its first instruction after the prologue.
+`WriteSaveData` tail-calls `ReplacePoke`; neither has a direct caller, because the state handlers are
+registered as delegates rather than branched to. `FirstSave` arms the disconnect penalty -
+`UnionWork$$SetPenartyCounter(30)` - before it writes.
+
+**`BoxWindow.NetTradePhase.WaitSave` is not a save.** The phase enum reads `None, WaitSave,
+PlayerSelecting, ...` and `ToNextPhase(0)` walks it by increment, so a console at the box picker has
+passed through WaitSave - but the coroutine that phase runs,
+`BoxWindow.<WaitTradeSave>d__203$$MoveNext`, reads `FieldCommonParam[0xEB]`, multiplies it by
+0.001f and counts it down against `Time.deltaTime`. It is a timed on-screen wait and writes nothing.
+The save the box window is waiting *for* is `TradeStateModel.PlayerSave`, which needs a
+`TradeStateModel`, which needs the security phase, which needs our byte.
+
+So **no run in this project has written a console's save**, sp82 and sp87 included, and the line is
+not where the trade completes - it is the 0x21. Read offline, no run spent.
 
 ## The pages
 
