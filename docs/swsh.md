@@ -164,12 +164,37 @@ names the middleware:
 through a GOT slot filled by a JUMP_SLOT relocation naming the symbol, so the slot is the thing to
 cross-reference, and its one PLT stub is the thing to count callers of.
 
+## Taking a seat
+
+`bin/swsh_join.py` scans, reports and associates. It carries the passphrase above and nothing else
+game-specific, because nothing else is settled: the local communication id is filled at runtime, so
+the first run is a scan that writes every advertisement it sees to `scratchpad/swsh_net_facts.json`
+and names the ones this project already knows.
+
+    sudo -E ./.venv/bin/python bin/swsh_join.py --scan-only
+
+`--pw-mode` defaults to `raw` rather than to BDSP's sweep of readings, because the length here is an
+instruction (`mov w2, #0x40`) rather than the length of a wiki string. If raw fails, the reading is
+what to doubt last.
+
+Above LDN there is nothing to run: version 4 has no transport in this repository. `pokeldn.swsh`
+holds the constants and the one derivation that IS shared with BDSP - the LDN session key, whose
+copy at `0x017ab010` is instruction-for-instruction `pokeldn.ldn.pia5.ldn_session_key`: seed an
+xorshift128 with the recurrence around `0x6C078965`, take four draws into consecutive words, and
+AES-128-ECB them under the game key that Pia keeps at `LocalProtocol+0x4d4` (its setter is at
+`0x017ab750`, and what it copies is exactly the `{u32 enabled; u8 key[16]}` the game built).
+
+That settles which of the two families applies. `nn::pia::local` and `nn::pia::lan` are both present
+and named in this binary, and it is the **local** one - the LDN row of `docs/pia.md`'s table - that
+holds this code.
+
 ## Open questions
 
 - **The two unnamed header fields**, the byte at 0x05 and the halfword at 0x06. What writes them is
   `0x017beb74`/`0x017beb78`; what they mean is a deduction until a capture agrees.
-- **Which session-key derivation applies**, `nn::pia::local`'s or `nn::pia::lan`'s. Both classes are
-  present and named, and reading the class rather than the prose is what settled it for BDSP.
+- **What seeds the session key.** The derivation is settled; its input is not. `0x0179bff0` ->
+  `0x01774f40` caches a value computed from `LocalProtocol+0x80`, and whether that is the
+  advertisement's session parameter the way BDSP's is has not been read.
 - **The local communication id and version.** Held at the Pia object's +0xB8 and +0xC0, filled at
   runtime from an object in `.bss` rather than a literal. Reachable from a scan of the console's own
   advertisement without reading any more code.

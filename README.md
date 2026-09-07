@@ -8,9 +8,12 @@ Two kinds of target, sharing one wireless layer:
 - **FireRed and LeafGreen** — a GBA ROM inside the Switch's emulator. Trading, Mystery Gift, Union
   Room battles and native code on the console all work end to end on retail hardware. This is where
   the project has gone deepest.
-- **Native Switch titles** — starting with **Brilliant Diamond / Shining Pearl**. The LDN side is
-  proven (a Linux box holds a seat in a real Union Room session); Pia's payloads are still
-  encrypted. See [the BDSP notes](https://decryptu.github.io/pokeldn/bdsp.html).
+- **Native Switch titles** — **Brilliant Diamond / Shining Pearl**, where a character this project
+  invented walks in a retail Union Room and the game runs its own trade flow against it, and
+  **Sword / Shield**, read but not yet spoken to: its LDN passphrase, its Pia game key and the fact
+  that its Mystery Gift menu has a local-wireless branch all come out of the cartridge. See the
+  [BDSP notes](https://decryptu.github.io/pokeldn/bdsp.html) and the
+  [Sword/Shield notes](https://decryptu.github.io/pokeldn/swsh.html).
 
 The package is layered by what a module is true of, so the game-independent part is visible from
 the import line: `pokeldn.ldn` is the wireless layer every Switch title shares, `pokeldn.gba` is the
@@ -38,7 +41,8 @@ This demo was recorded using the **ALFA AWUS036ACHM**. The RZ616 is half as fast
 - Native code on the console through the gift link: reading and writing its save, mapping its ROM,
   and calling its own functions. See [the documentation site](https://decryptu.github.io/pokeldn/)
 - Native Switch titles: LDN discovery and association against Brilliant Diamond / Shining Pearl, the
-  Pia 5.x packet format, and an offline toolkit for reading a retail title's own code
+  Pia 5.x packet format, and an offline toolkit for reading a retail title's own code - including
+  Sword/Shield's passphrase, game key and Pia version, read straight off a cartridge image
 
 ## Requirements
 - Linux
@@ -73,7 +77,7 @@ contain this project's adapter compatibility fixes.
 
 | | |
 |---|---|
-| [`bin/`](bin) | the things you run against a console. FireRed/LeafGreen: `frlg_mg_host.py` (Mystery Gift, Wonder News and native code), `frlg_mg_client.py` (receive a card from a console), `frlg_trade_host.py` (trade and Union Room host), `frlg_trade_join.py` (trade joiner). Native titles: `bdsp_join.py` (associate and take a seat), `bdsp_pia_probe.py` (hold the seat and speak Pia) |
+| [`bin/`](bin) | the things you run against a console. FireRed/LeafGreen: `frlg_mg_host.py` (Mystery Gift, Wonder News and native code), `frlg_mg_client.py` (receive a card from a console), `frlg_trade_host.py` (trade and Union Room host), `frlg_trade_join.py` (trade joiner). Native titles: `bdsp_join.py` (associate and take a seat), `bdsp_pia_probe.py` (hold the seat and speak Pia), `swsh_join.py` (scan for and join a Sword/Shield session) |
 | [`tools/ldn/`](tools/ldn) | the radio, for any target: `ldn_scan.py`, `sniff.py`, `joyspot_probe.py`, `ldn_debug_report.sh` |
 | [`tools/frlg/`](tools/frlg) | reading what a FireRed console sent back, all offline: `dump_read.py` (a save dump), `script_read.py`, `rom_functions.py`, `cartridge_pair.py`, `game_data_read.py` |
 | [`tools/switch/`](tools/switch) | reading a retail Switch title's own code, all offline: `nso_read.py`, `nso_relocs.py`, `rtti_names.py`, `arm64_xref.py`, `arm64_dis.py` |
@@ -359,6 +363,22 @@ that is expected** — LDN association is below the game, so the game has not se
 `bin/bdsp_pia_probe.py` holds the seat and sends Pia datagrams on UDP 12345. The console currently
 ignores unauthenticated Pia; see the docs for what is known about its session key and what is still
 missing.
+
+### Native Switch titles: scan a Sword / Shield session
+
+Sword/Shield's passphrase is read out of the game rather than taken from a table, and
+`bin/swsh_join.py` carries it. Its local communication id is **not** known yet - the game fills it
+at runtime - so the first run is a scan that reports every network on the air:
+
+```bash
+# on the console: Mystery Gift -> receive by local wireless, then
+sudo -E ./.venv/bin/python bin/swsh_join.py --scan-only
+```
+
+Everything each advertisement carries is written to `scratchpad/swsh_net_facts.json`. Once the id is
+known, `--comm-id <hex>` joins it. Above LDN there is nothing yet: Sword/Shield's Pia header carries
+version **4**, and this repository implements 6.32+ and 5.27-5.45 - see
+[the Sword/Shield notes](https://decryptu.github.io/pokeldn/swsh.html).
 
 ## Credits
 - [kinnay](https://github.com/kinnay) - For the [LDN library](https://github.com/kinnay/LDN) this is built upon, and the excellent [NintendoClients Wiki](https://github.com/kinnay/NintendoClients/wiki)
