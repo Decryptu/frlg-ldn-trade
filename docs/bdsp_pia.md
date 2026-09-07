@@ -436,8 +436,11 @@ and re-entering the room clears them, and so does a fresh id.
 
 **The game's own traffic is on 0x68, the unreliable protocol**, and it was invisible until the
 footer bug above was fixed: 111 of sp36's packets carried a four-byte footer and none of them
-authenticated. They are a 5-byte keepalive `04 00 02 00 00` every 2 s when nothing is happening, and
-75- and 576-byte payloads of little-endian halfword triples that move smoothly while an avatar does.
+authenticated. Every one of them is a whole game message - see
+[the game's own protocol](bdsp.md). The 5-byte `04 00 02 00 00` read as a keepalive here for several
+sessions is `NetCharacterStateData{state: NONE, isRecruiment: 0}`, the console broadcasting its own
+character's state every 2 s; the 75-byte form is a `NetPosData` of twelve points, and a 4-byte one
+is a `NetRequestData`. The naming predates the message table.
 
 Two traps for the next session. **LDN association is about one attempt in two** - sp39 failed once
 with `Connect failed with status code 1` and no `authenticate` line in dmesg at all, then succeeded
@@ -461,8 +464,8 @@ the halfword before the mask is `ack id - 1`.
 
 **sp45: acking the console's own data stops it.** `build_ack_message(highest received + 1)` went out
 once and the retransmission ended - **zero** reliable messages for the remaining 110 s, against 1726
-in sp44 and 835 in sp43. The 5-byte unreliable keepalive carried on, so the link was live and the
-console had simply been answered.
+in sp44 and 835 in sp43. The console's 5-byte state broadcast carried on, so the link was live and it
+had simply been answered.
 
 **THE LESSON, and it is worth more than the result.** sp40-sp43 spent four runs sweeping an ack -
 the two unread bytes, five framings, then the reset counter - and every single reading was a

@@ -18,9 +18,10 @@ station in the console's mesh, answers its round-trip timer, and **talks to its 
 in both directions** - the console acknowledges data we send it, and an acknowledgement from us
 stops it retransmitting. Nothing but `prod.keys` and the title's LDN passphrase is needed to start.
 
-**And the game itself is now readable.** The reliable stream carries the player's position - a
-facing angle in degrees and three floats - and the unreliable stream carries a keepalive and a trail
-of recent positions while an avatar walks.
+**And the game itself is now readable.** All 65 messages BDSP speaks are named from its own source,
+and every payload either stream has ever carried is a whole, well-framed one: the reliable stream
+carries the console's arrival and a request addressed to us, and the unreliable stream carries its
+character's state every two seconds, another request, and its position while it walks.
 
 **And the game draws what we send it.** Messages of our own put avatars in the Union Room on a
 retail console - four of them from four corners, then twenty in a line through the walls. They are
