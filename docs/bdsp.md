@@ -22,15 +22,52 @@ stops it retransmitting. Nothing but `prod.keys` and the title's LDN passphrase 
 facing angle in degrees and three floats - and the unreliable stream carries a keepalive and a trail
 of recent positions while an avatar walks.
 
-**And the game draws what we send it.** Position messages of our own put avatars in the Union Room
-on a retail console - four of them from four corners, then twenty in a line through the walls. They
-are the default model with no name, no collision and no dialogue: the game renders a remote player's
-body but has no player record to hang it on, because **one avatar appears per position message** and
-nothing links them together.
+**And the game draws what we send it.** Messages of our own put avatars in the Union Room on a
+retail console - four of them from four corners, then twenty in a line through the walls. They are
+the default model with no name, no collision and no dialogue.
+
+**One avatar appears per message, because every message was a JOIN.** `UnionOpcManager` calls
+`CreateCharacter(joinData)` on each one, so forty joins are forty arrivals and the game is behaving
+correctly; the mistake was ours. What those avatars have no owner for, though, is real: they
+**survive the scene**. The player walked out of the Union Room and down to the Poke Center floor, into
+a shop, and the whole crowd came along, still through the walls. Only restarting the game cleared
+them. A remote player created without a session behind it is never cleaned up.
 
 **Not yet done.** The **Session Protocol (0x94)**, which sits above the reliable transport, has
 never carried a byte in any capture: the game has not opened it, and it is what would make those
 avatars one player instead of a crowd.
+
+## The game's own protocol, above Pia
+
+BDSP runs a typed protocol of its own inside the Pia payloads, and it does not have to be guessed:
+`TeamLumi/opendpr` is a decompiled C# recreation of the game, and `Dpr.NetworkUtils.NetDataParser`
+lists **every message the game speaks** - `NetJoinData`, `NetPosData`, `NetPlayerNameData`,
+`NetEmotionData`, `NetDataTranerCardData`, `NetTradePokeData` and about forty more. Each is an
+`ANetData<T>` with a one-byte `DataID`, and each `T` is a plain struct.
+
+The framing fits every payload ever captured:
+
+    0x0  1  data id
+    0x1  2  payload length, BIG-endian
+    0x3  .  the struct, little-endian, as C# lays it out
+
+| seen | id | class | meaning |
+|---|---|---|---|
+| `01 0011 08 00 31 5a00 <x><y><z>` | 1 | `NetJoinData` | a player has joined, here |
+| `02 0048 <12 x 6 bytes>` | 2 | `NetPosData` | where a player has been moving |
+| `12 0001 23` | 0x12 | - | one byte |
+| `23 0001 00` | 0x23 | - | one byte |
+
+`JoinData` is `byte avatarId, byte colorId, byte cassetVersion, short InitRotY, Vector3 InitPos`,
+and a real console sends avatar 8, colour 0, casset 0x31. `PosData` is `ushort posX, ushort posZ,
+short rotY` with the game's own conversion `pos = (-posX * 0.05, posZ * 0.05)` - a twentieth of a
+unit, and **x negated**. A captured trail decodes to the same place its join message named, which is
+what says the two are one player.
+
+**Reading that beat guessing by a wide margin.** This project first called `NetJoinData`'s leading
+bytes "a fixed head" and its rotation "an angle", and only the decompile showed that the six bytes
+were three struct fields and a length - and, more to the point, that the twenty-byte message is a
+JOIN and not a position update at all.
 
 ## What the room says
 

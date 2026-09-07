@@ -275,12 +275,13 @@ async def main_async(args):
                         if d["flags"] & rl.FLAG_APPLICATION_DATA:
                             st["rel_max_seq"] = max(st["rel_max_seq"], d["sequence_id"])
                             st["rel_streams"].add(d["stream_id"])
-                            if room.is_position(d["payload"]):
-                                st["their_position"] = room.parse_position(d["payload"])
-                                print(f"[rx] t={now:6.2f} THEIR POSITION "
-                                      f"{st['their_position']['x']:.2f}, "
-                                      f"{st['their_position']['z']:.2f} "
-                                      f"facing {st['their_position']['angle']}")
+                            g = room.parse(d["payload"]) if len(d["payload"]) >= 3 else None
+                            if g and "join" in g:
+                                st["their_position"] = g["join"]
+                                print(f"[rx] t={now:6.2f} {g['name']}: avatar "
+                                      f"{g['join']['avatar_id']} at "
+                                      f"({g['join']['x']:.2f}, {g['join']['z']:.2f}) "
+                                      f"facing {g['join']['rot_y']}")
                             if args.reliable_auto_ack and st["rel_handshaken"]:
                                 ack = rl.build_ack_message(st["rel_max_seq"] + 1,
                                                            stream_id=d["stream_id"])
@@ -397,6 +398,33 @@ async def main_async(args):
             # sp47 put four avatars in the room from four distinct positions, so the next question
             # is what the game thinks the IDENTITY is. A LINE answers it: one avatar walking says
             # the identity is the station, a trail of them says it is the position.
+            if args.room_pattern == "move":
+                # ONE join, then NetPosData on the UNRELIABLE stream - which is how the game moves a
+                # player it already knows about. sp47/sp48 spawned a crowd because every message we
+                # sent was a JOIN.
+                x0, z0 = here["x"] + 1.5, here["z"]
+                join = room.build_join(x0, 0.0, z0, rot_y=90)
+                msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                       | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                       seq, len(join), lowest_pending=seq) + join)
+                sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
+                                 rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+                record(rec="tx_join", t=time.monotonic() - t0, x=x0, z=z0, message=msg.hex())
+                print(f"[tx]   ONE join at ({x0:.2f}, {z0:.2f}), then moving it")
+                await trio.sleep(0.5)
+                for i in range(args.room_walk):
+                    x = x0 + 0.15 * i
+                    body = room.build_pos([(x, z0, 90)])
+                    sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(),
+                                     body, UNRELIABLE_PROTOCOL, port=0,
+                                     destination=0xFFFFFFFF, message_flags=rl.MESSAGE_FLAGS),
+                                (st["dst_ip"], PIA_PORT))
+                    record(rec="tx_pos", t=time.monotonic() - t0, x=x, z=z0, message=body.hex())
+                    if i % 5 == 0:
+                        print(f"[tx]   pos {i}: ({x:.2f}, {z0:.2f})")
+                    await trio.sleep(args.room_walk_gap)
+                return
+
             square = [(1.0, 0.0, 90), (0.0, 1.0, 180), (-1.0, 0.0, 270), (0.0, -1.0, 0)]
             for i in range(args.room_walk):
                 if args.room_pattern == "square":
@@ -405,7 +433,7 @@ async def main_async(args):
                     dx, dz, angle = 2.0, 0.0, 270
                 else:                                   # "line": step away, a quarter unit at a time
                     dx, dz, angle = 1.0 + i * 0.25, 0.0, 90
-                payload = room.build_position(here["x"] + dx, 0.0, here["z"] + dz, angle=angle)
+                payload = room.build_join(here["x"] + dx, 0.0, here["z"] + dz, rot_y=angle)
                 msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
                                        | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
                                        seq + i, len(payload), lowest_pending=seq + i) + payload)
@@ -766,7 +794,7 @@ def main():
                     help="after the reliable handshake, send N position messages of our own and "
                          "watch the console's screen")
     ap.add_argument("--room-walk-gap", type=float, default=1.0)
-    ap.add_argument("--room-pattern", choices=("square", "line", "fixed"), default="square",
+    ap.add_argument("--room-pattern", choices=("square", "line", "fixed", "move"), default="square",
                     help="square spawns one avatar per corner; line and fixed ask whether the "
                          "game's idea of identity is the station or the position")
     ap.add_argument("--reliable-auto-ack", action=argparse.BooleanOptionalAction, default=True,
