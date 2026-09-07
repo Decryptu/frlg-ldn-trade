@@ -152,6 +152,27 @@ def test_the_approach_reproduces_the_console_s_own_talk_reserve_bytes():
     assert parsed["length"] == 1
 
 
+# sp82: the console's own NetDataTradeTranerData, sent when its player entered the trade
+TRADE_TRANER_SP82 = bytes.fromhex(
+    "470075007200760061006e000000000018a4010014a401000000b2adf00f3103")
+
+
+def test_the_trade_trainer_record_reads_and_agrees_with_the_pokemon_it_came_with():
+    """An OPAQUE message given a layout by reading it, and checked against a SECOND message.
+
+    opendpr declares no layout for this id (it holds a string), so the only check available is
+    that the trainer id and secret id in the clear here are the same pair carried INSIDE the
+    encrypted PB8 of the same trade - sp82's Zubat, TID 44466 SID 4080.
+    """
+    r = room.parse_trade_traner(TRADE_TRANER_SP82)
+    assert r["name"] == "Gurvan"
+    assert r["trainer_id"] == 44466
+    assert r["secret_id"] == 4080
+    assert len(TRADE_TRANER_SP82) == room.TRADE_TRANER_SIZE == 32
+    with pytest.raises(ValueError):
+        room.parse_trade_traner(TRADE_TRANER_SP82[:-1])
+
+
 def test_a_payload_whose_struct_is_not_blittable_has_no_layout_and_says_so():
     # NetPlayerNameData carries a C# string and NetPosData an array; neither size is in the source
     for data_id in (room.PLAYER_NAME, room.POS):

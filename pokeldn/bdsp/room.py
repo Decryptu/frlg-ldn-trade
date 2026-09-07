@@ -226,6 +226,38 @@ def build_request(requested_id):
     return build_fields(REQUEST, requested_id & 0xFF)
 
 
+TRADE_TRANER = 0x24               # NetDataTradeTranerData - who the player trading with us IS
+TRADE_POKE = 0x13                 # NetTradePokeData - and a whole Pokemon, 328 bytes
+
+
+def parse_trade_traner(body):
+    """-> the player's own trade record. 32 bytes, READ OFF THE WIRE - opendpr gives it no layout.
+
+    `netdata.OPAQUE` lists this id because its C# struct holds a string, so the generated table
+    cannot decide a layout for it. The console sent one in sp82 and it reads cleanly, and the
+    reading CHECKS ITSELF: the trainer id and secret id sit in the clear at 0x1a and 0x1c and are
+    the same pair carried inside the encrypted PB8 of the same trade (44466 / 4080), which is two
+    independent messages agreeing.
+
+        0x00  name, 8 UTF-16LE code units, null padded
+        0x10  u32   107544        unidentified, and adjacent - they differ by 4
+        0x14  u32   107540
+        0x18  u16   0
+        0x1a  u16   trainer id
+        0x1c  u16   secret id
+        0x1e  u16   817
+    """
+    if len(body) != TRADE_TRANER_SIZE:
+        raise ValueError(f"{len(body)} bytes, expected {TRADE_TRANER_SIZE}")
+    a, b, c, tid, sid, tail = struct.unpack_from("<IIHHHH", body, 16)
+    return {"name": body[0:16].decode("utf-16-le").split("\x00")[0],
+            "unknown_10": a, "unknown_14": b, "unknown_18": c,
+            "trainer_id": tid, "secret_id": sid, "unknown_1e": tail}
+
+
+TRADE_TRANER_SIZE = 32
+
+
 def build_talk_reserve(body_byte=0):
     """"I want to talk to your character" - the message the player who WALKS UP sends.
 
