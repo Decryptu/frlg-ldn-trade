@@ -488,7 +488,7 @@ console's save, sp82 and sp87 included.
 
 ### The trade completes, and the console writes its save
 
-sp92 answered the 0x21 and a retail Brilliant Diamond went the whole way. `TradeStateModel`'s own
+sp92 answered the 0x21 and a retail Shining Pearl went the whole way. `TradeStateModel`'s own
 enum, walked in order, six states in 630 ms:
 
     t=79.41  their READY-OK {isTradeOk 0, tradeState 2}  ->  OUR READY-OK
@@ -521,14 +521,19 @@ completed trade, and the console repeated it **78 times, once a second, until ou
 it is waiting on an answer we do not yet build. By its name it offers the select window again, i.e.
 a second trade inside the same association.
 
-#### What was traded, and it is a Pokemon we built
+#### What was traded, and how much of it the player could see
 
 Both runs logged `offering species 41, 'PKCAMP', OT 'Gurvan'`: the template was sp82's own capture
 from this console, but `pokemon.build_from` rewrote the nickname before the radio was touched, so
-what the player received is **not** the Zubat they gave. It is that Zubat with a field of ours in
-it, re-encrypted and re-checksummed by us, and the console took it through `check-ok`, the security
-phase and `ReplacePoke` without complaint. **So a PB8 this project assembles is accepted into a
-retail save.** That is the claim sp82 and sp87 could not make.
+the bytes that went out are not the bytes that came in. The console re-checksummed nothing - our
+`encrypt` did - and it took the result through `check-ok`, the security phase and `ReplacePoke`
+without complaint. **So a PB8 this project assembles is accepted into a retail save.**
+
+**But the player almost certainly saw 'Nosferapti'.** The name field is only drawn when
+`IsNicknamed` - IV32 bit 31, at 0x8C - is set, and the template had it clear, so sp92 changed a
+string the game does not read. A PB8 always carries a name, the species name if it was never
+renamed, which is why this is easy to get wrong. `build_from` sets the flag with the nickname now.
+The bytes landed; a *visible* edit landing is still untested, and it is one run away.
 
 What the console offered is a separate fact and a duller one: sp82, sp91 and sp92's captures share
 a sha1, differ in zero of 328 bytes and decode to pid 2329222868 - the player picked the same Zubat

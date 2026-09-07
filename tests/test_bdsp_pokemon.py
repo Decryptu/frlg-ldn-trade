@@ -86,6 +86,40 @@ def test_building_from_a_template_changes_only_what_was_asked_for():
         pokemon.build_from(template, sparkly=1)
 
 
+def test_a_nickname_sets_the_flag_that_makes_the_console_draw_it():
+    """sp92's whole visible edit was lost to this: the name field is only shown when IV32 bit 31 is
+    set, and a PB8 always carries a name string, so a nickname with the flag clear is invisible."""
+    template = pokemon.encrypt(a_body())
+    plain = bytearray(a_body())
+    struct.pack_into("<I", plain, pokemon.OFF_IVS, 0x14A65C08)      # flag clear, as sp82's was
+    template = pokemon.encrypt(bytes(plain))
+    assert pokemon.read(template)["is_nicknamed"] is False
+
+    made = pokemon.build_from(template, nickname="PKCAMP")
+    r = pokemon.read(made)
+    assert r["nickname"] == "PKCAMP" and r["is_nicknamed"] is True
+    assert r["ivs"] == pokemon.read(template)["ivs"], "the IVs share the word with the flag"
+
+    # an explicit value after the nickname still wins, for the run that wants the string unshown
+    quiet = pokemon.read(pokemon.build_from(template, nickname="PKCAMP", is_nicknamed=False))
+    assert quiet["nickname"] == "PKCAMP" and quiet["is_nicknamed"] is False
+
+
+def test_the_fields_pkhex_names_survive_a_round_trip():
+    """The offsets beyond sp82's twelve come from PKHeX's G8PKM, where all twelve agree."""
+    template = pokemon.encrypt(a_body())
+    edits = dict(moves=(71, 48, 0, 0), move_pp=(25, 20, 0, 0), relearn=(1, 2, 3, 4),
+                 ball=4, met_level=4, met_location=357, egg_location=65535, language=3,
+                 version=49, ot_friendship=50, met_date=(21, 11, 21), gender=1,
+                 current_handler=0, is_egg=False)
+    r = pokemon.read(pokemon.build_from(template, **edits))
+    for key, value in edits.items():
+        assert r[key] == value, f"{key} did not survive"
+    # met_level and ot_gender share a byte and must not tread on each other
+    both = pokemon.read(pokemon.build_from(template, met_level=100, ot_gender=1))
+    assert (both["met_level"], both["ot_gender"]) == (100, 1)
+
+
 def test_a_name_too_long_for_its_field_is_refused_rather_than_truncated():
     template = pokemon.encrypt(a_body())
     with pytest.raises(ValueError, match="too long"):

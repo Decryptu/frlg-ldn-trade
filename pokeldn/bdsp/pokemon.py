@@ -34,8 +34,17 @@ BLOCK_ORDER = (
     (1, 2, 3, 0), (1, 3, 2, 0), (2, 1, 3, 0), (3, 1, 2, 0), (2, 3, 1, 0), (3, 2, 1, 0),
 )
 
-# offsets into the DECRYPTED, UNSHUFFLED body. Only what sp82 confirmed against its own two
-# messages is named here; the rest of the 328 bytes is left alone rather than guessed at.
+# offsets into the DECRYPTED, UNSHUFFLED body.
+#
+# The first block is what sp82 confirmed against the console's own two messages. The second is from
+# PKHeX's `PKHeX.Core/PKM/Shared/G8PKM.cs` (PB8 derives from it unchanged), read at
+# `scratchpad/pkhex_repo` - and it is worth saying WHY that is not a guess: PKHeX names 102 fields
+# and **every one of the twelve sp82 read independently agrees**, offset for offset. Twelve out of
+# twelve is not a coincidence, so the other ninety are as good as the twelve.
+#
+# Session 54 needed them because `--trade-nickname` was writing a string the game does not show.
+# The name field is only displayed when IsNicknamed (IV32 bit 31) is set, and sp92 sent a Pokemon
+# with the string changed and the flag clear.
 OFF_SPECIES = 0x08
 OFF_HELD_ITEM = 0x0A
 OFF_TID = 0x0C
@@ -50,6 +59,26 @@ OFF_NICKNAME = 0x58
 OFF_IVS = 0x8C
 OFF_OT_NAME = 0xF8
 NAME_LENGTH = 26                      # 13 UTF-16LE code units, null terminated
+
+# from PKHeX's G8PKM. IV32 at 0x8C carries two flags above the six 5-bit IVs.
+IV32_EGG = 1 << 30
+IV32_NICKNAMED = 1 << 31
+
+OFF_GENDER = 0x22                     # bits 2-3 of the byte; the rest is FatefulEncounter/Flag2
+OFF_MOVES = 0x72                      # 4 x u16
+OFF_MOVE_PP = 0x7A                    # 4 x u8
+OFF_MOVE_PP_UPS = 0x7E                # 4 x u8
+OFF_RELEARN = 0x82                    # 4 x u16
+OFF_CURRENT_HANDLER = 0xC4            # 0 = the original trainer still holds it
+OFF_VERSION = 0xDE
+OFF_LANGUAGE = 0xE2
+OFF_OT_FRIENDSHIP = 0x112
+OFF_EGG_DATE = 0x119                  # year-2000, month, day
+OFF_MET_DATE = 0x11C                  # year-2000, month, day
+OFF_EGG_LOCATION = 0x120
+OFF_MET_LOCATION = 0x122
+OFF_BALL = 0x124
+OFF_MET_LEVEL = 0x125                 # low 7 bits; bit 7 is the OT's gender
 
 
 def _crypt(data, seed):
@@ -124,6 +153,25 @@ def read(raw):
         "ivs": tuple((ivs >> s) & 31 for s in (0, 5, 10, 15, 20, 25)),
         "nickname": _text(plain, OFF_NICKNAME),
         "ot_name": _text(plain, OFF_OT_NAME),
+        # THE NAME IS ONLY SHOWN WHEN THIS IS SET. A PB8 always carries a name string - the species
+        # name, if the player never renamed it - so `nickname` alone does not say what the console
+        # displays. sp92 sent 'PKCAMP' with the flag clear and the game showed 'Nosferapti'.
+        "is_nicknamed": bool(ivs & IV32_NICKNAMED),
+        "is_egg": bool(ivs & IV32_EGG),
+        "gender": (plain[OFF_GENDER] >> 2) & 3,
+        "moves": struct.unpack_from("<4H", plain, OFF_MOVES),
+        "move_pp": tuple(plain[OFF_MOVE_PP:OFF_MOVE_PP + 4]),
+        "relearn": struct.unpack_from("<4H", plain, OFF_RELEARN),
+        "current_handler": plain[OFF_CURRENT_HANDLER],
+        "version": plain[OFF_VERSION],
+        "language": plain[OFF_LANGUAGE],
+        "ot_friendship": plain[OFF_OT_FRIENDSHIP],
+        "met_date": tuple(plain[OFF_MET_DATE:OFF_MET_DATE + 3]),
+        "egg_location": u16(OFF_EGG_LOCATION),
+        "met_location": u16(OFF_MET_LOCATION),
+        "ball": plain[OFF_BALL],
+        "met_level": plain[OFF_MET_LEVEL] & 0x7F,
+        "ot_gender": plain[OFF_MET_LEVEL] >> 7,
     }
 
 
@@ -140,7 +188,13 @@ def build_from(template_raw, **fields):
     inconsistent Pokemon behind - and `read` on the result is the check that it did what was asked.
 
         species, held_item, trainer_id, secret_id, experience, ability, pid,
-        nature, form, evs (6), ivs (6), nickname, ot_name, encryption_constant
+        nature, form, evs (6), ivs (6), nickname, ot_name, encryption_constant,
+        is_nicknamed, is_egg, gender, moves (4), move_pp (4), move_pp_ups (4), relearn (4),
+        current_handler, version, language, ot_friendship, met_date (3), egg_location,
+        met_location, ball, met_level, ot_gender
+
+    Passing `nickname` sets is_nicknamed as a side effect, because a name the flag does not enable
+    is a name the console never draws.
     """
     plain = bytearray(decrypt(template_raw))
     u16 = lambda o, v: struct.pack_into("<H", plain, o, v & 0xFFFF)
@@ -184,8 +238,47 @@ def build_from(template_raw, **fields):
             u32(OFF_IVS, (old & ~0x3FFFFFFF) | packed)
         elif key == "nickname":
             text(OFF_NICKNAME, value)
+            # AND SET THE FLAG, or the console shows the species name and the edit is invisible.
+            # An explicit is_nicknamed= after this still wins; dict order is insertion order.
+            u32(OFF_IVS, struct.unpack_from("<I", plain, OFF_IVS)[0] | IV32_NICKNAMED)
         elif key == "ot_name":
             text(OFF_OT_NAME, value)
+        elif key == "is_nicknamed":
+            old_iv = struct.unpack_from("<I", plain, OFF_IVS)[0]
+            u32(OFF_IVS, (old_iv | IV32_NICKNAMED) if value else (old_iv & ~IV32_NICKNAMED))
+        elif key == "is_egg":
+            old_iv = struct.unpack_from("<I", plain, OFF_IVS)[0]
+            u32(OFF_IVS, (old_iv | IV32_EGG) if value else (old_iv & ~IV32_EGG))
+        elif key == "gender":
+            plain[OFF_GENDER] = (plain[OFF_GENDER] & ~0x0C) | ((value & 3) << 2)
+        elif key == "moves":
+            struct.pack_into("<4H", plain, OFF_MOVES, *value)
+        elif key == "move_pp":
+            plain[OFF_MOVE_PP:OFF_MOVE_PP + 4] = bytes(value)
+        elif key == "move_pp_ups":
+            plain[OFF_MOVE_PP_UPS:OFF_MOVE_PP_UPS + 4] = bytes(value)
+        elif key == "relearn":
+            struct.pack_into("<4H", plain, OFF_RELEARN, *value)
+        elif key == "current_handler":
+            plain[OFF_CURRENT_HANDLER] = value & 0xFF
+        elif key == "version":
+            plain[OFF_VERSION] = value & 0xFF
+        elif key == "language":
+            plain[OFF_LANGUAGE] = value & 0xFF
+        elif key == "ot_friendship":
+            plain[OFF_OT_FRIENDSHIP] = value & 0xFF
+        elif key == "met_date":
+            plain[OFF_MET_DATE:OFF_MET_DATE + 3] = bytes(value)
+        elif key == "egg_location":
+            u16(OFF_EGG_LOCATION, value)
+        elif key == "met_location":
+            u16(OFF_MET_LOCATION, value)
+        elif key == "ball":
+            plain[OFF_BALL] = value & 0xFF
+        elif key == "met_level":
+            plain[OFF_MET_LEVEL] = (plain[OFF_MET_LEVEL] & 0x80) | (value & 0x7F)
+        elif key == "ot_gender":
+            plain[OFF_MET_LEVEL] = (plain[OFF_MET_LEVEL] & 0x7F) | ((value & 1) << 7)
         else:
             raise ValueError(f"unknown field {key!r}")
     return encrypt(bytes(plain))
