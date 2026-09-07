@@ -118,11 +118,17 @@ def test_the_site_base_url_matches_the_repository():
 
 # --- the launchers ------------------------------------------------------------------------
 #
-# Every file in bin/ and tools/ puts the repo root on sys.path ITSELF, derived from its own
-# __file__, so that it runs from anywhere without the venv or PYTHONPATH being set up. The
+# Every file in bin/, tools/ and scripts/ puts what it needs on sys.path ITSELF, derived from its
+# own __file__, so that it runs from anywhere without the venv or PYTHONPATH being set up. The
 # test suite cannot see a mistake there, because conftest.py has already put those paths on
 # sys.path for the tests - which is exactly how moving the tools one directory deeper left
 # all seven of them unable to import the package while 1088 tests passed.
+#
+# AND IT HAPPENED AGAIN, unnoticed until session 48: the same move left `scripts/` inserting
+# `tools` where `rom_functions` and `cartridge_pair` now live in `tools/frlg`, so the two
+# generators that WRITE committed tables - worker_names and leafgreen_twins - could not be run at
+# all. The check below is why it is caught now: it is not enough to look for the package, because
+# what broke was a sibling tool, so any repo module reported missing fails the test.
 
 def _standalone(script):
     env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
@@ -130,11 +136,18 @@ def _standalone(script):
                           capture_output=True, text=True, env=env, cwd=Path.cwd(), timeout=120)
 
 
+REPO_MODULES = {"pokeldn", "ldn"} | {
+    p.stem for d in ("bin", "tools", "scripts") for p in Path(d).rglob("*.py")
+    if "__pycache__" not in str(p)}
+
+
 @pytest.mark.parametrize("script", sorted(
-    str(p) for d in ("bin", "tools") for p in Path(d).rglob("*.py") if "__pycache__" not in str(p)))
+    str(p) for d in ("bin", "tools", "scripts")
+    for p in Path(d).rglob("*.py") if "__pycache__" not in str(p)))
 def test_every_launcher_finds_the_package_without_help_from_the_test_harness(script):
     result = _standalone(script)
-    assert "No module named 'pokeldn'" not in result.stderr, \
-        f"{script} cannot import the package on its own: {result.stderr.strip().splitlines()[-1]}"
-    assert "No module named 'ldn'" not in result.stderr, \
-        f"{script} cannot reach vendor/LDN on its own"
+    missing = re.findall(r"No module named '([\w.]+)'", result.stderr)
+    ours = [name for name in missing if name.split(".")[0] in REPO_MODULES]
+    assert not ours, \
+        f"{script} cannot reach {', '.join(ours)} on its own: " \
+        f"{result.stderr.strip().splitlines()[-1]}"

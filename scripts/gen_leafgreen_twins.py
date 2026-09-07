@@ -20,8 +20,12 @@ import pathlib
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+# tools/frlg, not tools/: session 44 moved the tools one directory deeper and this line kept
+# pointing at the parent, so `from rom_functions import ...` raised ModuleNotFoundError and the
+# generator could not be run at all. conftest.py hides that from the suite - the guard is
+# test_documentation's standalone check, which now covers scripts/ too.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-                                "tools"))
+                                "tools", "frlg"))
 
 from cartridge_pair import candidate_pairs, paired_calls, paired_literals   # noqa: E402
 from script_read import dumps                                              # noqa: E402
