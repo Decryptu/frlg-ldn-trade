@@ -506,12 +506,22 @@ console really did write.**
     w8 = Year + Month + Day + Hour + Minute + Second
     cset w0, mi            ... on  (stored + 30.0) < w8
 
-A sum like that rises by 1 a second inside a minute and then FALLS by 58 when the seconds wrap, so
-the wait is 30 seconds if the penalty was armed before :30 of its minute and about **30 minutes**
-otherwise, the minute field carrying it the rest of the way. Nothing else in the check is
-time-shaped: raising any field raises the sum, so a console clock moved forward by 30 in any single
-field (the year is the one that takes 30 exactly) clears it immediately, and moving the clock back
-restores it, because only `SecondSave` zeroes the counter.
+`SetPenartyTime` [0x1dd32d0] stores the same sum, so the two are in the same units - and **that sum
+is not monotonic**. It rises by 1 a second, then FALLS by 58 when the minute wraps and again when
+the hour does: armed at 18:45:20 it is 2125, and at 19:20:00 it is 2081, lower than when it started.
+Only the DAY field carries it forward reliably, at +1 a day. So if the penalty is armed at a moment
+whose Hour+Minute+Second is already high, no later time that day can beat `stored + 30` at all and
+the wait runs to the next day or beyond - **which is where the 24 hours players report comes from**.
+It is not a duration in the code anywhere; it is this arithmetic.
+
+FIRST READING, WRONG, AND WORTH KEEPING: "the seconds carry it, so about 30 minutes". That was the
+minute wrap considered and the hour wrap not, from the same disassembly, and a player sat through it.
+A non-monotonic counter has no "typical" wait - work the worst case.
+
+Nothing else in the check is time-shaped, so raising any field clears it: a console clock moved
+forward by **31** years does it in one field, and 30 is not enough because the comparison is strict
+(`cset w0, mi`). Moving the clock back restores the penalty, because only `SecondSave` zeroes the
+counter - so the clock has to stay forward until a trade completes.
 
 ## The pages
 
