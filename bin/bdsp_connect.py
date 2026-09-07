@@ -64,13 +64,13 @@ def make_socket(ifname):
 
 
 def wrap(keys, our_mac, src_var, dst_var, nonce8, payload, protocol, port=0,
-         destination=lp.BROADCAST, message_flags=lp.MESSAGE_FLAGS):
+         destination=lp.BROADCAST, message_flags=lp.MESSAGE_FLAGS, packet_id=0):
     """A Pia message in a Pia packet, in the framing session 46 proved the console accepts."""
     body = pad_payload(build_message(payload, protocol=protocol, port=port,
                                      message_flags=message_flags, destination=destination))
     iv = gcm_iv(ldn_nonce_crc(keys.network_id_le, our_mac), src_var, nonce8)
     ct, tag = encrypt_payload(keys.session_key, iv, body)
-    return PiaHeader5(dst_var=dst_var, src_var=src_var, packet_id=0, footer_size=0,
+    return PiaHeader5(dst_var=dst_var, src_var=src_var, packet_id=packet_id, footer_size=0,
                       nonce8=nonce8, tag=tag[:8], encrypted=True).pack() + ct
 
 
@@ -133,7 +133,8 @@ async def main_async(args):
               "reply_payload": None, "result": None,
               "join_responses": 0, "last_join_response": None, "join_response": None,
               "rtt_requests": 0, "rtt_answers": 0, "reliable": 0, "unreliable": 0,
-              "join_acks": 0, "dst_ip": bcast, "dst_var": 0}
+              "join_acks": 0, "dst_ip": bcast, "dst_var": 0,
+              "rel_max_seq": 0, "rel_streams": set(), "rel_control": []}
 
         nonce = int.from_bytes(os.urandom(8), "big")
 
@@ -270,6 +271,16 @@ async def main_async(args):
                               f"stream {d['stream_id']} pending {d['lowest_pending']} "
                               f"[{'|'.join(d['flag_names'])}] {d['payload_size']} B ***")
                         print(f"[rx]     {d['payload'].hex(' ')}\n")
+                        if d["flags"] & rl.FLAG_APPLICATION_DATA:
+                            st["rel_max_seq"] = max(st["rel_max_seq"], d["sequence_id"])
+                            st["rel_streams"].add(d["stream_id"])
+                        else:
+                            # a control message - reset, reset ack or a bulk ack. THIS is the
+                            # positive signal: an answer, not the absence of one
+                            st["rel_control"].append((now, d["flags"], m.payload.hex()))
+                            print(f"[rx] t={now:6.2f} *** RELIABLE CONTROL "
+                                  f"[{'|'.join(d['flag_names']) or 'no flags'}] "
+                                  f"{m.payload.hex()} ***")
                         record(rec="reliable", t=now, phase=st["phase"], flags=d["flags"],
                                stream=d["stream_id"], seq=d["sequence_id"],
                                pending=d["lowest_pending"], payload=d["payload"].hex(),
@@ -287,6 +298,96 @@ async def main_async(args):
                     else:
                         print(f"[rx] t={now:6.2f} protocol {m.protocol} port {m.port} "
                               f"({len(m.payload)} B) - something new")
+
+        async def sweep_reliable_ack():
+            """Ack the reliable data, sweeping the two bytes the binary does not spell out.
+
+            The bulk-ack payload's shape is the serialiser's, byte for byte (main.bin 0x0159718c,
+            size 0x0159716c = 2 + 21n). Two fields are not read: the payload's first byte - the
+            consumer tests its bit 0 at 0x01596c98 and sets a flag at protocol+0x738, so it is a
+            bitfield and not a version - and the entry's second halfword, which comes from the
+            window's own field 0x50 and is filed per station at protocol+0x7b8.
+
+            The verdict is free and fast: an ack that lands stops the retransmission, and the
+            console is retransmitting several times a second. Silence IS the pass here, so each
+            candidate is only believed after the traffic has been flowing right up to it.
+            """
+            if not st["rel_max_seq"]:
+                print("[cx] no reliable data to ack yet")
+                return
+            ack_id, streams = st["rel_max_seq"], sorted(st["rel_streams"]) or [0]
+
+            # sp40 swept the two unread bytes in the framing every other protocol has accepted and
+            # the console kept retransmitting through all eight. So sweep the FRAMING instead, and
+            # mirror what the console itself puts on this protocol: message flags 0x01 (0x11 is the
+            # local protocol's alone) and a destination BITMAP naming the host, not broadcast.
+            host_bit = 1 << 0                      # the host is station 0; ours is 1 << 1
+            framings = [
+                ("as sent so far   bcast msgflags=0x11 dest=0",
+                 dict(ip=st["dst_ip"], var=st["dst_var"], mf=lp.MESSAGE_FLAGS, dest=lp.BROADCAST)),
+                ("console's flags  bcast msgflags=0x01 dest=0",
+                 dict(ip=st["dst_ip"], var=st["dst_var"], mf=rl.MESSAGE_FLAGS, dest=lp.BROADCAST)),
+                ("addressed        bcast msgflags=0x01 dest=1<<0",
+                 dict(ip=st["dst_ip"], var=st["dst_var"], mf=rl.MESSAGE_FLAGS, dest=host_bit)),
+                ("unicast          host  msgflags=0x01 dest=1<<0",
+                 dict(ip=host_ip, var=st["host_var"] or 0, mf=rl.MESSAGE_FLAGS, dest=host_bit)),
+                # every packet we have ever sent carried packet id 0, which the wiki ties to a
+                # connection id of 0 - "sent to an address rather than a station". The console's own
+                # reliable packets are addressed to our variable id AND carry a real, incrementing
+                # packet id, so this framing is the only one that mirrors it completely.
+                ("unicast+packet id host msgflags=0x01 dest=1<<0",
+                 dict(ip=host_ip, var=st["host_var"] or 0, mf=rl.MESSAGE_FLAGS, dest=host_bit,
+                      pid=True)),
+            ]
+            packet_id = [0]
+
+            def send(msg, f, label):
+                st["phase"] = label
+                pid = 0
+                if f.get("pid"):
+                    packet_id[0] = packet_id[0] % 0xFFFF + 1     # 0 is skipped on rollover
+                    pid = packet_id[0]
+                sock.sendto(wrap(keys, our_mac, args.src_var, f["var"], next_nonce(), msg,
+                                 rl.PROTOCOL, port=rl.PORT, destination=f["dest"],
+                                 message_flags=f["mf"], packet_id=pid), (f["ip"], PIA_PORT))
+
+            print(f"\n[tx] --- the reliable window: streams {streams}, data up to sequence "
+                  f"{ack_id}. A RESET is answered with a RESET ACK, so it is a REPLY and not a "
+                  f"silence - that is the framing test. The ack itself is judged on the "
+                  f"retransmission stopping.")
+            for label, f in framings:
+                # 1. RESET: the console answers a reset with a reset ack, so this says whether the
+                #    framing reaches the sliding window at all - a positive signal either way
+                before = len(st["rel_control"])
+                send(rl.build_header(rl.FLAG_RESET, 0, 0), f, f"reset {label}")
+                record(rec="tx_reliable_reset", t=time.monotonic() - t0, framing=label,
+                       message=rl.build_header(rl.FLAG_RESET, 0, 0).hex())
+                await trio.sleep(1.0)
+                control = st["rel_control"][before:]
+                print(f"[tx]   RESET  {label}: "
+                      + (f"*** ANSWERED: {[hex(c[1]) for c in control]} ***" if control
+                         else "no control message back"))
+                record(rec="reliable_reset_result", framing=label,
+                       control=[c[1] for c in control])
+
+                # 2. the bulk ack, in the same framing
+                body = rl.build_ack_payload(
+                    [{"stream_id": sid, "ack_id": ack_id} for sid in streams])
+                msg = rl.build_header(rl.FLAG_IS_INITIALIZED, 0, len(body)) + body
+                mark, cmark = st["reliable"], len(st["rel_control"])
+                send(msg, f, f"ack {label}")
+                record(rec="tx_reliable_ack", t=time.monotonic() - t0, framing=label,
+                       ack_id=ack_id, message=msg.hex())
+                await trio.sleep(args.reliable_ack_wait)
+                got = st["reliable"] - mark
+                print(f"[tx]   ACK    {label}: {got} reliable message(s) after it"
+                      + ("   *** THE RETRANSMIT STOPPED ***" if got == 0 else ""))
+                record(rec="reliable_ack_result", framing=label, after=got,
+                       control=[c[1] for c in st["rel_control"][cmark:]])
+                if got == 0:
+                    print(f"\n[cx] *** THE RELIABLE DATA IS ACKED: {label} ***")
+                    return
+            print("[cx] every framing left the console retransmitting")
 
         async def sender():
             async def ask(payload, protocol, label, timeout=None, src_var=None):
@@ -454,6 +555,8 @@ async def main_async(args):
                         record(rec="join_acked", copies=st["join_responses"],
                                acks=st["join_acks"])
                         st["phase"] = "joined"
+                        if args.reliable_ack:
+                            await sweep_reliable_ack()
                         break
                     await trio.sleep(args.connect_gap)
                 st["phase"] = "after"
@@ -604,6 +707,11 @@ def main():
     ap.add_argument("--connect-gap", type=float, default=2.0)
     ap.add_argument("--join", type=int, default=0, metavar="N",
                     help="after the station handshake, send up to N mesh join requests")
+    ap.add_argument("--reliable-ack", action=argparse.BooleanOptionalAction, default=False,
+                    help="after the join, sweep the bulk acknowledgement until the console's "
+                         "reliable retransmission stops")
+    ap.add_argument("--reliable-ack-wait", type=float, default=1.5,
+                    help="how long silence has to last to count as an ack that landed")
     ap.add_argument("--connect-timeout", type=float, default=4.0,
                     help="how long one connection request waits for its answer")
     ap.add_argument("--rtt", action=argparse.BooleanOptionalAction, default=True,
