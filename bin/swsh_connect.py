@@ -156,7 +156,8 @@ async def main_async(args):
         st = {"seq": None, "host_var": None, "host_constant_seen": None, "last_update": None,
               "updates": 0, "phase": "listen", "station": None, "acks": 0,
               "rx": 0, "undecrypted": 0, "other": [], "answer": None, "station_replies": 0,
-              "requests": 0}
+              "requests": 0, "requests_in": 0, "responses": 0, "their_request": None,
+              "our_variable_id": 0, "responses_in": 0, "acks_out": 0}
 
         nonce = int.from_bytes(os.urandom(8), "big")
 
@@ -218,6 +219,61 @@ async def main_async(args):
                         verdict = station4.RESULT_NAMES.get(result, result)
                         print(f"\n[rx] t={now:6.2f} *** STATION PROTOCOL 0x14, type {kind}, "
                               f"result {verdict} *** phase {st['phase']}\n     {body.hex()}")
+                        if kind == station4.CONNECTION_REQUEST and args.respond:
+                            try:
+                                got = station4.parse_incoming_request(body)
+                            except (IndexError, ValueError) as e:
+                                print(f"[rx]     could not parse it: {e}")
+                                continue
+                            them = got["station"]
+                            st["their_request"] = got
+                            if st["requests_in"] == 0:
+                                print(f"[rx]     it is addressed to our constant "
+                                      f"{got['constant_id']:#018x} and our variable "
+                                      f"{got['variable_id']:#010x}; its own location says "
+                                      f"{them['ip']}:{them['port']} constant "
+                                      f"{them['constant_id']:#018x} variable "
+                                      f"{them['variable_id']:#010x} nat "
+                                      f"{them['nat_flags']}/{them['nat_location']} ack "
+                                      f"{got['ack_id']}")
+                            st["requests_in"] += 1
+                            # WHOSE ids belong in the response is a deduction, so alternate the two
+                            # readings across retransmits and let the console pick.
+                            mine = args.respond_with == "ours" or (
+                                args.respond_with == "both" and st["responses"] % 2)
+                            cid = our_constant if mine else them["constant_id"]
+                            vid = (st["our_variable_id"] if mine else them["variable_id"])
+                            reply = station4.build_connection_response(args.respond_result, cid, vid)
+                            pkt = wrap(keys, our_mac, our_constant, next_nonce(), reply,
+                                       station4.PROTOCOL, args.connect_station_first)
+                            sock.sendto(pkt, (addr[0], PIA_PORT))
+                            st["responses"] += 1
+                            record(rec="tx_response", t=now, ids="ours" if mine else "theirs",
+                                   response=reply.hex())
+                            print(f"[tx]     answered with result {args.respond_result}, "
+                                  f"{'our' if mine else 'their'} ids: {reply.hex()}")
+                        elif kind == station4.CONNECTION_RESPONSE and args.respond:
+                            # THE CONSOLE ACCEPTED US AND REPEATS UNTIL IT IS ACKED - the same
+                            # pass/fail the update session gives, one layer up. Two readings of
+                            # which u32 belongs in the ack, alternated across the retransmits.
+                            st["responses_in"] += 1
+                            if result == 0 and st["responses_in"] == 1:
+                                print(f"[rx]     *** ACCEPTED INTO THE MESH *** {len(body)} B")
+                            trailing = station4.ack_id_of(body)
+                            theirs = (st["their_request"] or {}).get("station", {}).get(
+                                "variable_id", 0)
+                            use_trailing = st["acks_out"] % 2 == 0
+                            ack_id = trailing if use_trailing else theirs
+                            ack = station4.build_ack(ack_id)
+                            sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), ack,
+                                             station4.PROTOCOL, args.connect_station_first),
+                                        (addr[0], PIA_PORT))
+                            st["acks_out"] += 1
+                            record(rec="tx_station_ack", t=now, ack_id=ack_id,
+                                   reading="trailing" if use_trailing else "their_variable_id")
+                            if st["acks_out"] <= 4:
+                                print(f"[tx]     acked with {ack_id:#010x} "
+                                      f"({'the message tail' if use_trailing else 'their variable id'})")
                     else:
                         # ANYTHING on a protocol the console has never used with us is the finding
                         st["other"].append((now, "proto", f["protocol"], body.hex()))
@@ -275,6 +331,7 @@ async def main_async(args):
             exactly how BDSP's protocol count was measured."""
             variable_id = args.src_var if args.src_var is not None else \
                 int.from_bytes(os.urandom(4), "big")
+            st["our_variable_id"] = variable_id
             location = stp.station_location(our_ip, PIA_PORT, our_constant, variable_id,
                                             stp.ldn_service_variable_id(our_mac))
             target_constant = st["host_constant_seen"] or stp.ldn_constant_id(host_mac)
@@ -316,6 +373,8 @@ async def main_async(args):
                                       f"msgflags={mf:#04x} station={stn} nat={nf}/{nl} - stopping "
                                       f"the sweep so the capture is unambiguous")
                                 return
+            if st["station_replies"]:
+                return
             print(f"[tx] {st['requests']} requests, no 0x14 reply. Silence is what a wrong "
                   f"constant id, a wrong count or a malformed location all look like.")
 
@@ -327,13 +386,17 @@ async def main_async(args):
 
         print(f"\n[cx] === {st['rx']} packets in, {st['undecrypted']} that did not decrypt, "
               f"{st['updates']} update sessions, {st['acks']} acks out, "
-              f"{st['requests']} connection requests, {st['station_replies']} replies on 0x14")
+              f"{st['requests']} connection requests, {st['station_replies']} messages on 0x14, "
+              f"{st['requests_in']} of them requests, {st['responses_in']} connection responses "
+              f"in, {st['responses']} responses out, {st['acks_out']} station acks out")
         if st["answer"]:
             now, phase, proto = st["answer"]
             print(f"[cx] FIRST TRAFFIC ON A NEW PROTOCOL: {proto:#04x} at t={now:.2f} in {phase}")
         record(rec="end", updates=st["updates"], acks=st["acks"], rx=st["rx"],
                undecrypted=st["undecrypted"], phase=st["phase"], answer=st["answer"],
-               requests=st["requests"], station_replies=st["station_replies"])
+               requests=st["requests"], station_replies=st["station_replies"],
+               requests_in=st["requests_in"], responses=st["responses"],
+               responses_in=st["responses_in"], acks_out=st["acks_out"])
     if cap:
         cap.close()
     return 0
@@ -373,6 +436,13 @@ def build_parser():
     ap.add_argument("--connect-station", default="0",
                     help="values for the header byte at 0x05 on the requests, and their IV source "
                          "id; list or LO-HI")
+    ap.add_argument("--respond", action="store_true",
+                    help="answer a connection request the CONSOLE sends us with a connection "
+                         "response. sw20 drew one and had nothing to say back")
+    ap.add_argument("--respond-result", type=int, default=0, help="0 is accepted")
+    ap.add_argument("--respond-with", default="theirs", choices=["theirs", "ours", "both"],
+                    help="whose constant and variable id go in the response's two id fields - a "
+                         "deduction, so 'both' alternates them across the retransmits")
     ap.add_argument("--request-platform", default="9",
                     help="values for the platform byte at [2]. 9 is the real one; ANY other value "
                          "is answered with a connection response rather than dropped, which is the "
@@ -398,6 +468,7 @@ def build_parser():
 
 def main(argv=None):
     args = build_parser().parse_args(argv)
+    args.connect_station_first = int(_expand(args.connect_station)[0], 0)
     if os.geteuid() != 0:
         build_parser().error("must run as root (LDN needs the raw radio)")
     try:

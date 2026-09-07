@@ -63,8 +63,10 @@ OFF_LOCATION = 0x11
 __all__ = ["PROTOCOL", "PLATFORM_SWITCH", "HEADER_SIZE", "OFF_NAT_FLAGS", "OFF_PLATFORM",
            "OFF_HAS_VARIABLE_ID", "OFF_CONSTANT_ID", "OFF_VARIABLE_ID", "OFF_NAT_LOCATION",
            "OFF_LOCATION", "CONNECTION_REQUEST", "CONNECTION_RESPONSE",
-           "RELAY_CONNECTION_REQUEST", "RESULT_NAMES", "build_connection_request",
-           "parse_connection_request", "parse_reply", "inet_address", "ldn_constant_id",
+           "ACK", "ACK_SIZE", "build_ack", "ack_id_of",
+           "RELAY_CONNECTION_REQUEST", "RESULT_NAMES", "RESPONSE_SIZE", "build_connection_request",
+           "build_connection_response", "parse_connection_request", "parse_incoming_request",
+           "parse_station_location", "parse_reply", "inet_address", "ldn_constant_id",
            "ldn_service_variable_id", "station_location"]
 
 
@@ -101,6 +103,92 @@ def parse_connection_request(data):
             "constant_id": struct.unpack_from(">Q", data, OFF_CONSTANT_ID)[0],
             "variable_id": struct.unpack_from(">I", data, OFF_VARIABLE_ID)[0],
             "nat_location": data[OFF_NAT_LOCATION], "location": data[OFF_LOCATION:]}
+
+
+RESPONSE_SIZE = 0x11              # 17 bytes, the allocation the sender asks for
+OFF_RESPONSE_RESULT = 1
+OFF_RESPONSE_CONSTANT_ID = 5
+OFF_RESPONSE_VARIABLE_ID = 0xD
+
+
+def build_connection_response(result, constant_id, variable_id):
+    """The 17-byte answer, field for field off the sender at 0x017c6c30.
+
+        [0]    2                      the message type
+        [1]    the connection result   0 accepted, 1 denied, 2 version too low, 3 too high
+        [2]    9                      the platform, written as a literal
+        [3]    0
+        [4]    0
+        [5]    a constant id           u64 big-endian (0x1853b40)
+        [0xD]  a variable id           u32 big-endian (0x1853b10)
+
+    MEASURED: a wrong-platform request is answered with result 2 and both ids zero, which is this
+    with x3 and w4 both xzr - sw15 read back `0202090000...` byte for byte. WHOSE ids belong in the
+    accepted case is a DEDUCTION: the only other caller passes them out of the peer's own station
+    location, so they are read here as the station being answered.
+    """
+    out = bytearray(RESPONSE_SIZE)
+    out[0] = CONNECTION_RESPONSE
+    out[OFF_RESPONSE_RESULT] = result & 0xFF
+    out[2] = PLATFORM_SWITCH
+    struct.pack_into(">Q", out, OFF_RESPONSE_CONSTANT_ID, constant_id & ((1 << 64) - 1))
+    struct.pack_into(">I", out, OFF_RESPONSE_VARIABLE_ID, variable_id & 0xFFFFFFFF)
+    return bytes(out)
+
+
+def parse_station_location(data):
+    """-> dict. The two size-prefixed addresses, then the fixed tail. MEASURED against the console's
+    own connection request (sw20), whose location carries a size-2 address and a size-6 one."""
+    s1, s2 = data[0], data[1]
+    a1, a2 = data[2:2 + s1], data[2 + s1:2 + s1 + s2]
+    t = 2 + s1 + s2
+    return {"address_sizes": (s1, s2), "address1": a1, "address2": a2,
+            "ip": ".".join(str(b) for b in a2[:4]) if len(a2) >= 6 else None,
+            "port": int.from_bytes(a2[4:6], "big") if len(a2) >= 6 else None,
+            "relay_address": int.from_bytes(data[t:t + 4], "big"),
+            "relay_port": int.from_bytes(data[t + 4:t + 6], "big"),
+            "constant_id": int.from_bytes(data[t + 6:t + 14], "big"),
+            "variable_id": int.from_bytes(data[t + 14:t + 18], "big"),
+            "service_variable_id": int.from_bytes(data[t + 18:t + 22], "big"),
+            "nat_flags": data[t + 22], "nat_location": data[t + 23],
+            "probeinit": data[t + 24], "private_available": data[t + 25],
+            "size": t + 26}
+
+
+def parse_incoming_request(data):
+    """A connection request the CONSOLE sent us: the header, its location and the trailing ack id.
+
+    MEASURED, sw20: the console answers an accepted request by sending one of its own, addressed to
+    the constant id and the variable id it read out of OUR location. Its own tail is
+    `location || u32 ack id` - four bytes our first requests never sent, which is what
+    `0x017d5750` reads by taking the message size minus four.
+    """
+    got = parse_connection_request(data)
+    location = got["location"]
+    got["station"] = parse_station_location(location)
+    got["ack_id"] = int.from_bytes(location[got["station"]["size"]:], "big") or None
+    return got
+
+
+ACK = 5
+ACK_SIZE = 8
+
+
+def build_ack(ack_id):
+    """The type-5 acknowledgement: `05 00 00 00` then a u32 big-endian.
+
+    MEASURED, sw21: the console answered our connection response with `05 00 00 00 121a8113`, eight
+    bytes, and 5.27-5.45 sends the same eight (`mesh_protocol.ack_for`). WHICH u32 is a DEDUCTION -
+    the console put its own variable id there, and every message it sends ends in a counter that
+    increments per message (7106cab5, b6, b7), so both readings are worth sweeping.
+    """
+    return bytes([ACK, 0, 0, 0]) + struct.pack(">I", ack_id & 0xFFFFFFFF)
+
+
+def ack_id_of(data):
+    """The trailing counter: the last four bytes, big-endian. `0x017d5750` reads exactly this -
+    message size minus four - which is how the console finds it in what we send."""
+    return int.from_bytes(data[-4:], "big") if len(data) >= 4 else 0
 
 
 def parse_reply(data):

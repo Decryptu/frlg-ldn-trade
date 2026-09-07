@@ -161,11 +161,47 @@ back byte for byte, including the length. That is the first word a Sword has sai
 Local Protocol, and it proves the whole path: our version-4 packet decrypts, its 24-byte message
 header is walked, protocol 0x14 dispatches, and the handler reads our byte at offset 2.
 
-WHAT IS STILL SILENT is the real request, platform 9: 96 of them across sw13 and sw14 (nat flags
-0-15 x nat location 0-3, four message-flag readings, two station bytes) drew nothing. The checks
-below the platform byte, in the order the handler makes them, are the flag at [3], the target
-constant id, the target variable id, the location parse, then the nat pair - and one of those is
-what a run has to find next.
+### Clearing [3] is what gets a real request through
+
+FACT, sw13 against sw20 - one byte changed, everything else identical (platform 9, message flags
+0x09, station byte 0, nat 0/0, the same location builder). With [3] = 1, asking the console to check
+a target variable id, 96 requests drew nothing. With [3] = 0 the console **answered with a
+connection request of its own**, addressed to our constant id and to the variable id we had invented
+that run:
+
+    01 6a 09 01 1249a221d8580000 21e6dcd4 00 | 02 06 0000 a9fe0201 3039 | 00000000 0000
+    | eb9b2220f1480000 | 75bf17e2 | 597bc2a3 | 00 00 00 01 | 7106cab5
+
+Its own location, read with the same parser: a size-**2** address then a size-6 one
+(169.254.2.1:12345), relay address and port zero, its constant id, the variable id the update
+session had already given us, a service variable id, and a nat quad of `00 00 00 01` - so **the
+console's own nat flags and nat location are both 0**. Then four bytes that are not part of the
+location at all: an **ack id**, a counter that increments once per message (`7106cab5`, `b6`, `b7`).
+That is what `0x017d5750` reads by taking the message size minus four, and our own requests had
+never carried one.
+
+### The whole handshake, and the console accepting
+
+sw21 answered that request with the 17-byte connection response and the console completed the
+exchange inside 350 ms:
+
+    t=7.75   ->   its connection request
+    t=7.75   <-   our connection response, result 0, carrying ITS constant and variable ids
+    t=7.76   ->   `05 00 00 00 121a8113` - a type-5 ACK, eight bytes
+    t=8.10   ->   its own connection response, **result 0, ACCEPTED**, ~600 bytes, carrying our
+                  constant id, our variable id and the player's name in plain ASCII
+
+and then it repeated that response until it was acknowledged, exactly as the Local Protocol repeats
+an update session.
+
+FACT, sw24 against sw21 - the ack is the only difference. sw21 had nothing to say and counted about
+ten retransmits of the acceptance; sw24 echoed the response's **trailing counter** back as
+`05 00 00 00 7106cab9` and the console sent it **once**: three messages on 0x14 for the whole run,
+one request in, one response in, one ack out, then silence. So the u32 in an ack is the acked
+message's own tail, and the Mesh Station Protocol is closed in both directions.
+
+    LDN association  ->  Local Protocol ack  ->  connection request ([3] = 0)
+                     ->  answer its request  ->  ack its acceptance   = a station in the mesh
 
 ## Two families of session key
 
