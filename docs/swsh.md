@@ -128,15 +128,20 @@ The game also counts what it received by channel: the play-record keys are `fush
 `fushigi_serial` and **`fushigi_p2p`**, sitting beside `yy_battle_single_p2p` / `_net` in the same
 table. A record key per channel is a channel the game expects to use.
 
-**There is a static call path from `StateReceiveLocal`'s block into the LDN session setup.**
-`0x01004e54` (inside the block) calls `0x010b7100`, which calls `0x010f6b00`, which reaches the same
-class the passphrase call site belongs to. Every edge of that chain was checked instruction by
-instruction rather than taken from the search that suggested it.
+UNKNOWN: what `StateReceiveLocal` actually speaks. **There is no static call path** from the
+Mystery Gift app to the LDN session setup - checked over the whole app to depth 10 with a
+function-level call graph. That is not evidence the branch is dead: the game reaches its network
+layer through vtables and delegates, which a static walk cannot follow, and the same search finds no
+path from the Union Room's own code either.
 
-DEDUCTION, and it is not yet proof: an indirect call is invisible to a static walk, so a path found
-this way is evidence the branch is wired up, not evidence of what it says. The cheap way to settle
-it is the air - open the Mystery Gift local screen on the console and see whether `ldn_scan.py`
-finds a network or the console is scanning for ours.
+A first attempt at this DID report a path, and it was an artefact worth recording: the walker
+bounded each function by "the first 0x1000 bytes after its entry", walked through the `ret` into the
+next function's body, and stitched two unrelated bodies into one edge. Both of the hops it produced
+turned out to be refcounted-pointer setters that call nothing. `scratchpad/swsh_reach.py` builds a
+real function-level graph now.
+
+So the cheap decisive test is the air, not more reading: open the Mystery Gift local-wireless screen
+on the console and see whether it advertises a network or is scanning for one.
 
 ## Reading the cartridge
 
@@ -198,7 +203,8 @@ holds this code.
 - **The local communication id and version.** Held at the Pia object's +0xB8 and +0xC0, filled at
   runtime from an object in `.bss` rather than a literal. Reachable from a scan of the console's own
   advertisement without reading any more code.
-- **What `StateReceiveLocal` actually sends**, past the fact that it reaches the session setup.
+- **What `StateReceiveLocal` actually sends**, and whether the console hosts or scans on that
+  screen. A scan answers the second half in one run.
 - **Sword against Shield.** Everything above is read off Shield. The passphrase, the game key, the
   Pia version and the Mystery Gift states are game code, not per-version data, so they should be
   identical; association against the console is what proves it.
