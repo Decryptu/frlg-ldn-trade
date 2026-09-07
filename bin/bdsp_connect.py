@@ -22,7 +22,7 @@ Switch title is the pass signal.
 The ack goes first, so the console falls silent and ANY packet afterwards is unambiguously an
 answer to us. docs/bdsp_pia.md. Never pass --verbose to a live run; use --capture.
 """
-import argparse, json, os, socket, struct, sys, time
+import argparse, json, os, pathlib, socket, struct, sys, time
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -31,7 +31,7 @@ if os.path.isdir(BUNDLED):
     sys.path.insert(0, BUNDLED)
 
 import trio, ldn
-from pokeldn.bdsp import COMM_ID, PASSPHRASE, PIA_PORT, room, session_keys
+from pokeldn.bdsp import COMM_ID, PASSPHRASE, PIA_PORT, pokemon, room, session_keys
 from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mp, reliable5 as rl,
                         rtt_protocol as rtt, station_protocol as stp)
 from pokeldn.ldn.pia5 import (PiaHeader5, is_pia5, ciphertext, gcm_iv, ldn_nonce_crc,
@@ -139,7 +139,21 @@ async def main_async(args):
               "requests": 0, "request_answers": 0, "last_request": None, "talk_answers": 0,
               "state_requests": 0, "their_state": None, "their_recruiting": 0,
               "reserves_sent": 0, "reserve_results": 0, "match_wait_sent": 0,
-              "reserve_accepted": False, "room_done": False}
+              "reserve_accepted": False, "room_done": False, "their_traner": None,
+              "their_poke": None, "our_poke": None, "trade_replies": 0}
+
+        # BUILD WHAT WE WILL OFFER BEFORE THE RADIO IS TOUCHED. A template that will not load, or
+        # a nickname that will not fit, must fail here and not halfway through a trade on a real
+        # console's screen.
+        if args.trade_template:
+            edits = {k: v for k, v in (("species", args.trade_species),
+                                       ("nickname", args.trade_nickname),
+                                       ("ot_name", args.trade_ot)) if v is not None}
+            st["our_poke"] = pokemon.build_from(
+                pathlib.Path(args.trade_template).read_bytes(), **edits)
+            offered = pokemon.read(st["our_poke"])
+            print(f"[cx] offering species {offered['species']}, {offered['nickname']!r}, "
+                  f"OT {offered['ot_name']!r}, IVs {offered['ivs']}")
 
         nonce = int.from_bytes(os.urandom(8), "big")
 
@@ -315,6 +329,8 @@ async def main_async(args):
                                     st["state_requests"] += 1
                                 if args.answer_requests:
                                     await answer_the_request(g, now, via="reliable")
+                            if g and g["data_id"] in (room.TRADE_TRANER, room.TRADE_POKE):
+                                await answer_the_trade(g, m.payload, now)
                             if g and g["data_id"] == room.STATE and g.get("fields"):
                                 note_their_state(g["fields"], now)
                             if g and g["data_id"] == room.TALK_RESERVE_RESULT and g.get("fields"):
@@ -1036,6 +1052,57 @@ async def main_async(args):
 
             st["phase"] = "after"
 
+        async def answer_the_trade(g, payload, now):
+            """Answer the console's own half of a trade with ours.
+
+            It sends WHO IT IS and then WHAT IT IS OFFERING, and waits. sp82 reached both and was
+            answered with nothing, so the player sat on "En attente d'une reponse".
+
+            NOTHING HERE COMPLETES A TRADE. The exchange itself is further down the flow - the
+            player still has to confirm on their own screen, and `TradeStateModel$$WriteSaveData`
+            -> `ReplacePoke` is what would put a Pokemon into their save. Declining at that
+            confirmation leaves the save untouched.
+            """
+            if not args.trade_reply:
+                return
+            if g["data_id"] == room.TRADE_TRANER:
+                st["their_traner"] = room.parse_trade_traner(payload[room.HEADER_SIZE:])
+                print(f"\n[rx] t={now:6.2f} *** THEIR TRAINER RECORD: {st['their_traner']} ***")
+                record(rec="their_traner", t=now, fields=st["their_traner"])
+                reply = room.build_trade_traner(args.trade_name, args.trade_tid, args.trade_sid)
+                label = "our trainer record"
+            else:
+                try:
+                    theirs = pokemon.read(payload[room.HEADER_SIZE:])
+                except ValueError as exc:
+                    print(f"[cx] their Pokemon did not decode: {exc}")
+                    record(rec="their_poke_bad", t=now, error=str(exc))
+                    return
+                st["their_poke"] = theirs
+                print(f"\n[rx] t={now:6.2f} *** THEIR POKEMON: species {theirs['species']}, "
+                      f"{theirs['nickname']!r}, OT {theirs['ot_name']!r}, "
+                      f"IVs {theirs['ivs']} ***")
+                record(rec="their_poke", t=now, fields=theirs)
+                pathlib.Path(args.trade_save_poke).write_bytes(payload[room.HEADER_SIZE:])
+                print(f"[cx]   saved their Pokemon -> {args.trade_save_poke}")
+                if not st["our_poke"]:
+                    print("[cx] no --trade-template, so nothing to offer back")
+                    return
+                reply = room.build_trade_poke(st["our_poke"])
+                label = "our Pokemon"
+            seq = st["their_ack_id"]
+            if not seq:
+                record(rec="trade_reply_no_seq", t=now, label=label)
+                return
+            msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                   | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                   seq, len(reply), lowest_pending=seq) + reply)
+            sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
+                             rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+            st["trade_replies"] += 1
+            print(f"[tx] t={now:6.2f} *** SENT {label} at seq {seq} ({len(reply)} B) ***\n")
+            record(rec="trade_reply", t=now, label=label, seq=seq, length=len(reply))
+
         def note_their_state(fields, now):
             """The console broadcasts its OWN OpcState, and an emote is visible in it.
 
@@ -1275,6 +1342,26 @@ def main():
                          "gates the trade on it (`cmp w23, #1` at main.bin 0x01fd56e4, then "
                          "UnionFrontDeskTradeController$$StartMatch); every run since session 46 has "
                          "answered 0, which is a station declining to be matched")
+    ap.add_argument("--trade-reply", action=argparse.BooleanOptionalAction, default=False,
+                    help="answer the console's trade messages with ours. It sends a trainer record "
+                         "and then a Pokemon and WAITS; sp82 answered neither and the player sat on "
+                         "\"En attente d'une reponse\". THIS DOES NOT COMPLETE A TRADE - the player "
+                         "still confirms on their own screen, and declining there leaves the save "
+                         "untouched")
+    ap.add_argument("--trade-template", metavar="FILE",
+                    help="a 328-byte PB8 to offer, edited by --trade-species and friends. 328 "
+                         "bytes hold much more than this project has identified, so what we send "
+                         "is a real Pokemon with named fields changed rather than one invented "
+                         "from nothing")
+    ap.add_argument("--trade-species", type=int, metavar="N", help="species for the offered Pokemon")
+    ap.add_argument("--trade-nickname", metavar="TEXT", help="nickname for the offered Pokemon")
+    ap.add_argument("--trade-ot", metavar="TEXT", help="OT name for the offered Pokemon")
+    ap.add_argument("--trade-name", default="PkCamp", metavar="TEXT",
+                    help="the name in OUR trainer record")
+    ap.add_argument("--trade-tid", type=int, default=44466, metavar="N")
+    ap.add_argument("--trade-sid", type=int, default=4080, metavar="N")
+    ap.add_argument("--trade-save-poke", default="scratchpad/their_poke.pb8", metavar="FILE",
+                    help="where to write the Pokemon the console offers")
     ap.add_argument("--join-offset-x", type=float, default=2.0, metavar="U",
                     help="where our character spawns relative to the console's own, on x. The "
                          "default +2.0 is one fixed side, and a player standing against the wall "

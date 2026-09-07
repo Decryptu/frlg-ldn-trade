@@ -258,6 +258,34 @@ def parse_trade_traner(body):
 TRADE_TRANER_SIZE = 32
 
 
+def build_trade_poke(pb8):
+    """"here is my Pokemon" - a NetTradePokeData carrying an encrypted 328-byte PB8.
+
+    `UnionTradeManager$$RecivePokeData` [main.bin 0x1dd2800] takes it only when the manager's own
+    state field is 1, stores it at `[this+0x28]+0x68` and raises a flag at +0x70, so the message is
+    accepted in one phase and ignored in every other. `pokeldn.bdsp.pokemon` builds the payload.
+    """
+    if len(pb8) != 328:
+        raise ValueError(f"{len(pb8)} bytes, expected a 328-byte PB8")
+    return build(TRADE_POKE, pb8)
+
+
+def build_trade_traner(name, trainer_id, secret_id, unknown_10=107544, unknown_14=107540,
+                       unknown_18=0, unknown_1e=817):
+    """"and here is who I am" - the 32-byte record, in the layout read off sp82.
+
+    The defaults are the console's own values for the three fields nothing has identified yet, so a
+    record we send differs from a real one only where we meant it to.
+    """
+    encoded = name.encode("utf-16-le")
+    if len(encoded) + 2 > 16:
+        raise ValueError(f"{name!r} is too long for the 16-byte name field")
+    return build(TRADE_TRANER,
+                 encoded.ljust(16, b"\x00")
+                 + struct.pack("<IIHHHH", unknown_10, unknown_14, unknown_18,
+                               trainer_id, secret_id, unknown_1e))
+
+
 def build_talk_reserve(body_byte=0):
     """"I want to talk to your character" - the message the player who WALKS UP sends.
 
