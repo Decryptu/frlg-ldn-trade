@@ -32,9 +32,22 @@ if os.path.isdir(BUNDLED):
 
 import trio, ldn
 from pokeldn.host_support import resolve_keys
-from pokeldn.ldn import local_protocol as lp, pia4, station_protocol as stp
+from pokeldn.ldn import local_protocol as lp, pia4, station4, station_protocol as stp
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.swsh import COMM_ID, PASSPHRASE, PIA_PORT, packet_iv, session_keys
+
+
+def _expand(spec):
+    """"0-15" or "5,1,0" -> a list of strings, so a sweep and a single value are the same flag."""
+    out = []
+    for part in str(spec).split(","):
+        part = part.strip()
+        if "-" in part[1:]:
+            lo, _, hi = part.partition("-")
+            out += [str(v) for v in range(int(lo, 0), int(hi, 0) + 1)]
+        elif part:
+            out.append(part)
+    return out
 
 
 def cleanup():
@@ -134,7 +147,8 @@ async def main_async(args):
         t0 = time.monotonic()
         st = {"seq": None, "host_var": None, "host_constant_seen": None, "last_update": None,
               "updates": 0, "phase": "listen", "station": None, "acks": 0,
-              "rx": 0, "undecrypted": 0, "other": [], "answer": None}
+              "rx": 0, "undecrypted": 0, "other": [], "answer": None, "station_replies": 0,
+              "requests": 0}
 
         nonce = int.from_bytes(os.urandom(8), "big")
 
@@ -188,6 +202,14 @@ async def main_async(args):
                         st["other"].append((now, "local", kind, body.hex()))
                         print(f"[rx] t={now:6.2f} local protocol type {kind:#04x}, "
                               f"{len(body)} B, phase {st['phase']}")
+                    elif f["protocol"] == station4.PROTOCOL:
+                        kind, result = station4.parse_reply(body)
+                        st["station_replies"] += 1
+                        st["answer"] = st["answer"] or (now, st["phase"], f["protocol"])
+                        st["other"].append((now, "station", kind, body.hex()))
+                        verdict = station4.RESULT_NAMES.get(result, result)
+                        print(f"\n[rx] t={now:6.2f} *** STATION PROTOCOL 0x14, type {kind}, "
+                              f"result {verdict} *** phase {st['phase']}\n     {body.hex()}")
                     else:
                         # ANYTHING on a protocol the console has never used with us is the finding
                         st["other"].append((now, "proto", f["protocol"], body.hex()))
@@ -226,7 +248,49 @@ async def main_async(args):
                         return
                 print(f"[tx] station byte {station}: the rebroadcast did not stop "
                       f"({st['updates']} update sessions so far)")
+            if args.connect:
+                await connect_sweep(dst)
             st["phase"] = "hold"
+
+        async def connect_sweep(dst):
+            """Sweep the one pair of bytes a version-4 connection request cannot know in advance.
+
+            [1] and [0x10] are the TARGET's nat flags and nat location, and we have never seen the
+            console's station location - it travels on the Mesh Protocol, which has not spoken to
+            us. A mismatch is silence and a match is the console's first word on 0x14, which is
+            exactly how BDSP's protocol count was measured."""
+            variable_id = args.src_var if args.src_var is not None else \
+                int.from_bytes(os.urandom(4), "big")
+            location = stp.station_location(our_ip, PIA_PORT, our_constant, variable_id,
+                                            stp.ldn_service_variable_id(our_mac))
+            target_constant = st["host_constant_seen"] or stp.ldn_constant_id(host_mac)
+            target_var = st["host_var"] or 0
+            flags = [int(x, 0) for x in _expand(args.nat_flags)]
+            locs = [int(x, 0) for x in _expand(args.nat_location)]
+            print(f"\n[tx] connection requests on 0x14 -> {host_ip}: target constant "
+                  f"{target_constant:#018x} variable {target_var:#010x}, our variable id "
+                  f"{variable_id:#010x}")
+            print(f"[tx] sweeping nat flags {flags} x nat location {locs} "
+                  f"({len(flags) * len(locs)} requests, {args.request_gap:.2f}s apart)")
+            for nl in locs:
+                for nf in flags:
+                    st["phase"] = f"connect:flags={nf},location={nl}"
+                    payload = station4.build_connection_request(
+                        target_constant, target_var, location, nat_flags=nf, nat_location=nl,
+                        with_variable_id=not args.no_variable_id)
+                    pkt = wrap(keys, our_mac, our_constant, next_nonce(), payload,
+                               station4.PROTOCOL, args.connect_station)
+                    sock.sendto(pkt, (host_ip, PIA_PORT))
+                    st["requests"] += 1
+                    record(rec="tx_request", t=time.monotonic() - t0, nat_flags=nf,
+                           nat_location=nl, request=payload.hex())
+                    await trio.sleep(args.request_gap)
+                    if st["station_replies"]:
+                        print(f"[tx] a 0x14 reply arrived at flags={nf} location={nl} - stopping "
+                              f"the sweep so the capture is unambiguous")
+                        return
+            print(f"[tx] {st['requests']} requests, no 0x14 reply. Silence is what a wrong "
+                  f"constant id, a wrong count or a malformed location all look like.")
 
         async with trio.open_nursery() as nursery:
             nursery.start_soon(receiver)
@@ -235,12 +299,14 @@ async def main_async(args):
             nursery.cancel_scope.cancel()
 
         print(f"\n[cx] === {st['rx']} packets in, {st['undecrypted']} that did not decrypt, "
-              f"{st['updates']} update sessions, {st['acks']} acks out")
+              f"{st['updates']} update sessions, {st['acks']} acks out, "
+              f"{st['requests']} connection requests, {st['station_replies']} replies on 0x14")
         if st["answer"]:
             now, phase, proto = st["answer"]
             print(f"[cx] FIRST TRAFFIC ON A NEW PROTOCOL: {proto:#04x} at t={now:.2f} in {phase}")
         record(rec="end", updates=st["updates"], acks=st["acks"], rx=st["rx"],
-               undecrypted=st["undecrypted"], phase=st["phase"], answer=st["answer"])
+               undecrypted=st["undecrypted"], phase=st["phase"], answer=st["answer"],
+               requests=st["requests"], station_replies=st["station_replies"])
     if cap:
         cap.close()
     return 0
@@ -271,6 +337,19 @@ def build_parser():
                     help="THE CONTROL. Ack a sequence id the console never sent: a rebroadcast "
                          "that carries on under --seq-delta 1 is what attributes a stop under 0 to "
                          "the ack's CONTENT rather than to our merely having transmitted")
+    ap.add_argument("--connect", action="store_true",
+                    help="after the ack, sweep the version-4 connection request on protocol 0x14")
+    ap.add_argument("--nat-flags", default="0-15", help="values for byte [1], list or LO-HI")
+    ap.add_argument("--nat-location", default="0-3", help="values for byte [0x10]")
+    ap.add_argument("--request-gap", type=float, default=0.25,
+                    help="seconds between requests; the console answered BDSP's in 40 ms")
+    ap.add_argument("--connect-station", type=int, default=0,
+                    help="the header byte at 0x05 for the requests, and their IV source id")
+    ap.add_argument("--src-var", type=lambda s: int(s, 0), default=None,
+                    help="our own station variable id; fresh random when omitted, because a reused "
+                         "one is 'already one of my stations' on BDSP")
+    ap.add_argument("--no-variable-id", action="store_true",
+                    help="clear [3], which makes the console skip the variable-id comparison")
     ap.add_argument("--unicast", action="store_true",
                     help="send to the console rather than the broadcast address")
     ap.add_argument("--hold", type=float, default=30.0)
