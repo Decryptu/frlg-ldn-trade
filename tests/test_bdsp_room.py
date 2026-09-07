@@ -247,3 +247,33 @@ def test_trainer_card_is_seventy_five_blittable_bytes():
     assert parsed["fields"]["bodyType"] == 1
     assert parsed["fields"]["genderid"] == 1
     assert parsed["fields"]["cardData.tranerId"] == 41000
+
+
+def test_the_ready_ok_we_send_is_the_console_s_own_message_byte_for_byte():
+    """sp87's own is `21 00 02 00 02` on the wire and ours is that, byte for byte.
+
+    `TradeSelectPokeModel$$ReciveReadyOk` [main.bin 0x1cd4860] is three instructions and only
+    `[netdata + 0x11]` - the SECOND field - reaches the game, so `isTradeOk` is left at the value
+    the console itself sends rather than given a meaning it does not have.
+    """
+    msg = room.build_trade_ready_ok()
+    assert msg == bytes.fromhex("2100020002")
+    parsed = room.parse(msg)
+    assert parsed["data_id"] == room.TRADE_READY_OK
+    assert parsed["fields"] == {"isTradeOk": 0, "tradeState": room.TRADE_STATE_WAIT}
+    # and WAIT is 2 in TradeStateModel.TradeState, which is what the console's own carried
+    assert room.TRADE_STATE_WAIT == 2
+    assert room.TRADE_STATE_START_WRITE_SAVE == 7 and room.TRADE_STATE_WRITEING_SAVE == 8
+
+
+def test_the_ready_ok_is_the_only_trade_message_that_needs_a_flag_of_its_own():
+    """Every other answer rides on --trade-reply; this one writes a save, so it is separate.
+
+    The launcher's parser is built inside `main()`, so this reads the source rather than the
+    namespace - what matters is that the flag exists, defaults to off, and says what it does.
+    """
+    source = (pathlib.Path(__file__).resolve().parent.parent
+              / "bin" / "bdsp_connect.py").read_text()
+    assert '"--complete-trade", action=argparse.BooleanOptionalAction, default=False' in source
+    assert "WRITES THE CONSOLE'S SAVE" in source
+    assert "if not args.complete_trade:" in source

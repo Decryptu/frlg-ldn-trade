@@ -231,8 +231,8 @@ TRADE_POKE_CHECK_OK = 0x46        # NetDataTradePokeCheckOkData - "I have looked
                                   # the first message in this project's history that no capture had
                                   # ever held AND that says the console ACCEPTED something we made.
 TRADE_READY_OK = 0x21             # NetDataTradeReadyOkData - the step after, and the one that
-                                  # leads to the exchange itself. NOT SENT: it is where a save is
-                                  # written and that is the user's decision, not this file's.
+                                  # leads to the exchange itself. IT IS THE LINE: past it the
+                                  # console writes its save. `build_trade_ready_ok` below.
 TRADE_TRANER = 0x24               # NetDataTradeTranerData - who the player trading with us IS
 TRADE_POKE = 0x13                 # NetTradePokeData - and a whole Pokemon, 328 bytes
 
@@ -291,6 +291,44 @@ def build_trade_traner(name, trainer_id, secret_id, unknown_10=107544, unknown_1
                  encoded.ljust(16, b"\x00")
                  + struct.pack("<IIHHHH", unknown_10, unknown_14, unknown_18,
                                trainer_id, secret_id, unknown_1e))
+
+
+# `TradeStateModel.TradeState` [dump.cs:258737]. The union-room flow only ever uses WAIT, which is
+# what a "ready" means here - the state machine that uses the rest of the enum is the one created
+# AFTER the handshake, on the other side of the save.
+TRADE_STATE_NONE = 0
+TRADE_STATE_INIT = 1
+TRADE_STATE_WAIT = 2
+TRADE_STATE_SEND_POKE = 3
+TRADE_STATE_WAIT_POKE = 4
+TRADE_STATE_SEND_READYOK = 5
+TRADE_STATE_WAIT_READYOK = 6
+TRADE_STATE_START_WRITE_SAVE = 7
+TRADE_STATE_WRITEING_SAVE = 8
+
+
+def build_trade_ready_ok(trade_state=TRADE_STATE_WAIT, is_trade_ok=0):
+    """"I am ready" - AND IT IS THE MESSAGE THAT LETS THE CONSOLE WRITE ITS SAVE.
+
+    ONE BYTE OF IT IS READ. `TradeSelectPokeModel$$ReciveReadyOk` [main.bin 0x1cd4860] is three
+    instructions - `ldrb w8, [x1, #0x11]; str w8, [x0, #0x78]; ret` - so the SECOND field,
+    `tradeState`, becomes `targetTradeState` and `isTradeOk` is never looked at. The console's own,
+    in sp87, was `{isTradeOk 0, tradeState 2}`, and 0 is kept as the default for the field the game
+    ignores so that ours is byte-identical to it: sp87's message is `21 00 02 00 02` in
+    `scratchpad/sp87_pia.jsonl` and `build_trade_ready_ok()` produces those five bytes.
+
+    WHAT IT DOES. `UnionTradeManager.<WaitBoxWindowComplete>d__24$$MoveNext` [0x1dd3780] waits for
+    `myTradeState == WAIT` (the player's own `MyReadyOk` sets that) AND `targetTradeState == WAIT`,
+    which has no other writer in the image. Both at WAIT and it sets
+    `UnionTradeManager.currentState = SECURIY_TRADE`, clears the select model and sends its own
+    0x21 back carrying zero. From there `TradeSecurityController` -> `CreateTradeStateModel` ->
+    `TradeStateModel$$InitState`, whose first instruction after the prologue is `PlayerSave`.
+
+    So the console cannot leave SELECT_WINDOW without this message, and it writes a save shortly
+    after it. `bin/bdsp_connect.py` gates it behind `--complete-trade`, off by default.
+    docs/bdsp.md "Where it stops, and why".
+    """
+    return build_fields(TRADE_READY_OK, is_trade_ok & 0xFF, trade_state & 0xFF)
 
 
 def build_talk_reserve(body_byte=0):

@@ -140,7 +140,8 @@ async def main_async(args):
               "state_requests": 0, "their_state": None, "their_recruiting": 0,
               "reserves_sent": 0, "reserve_results": 0, "match_wait_sent": 0,
               "reserve_accepted": False, "room_done": False, "their_traner": None,
-              "their_poke": None, "our_poke": None, "trade_replies": 0, "check_oks": 0}
+              "their_poke": None, "our_poke": None, "trade_replies": 0, "check_oks": 0,
+              "their_ready_ok": None, "ready_oks_sent": 0}
 
         # BUILD WHAT WE WILL OFFER BEFORE THE RADIO IS TOUCHED. A template that will not load, or
         # a nickname that will not fit, must fail here and not halfway through a trade on a real
@@ -330,7 +331,8 @@ async def main_async(args):
                                 if args.answer_requests:
                                     await answer_the_request(g, now, via="reliable")
                             if g and g["data_id"] in (room.TRADE_TRANER, room.TRADE_POKE,
-                                                      room.TRADE_POKE_CHECK_OK):
+                                                      room.TRADE_POKE_CHECK_OK,
+                                                      room.TRADE_READY_OK):
                                 # d["payload"] IS the game message here. `m.payload` still has the
                                 # reliable header on the front of it - sp83 passed that, the parser
                                 # was handed 41 bytes where 32 were expected, and the exception took
@@ -1093,6 +1095,22 @@ async def main_async(args):
                 record(rec="their_check_ok", t=now, payload=payload.hex())
                 reply = room.build_fields(room.TRADE_POKE_CHECK_OK, 1)
                 label = "our check-ok"
+            elif g["data_id"] == room.TRADE_READY_OK:
+                # THE LAST MESSAGE, AND THE ONE THAT LETS THE CONSOLE WRITE ITS SAVE. Answering it
+                # with tradeState=WAIT satisfies the second half of
+                # `<WaitBoxWindowComplete>d__24`'s condition, the manager moves to SECURIY_TRADE,
+                # and `TradeStateModel$$InitState` calls `PlayerSave`. Off unless --complete-trade.
+                st["their_ready_ok"] = g.get("fields")
+                print(f"\n[rx] t={now:6.2f} *** THEIR READY-OK: {st['their_ready_ok']} ***")
+                record(rec="their_ready_ok", t=now, fields=st["their_ready_ok"])
+                if not args.complete_trade:
+                    print("[cx]   NOT ANSWERED - --complete-trade is off, so the console stays in "
+                          "SELECT_WINDOW and no save is written")
+                    record(rec="ready_ok_declined", t=now)
+                    return
+                reply = room.build_trade_ready_ok()
+                st["ready_oks_sent"] += 1
+                label = "our ready-ok (THE CONSOLE SAVES AFTER THIS)"
             elif g["data_id"] == room.TRADE_TRANER:
                 st["their_traner"] = room.parse_trade_traner(payload[room.HEADER_SIZE:])
                 print(f"\n[rx] t={now:6.2f} *** THEIR TRAINER RECORD: {st['their_traner']} ***")
@@ -1307,6 +1325,10 @@ async def main_async(args):
         print(f"[cx] NetRequestData received {st['requests']}"
               + (f" (last for {room.name(st['last_request'])})" if st["last_request"] else "")
               + f", answered {st['request_answers']}")
+        print(f"[cx] trade replies sent {st['trade_replies']}, their check-oks {st['check_oks']}, "
+              f"their ready-oks {'yes' if st['their_ready_ok'] else 'none'}, "
+              f"our ready-oks {st['ready_oks_sent']}"
+              + (" - THE CONSOLE WROTE ITS SAVE" if st["ready_oks_sent"] else ""))
         # the verdict a capture can give on its own, without asking anyone to watch the screen
         print(f"[cx] requests for NetCharacterStateData {st['state_requests']} - "
               + ("THE GAME CREATED A CHARACTER FROM US" if st["state_requests"]
@@ -1394,6 +1416,13 @@ def main():
                          "\"En attente d'une reponse\". THIS DOES NOT COMPLETE A TRADE - the player "
                          "still confirms on their own screen, and declining there leaves the save "
                          "untouched")
+    ap.add_argument("--complete-trade", action=argparse.BooleanOptionalAction, default=False,
+                    help="answer NetDataTradeReadyOkData (0x21) with tradeState=WAIT and LET THE "
+                         "TRADE COMPLETE. THIS WRITES THE CONSOLE'S SAVE: the message is the only "
+                         "writer of the console's `targetTradeState`, both states at WAIT move "
+                         "UnionTradeManager to SECURIY_TRADE, and TradeStateModel$$InitState calls "
+                         "PlayerSave. The Pokemon the player picked leaves their box and ours takes "
+                         "its place. Needs --trade-reply. ASK THE USER FIRST")
     ap.add_argument("--trade-template", metavar="FILE",
                     help="a 328-byte PB8 to offer, edited by --trade-species and friends. 328 "
                          "bytes hold much more than this project has identified, so what we send "
@@ -1519,6 +1548,14 @@ def main():
     args = ap.parse_args()
     if os.geteuid() != 0:
         ap.error("must run as root")
+    if args.complete_trade and not args.trade_reply:
+        # --complete-trade answers the LAST trade message; without --trade-reply the console never
+        # gets the trainer record or the Pokemon that come before it, so there is nothing to be
+        # ready for. Failing here costs nothing; failing at the console costs a join and an A press.
+        ap.error("--complete-trade needs --trade-reply")
+    if args.complete_trade:
+        print("[cx] *** --complete-trade IS ON: the console will WRITE ITS SAVE and the Pokemon "
+              "the player picks will LEAVE THEIR BOX ***")
     return trio.run(main_async, args)
 
 
