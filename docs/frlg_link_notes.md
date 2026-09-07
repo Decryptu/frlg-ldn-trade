@@ -441,10 +441,21 @@ every fragment missing from its own echo bitmask (`HandleSendFailure`, link_rfu_
 receiver ORs fragments into a bitmask, so duplicated or reordered echoes are harmless. What is not
 harmless is the 0.1 s hole that started it.
 
-UNKNOWN: which of the three stages holds the frame. The hold has not reproduced since (u27-u32 are
-six clean runs), so the next run is a trap set rather than a search: `scratchpad/txpath_trace.bt`
-partitions the path into g_tap (the tap ring), g_py (inside Python) and g_mon (mac80211/rtw88), and
-`scratchpad/txpath.py` names the growing gauge at a hold.
+UNKNOWN: which of the three stages holds the frame. The hold has not reproduced since - **u27-u33
+and u35 are eight clean runs** - so a run is a trap set rather than a search:
+`scratchpad/txpath_trace.bt` partitions the path into g_tap (the tap ring), g_py (inside Python) and
+g_mon (mac80211/rtw88), and `scratchpad/txpath.py` names the growing gauge at a hold.
+
+**u35 is the strongest negative so far: a 23 minute 51 second link battle**, half again as long as
+u33 and roughly five times any run before that, fought to a natural finish with the trap armed
+throughout. No hold of 150 ms or more, `g_py` never left 0, `ps_buf` never returned TX_QUEUED, and
+`echo_gaps` found a fragment we failed to mirror in 0 of 494 blocks.
+
+**And it retires a generalisation u33 left.** u33 said the acklag COUNT rises with run length while
+the SIZE does not. Over half again the length the size did move - the worst inbound gap went 44 ms
+to 90 ms - and the three worst gaps sat in the last eight seconds of the battle rather than spread
+through it. Two orders of magnitude below the 0.1-1.1 s a hold means, so it is not the hold arriving
+in miniature; what it says is that "the size does not move" was a reading taken at one run length.
 
 # The Union Room
 
