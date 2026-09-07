@@ -32,6 +32,10 @@ NEGATED. THE TWELVE POINTS ARE A SPAN, not a burst: they are where the player HA
 last message, so a walk is one message per stride with the strides interpolated across it. sp57 sent
 twelve points 0.008 apart and the avatar crept and then jumped, which is what `pos_span` fixes.
 
+**THE STREAM DECIDES THE STREAM.** All 4333 requests for 0x23 arrived on the RELIABLE protocol and
+all 55 requests for 0x04 on the UNRELIABLE one, with no crossover in nineteen runs - so a request is
+answered on the protocol it came in on, which is also where the console puts its own answer.
+
 **THE TWO MESSAGES THE CONSOLE HAS BEEN REPEATING SINCE THE FIRST JOIN ARE A QUESTION AND ITS OWN
 ANSWER.** `12 0001 23` is `NetRequestData{RequestDataID = 0x23}` and 0x23 is itself a data id -
 `OpcManager._RequestNetDataCallback` is an `Action<byte>`, so a request names the message it wants -
@@ -62,7 +66,12 @@ POS_POINTS = 12                   # what a console puts in one message; 12 * 6 i
 POS_SCALE = 0.05                  # PosData.pos: -posX * 0.05, posZ * 0.05
 POS_UNIT = 20.0                   # and the setter MULTIPLIES by 20 rather than dividing by 0.05 -
                                   # 10.35 / 0.05 truncates to 206 where 10.35 * 20 gives 207
-KEEPALIVE = bytes.fromhex("0400020000")   # the unreliable stream every 2 s when nothing happens
+# WHAT THIS PROJECT CALLED A KEEPALIVE IS A MESSAGE. `04 00 02 00 00` is data id 4, big-endian
+# length 2, body `00 00` - `NetCharacterStateData{state: NONE, isRecruiment: 0}`, the console
+# broadcasting its own character's state every two seconds. It was named before the table existed.
+# Every one of the 968 unreliable payloads in the archive is a whole game message and 853 are this.
+STATE_NONE_MESSAGE = bytes.fromhex("0400020000")
+KEEPALIVE = STATE_NONE_MESSAGE            # the old name, kept so an old log still reads
 
 # The name this project used before opendpr named them, kept so an old log still reads.
 DATA_ID_NAMES = {ident: name for ident, (name, _) in NAMES.items()}

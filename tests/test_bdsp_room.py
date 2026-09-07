@@ -80,8 +80,15 @@ def test_a_short_message_is_refused():
         room.parse_join_body(b"\x00" * 16)
 
 
-def test_the_keepalive_is_five_bytes():
-    assert room.KEEPALIVE == bytes.fromhex("0400020000")
+def test_what_was_called_a_keepalive_is_a_message():
+    """`04 00 02 00 00` is data id 4, length 2, body 00 00 - the console's own character state."""
+    assert room.KEEPALIVE == room.STATE_NONE_MESSAGE == bytes.fromhex("0400020000")
+    out = room.parse(room.STATE_NONE_MESSAGE)
+    assert out["data_id"] == room.STATE and out["name"] == "NetCharacterStateData"
+    assert out["length"] == 2 and out["truncated"] is False
+    assert out["fields"] == {"state": room.STATE_NONE, "isRecruiment": 0}
+    # so the answer to a request for 0x04 is a message the console itself broadcasts every 2 s
+    assert room.build_state() == room.STATE_NONE_MESSAGE
 
 
 def test_every_message_the_game_speaks_is_named_and_the_ids_are_nibble_grouped():

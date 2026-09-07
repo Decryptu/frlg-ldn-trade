@@ -312,7 +312,7 @@ async def main_async(args):
                                               f"CHARACTER FROM US ***\n")
                                     st["state_requests"] += 1
                                 if args.answer_requests:
-                                    await answer_the_request(g, now)
+                                    await answer_the_request(g, now, via="reliable")
                             if args.reliable_auto_ack and st["rel_handshaken"]:
                                 ack = rl.build_ack_message(st["rel_max_seq"] + 1,
                                                            stream_id=d["stream_id"])
@@ -347,9 +347,34 @@ async def main_async(args):
                         st["unreliable"] += 1
                         record(rec="unreliable", t=now, phase=st["phase"], port=m.port,
                                dest=m.destination, payload=m.payload.hex())
+                        # EVERY unreliable payload in the archive is a whole game message - 968 of
+                        # them, three types, no exceptions - and the five-byte one this project
+                        # called a keepalive is NetCharacterStateData. So parse them here as well,
+                        # which is where the 0x04 request lives: all 55 of them came in on THIS
+                        # protocol and none on the reliable one.
+                        g = room.parse(m.payload) if len(m.payload) >= room.HEADER_SIZE else None
+                        if g and not g["truncated"] and g["length"] + room.HEADER_SIZE == len(m.payload):
+                            record(rec="game_message", t=now, via="unreliable",
+                                   data_id=g["data_id"], name=g["name"], fields=g.get("fields"),
+                                   payload=m.payload.hex())
+                            if g["data_id"] == room.REQUEST and g.get("fields"):
+                                st["requests"] += 1
+                                st["last_request"] = g["fields"]["RequestDataID"]
+                                if g["fields"]["RequestDataID"] == room.STATE:
+                                    if not st["state_requests"]:
+                                        print(f"\n[rx] t={now:6.2f} *** IT ASKED FOR "
+                                              f"NetCharacterStateData - THE GAME HAS CREATED A "
+                                              f"CHARACTER FROM US ***\n")
+                                    st["state_requests"] += 1
+                                if args.answer_requests:
+                                    await answer_the_request(g, now, via="unreliable")
+                        else:
+                            g = None
                         if st["unreliable"] <= 5 or st["unreliable"] % 25 == 0:
                             print(f"[rx] t={now:6.2f} UNRELIABLE #{st['unreliable']} "
-                                  f"({len(m.payload)} B) {m.payload[:32].hex(' ')}")
+                                  f"({len(m.payload)} B) "
+                                  + (f"{g['name']} {g.get('fields', '')}" if g
+                                     else m.payload[:32].hex(' ')))
                     else:
                         print(f"[rx] t={now:6.2f} protocol {m.protocol} port {m.port} "
                               f"({len(m.payload)} B) - something new")
@@ -424,13 +449,18 @@ async def main_async(args):
 
             print("[cx] the data probe was never answered; not acking blind")
 
-        async def answer_the_request(message, now):
-            """Answer a NetRequestData with the message it names, on the reliable stream.
+        async def answer_the_request(message, now, via="reliable"):
+            """Answer a NetRequestData with the message it names, ON THE PROTOCOL IT ARRIVED ON.
 
-            The sequence id is taken FRESH: the window is shared with the console's own sends and
-            anything below its ack id is discarded in silence (sp53). One send, no retransmission -
-            the console repeats the request, so a lost answer costs nothing and the next request is
-            another chance.
+            THE STREAM DECIDES THE STREAM. All 4333 requests for 0x23 came in on the reliable
+            protocol and all 55 for 0x04 on the unreliable one, with no crossover in nineteen runs,
+            and each is where the console puts its own answer - so replying on the other one would
+            be a framing mistake of exactly the kind sp40-sp43 spent four runs on.
+
+            On the reliable stream the sequence id is taken FRESH: the window is shared with the
+            console's own sends and anything below its ack id is discarded in silence (sp53). One
+            send, no retransmission - the console repeats the request, so a lost answer costs
+            nothing and the next request is another chance.
             """
             reply = room.answer(message)
             wanted = message["fields"]["RequestDataID"]
@@ -438,6 +468,16 @@ async def main_async(args):
                 print(f"[tx] t={now:6.2f} it asked for {room.name(wanted)} and this table cannot "
                       f"build one")
                 record(rec="request_unanswerable", t=now, requested=wanted)
+                return
+            if via == "unreliable":
+                sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), reply,
+                                 UNRELIABLE_PROTOCOL, port=0, destination=0xFFFFFFFF,
+                                 message_flags=rl.MESSAGE_FLAGS), (st["dst_ip"], PIA_PORT))
+                st["request_answers"] += 1
+                print(f"[tx] t={now:6.2f} answered its request for {room.name(wanted)} on the "
+                      f"unreliable stream: {reply.hex(' ')}")
+                record(rec="request_answered", t=now, requested=wanted, via=via,
+                       reply=reply.hex())
                 return
             seq = st["their_ack_id"]
             if not seq:
@@ -451,7 +491,8 @@ async def main_async(args):
             st["request_answers"] += 1
             print(f"[tx] t={now:6.2f} answered its request for {room.name(wanted)} at seq {seq}: "
                   f"{reply.hex(' ')}")
-            record(rec="request_answered", t=now, requested=wanted, seq=seq, reply=reply.hex())
+            record(rec="request_answered", t=now, requested=wanted, via=via, seq=seq,
+                   reply=reply.hex())
 
         async def walk_the_room(seq):
             """Put a position of OUR OWN into the room, and see whether the game draws it.

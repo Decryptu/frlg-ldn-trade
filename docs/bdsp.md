@@ -186,11 +186,29 @@ the table reproduces the console's own four bytes exactly, which is the check th
 right before any run is spent on it. `bin/bdsp_connect.py --answer-requests` sends it; the counter
 to read afterwards is whether the request keeps being asked.
 
-On the unreliable protocol the console sends a five-byte keepalive `04 00 02 00 00` every two
-seconds while nothing happens, and a **trail** while an avatar moves: three bytes of head and then
-triples of little-endian halfwords, twelve of them in the 75-byte form, stepping smoothly from one
-to the next. Their units are not the position message's, and calling them anything more than a
-trail would be a guess. `pokeldn/bdsp/room.py`.
+### The unreliable stream is not a keepalive and a trail - it is three messages
+
+Every one of the 968 unreliable payloads in the archive is a whole game message, and there are three
+of them:
+
+| bytes | times | message |
+|---|---|---|
+| `04 0002 00 00` | 853 | `NetCharacterStateData{state: NONE, isRecruiment: 0}`, every two seconds |
+| `12 0001 04` | 55 | `NetRequestData` - "send me your `NetCharacterStateData`" |
+| `02 0048 <72 B>` | 60 | `NetPosData`, twelve points, while the console's avatar walks |
+
+The five-byte one was called a keepalive here for several sessions, and it is the console
+broadcasting its own character's state. It was named before the message table existed.
+
+**The stream decides the stream.** All 4333 requests for `NetDataIsMatchWaitData` arrived on the
+reliable protocol and all 55 for `NetCharacterStateData` on the unreliable one, with no crossover in
+nineteen runs - and each is where the console puts its own answer, so a reply goes back on the
+protocol its request came in on.
+
+Which makes the answer free of invention twice over: `room.build_state()` produces `04 0002 0000`,
+the exact five bytes the console broadcasts 853 times, and `room.build_match_wait(False)` produces
+the exact four the console answers itself with. Neither reply is anything the console has not
+already said.
 
 ## The pages
 
