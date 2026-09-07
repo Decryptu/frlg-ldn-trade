@@ -123,8 +123,41 @@ def parse_join_response(data):
         "max_total": data[10],
         "update_counter": struct.unpack_from(">I", data, 12)[0],
     }
-    infos, off = [], 16
-    for _ in range(out["entries"]):
+    out["station_info"] = _station_info(data, 16, out["entries"])
+    out["ack_id"] = read_ack_id(data)
+    return out
+
+
+UPDATE_MESH_HEADER = 12
+UPDATE_MESH_SIZE = UPDATE_MESH_HEADER + 8 * STATION_INFO_SIZE      # 556: always the full 8 seats
+
+
+def parse_update_mesh(data):
+    """-> dict. The host's periodic statement of who is in the mesh.
+
+    BDSP sends this about once a second and always at the FULL 556 bytes - twelve bytes of header
+    and room for all eight seats, the unused ones left zero - so the length says nothing and
+    `entries` is what to walk. sp45 caught 110 of them, every one identical, update counter 5.
+    """
+    if len(data) < UPDATE_MESH_HEADER or data[0] != UPDATE_MESH:
+        raise ValueError(f"not a mesh update: {data[:12].hex()}")
+    out = {
+        "stations": data[1],
+        "host_index": data[2],
+        "update_counter": struct.unpack_from(">I", data, 4)[0],
+        "fragments": data[8],
+        "fragment_index": data[9],
+        "entries": data[10],
+        "base_index": data[11],
+    }
+    out["station_info"] = _station_info(data, UPDATE_MESH_HEADER, out["entries"])
+    return out
+
+
+def _station_info(data, off, count):
+    """The 5.31-5.45 entry: a 64-byte location, the index, a big-endian join order, one pad."""
+    infos = []
+    for _ in range(count):
         if off + STATION_INFO_SIZE > len(data):
             break
         blob = data[off:off + STATION_INFO_SIZE]
@@ -136,9 +169,7 @@ def parse_join_response(data):
             entry["location_error"] = str(exc)
         infos.append(entry)
         off += STATION_INFO_SIZE
-    out["station_info"] = infos
-    out["ack_id"] = read_ack_id(data)
-    return out
+    return infos
 
 
 def parse_message(data):

@@ -130,10 +130,16 @@ four bytes.
 `pokeldn/ldn/mesh_protocol.ack_for()` is that rule in one call, and `docs/bdsp_pia.md` carries the
 addresses it was read at.
 
+**UPDATE_MESH (0x20) is the host's periodic statement of who is in the mesh**, and BDSP sends it
+about once a second. It is always the **full 556 bytes** - twelve of header and room for all eight
+seats, the unused ones left zero - so the length says nothing and the `entries` byte is what to
+walk. `pokeldn/ldn/mesh_protocol.parse_update_mesh()`.
+
 The 5.31-5.45 station info entry is 68 bytes: a 64-byte station location, the station index, and a
 **big-endian halfword join order** - the wiki calls the last two bytes padding for 5.27-5.29 and
-names the join order only from 5.31, and a real capture has 0 for the host and 1 for the station
-that joined after it.
+names the join order only from 5.31. It counts JOINS and not seats: a capture taken after three
+successive connections from the same machine reads 0 for the host and **3** for us, in station
+index 1. That is the field naming itself.
 
 ## The RTT protocol (0x58)
 

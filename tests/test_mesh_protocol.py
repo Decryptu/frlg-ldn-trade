@@ -115,3 +115,32 @@ def test_the_real_join_response_reads_back_as_the_mesh_the_console_named():
     assert host["location"]["constant_id"] == 0xEB9B2220F1480000
     assert us["location"]["private"] == ("169.254.14.2", 12345)
     assert us["location"]["variable_id"] == 0x2B7F4C11
+
+
+# One real UPDATE_MESH off the console, sp45. It sent 110 of these, every one identical, about once
+# a second, and always at the full 556 bytes with the six empty seats left zero.
+SP45_UPDATE_MESH = bytes.fromhex(
+    "20020000000000050100020002060000a9fe07013039000000000000eb9b2220f1480000406a4ae6597bc2a30000000100000000000000000000000000000000000000000000000000000000000000000606a9fe07023039a9fe070230390000000000001249a221d85800002b7f4c1a32669aea0501000100000000000000000000000000000000000000000000000001000300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
+
+
+def test_the_update_mesh_is_always_the_full_eight_seats():
+    assert len(SP45_UPDATE_MESH) == mp.UPDATE_MESH_SIZE == 556
+    assert mp.UPDATE_MESH_SIZE == 12 + 8 * mp.STATION_INFO_SIZE
+    out = mp.parse_update_mesh(SP45_UPDATE_MESH)
+    assert out["stations"] == 2 and out["host_index"] == 0
+    assert out["update_counter"] == 5
+    assert out["fragments"] == 1 and out["fragment_index"] == 0
+    assert out["entries"] == 2 and out["base_index"] == 0
+    assert len(out["station_info"]) == 2          # entries, not the length, says how many
+    host, us = out["station_info"]
+    assert host["station_index"] == 0 and host["join_order"] == 0
+    # join order 3, not 1: it counts JOINS, and sp43/sp44/sp45 each took a seat in the same room
+    # session. That is the field naming itself.
+    assert us["station_index"] == 1 and us["join_order"] == 3
+    assert host["location"]["private"][1] == 12345
+    assert us["location"]["variable_id"] == 0x2B7F4C1A     # the --src-var sp45 ran with
+
+
+def test_a_wrong_type_is_refused():
+    with pytest.raises(ValueError):
+        mp.parse_update_mesh(bytes([mp.JOIN_RESPONSE]) + bytes(20))
