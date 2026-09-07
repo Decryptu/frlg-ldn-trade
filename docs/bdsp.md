@@ -485,6 +485,34 @@ The save the box window is waiting *for* is `TradeStateModel.PlayerSave`, which 
 So **no run in this project has written a console's save**, sp82 and sp87 included, and the line is
 not where the trade completes - it is the 0x21. Read offline, no run spent.
 
+### The disconnect penalty, and what it proves
+
+Dropping out mid-trade earns "vous ne pouvez pas faire d'echange en reseau pour le moment", and the
+console then refuses to advertise at all - a run against it sees `their advertising state seen 0`
+and nothing else. Three methods hold all of it:
+
+    TradeStateModel$$FirstSave    0x1cd4fc0   SetPenartyCounter(30); SetPenartyTime(now)
+    TradeStateModel$$SecondSave   0x1cd5030   SetPenartyCounter(0)
+    UnionFrontDeskStateController$$CheckPenarty  0x1fcc400   counter >= 1 AND not CheckDateTime()
+
+**So the penalty is armed by the FIRST save and cleared by the SECOND** - the classic "you
+disconnected between the two writes" design, and a trade that completes clears it on its own. That
+also settles a question no screen could answer: **a penalty means `FirstSave` ran, which means the
+console really did write.**
+
+**`UnionWork$$CheckDateTime` [0x1dd3e30] is the timer, and it is a sloppy one.** It takes
+`DateTime.Now` and adds the fields together with no weighting at all:
+
+    w8 = Year + Month + Day + Hour + Minute + Second
+    cset w0, mi            ... on  (stored + 30.0) < w8
+
+A sum like that rises by 1 a second inside a minute and then FALLS by 58 when the seconds wrap, so
+the wait is 30 seconds if the penalty was armed before :30 of its minute and about **30 minutes**
+otherwise, the minute field carrying it the rest of the way. Nothing else in the check is
+time-shaped: raising any field raises the sum, so a console clock moved forward by 30 in any single
+field (the year is the one that takes 30 exactly) clears it immediately, and moving the clock back
+restores it, because only `SecondSave` zeroes the counter.
+
 ## The pages
 
 - [Joining the session](bdsp_ldn.md) - the advertisement, the passphrase, and taking a seat.
