@@ -226,6 +226,13 @@ def build_request(requested_id):
     return build_fields(REQUEST, requested_id & 0xFF)
 
 
+TRADE_POKE_CHECK_OK = 0x46        # NetDataTradePokeCheckOkData - "I have looked at yours and
+                                  # it is fine". sp85 got `46 00 01 01` after sending a Pokemon:
+                                  # the first message in this project's history that no capture had
+                                  # ever held AND that says the console ACCEPTED something we made.
+TRADE_READY_OK = 0x21             # NetDataTradeReadyOkData - the step after, and the one that
+                                  # leads to the exchange itself. NOT SENT: it is where a save is
+                                  # written and that is the user's decision, not this file's.
 TRADE_TRANER = 0x24               # NetDataTradeTranerData - who the player trading with us IS
 TRADE_POKE = 0x13                 # NetTradePokeData - and a whole Pokemon, 328 bytes
 

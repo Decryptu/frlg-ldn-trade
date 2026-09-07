@@ -140,7 +140,7 @@ async def main_async(args):
               "state_requests": 0, "their_state": None, "their_recruiting": 0,
               "reserves_sent": 0, "reserve_results": 0, "match_wait_sent": 0,
               "reserve_accepted": False, "room_done": False, "their_traner": None,
-              "their_poke": None, "our_poke": None, "trade_replies": 0}
+              "their_poke": None, "our_poke": None, "trade_replies": 0, "check_oks": 0}
 
         # BUILD WHAT WE WILL OFFER BEFORE THE RADIO IS TOUCHED. A template that will not load, or
         # a nickname that will not fit, must fail here and not halfway through a trade on a real
@@ -329,8 +329,13 @@ async def main_async(args):
                                     st["state_requests"] += 1
                                 if args.answer_requests:
                                     await answer_the_request(g, now, via="reliable")
-                            if g and g["data_id"] in (room.TRADE_TRANER, room.TRADE_POKE):
-                                await answer_the_trade(g, m.payload, now)
+                            if g and g["data_id"] in (room.TRADE_TRANER, room.TRADE_POKE,
+                                                      room.TRADE_POKE_CHECK_OK):
+                                # d["payload"] IS the game message here. `m.payload` still has the
+                                # reliable header on the front of it - sp83 passed that, the parser
+                                # was handed 41 bytes where 32 were expected, and the exception took
+                                # the whole station down mid-trade. The console called that a cancel.
+                                await answer_the_trade(g, d["payload"], now)
                             if g and g["data_id"] == room.STATE and g.get("fields"):
                                 note_their_state(g["fields"], now)
                             if g and g["data_id"] == room.TALK_RESERVE_RESULT and g.get("fields"):
@@ -1053,6 +1058,17 @@ async def main_async(args):
             st["phase"] = "after"
 
         async def answer_the_trade(g, payload, now):
+            try:
+                await _answer_the_trade(g, payload, now)
+            except Exception as exc:                                  # noqa: BLE001
+                # A HANDLER THAT RAISES DROPS OUR STATION, and the console reads a station that
+                # vanishes mid-trade as a cancellation - which is what the player sees on their own
+                # screen (sp83). Nothing read off the wire is worth ending a run for.
+                print(f"\n[cx] *** the trade answer failed and the run is CARRYING ON: "
+                      f"{type(exc).__name__}: {exc} ***\n")
+                record(rec="trade_answer_error", t=now, error=f"{type(exc).__name__}: {exc}")
+
+        async def _answer_the_trade(g, payload, now):
             """Answer the console's own half of a trade with ours.
 
             It sends WHO IT IS and then WHAT IT IS OFFERING, and waits. sp82 reached both and was
@@ -1065,7 +1081,19 @@ async def main_async(args):
             """
             if not args.trade_reply:
                 return
-            if g["data_id"] == room.TRADE_TRANER:
+            if g["data_id"] == room.TRADE_POKE_CHECK_OK:
+                # IT LOOKED AT OUR POKEMON AND SAID YES. sp85 received `46 00 01 01` after sending
+                # one - the console checked something we assembled and accepted it. The same
+                # acknowledgement goes back, and NOTHING BEYOND IT: the next message in the flow is
+                # NetDataTradeReadyOkData, which leads to the exchange and to the console writing
+                # its save. That is the user's call and there is no flag here that makes it.
+                st["check_oks"] += 1
+                print(f"\n[rx] t={now:6.2f} *** IT ACCEPTED OUR POKEMON - "
+                      f"NetDataTradePokeCheckOkData {payload.hex(' ')} ***")
+                record(rec="their_check_ok", t=now, payload=payload.hex())
+                reply = room.build_fields(room.TRADE_POKE_CHECK_OK, 1)
+                label = "our check-ok"
+            elif g["data_id"] == room.TRADE_TRANER:
                 st["their_traner"] = room.parse_trade_traner(payload[room.HEADER_SIZE:])
                 print(f"\n[rx] t={now:6.2f} *** THEIR TRAINER RECORD: {st['their_traner']} ***")
                 record(rec="their_traner", t=now, fields=st["their_traner"])
@@ -1112,7 +1140,11 @@ async def main_async(args):
             """
             was = st["their_state"]
             st["their_state"] = fields
-            if fields.get("state") and fields != was:
+            # `isRecruiment` IS THE FLAG, NOT "state is non-zero". sp86 saw state 18 - the console
+            # still sitting in the trade flow from the previous run - read it as an invitation,
+            # spent its one approach on it at t=26 and was declined; the real emote went up at
+            # t=48 with nothing left to send. state 4 carries isRecruiment 1, state 18 carries 0.
+            if fields.get("isRecruiment") and fields != was:
                 st["their_recruiting"] += 1
                 print(f"\n[rx] t={now:6.2f} *** THE PLAYER IS ADVERTISING: {fields} - "
                       f"their character is now approachable ***\n")
@@ -1138,9 +1170,21 @@ async def main_async(args):
             # the experiment.
             while not st["room_done"]:
                 await trio.sleep(0.5)
-            while not st["their_recruiting"]:
-                await trio.sleep(0.5)
-            await trio.sleep(args.initiate_delay)
+            # AND EVERY INVITATION GETS AN ATTEMPT, not just the first. sp86 spent its only
+            # approach on a stale state and had nothing left when the emote actually went up.
+            seen = st["their_recruiting"]
+            while True:
+                while st["their_recruiting"] == seen:
+                    await trio.sleep(0.5)
+                seen = st["their_recruiting"]
+                await trio.sleep(args.initiate_delay)
+                if await one_approach():
+                    return
+                print("\n[cx] --- that approach came to nothing; waiting for them to advertise "
+                      "again\n")
+
+        async def one_approach():
+            """-> True if they accepted and the follow-up was sent, False to try again later."""
             payload = room.build_talk_reserve()
             print(f"\n[tx] --- APPROACHING THEIR CHARACTER: NetDataTalkReserveData "
                   f"{payload.hex(' ')}, retransmitted until their ack covers it")
@@ -1168,7 +1212,8 @@ async def main_async(args):
                         # must not be taken again.
                         print("[cx] *** THEY DECLINED (IsCanTalk 1). Sending NOTHING further. ***")
                         record(rec="approach_declined", t=time.monotonic() - t0)
-                        return
+                        st["reserve_results"] = 0
+                        return False
                     # AND NOW THE INITIATOR'S OWN NEXT MESSAGE, if the run was given one.
                     # sp76 sent TalkData{CHECK} as the RESPONDER and the console cancelled; CHECK
                     # is what `UnionStateController$$SwitchTalkStateMine` builds, and that is the
@@ -1202,8 +1247,9 @@ async def main_async(args):
                         print(f"[tx] t={now2:6.2f}   after-approach {room.name(payload[0])} "
                               f"at seq {seq}: {payload.hex(' ')}")
                         record(rec="after_approach_sent", t=now2, spec=spec, seq=seq)
-                    return
+                    return True
             print(f"[cx] {st['reserves_sent']} approaches, no NetDataTalkReserveResultData back")
+            return False
 
         async def keep_saying_match_wait():
             """Repeat NetDataIsMatchWaitData{1} for the whole hold.

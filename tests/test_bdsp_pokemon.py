@@ -104,3 +104,36 @@ def test_the_trade_messages_wrap_the_payloads_the_console_wraps_them_in():
         room.build_trade_poke(raw[:-1])
     rec = room.build_trade_traner("Gurvan", 44466, 4080)
     assert room.parse_trade_traner(rec[3:])["trainer_id"] == 44466
+
+
+# the two trainer records this project has seen, sp82 and sp83. They differ at 0x18.
+TRADE_TRANER_SP82 = bytes.fromhex(
+    "470075007200760061006e000000000018a4010014a401000000b2adf00f3103")
+TRADE_TRANER_SP83 = bytes.fromhex(
+    "470075007200760061006e000000000018a4010014a401006e3db2adf00f3103")
+
+
+def test_the_trainer_record_is_parsed_from_the_game_message_not_the_reliable_frame():
+    """sp83 handed the parser the reliable frame and the exception took the station down.
+
+    The console reads a station that vanishes mid-trade as a cancellation, which is exactly what
+    the player saw. The parser must refuse a wrong length loudly - it did - and the caller must
+    pass the game message alone.
+    """
+    message = room.build(room.TRADE_TRANER, TRADE_TRANER_SP83)
+    assert room.parse(message)["data_id"] == room.TRADE_TRANER
+    body = message[room.HEADER_SIZE:]
+    assert len(body) == room.TRADE_TRANER_SIZE
+    assert room.parse_trade_traner(body)["name"] == "Gurvan"
+    # a reliable header left on the front is a length error, not a silent misparse
+    with pytest.raises(ValueError, match="expected 32"):
+        room.parse_trade_traner(b"\x00" * 9 + body)
+
+
+def test_the_field_at_0x18_varies_between_sessions_and_is_not_asserted_to_be_zero():
+    sp82 = room.parse_trade_traner(TRADE_TRANER_SP82)
+    sp83 = room.parse_trade_traner(TRADE_TRANER_SP83)
+    assert sp82["unknown_18"] == 0 and sp83["unknown_18"] == 0x3D6E
+    # what does NOT vary is the identity, and that is the part the Pokemon corroborates
+    assert sp82["trainer_id"] == sp83["trainer_id"] == 44466
+    assert sp82["secret_id"] == sp83["secret_id"] == 4080

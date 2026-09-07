@@ -348,6 +348,89 @@ game applies collision to a remote character's movement, and it takes our `rot_y
 than deriving facing from the direction of travel. The player has no collision against our character
 at all.
 
+## The trade: the game handed us a Pokemon, and took one back
+
+A retail console opened its trade screen for a character we invented, sent its own trainer record
+and one of its Pokemon, and then **accepted a Pokemon we assembled**. The run stops one message
+short of the exchange itself, deliberately - that message is where the console writes its save.
+
+### The roles are the other way round from what we assumed
+
+For fifty runs our character advertised itself and waited to be approached. That is backwards.
+**Picking an emote locks a player in place waiting to be interacted with**, so a console showing a
+trade emote cannot start anything; someone has to walk up to it. The console broadcasts its own
+state, so the moment the emote goes up is visible on the wire:
+
+    NetCharacterStateData{state: 4, isRecruiment: 1}     the trade emote, up
+    NetCharacterStateData{state: 0, isRecruiment: 0}     and down again
+
+`isRecruiment` is the flag to gate on, not "state is non-zero" - state 18 is a console already
+inside a trade, and approaching that is refused. The approach itself is `NetDataTalkReserveData`,
+`63 00 01 00`, which is byte-for-byte what the console sends when its player walks up to someone.
+It was answered in 40 ms with `NetDataTalkReserveResultData{IsCanTalk: 0, ...}` - and `IsCanTalk`
+reads backwards from its name, 0 accepting and 1 declining.
+
+### talkState decides, and one of its three values crashes the game
+
+`TalkState` is `CHECK = 0, GREETING = 1, NONE = 2`. `UnionStateController$$SwitchSpokenStateMine`
+is the handler, and its whole shape is one branch:
+
+    0x1fd5e6c  cbz  w21, 0x1fd5e84    talkState == CHECK -> below
+    0x1fd5e80  b    0x1fd85e0         anything else -> StartOpenGreetingMsgWindow
+
+    0x1fd5e84  ldr  x0, [x0, #0x10]   systemController->msgWindow
+    0x1fd5e88  cbz  x0, 0x1fd5f00     ... and when it is NULL:
+    0x1fd5f00  mov  x19, xzr            x19 = 0
+    0x1fd5ec0  ldr  x20, [x19, #0x10]   dereferences it. No guard anywhere.
+
+CHECK is only meaningful to a console that already has a message window open. A player standing
+with an emote up has none, so sending it takes the game down - twice, before the handler was read.
+GREETING takes the branch that *opens* the window, and the game answers it with its greeting, its
+name, and an offer to trade. **A state value read out of a sender is not safe to send until the
+receiver's handler has been read**: CHECK really is what the initiator sends, in a state the
+console was not in.
+
+### The messages, in order
+
+    NetDataTransitionData{transitionType: 18}     entering the trade
+    NetDataTradeTranerData        32 B            who they are
+    NetTradePokeData             328 B            the Pokemon
+    NetDataTradePokeCheckOkData    1 B, value 1   "yours is fine"
+    NetDataTradeReadyOkData        2 B            the last message before the exchange
+
+Each is answered with our own. `NetDataTradePokeCheckOkData` is the one worth naming: it is the
+console reporting that it looked at a Pokemon we built and found it acceptable.
+
+### The Pokemon is an ordinary encrypted PB8
+
+328 bytes is Gen 8 `SIZE_STORED` exactly, and the format is the Gen 6+ one unchanged: an LCG seeded
+with the encryption constant XORs every 16-bit word from 0x08, and the four 80-byte blocks are
+permuted by `(EC >> 13) & 31`. **The checksum is the proof** - it sits in the clear at 0x06 and sums
+the *decrypted* body, so a wrong key, order or offset cannot produce a match, and a Pokemon we
+assemble is verified by decoding it back before it is ever sent. `pokeldn/bdsp/pokemon.py`.
+
+`NetDataTradeTranerData` has no generated layout - its C# struct holds a string - so it is read off
+the wire instead, and the reading checks itself: the trainer and secret ids in the clear at 0x1a and
+0x1c are the same pair carried inside the encrypted Pokemon of the same trade.
+
+    0x00  name, 8 UTF-16LE code units      0x18  u16, varies between sessions
+    0x10  u32, unidentified                0x1a  trainer id
+    0x14  u32, unidentified                0x1c  secret id
+
+**What we offer is a real Pokemon with named fields changed**, not one built from nothing. Those 328
+bytes hold far more than the dozen fields identified here - met data, ribbons, handler records, the
+language byte - and none of it is zero on a console's own. What the game validates on receipt is
+unknown: it accepted a near-copy of its own Pokemon, which is not the same as accepting any.
+
+### Where it stops, and why
+
+`NetDataTradeReadyOkData` is not sent, and no option makes it. `TradeStateModel$$WriteSaveData`
+calls `ReplacePoke` after it, which would write the player's save - the first thing this project
+would have done that touches a cartridge. Whether the console *already* saves on entering a trade is
+unresolved: `NetTradePhase` runs `None, WaitSave, PlayerSelecting, ...`, so WaitSave precedes the
+box picker, but the save call is reached indirectly and has not been traced, and no capture shows a
+stall long enough to be one.
+
 ## The pages
 
 - [Joining the session](bdsp_ldn.md) - the advertisement, the passphrase, and taking a seat.
