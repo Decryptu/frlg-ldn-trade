@@ -409,6 +409,44 @@ The message flags in the Pia header are **0x01** on 0x14, 0x18, 0x58 and 0x7c, a
 local protocol (0x24) - session 46's "0x11 for all four message types" was about the local
 protocol's own four. 0x11 has been accepted on 0x14 and 0x18 all the same.
 
+## On hardware: the ack lands, the RTT is answered, and the game's own traffic appears
+
+sp36-sp39, one session, four runs. The console sat in the Union Room throughout.
+
+**sp39 is the pass.** One join response, acknowledged on protocol 0x14, and silence after it -
+against eleven copies in sp35 and eighteen in sp36 with nothing acking. RTT: 135 requests, 135
+answered. The rule read out of the ARM64 is now measured from both ends.
+
+**sp36 confirmed the same rule from the other side, by accident.** The console acknowledges *our*
+join request with the station protocol's type-5 ack, and it arrives before the join response does.
+A join loop that breaks on "any reply" therefore breaks on that ack and has no join response in hand
+when it goes to acknowledge one - which is what sp36 did, and why it read 18 unacked copies. The ack
+belongs in the receiver, on every copy, not in the sender once.
+
+**Answering the RTT changes what the console does, measurably.** sp35 answered none: the RTT period
+was 410 ms and the two reliable messages were retransmitted once in 78 s. sp36 answered all 158: the
+period moved to **508 ms** - the branch the update takes once every station's sample ring is full -
+and the reliable retransmit collapsed to about six rounds a second, which is a retransmit timer
+derived from an RTT that is now measured and tiny. The 410 ms and 500 ms settings behind
+`0x015ace54` are the two branches, and this is which is which.
+
+**Result 7 is "this variable id is already one of my stations".** sp37 re-used sp36's `--src-var`
+minutes later and was refused with result 7; sp38 changed one digit of it and was accepted. Leaving
+and re-entering the room clears them, and so does a fresh id.
+
+**The game's own traffic is on 0x68, the unreliable protocol**, and it was invisible until the
+footer bug above was fixed: 111 of sp36's packets carried a four-byte footer and none of them
+authenticated. They are a 5-byte keepalive `04 00 02 00 00` every 2 s when nothing is happening, and
+75- and 576-byte payloads of little-endian halfword triples that move smoothly while an avatar does.
+
+Two traps for the next session. **LDN association is about one attempt in two** - sp39 failed once
+with `Connect failed with status code 1` and no `authenticate` line in dmesg at all, then succeeded
+on the retry; that is the known 40-60% baseline, so retry before diagnosing. And **the console can
+stop advertising while the player never leaves the Union Room**: the screen does not change, our
+radio stays clean, and three scans across all three channels find nothing. Leaving the room and
+re-entering brings it back, on a new channel, ssid and session parameter - all of which the key
+derivation handles live.
+
 ## What result 7 was
 
 Before the fix, a well-formed-looking request came back **result 7** every time - internal error

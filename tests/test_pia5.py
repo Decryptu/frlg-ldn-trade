@@ -78,3 +78,42 @@ def test_an_inherited_message_still_opens_with_its_own_presence_byte():
     got = parse_messages(first + second)
     assert [m.protocol for m in got] == [36, 36]         # the second inherits the first's
     assert [m.message_flags for m in got] == [0x11, 0x11]
+
+
+# One real sp36 packet, 68 bytes, `footer size` 4 - the shape that decrypted only once the footer
+# came off. Its four footer bytes are the low halves of the two stations' variable ids.
+SP36_FOOTER_PACKET = bytes.fromhex(
+    "32ab98648900000001ab358028000504100d649b1ec312c65bc4bc05c88237c05acc7a796988"
+    "059a6f997bede1c55e308972518adcbd59256ebdf3d5f6aa69c780284c11")
+SP36_SESSION_KEY = bytes.fromhex("1cd8384ae3cc5198402f8d5291eb054c")
+SP36_HOST_MAC = bytes.fromhex("48f1eb209b22")
+SP36_NETWORK_ID = 0x19EC1D90
+
+
+def test_the_footer_is_not_part_of_the_ciphertext():
+    from pokeldn.ldn import pia5
+    h = pia5.PiaHeader5.parse(SP36_FOOTER_PACKET)
+    assert h.footer_size == 4 and h.dst_var == 1
+    ct = pia5.ciphertext(SP36_FOOTER_PACKET, h.footer_size)
+    assert len(ct) == len(SP36_FOOTER_PACKET) - pia5.HEADER_SIZE - 4
+    assert len(ct) % 16 == 0
+    assert pia5.ciphertext(SP36_FOOTER_PACKET) == ct       # the size is a header field, so read it
+    assert pia5.footer(SP36_FOOTER_PACKET) == [0x8028, 0x4C11]   # the two variable ids, low halves
+
+
+def test_the_real_footer_packet_authenticates_once_the_footer_is_off():
+    import struct as _struct
+    from pokeldn.ldn import pia5
+    h = pia5.PiaHeader5.parse(SP36_FOOTER_PACKET)
+    crc = pia5.ldn_nonce_crc(_struct.pack("<I", SP36_NETWORK_ID), SP36_HOST_MAC)
+    iv = pia5.gcm_iv(crc, h.src_var, h.nonce8)
+    assert pia5.decrypt_payload(SP36_SESSION_KEY, iv,
+                                pia5.ciphertext(SP36_FOOTER_PACKET, 0), h.tag) is None
+    plain = pia5.decrypt_payload(SP36_SESSION_KEY, iv,
+                                 pia5.ciphertext(SP36_FOOTER_PACKET), h.tag)
+    assert plain is not None
+    msgs = pia5.parse_messages(plain)
+    assert len(msgs) == 1
+    assert msgs[0].protocol == 0x68                        # the unreliable protocol: the game
+    assert msgs[0].destination == 0xFFFFFFFF
+    assert msgs[0].payload == bytes.fromhex("0400020000")

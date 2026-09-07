@@ -38,6 +38,8 @@ from pokeldn.ldn.pia5 import (PiaHeader5, is_pia5, ciphertext, gcm_iv, ldn_nonce
                               build_message, pad_payload, parse_messages, encrypt_payload,
                               decrypt_payload)
 from pokeldn.ldn.transport import find_ap_phy
+
+UNRELIABLE_PROTOCOL = 0x68        # the console's own list; its payload is the game's live state
 from pokeldn.host_support import resolve_keys
 
 
@@ -77,7 +79,8 @@ async def main_async(args):
     phy = find_ap_phy(log=print) if args.phy == "auto" else args.phy
     cleanup()
     nets = await ldn.scan(keys_file, phyname=phy,
-                          channels=[int(c) for c in args.channels.split(",")], dwell_time=0.8)
+                          channels=[int(c) for c in args.channels.split(",")],
+                          dwell_time=args.dwell)
     want = int(args.comm_id, 16) if args.comm_id else COMM_ID
     net = next((n for n in nets if n.local_communication_id == want), None)
     if net is None:
@@ -129,8 +132,8 @@ async def main_async(args):
               "updates": 0, "phase": "listen", "replies": [], "waiter": None, "reply": None,
               "reply_payload": None, "result": None,
               "join_responses": 0, "last_join_response": None, "join_response": None,
-              "rtt_requests": 0, "rtt_answers": 0, "reliable": 0,
-              "dst_ip": bcast, "dst_var": 0}
+              "rtt_requests": 0, "rtt_answers": 0, "reliable": 0, "unreliable": 0,
+              "join_acks": 0, "dst_ip": bcast, "dst_var": 0}
 
         nonce = int.from_bytes(os.urandom(8), "big")
 
@@ -142,7 +145,9 @@ async def main_async(args):
         def decode(data, addr, now):
             h = PiaHeader5.parse(data)
             iv = gcm_iv(ldn_nonce_crc(keys.network_id_le, host_mac), h.src_var, h.nonce8)
-            pt = decrypt_payload(keys.session_key, iv, ciphertext(data), h.tag)
+            # the footer - one halfword per recipient - is NOT covered by the tag, and leaving it
+            # in is what made 111 of sp36's packets look undecryptable
+            pt = decrypt_payload(keys.session_key, iv, ciphertext(data, h.footer_size), h.tag)
             if pt is None:
                 record(rec="rx_undecrypted", t=now, src=addr[0], raw=data[:48].hex())
                 print(f"[rx] t={now:6.2f} a packet from {addr[0]} that did NOT decrypt "
@@ -192,11 +197,27 @@ async def main_async(args):
                               f"({len(m.payload)} B), phase {st['phase']} ***")
                         if kind == mp.JOIN_RESPONSE:
                             # the host repeats this every 500 ms until it is acknowledged, so the
-                            # count and the time of the last one are the pass signal for the ack
+                            # count and the time of the last one are the pass signal for the ack.
+                            # Ack from HERE, not from the sender: sp36's sender broke out of the
+                            # join loop on the station ack for our join REQUEST, which arrives
+                            # first, and had no join response in hand when it looked.
                             st["join_responses"] += 1
                             st["last_join_response"] = now
                             st["join_response"] = m.payload
                             print(f"[rx]     {mp.parse_join_response(m.payload)}")
+                            ack = mp.ack_for(m.payload) if args.join_ack else None
+                            if ack is not None:
+                                proto, payload = ack
+                                sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"],
+                                                 next_nonce(), payload, proto,
+                                                 port=stp.PORT_UNRELIABLE),
+                                            (st["dst_ip"], PIA_PORT))
+                                st["join_acks"] += 1
+                                record(rec="tx_mesh_ack", t=now, protocol=proto,
+                                       ack_id=mp.read_ack_id(m.payload), payload=payload.hex())
+                                print(f"[tx]     acked it on protocol {proto:#04x}, ack id "
+                                      f"{mp.read_ack_id(m.payload):#010x} "
+                                      f"({st['join_acks']} so far)")
                         print(f"[rx]     {m.payload.hex()}\n")
                         record(rec="mesh_protocol", t=now, phase=st["phase"], kind=kind,
                                payload=m.payload.hex())
@@ -254,6 +275,15 @@ async def main_async(args):
                                pending=d["lowest_pending"], payload=d["payload"].hex(),
                                is_ack=d["is_ack"],
                                ack={"count": body["count"]} if body else None)
+                    elif m.protocol == UNRELIABLE_PROTOCOL:
+                        # THE GAME'S LIVE STATE. These are the packets sp36 could not read: they
+                        # carry a footer and the footer is not covered by the GCM tag.
+                        st["unreliable"] += 1
+                        record(rec="unreliable", t=now, phase=st["phase"], port=m.port,
+                               dest=m.destination, payload=m.payload.hex())
+                        if st["unreliable"] <= 5 or st["unreliable"] % 25 == 0:
+                            print(f"[rx] t={now:6.2f} UNRELIABLE #{st['unreliable']} "
+                                  f"({len(m.payload)} B) {m.payload[:32].hex(' ')}")
                     else:
                         print(f"[rx] t={now:6.2f} protocol {m.protocol} port {m.port} "
                               f"({len(m.payload)} B) - something new")
@@ -342,7 +372,11 @@ async def main_async(args):
                     payload = stp.build_connection_request(
                         target_constant, target_var, [stp.FILLER] * count, location,
                         network_id=0, player_infos=infos, ack_id=attempt + 1)
-                    got = await ask(payload, stp.PROTOCOL, f"connect#{attempt}", timeout=2.0)
+                    # 4 s, not 2: sp38 caught the console taking over three seconds to accept when
+                    # it had a stale station of ours to time out first, and a 2 s wait walked past
+                    # the acceptance and left it repeating unanswered
+                    got = await ask(payload, stp.PROTOCOL, f"connect#{attempt}",
+                                    timeout=args.connect_timeout)
                     name = ("silence" if got is None
                             else stp.RESULT_NAMES.get(got, f"result {got}"))
                     print(f"[tx]   attempt {attempt}: {name}")
@@ -378,20 +412,21 @@ async def main_async(args):
                         print(f"\n[tx] --- mesh join request (protocol {mp.PROTOCOL:#04x} v3)")
                         for attempt in range(args.join):
                             st["phase"] = f"join#{attempt}"
-                            st["reply"] = None
-                            st["reply_payload"] = None
-                            st["waiter"] = trio.Event()
                             req = mp.build_join_request(attempt + 1)
                             sock.sendto(wrap(keys, our_mac, args.src_var, dst_var, next_nonce(),
                                              req, mp.PROTOCOL, port=mp.PORT_UNRELIABLE),
                                         (dst_ip, PIA_PORT))
                             record(rec="tx_join", t=time.monotonic() - t0, attempt=attempt,
                                    request=req.hex())
-                            with trio.move_on_after(2.0):
-                                await st["waiter"].wait()
-                            st["waiter"] = None
-                            if st["reply_payload"] is None:
-                                print(f"[tx]   join {attempt}: silence")
+                            # WAIT FOR THE JOIN RESPONSE, not for any reply. The console acks our
+                            # join REQUEST on the station protocol and that arrives first, which is
+                            # what sp36's join loop mistook for the answer.
+                            deadline = time.monotonic() + 2.0
+                            while (st["join_response"] is None
+                                   and time.monotonic() < deadline):
+                                await trio.sleep(0.05)
+                            if st["join_response"] is None:
+                                print(f"[tx]   join {attempt}: no join response yet")
                                 continue
                             print(f"[tx]   join {attempt}: answered")
                             break
@@ -400,36 +435,24 @@ async def main_async(args):
                         # handlers read the ack id and hand it to a MeshStationProtocol method
                         # (0x0154b984 -> 0x01550324), so what goes out is the station protocol's
                         # eight-byte type-5 ack on 0x14. mesh_protocol.ack_for() is that rule.
-                        ack = mp.ack_for(st["join_response"] or b"") if args.join_ack else None
-                        if ack is None:
-                            print("[cx] no join response to ack")
+                        # the receiver acks every copy as it arrives; watch for them stopping
+                        st["phase"] = "join-ack"
+                        quiet_for = max(args.quiet_for, 1.5)   # two missed 500 ms repeats
+                        deadline = time.monotonic() + args.join_ack_seconds
+                        while time.monotonic() < deadline:
+                            await trio.sleep(0.25)
+                            if st["last_join_response"] is None:
+                                continue
+                            quiet = (time.monotonic() - t0) - st["last_join_response"]
+                            if quiet > quiet_for:
+                                print(f"\n[tx] the join response stopped ({quiet:.2f}s quiet after "
+                                      f"{st['join_responses']} copies, {st['join_acks']} acked)")
+                                break
                         else:
-                            proto, payload = ack
-                            print(f"\n[tx] acking the join response, ack id "
-                                  f"{mp.read_ack_id(st['join_response']):#010x} on protocol "
-                                  f"{proto:#04x}, until the repeats stop")
-                            st["phase"] = "join-ack"
-                            # two missed repeats is the quietest reading that is not one lost
-                            # packet, and the host repeats every 500 ms
-                            quiet_for = max(args.quiet_for, 1.5)
-                            deadline = time.monotonic() + args.join_ack_seconds
-                            while time.monotonic() < deadline:
-                                sock.sendto(wrap(keys, our_mac, args.src_var, dst_var,
-                                                 next_nonce(), payload, proto,
-                                                 port=stp.PORT_UNRELIABLE), (dst_ip, PIA_PORT))
-                                record(rec="tx_mesh_ack", t=time.monotonic() - t0,
-                                       ack_id=mp.read_ack_id(st["join_response"]),
-                                       protocol=proto, payload=payload.hex())
-                                await trio.sleep(0.25)
-                                quiet = (time.monotonic() - t0) - st["last_join_response"]
-                                if quiet > quiet_for:
-                                    print(f"[tx] the join response stopped ({quiet:.2f}s quiet "
-                                          f"after {st['join_responses']} copies)")
-                                    break
-                            else:
-                                print(f"[tx] the join response did NOT stop "
-                                      f"({st['join_responses']} copies); carrying on anyway")
-                            record(rec="join_acked", copies=st["join_responses"])
+                            print(f"\n[tx] the join response did NOT stop "
+                                  f"({st['join_responses']} copies, {st['join_acks']} acked)")
+                        record(rec="join_acked", copies=st["join_responses"],
+                               acks=st["join_acks"])
                         st["phase"] = "joined"
                         break
                     await trio.sleep(args.connect_gap)
@@ -529,14 +552,16 @@ async def main_async(args):
         print(f"\n[cx] {st['updates']} update session(s), {len(st['replies'])} station-protocol "
               f"reply/replies")
         # the three signals this run exists to read, each a count and not a story
-        print(f"[cx] mesh join responses {st['join_responses']} "
-              f"(one is an ack that landed; eleven is sp35)")
+        print(f"[cx] mesh join responses {st['join_responses']}, acked {st['join_acks']} "
+              f"(a couple is an ack that landed; eighteen is sp36, unacked)")
         print(f"[cx] RTT requests {st['rtt_requests']}, answered {st['rtt_answers']}")
         print(f"[cx] reliable messages {st['reliable']} "
               f"(a repeat means it is still waiting to be acked)")
+        print(f"[cx] unreliable messages {st['unreliable']} - the game's live state")
         record(rec="counters", join_responses=st["join_responses"],
-               rtt_requests=st["rtt_requests"], rtt_answers=st["rtt_answers"],
-               reliable=st["reliable"])
+               join_acks=st["join_acks"], rtt_requests=st["rtt_requests"],
+               rtt_answers=st["rtt_answers"], reliable=st["reliable"],
+               unreliable=st["unreliable"])
         if st["result"]:
             reg = st["result"]["registered"]
             print(f"[cx] the console said it registers {st['result']['count']} protocols, "
@@ -563,6 +588,8 @@ def main():
     ap.add_argument("--phy", default="auto")
     ap.add_argument("--ifname", default="ldnclient")
     ap.add_argument("--channels", default="1,6,11")
+    ap.add_argument("--dwell", type=float, default=1.5,
+                    help="seconds per channel in the scan; 0.8 missed a live network twice")
     ap.add_argument("--name", default="PkCamp")
     ap.add_argument("--hold", type=float, default=300.0)
     ap.add_argument("--listen-first", type=float, default=5.0)
@@ -577,6 +604,8 @@ def main():
     ap.add_argument("--connect-gap", type=float, default=2.0)
     ap.add_argument("--join", type=int, default=0, metavar="N",
                     help="after the station handshake, send up to N mesh join requests")
+    ap.add_argument("--connect-timeout", type=float, default=4.0,
+                    help="how long one connection request waits for its answer")
     ap.add_argument("--rtt", action=argparse.BooleanOptionalAction, default=True,
                     help="answer the console's RTT requests (protocol 0x58) while we hold the seat")
     ap.add_argument("--join-ack", action=argparse.BooleanOptionalAction, default=True,

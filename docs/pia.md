@@ -100,6 +100,19 @@ The plaintext is padded with `0xFF` to a multiple of 16 before encryption, and o
 eight bytes** of the GCM tag go on the wire. The 0xFF padding is useful beyond parsing: it is free
 known-plaintext, so a candidate key can be tested with one AES block instead of a whole GHASH.
 
+## The footer is not part of the ciphertext
+
+A packet sent to more than one console at once carries a **footer**: one big-endian halfword per
+recipient, the low half of each station's variable id. Its length is a header field at offset 0x0f,
+so nothing has to be guessed - and **it is not covered by the GCM tag**. Feeding it to the cipher as
+if it were ciphertext makes the packet fail to authenticate, silently and with no other symptom.
+
+sp36 lost 111 packets to exactly that, every one of them the game's own unreliable traffic, for as
+long as the decode read `everything after the header`. The right boundary is
+`data[0x20 : len(data) - footer_size]`, and `pokeldn/ldn/pia5.ciphertext()` reads the size off the
+packet when it is not told. A capture where *some* packets authenticate and some do not is the
+signature: group the failures by `footer size` before touching the key or the IV.
+
 ## Joining a mesh: 0x14, 0x18, and where the ack lives
 
 A Pia 5.x station reaches a mesh through three protocols in order - the Local Protocol's update

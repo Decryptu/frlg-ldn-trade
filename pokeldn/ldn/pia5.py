@@ -26,6 +26,7 @@ MAGIC = 0x32AB9864
 VERSION = 9
 HEADER_SIZE = 0x20
 NONCE_OFF, TAG_OFF, CT_OFF = 0x10, 0x18, 0x20
+FOOTER_SIZE_OFF = 0x0F
 FLAG_ENCRYPTED = 0x80
 
 
@@ -66,8 +67,30 @@ class PiaHeader5:
                 f"nonce={self.nonce8.hex()})")
 
 
-def ciphertext(data):
-    return data[CT_OFF:]
+def ciphertext(data, footer_size=None):
+    """The encrypted body: everything after the header, MINUS THE FOOTER.
+
+    A packet sent to more than one console at once carries a footer of one big-endian halfword per
+    recipient - the low half of each station's variable id - and it is NOT covered by the GCM tag.
+    sp36 caught 111 packets with `footer size` 4, every one of them the game's own unreliable
+    traffic, and every one of them failed to authenticate until those four bytes were taken off the
+    end. The footer size is a header field, so nothing has to be guessed: pass it, or let this read
+    it back off the packet.
+    """
+    if footer_size is None:
+        footer_size = data[FOOTER_SIZE_OFF] if len(data) > FOOTER_SIZE_OFF else 0
+    end = len(data) - footer_size if footer_size else len(data)
+    return data[CT_OFF:end]
+
+
+def footer(data, footer_size=None):
+    """-> the recipients' variable ids, low halves, as the console packs them."""
+    if footer_size is None:
+        footer_size = data[FOOTER_SIZE_OFF] if len(data) > FOOTER_SIZE_OFF else 0
+    if not footer_size:
+        return []
+    raw = data[len(data) - footer_size:]
+    return [struct.unpack_from(">H", raw, i)[0] for i in range(0, len(raw) - 1, 2)]
 
 
 def is_pia5(data):
