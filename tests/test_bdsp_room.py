@@ -296,3 +296,17 @@ def test_the_security_phase_answer_mirrors_the_state_that_advances_theirs():
     assert room.build_trade_ready_ok(room.TRADE_STATE_WAIT, is_trade_ok=1) \
         == bytes.fromhex("2100020102")
     assert room.TRADE_STATE_NAMES[room.TRADE_STATE_START_WRITE_SAVE] == "START_WRITE_SAVE"
+
+
+def test_the_post_trade_question_is_built_the_way_the_console_asks_it():
+    """sp92 and sp93 both ended on `45 00 01 00`, repeated once a second until we left.
+
+    dump_base cannot explain this message - the base game has no such type, and the console runs
+    1.3.0 - so the shape is taken from the wire and the value from opendpr's parameter name.
+    """
+    assert room.name(room.RETURN_SELECT) == "NetDataReturnSelectData"
+    theirs = bytes.fromhex("45000100")
+    assert room.parse(theirs)["fields"] == {"isReturnSelect": 0}
+    ours = room.build_fields(room.RETURN_SELECT, 1)
+    assert ours == bytes.fromhex("45000101")
+    assert room.parse(ours)["fields"] == {"isReturnSelect": 1}

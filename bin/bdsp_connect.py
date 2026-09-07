@@ -142,7 +142,7 @@ async def main_async(args):
               "reserve_accepted": False, "room_done": False, "their_traner": None,
               "their_poke": None, "our_poke": None, "trade_replies": 0, "check_oks": 0,
               "their_ready_ok": None, "ready_oks_sent": 0, "their_security_state": None,
-              "our_security_state": 0, "our_next_seq": 0}
+              "our_security_state": 0, "our_next_seq": 0, "return_selects": 0}
 
         # BUILD WHAT WE WILL OFFER BEFORE THE RADIO IS TOUCHED. A template that will not load, or
         # a nickname that will not fit, must fail here and not halfway through a trade on a real
@@ -333,7 +333,7 @@ async def main_async(args):
                                     await answer_the_request(g, now, via="reliable")
                             if g and g["data_id"] in (room.TRADE_TRANER, room.TRADE_POKE,
                                                       room.TRADE_POKE_CHECK_OK,
-                                                      room.TRADE_READY_OK):
+                                                      room.TRADE_READY_OK, room.RETURN_SELECT):
                                 # d["payload"] IS the game message here. `m.payload` still has the
                                 # reliable header on the front of it - sp83 passed that, the parser
                                 # was handed 41 bytes where 32 were expected, and the exception took
@@ -1096,6 +1096,22 @@ async def main_async(args):
                 record(rec="their_check_ok", t=now, payload=payload.hex())
                 reply = room.build_fields(room.TRADE_POKE_CHECK_OK, 1)
                 label = "our check-ok"
+            elif g["data_id"] == room.RETURN_SELECT:
+                # THE QUESTION A COMPLETED TRADE ENDS ON, and two runs have walked away from it.
+                # It arrives once a second and does not stop, so answering EVERY one would put 50+
+                # messages in the window for no reason; one answer is the experiment, and what the
+                # console does after it is the result.
+                st["return_selects"] += 1
+                if not args.answer_return_select or st["return_selects"] > 1:
+                    if st["return_selects"] == 2:
+                        print(f"[cx]   NetDataReturnSelectData again - answered once, not repeating")
+                    return
+                print(f"\n[rx] t={now:6.2f} *** THE POST-TRADE QUESTION - "
+                      f"NetDataReturnSelectData {payload.hex(' ')} ***")
+                record(rec="their_return_select", t=now, payload=payload.hex(),
+                       fields=g.get("fields"))
+                reply = room.build_fields(room.RETURN_SELECT, args.return_select_value)
+                label = f"our return-select {args.return_select_value}"
             elif g["data_id"] == room.TRADE_READY_OK and (g.get("fields") or {}).get("isTradeOk"):
                 # THE SECURITY PHASE, AND IT IS A DIFFERENT MACHINE FROM THE HANDSHAKE ABOVE.
                 # `TradeSecurityController$$ReciveState` [0x1cd2ff0] drops anything whose isTradeOk
@@ -1488,6 +1504,10 @@ def main():
                          "from nothing")
     ap.add_argument("--trade-species", type=int, metavar="N", help="species for the offered Pokemon")
     ap.add_argument("--trade-nickname", metavar="TEXT", help="nickname for the offered Pokemon")
+    ap.add_argument("--answer-return-select", action="store_true",
+                    help="answer the NetDataReturnSelectData a completed trade ends on, ONCE")
+    ap.add_argument("--return-select-value", type=int, default=1, metavar="N",
+                    help="the byte to answer it with (default 1, opendpr's `received`)")
     ap.add_argument("--trade-ot", metavar="TEXT", help="OT name for the offered Pokemon")
     ap.add_argument("--trade-name", default="PkCamp", metavar="TEXT",
                     help="the name in OUR trainer record")

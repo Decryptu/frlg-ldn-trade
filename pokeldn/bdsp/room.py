@@ -235,6 +235,18 @@ TRADE_READY_OK = 0x21             # NetDataTradeReadyOkData - the step after, an
                                   # console writes its save. `build_trade_ready_ok` below.
 TRADE_TRANER = 0x24               # NetDataTradeTranerData - who the player trading with us IS
 TRADE_POKE = 0x13                 # NetTradePokeData - and a whole Pokemon, 328 bytes
+RETURN_SELECT = 0x45              # NetDataReturnSelectData - THE MESSAGE ON THE FAR SIDE OF A
+                                  # COMPLETED TRADE. sp92 and sp93 both ended with the console
+                                  # sending `45 00 01 00` once a second (78 and 50 times) until our
+                                  # station left. `build_fields(RETURN_SELECT, 1)` answers it.
+                                  #
+                                  # NOTHING IN dump_base EXPLAINS IT. The base game has no such
+                                  # type, no such method and not even the string - it is one of the
+                                  # 41 messages 1.3.0 added, and the console runs 1.3.0. The only
+                                  # reading available is opendpr's signature,
+                                  # `TradeSelectPokeModel$$SendReturnSelectPoke(bool received)`,
+                                  # which makes the byte "received" and 1 the answer. HYPOTHESIS,
+                                  # from a parameter name; there is no code to check it against.
 
 
 def parse_trade_traner(body):
