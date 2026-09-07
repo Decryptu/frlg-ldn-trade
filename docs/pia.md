@@ -13,12 +13,16 @@ wire.
 Pia's version decides the header layout, and titles of different ages speak different versions. Two
 are implemented here:
 
-| | FireRed/LeafGreen (the GBA app) | Brilliant Diamond / Shining Pearl |
-|---|---|---|
-| Pia version byte | 15/16 (6.32+) | **9** (5.27-5.45) |
-| header size | 0x1D | **0x20** |
-| variable ids | 2 bytes each | **4 bytes each** |
-| module | `pokeldn/ldn/pia_connect.py` | `pokeldn/ldn/pia5.py` |
+| | FireRed/LeafGreen (the GBA app) | Brilliant Diamond / Shining Pearl | Sword / Shield |
+|---|---|---|---|
+| Pia version byte | 15/16 (6.32+) | **9** (5.27-5.45) | **4** |
+| header size | 0x1D | **0x20** | **0x20** |
+| variable ids | 2 bytes each | **4 bytes each** | 1 byte + a halfword |
+| GCM tag on the wire | | 8, truncated from 16 | **all 16** |
+| module | `pokeldn/ldn/pia_connect.py` | `pokeldn/ldn/pia5.py` | none yet |
+
+Three bands, and the third was found by comparing the two titles' own parsers rather than by
+assuming the older game used the older of the two headers we had.
 
 ## The 5.27-5.45 header
 
@@ -38,6 +42,32 @@ parser byte-swaps three fields with `rev`:
 
 `pokeldn/ldn/pia5.py` implements it and round-trips real captured packets byte-identically; the fixture
 in `tests/test_pia5.py` is one of them.
+
+## The version-4 header (Sword/Shield)
+
+Read the same way, out of Sword/Shield's own deserializer at `0x01774730` in `main`, which refuses a
+buffer of 0x20 bytes or less (`cmp w2, #0x1f; b.hi`) and then copies field by field:
+
+    0x00  4  magic 0x32AB9864, big-endian          (rev'd into the object)
+    0x04  1  0x80 (encrypted) | version (0x7F) = 4
+    0x05  1  a station index
+    0x06  2  big-endian halfword                   (rev'd; a session or protocol id)
+    0x08  8  AES-GCM nonce (a monotonic counter)
+    0x10  16 AES-GCM tag, NOT truncated
+    0x20     ciphertext
+
+FACT: the widths, the endianness, the 0x20 total and the version byte. The header initializer at
+`0x017748bc` writes magic and version as one 64-bit store - `0x00000004_32AB9864` - and zeroes
+exactly 8 bytes at the nonce and 16 at the tag, and three validators
+(`0x017749f0`, `0x01774b60`, `0x01774d00`) each check `(byte & 0x7f) == 4`. BDSP's binary has the
+same three validators against **9** and the same initializer writing 9, which is what makes the
+comparison a reading rather than a guess.
+
+DEDUCTION, not yet confirmed on the wire: that the byte at 0x05 is a destination station index and
+the halfword at 0x06 a session or protocol id. What writes them is `0x017beb74`/`0x017beb78`, which
+takes the byte from its caller and the halfword from a session object. Where 5.27-5.45 spends
+eleven bytes on a 4-byte destination id, a 4-byte source id, a 2-byte packet id and a footer size,
+version 4 spends three - which is what an older Pia in a smaller mesh looks like.
 
 ## Two families of session key
 

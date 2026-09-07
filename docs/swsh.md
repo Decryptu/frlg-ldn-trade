@@ -53,8 +53,19 @@ transcription error in someone else's table is two real values.
 
     p1frXqxmeCZWFv0X
 
-The wiki's Pokemon Sword/Shield row, and the same 16 bytes it gives for Legends: Arceus and for
-Scarlet/Violet. Not yet verified against the binary - see the open questions.
+The wiki's Pokemon Sword/Shield row, and now **verified in the binary**: the literal is at
+`0x01c3dc87`, referenced from three call sites, and the one at `0x006ca91c` shows how it is used -
+sixteen ASCII bytes loaded with a single `ldp` into a `{u32 enabled = 1; u8 key[16]}` beside the
+session setting, handed to Pia's session entry at `0x0183fd10`:
+
+    0x006ca914  mov  w8, #1 ; str w8, [sp, #0x18]     crypto enabled
+    0x006ca91c  adrp x8, #0x1c3d000 ; add x8, x8, #0xc87
+    0x006ca924  ldp  x9, x8, [x8]                     the 16 bytes, raw ASCII
+    0x006ca938  stur x9, [sp, #0x1c]                  -> the setting's key field
+    0x006ca93c  bl   #0x183fd10                       create/join, with the setting
+
+Unlike BDSP's, this one needed no metadata archaeology: a native title keeps its constants in
+rodata where a cross-reference finds them.
 
 ## Where the passphrase goes
 
@@ -70,6 +81,30 @@ them immediately before calling `nn::ldn::CreateNetwork`:
 The same object holds the `NetworkConfig`'s intent at **+0xB8** (the local communication id, a u64)
 and **+0xC0**. `nn::pia::local::LdnBackgroundProcessJob` validates the length as **16..64** before
 any of this runs, which is the same range `docs/ldn.md` records.
+
+## Pia here is version 4, and we have never spoken it
+
+`docs/pia.md` had two bands, 6.32+ (version byte 15/16) and 5.27-5.45 (version byte 9). Sword and
+Shield are **neither**: their header carries **4**, and the header is a different shape.
+
+    0x00  4  magic 0x32AB9864, big-endian
+    0x04  1  0x80 (encrypted) | version (0x7F) = 4
+    0x05  1  a station index
+    0x06  2  big-endian halfword
+    0x08  8  AES-GCM nonce
+    0x10  16 AES-GCM tag, NOT truncated to 8 the way 5.27-5.45 truncates it
+    0x20     ciphertext
+
+Read out of the game's own deserializer (`0x01774730`, which requires more than 0x1f bytes and then
+copies field by field), its initializer (`0x017748bc`, one 64-bit store of `0x00000004_32AB9864`)
+and three validators that each check `(byte & 0x7f) == 4`. **BDSP's binary has the identical three
+validators against 9**, which is what makes this a comparison rather than a guess - see
+`docs/pia.md` "The version-4 header".
+
+So neither `pia_connect.py` nor `pia5.py` applies as it stands, and a third module is what talking
+to this console will need. The session-key derivation is a separate question: `nn::pia::local` and
+`nn::pia::lan` are both present and named here, so the same class-name test that settled it for BDSP
+settles it here.
 
 ## Mystery Gift has a local branch
 
@@ -93,9 +128,15 @@ The game also counts what it received by channel: the play-record keys are `fush
 `fushigi_serial` and **`fushigi_p2p`**, sitting beside `yy_battle_single_p2p` / `_net` in the same
 table. A record key per channel is a channel the game expects to use.
 
-UNKNOWN: what `StateReceiveLocal` actually speaks. It has not been read past its name, and nothing
-here says whether the local branch reaches the same Pia session the rest of Y-Comm uses or opens one
-of its own.
+**There is a static call path from `StateReceiveLocal`'s block into the LDN session setup.**
+`0x01004e54` (inside the block) calls `0x010b7100`, which calls `0x010f6b00`, which reaches the same
+class the passphrase call site belongs to. Every edge of that chain was checked instruction by
+instruction rather than taken from the search that suggested it.
+
+DEDUCTION, and it is not yet proof: an indirect call is invisible to a static walk, so a path found
+this way is evidence the branch is wired up, not evidence of what it says. The cheap way to settle
+it is the air - open the Mystery Gift local screen on the console and see whether `ldn_scan.py`
+finds a network or the console is scanning for ours.
 
 ## Reading the cartridge
 
@@ -125,13 +166,14 @@ cross-reference, and its one PLT stub is the thing to count callers of.
 
 ## Open questions
 
-- **The Pia version band.** `docs/pia.md` splits at 6.32; BDSP is 5.27-5.45. Sword/Shield's SDK is
-  7.7.0.0, older than BDSP's, but no version constant has been read yet and the version byte in the
-  header decides which of `pia_connect.py` / `pia5.py` applies.
+- **The two unnamed header fields**, the byte at 0x05 and the halfword at 0x06. What writes them is
+  `0x017beb74`/`0x017beb78`; what they mean is a deduction until a capture agrees.
+- **Which session-key derivation applies**, `nn::pia::local`'s or `nn::pia::lan`'s. Both classes are
+  present and named, and reading the class rather than the prose is what settled it for BDSP.
 - **The local communication id and version.** Held at the Pia object's +0xB8 and +0xC0, filled at
   runtime from an object in `.bss` rather than a literal. Reachable from a scan of the console's own
   advertisement without reading any more code.
-- **The game key**, taken from the wiki and not yet verified against the binary.
-- **Sword against Shield.** Everything above is read off Shield. The passphrase and the Mystery Gift
-  states are game code, not per-version data, so they should be identical; association against the
-  console is what proves it.
+- **What `StateReceiveLocal` actually sends**, past the fact that it reaches the session setup.
+- **Sword against Shield.** Everything above is read off Shield. The passphrase, the game key, the
+  Pia version and the Mystery Gift states are game code, not per-version data, so they should be
+  identical; association against the console is what proves it.
