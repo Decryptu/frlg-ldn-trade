@@ -135,7 +135,7 @@ async def main_async(args):
               "rtt_requests": 0, "rtt_answers": 0, "reliable": 0, "unreliable": 0,
               "join_acks": 0, "dst_ip": bcast, "dst_var": 0,
               "rel_max_seq": 0, "rel_streams": set(), "rel_control": [],
-              "rel_handshaken": False, "rel_acks": 0, "their_position": None}
+              "rel_handshaken": False, "rel_acks": 0, "their_position": None, "their_ack_id": 0}
 
         nonce = int.from_bytes(os.urandom(8), "big")
 
@@ -293,6 +293,15 @@ async def main_async(args):
                             # a control message - reset, reset ack or a bulk ack. THIS is the
                             # positive signal: an answer, not the absence of one
                             st["rel_control"].append((now, d["flags"], m.payload.hex()))
+                            if len(d["payload"]) >= 2:
+                                try:
+                                    body = rl.parse_ack_payload(d["payload"])
+                                except ValueError:
+                                    body = None
+                                if body and body["entries"]:
+                                    st["their_ack_id"] = max(
+                                        st["their_ack_id"],
+                                        max(e["ack_id"] for e in body["entries"]))
                             print(f"[rx] t={now:6.2f} *** RELIABLE CONTROL "
                                   f"[{'|'.join(d['flag_names']) or 'no flags'}] "
                                   f"{m.payload.hex()} ***")
@@ -398,29 +407,110 @@ async def main_async(args):
             # sp47 put four avatars in the room from four distinct positions, so the next question
             # is what the game thinks the IDENTITY is. A LINE answers it: one avatar walking says
             # the identity is the station, a trail of them says it is the position.
-            if args.room_pattern == "move":
-                # ONE join, then NetPosData on the UNRELIABLE stream - which is how the game moves a
-                # player it already knows about. sp47/sp48 spawned a crowd because every message we
-                # sent was a JOIN.
-                x0, z0 = here["x"] + 1.5, here["z"]
+            async def send_reliable(payload, seq, label, tries=12):
+                """Send one reliable message and RETRANSMIT until the console's ack covers it.
+
+                sp50 sent a single join and nothing appeared; sp47 and sp48 sent twenty-odd and the
+                room filled up. One message gets one chance, and this project had never retransmitted
+                anything - which is the entire point of a sliding window. The console's ack id is a
+                positive signal, so this says whether the join LANDED, separately from whether the
+                game drew it.
+                """
+                # THE ACK ID IS THE SEQUENCE THE CONSOLE WANTS NEXT, and anything below it is
+                # discarded in silence. sp53 is the proof: its ack sat at 13, we sent 1 through 20,
+                # and EXACTLY EIGHT avatars appeared - 13 through 20. sp47 and sp48 filled a room by
+                # spanning the number without knowing it; sp50 to sp52 sent one message below it and
+                # got nothing at all. So take the sequence id from the ack, every time.
+                # THE SEQUENCE SPACE IS SHARED WITH THE CONSOLE'S OWN SENDS. Its ack id is the
+                # next number in the whole window, not a count of what we have sent: sp53's ack sat
+                # at 13 while its own data was at 12, we sent 1 through 20, and exactly the eight
+                # from 13 up became avatars. So take the id FRESH on every attempt - a value read
+                # before its last message is already stale, which is how sp55 sent a join at 1 into
+                # a window that wanted 16.
+                for attempt in range(tries):
+                    seq = st["their_ack_id"]
+                    if not seq:
+                        await trio.sleep(0.4)
+                        continue
+                    msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                           | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                           seq, len(payload), lowest_pending=seq) + payload)
+                    st["phase"] = f"{label} seq={seq} try={attempt}"
+                    sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
+                                     rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+                    record(rec="tx_reliable_data", t=time.monotonic() - t0, label=label, seq=seq,
+                           attempt=attempt, message=msg.hex())
+                    await trio.sleep(0.4)
+                    if st["their_ack_id"] > seq:
+                        print(f"[tx]   {label}: landed at seq {seq} on try {attempt + 1} "
+                              f"(their ack id -> {st['their_ack_id']})")
+                        record(rec="reliable_data_acked", label=label, seq=seq,
+                               attempts=attempt + 1, ack_id=st["their_ack_id"])
+                        return True
+                print(f"[tx]   {label} seq={seq}: never acked in {tries} tries "
+                      f"(their ack id {st['their_ack_id']})")
+                record(rec="reliable_data_unacked", label=label, seq=seq, ack_id=st["their_ack_id"])
+                return False
+
+            if args.room_pattern == "fixed":
+                # A BURST OF JOINS, ALL AT ONE SPOT, each at the sequence id the console is asking
+                # for. Whatever lands stacks in one place, so the screen shows one avatar rather
+                # than a crowd - and then the movement updates have something unambiguous to move.
+                x0, z0 = here["x"] + 2.0, here["z"]
                 join = room.build_join(x0, 0.0, z0, rot_y=90)
-                msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
-                                       | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
-                                       seq, len(join), lowest_pending=seq) + join)
-                sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
-                                 rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
-                record(rec="tx_join", t=time.monotonic() - t0, x=x0, z=z0, message=msg.hex())
-                print(f"[tx]   ONE join at ({x0:.2f}, {z0:.2f}), then moving it")
-                await trio.sleep(0.5)
+                print(f"[tx]   {args.room_walk} joins, ALL at ({x0:.2f}, {z0:.2f})")
                 for i in range(args.room_walk):
-                    x = x0 + 0.15 * i
-                    body = room.build_pos([(x, z0, 90)])
+                    seq = st["their_ack_id"]
+                    if not seq:
+                        await trio.sleep(0.4)
+                        continue
+                    msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                           | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                           seq, len(join), lowest_pending=seq) + join)
+                    st["phase"] = f"burst seq={seq}"
+                    sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
+                                     rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+                    record(rec="tx_reliable_data", t=time.monotonic() - t0, label="burst", seq=seq,
+                           attempt=i, message=msg.hex())
+                    if i % 4 == 0:
+                        print(f"[tx]     join {i} at seq {seq}")
+                    await trio.sleep(0.4)
+                print(f"\n[tx]   --- now moving whatever is standing there, to the RIGHT")
+                for i in range(60):
+                    x = x0 + 0.1 * i
+                    body = room.build_pos([(x + 0.008 * k, z0, 90) for k in range(12)])
                     sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(),
                                      body, UNRELIABLE_PROTOCOL, port=0,
                                      destination=0xFFFFFFFF, message_flags=rl.MESSAGE_FLAGS),
                                 (st["dst_ip"], PIA_PORT))
                     record(rec="tx_pos", t=time.monotonic() - t0, x=x, z=z0, message=body.hex())
-                    if i % 5 == 0:
+                    if i % 15 == 0:
+                        print(f"[tx]     pos {i}: ({x:.2f}, {z0:.2f})")
+                    await trio.sleep(0.35)
+                return
+
+            if args.room_pattern == "move":
+                # ONE join, then NetPosData on the UNRELIABLE stream - which is how the game moves a
+                # player it already knows about. sp47/sp48 spawned a crowd because every message we
+                # sent was a JOIN.
+                x0, z0 = here["x"] + 1.5, here["z"]
+                print(f"[tx]   ONE join at ({x0:.2f}, {z0:.2f}), retransmitted until it is acked")
+                landed = await send_reliable(room.build_join(x0, 0.0, z0, rot_y=90), seq, "join")
+                if not landed:
+                    print("[cx] the join never landed; nothing after it can mean anything")
+                    return
+                print(f"[tx]   ONE avatar should be standing at ({x0:.2f}, {z0:.2f}) now")
+                # and now move it, batched the way the console batches: twelve points a message
+                for i in range(args.room_walk):
+                    x = x0 + 0.15 * i
+                    pts = [(x + 0.012 * k, z0, 90) for k in range(12)]
+                    body = room.build_pos(pts)
+                    sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(),
+                                     body, UNRELIABLE_PROTOCOL, port=0,
+                                     destination=0xFFFFFFFF, message_flags=rl.MESSAGE_FLAGS),
+                                (st["dst_ip"], PIA_PORT))
+                    record(rec="tx_pos", t=time.monotonic() - t0, x=x, z=z0, message=body.hex())
+                    if i % 8 == 0:
                         print(f"[tx]   pos {i}: ({x:.2f}, {z0:.2f})")
                     await trio.sleep(args.room_walk_gap)
                 return
@@ -479,16 +569,27 @@ async def main_async(args):
                 sock.sendto(pkt, (dst_ip, PIA_PORT))
                 record(rec="tx_request", t=time.monotonic() - t0, label=label, dst=dst_ip,
                        size=len(payload), request=payload.hex())
-                with trio.move_on_after(timeout or args.gap):
-                    await st["waiter"].wait()
-                st["waiter"] = None
-                got = st["reply"]
-                if got is None:
-                    return None                    # silence, which is itself an answer
-                kind, result = got
-                if kind != stp.CONNECTION_RESPONSE:
-                    return ("other", kind)         # something we did not ask for; never a version
-                return result
+                # KEEP WAITING PAST AN ACK. The console acknowledges our request before it answers
+                # it, and returning on the first reply reads that ack as "something else" and throws
+                # a real acceptance away - which is what sp54 did, twice, to a console that had said
+                # yes both times.
+                deadline = time.monotonic() + (timeout or args.gap)
+                while True:
+                    with trio.move_on_at(trio.current_time()
+                                         + max(0.0, deadline - time.monotonic())):
+                        await st["waiter"].wait()
+                    got = st["reply"]
+                    if got is None:
+                        return None                # silence, which is itself an answer
+                    kind, result = got
+                    if kind == stp.CONNECTION_RESPONSE:
+                        st["waiter"] = None
+                        return result
+                    if time.monotonic() >= deadline:
+                        st["waiter"] = None
+                        return ("other", kind)     # only after waiting the whole timeout out
+                    st["reply"] = None
+                    st["waiter"] = trio.Event()
 
             def request(protocols, ack_id=1):
                 return stp.build_connection_request(

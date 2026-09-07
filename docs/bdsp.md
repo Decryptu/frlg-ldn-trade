@@ -26,6 +26,20 @@ of recent positions while an avatar walks.
 retail console - four of them from four corners, then twenty in a line through the walls. They are
 the default model with no name, no collision and no dialogue.
 
+**A character we created has walked.** sp57 sent fifteen joins at one spot and then sixty
+`NetPosData` messages: two avatars appeared and one of them moved across the room until it stopped
+at a wall. Spawning and moving a player in a retail game's Union Room, from a Linux box, is done.
+
+**How a message lands.** The reliable sequence id is shared with the console's OWN sends, and
+anything below the number its acknowledgement names is discarded in silence. The proof is
+arithmetic: one run's ack sat at 13, twenty messages went out numbered 1 to 20, and exactly the
+eight from 13 up became avatars. Read the id fresh immediately before each send.
+
+**What the screen said and the capture could not.** The twelve points in a `NetPosData` message are
+meant to span the movement since the last one - sending twelve near-identical points makes the
+avatar stutter. A character that stops receiving position updates is dropped after about twenty
+seconds, so the one being moved was properly owned while the crowd that never moved was not.
+
 **One avatar appears per message, because every message was a JOIN.** `UnionOpcManager` calls
 `CreateCharacter(joinData)` on each one, so forty joins are forty arrivals and the game is behaving
 correctly; the mistake was ours. What those avatars have no owner for, though, is real: they
