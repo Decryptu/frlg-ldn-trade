@@ -47,9 +47,18 @@ correctly; the mistake was ours. What those avatars have no owner for, though, i
 a shop, and the whole crowd came along, still through the walls. Only restarting the game cleared
 them. A remote player created without a session behind it is never cleaned up.
 
-**Not yet done.** The **Session Protocol (0x94)**, which sits above the reliable transport, has
-never carried a byte in any capture: the game has not opened it, and it is what would make those
-avatars one player instead of a crowd.
+**What an avatar is missing has a name now.** `OpcManager.CharaData` is
+`{int stationIndex, string assetName, int colorId, int avatarId, int sexId, int cassetVersion}` and
+`RemoveCharacter(int stationIndex)` takes the same key, so **a character is keyed by the station it
+came from** - and a `JoinData` carries an appearance and a place but no name, which is why every
+avatar we have spawned is the default model. The messages that would carry the rest are in the
+table: `NetPlayerNameData` (0x42) is a nickname, a gender and a language, and
+`NetDataTranerCardData` (0x05) is a fashion id, a body type and a whole trainer card, 75 bytes and
+entirely blittable.
+
+**Not yet done.** `NetPlayerNameData`'s framing - the twelve messages whose struct holds a string or
+an array have no layout the source decides. And the **Session Protocol (0x94)**, which sits above
+the reliable transport, has never carried a byte in any capture.
 
 ## The game's own protocol, above Pia
 
@@ -69,8 +78,25 @@ The framing fits every payload ever captured:
 |---|---|---|---|
 | `01 0011 08 00 31 5a00 <x><y><z>` | 1 | `NetJoinData` | a player has joined, here |
 | `02 0048 <12 x 6 bytes>` | 2 | `NetPosData` | where a player has been moving |
-| `12 0001 23` | 0x12 | - | one byte |
-| `23 0001 00` | 0x23 | - | one byte |
+| `12 0001 23` | 0x12 | `NetRequestData` | "send me your data id 0x23" |
+| `23 0001 00` | 0x23 | `NetDataIsMatchWaitData` | "I am not waiting to be matched" |
+
+`NetDataParser` registers **65** of these and `pokeldn/bdsp/netdata.py` holds all of them, generated
+from the checkout by `scripts/gen_bdsp_netdata.py` rather than typed. The ids are nibble-grouped -
+0x01 to 0x09, 0x10 to 0x19, 0x20 to 0x29 and so on, no low nibble ever reaching 0xA - so a gap in
+the numbering is the grouping and not a message the table is missing.
+
+**The layout is PACKED, and the wire is what says so.** `JoinData` is `byte, byte, byte, short,
+Vector3`: seventeen bytes packed, twenty with C#'s default alignment, because an aligned `short`
+would sit at offset 4 rather than 3. The console's own message is seventeen, and its length field
+says `0x0011`. Every payload in every capture agrees with the packed reading, so the whole table
+decodes on it and 53 of the 65 messages have a layout that is decided rather than guessed.
+
+The other twelve carry a C# string, an array or a list, and their size is **not** in the source.
+`NetPlayerNameData` is one of them - `string nickName, byte genderid, byte languageId` - so the
+message that would give an avatar a name is exactly the one whose framing still has to be measured.
+`netdata.OPAQUE` names all twelve; writing a layout for one of them without measuring it is the
+mistake this table exists to prevent.
 
 `JoinData` is `byte avatarId, byte colorId, byte cassetVersion, short InitRotY, Vector3 InitPos`,
 and a real console sends avatar 8, colour 0, casset 0x31. `PosData` is `ushort posX, ushort posZ,
@@ -85,20 +111,35 @@ JOIN and not a position update at all.
 
 ## What the room says
 
-The twenty bytes the console repeats on the reliable protocol until they are acknowledged are the
-first thing this project has read that the GAME wrote rather than the middleware:
+The twenty bytes the console repeats on the reliable protocol until they are acknowledged are its
+own arrival - `NetJoinData`, the whole of `JoinData` and nothing else:
 
 | offset | size | field |
 |---|---|---|
-| 0x00 | 6 | a fixed head, `01 00 11 08 00 31` in every capture |
-| 0x06 | 2 | facing angle in **degrees**, little-endian |
-| 0x08 | 4 | x, little-endian float |
-| 0x0c | 4 | y, little-endian float - the floor |
-| 0x10 | 4 | z, little-endian float |
+| 0x00 | 1 | `avatarId`, 8 in every capture |
+| 0x01 | 1 | `colorId`, 0 |
+| 0x02 | 1 | `cassetVersion`, 0x31 |
+| 0x03 | 2 | `InitRotY`, the facing in **degrees**, little-endian and unaligned |
+| 0x05 | 12 | `InitPos`, three little-endian floats: x, y, z |
 
 Four runs caught four different places on that floor, and the angle was 0, 90, 90 and 225 - every
 one a multiple of 45, which is what an eight-direction facing is. `y` is 0.0 in three of them and
 1.5e-08 in the fourth, so it is a height on a flat room and not a constant.
+
+### The other two messages are a question and its own answer
+
+Since the very first join the console has been repeating two four-byte messages, and reading them
+against the table settles both at once. `12 0001 23` is `NetRequestData`, whose entire struct is
+`byte RequestDataID` - and 0x23 is **itself a data id**. `OpcManager` holds the other half:
+`_RequestNetDataCallback` is an `Action<byte>`, so a request names the message it wants. `23 0001 00`
+is the console answering its own question: `NetDataIsMatchWaitData{isMatchWait = 0}`, "I am not
+waiting to be matched".
+
+**So one of the two messages the console has been repeating at us for every run of this project is a
+question addressed to us, and nothing we have ever sent has answered it.** Building the answer from
+the table reproduces the console's own four bytes exactly, which is the check that the reading is
+right before any run is spent on it. `bin/bdsp_connect.py --answer-requests` sends it; the counter
+to read afterwards is whether the request keeps being asked.
 
 On the unreliable protocol the console sends a five-byte keepalive `04 00 02 00 00` every two
 seconds while nothing happens, and a **trail** while an avatar moves: three bytes of head and then

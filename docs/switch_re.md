@@ -112,6 +112,34 @@ the metadata by field name and then *verified by hashing it back*, which makes t
 rather than a guess. Session 45 got BDSP's 16-byte Pia game key this way after five sessions of
 scans had come up empty, and the same loop closes any `[Serializable]` constant in any IL2CPP title.
 
+## Check which VERSION you dumped, before you believe a struct
+
+A game on sale has a base release and an update, they are separate NSPs, and **the executable is
+easy to take from one and the metadata from the other** - the base romfs is a plain RomFS while the
+update's is a BKTR patch section, so the base is the one that extracts without a fight. That is
+exactly what makes it the one you accidentally read.
+
+It matters more than it sounds. BDSP's base game defines **24** network message classes and the
+version on the console defines **65**; `PosData` went from `Vector3 pos, short rotY` to
+`ushort posX, ushort posZ, short rotY`, so a point shrank from 16 bytes to 6, and `JoinData` gained
+two fields and lost its alignment. A layout read out of the base dump is not a slightly stale
+layout - it is a different protocol, and it decodes a real capture into plausible nonsense.
+
+Two cheap checks, and run both:
+
+- **Ask the metadata what it knows.** `strings global-metadata.dat | grep` for a class the newer
+  version added and one the older version had. BDSP's carries `NetDataTradeStandbyData`, which the
+  update deleted, and has no `NetPlayerNameData`, which the update added - so it is the base's, and
+  no further reading is needed to know it.
+- **Divide a captured length by the struct size.** A message of 72 bytes carrying a list of points
+  is 12 of 6 and cannot be a whole number of 16-byte ones. The wire settles a version question
+  without an opinion in it.
+
+A constant is a different case and does not need re-reading: BDSP's Pia key seed came out of the
+base metadata and decrypts 674 of 674 packets from the updated console. Something verified on the
+wire is verified whatever it was read from. What needs the right version is anything **structural**
+that a capture has not confirmed.
+
 ## The tools
 
 All offline, none needs a console:

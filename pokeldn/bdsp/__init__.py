@@ -9,7 +9,11 @@ directly on them, with no link layer of its own, so there is nothing between thi
 
 from pokeldn.bdsp.session import (COMM_ID, CRYPTO_KEY_DATA_SEED, PASSPHRASE, PIA_PORT,
                                   SessionKeys, session_keys)
-from pokeldn.bdsp.room import JOIN, KEEPALIVE, POS, build_join, build_pos, parse
+from pokeldn.bdsp.room import (JOIN, KEEPALIVE, MATCH_WAIT, POS, PLAYER_NAME, REQUEST, STATE,
+                               answer, build_join, build_pos, build_request, name, parse,
+                               pos_span)
 
 __all__ = ["COMM_ID", "CRYPTO_KEY_DATA_SEED", "PASSPHRASE", "PIA_PORT", "SessionKeys",
-           "session_keys", "JOIN", "POS", "KEEPALIVE", "build_join", "build_pos", "parse"]
+           "session_keys", "JOIN", "POS", "KEEPALIVE", "MATCH_WAIT", "PLAYER_NAME", "REQUEST",
+           "STATE", "answer", "build_join", "build_pos", "build_request", "name", "parse",
+           "pos_span"]

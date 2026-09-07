@@ -4,9 +4,14 @@ Every fixture is real, off a console. The names come from `TeamLumi/opendpr`'s d
 (`Dpr.NetworkUtils.NetDataParser`), which names every message the game speaks.
 """
 
+import pathlib
+import struct
+import subprocess
+import sys
+
 import pytest
 
-from pokeldn.bdsp import room
+from pokeldn.bdsp import netdata, room
 
 
 JOIN_SP43 = bytes.fromhex("0100110800315a00487615c1000000003a0be640")
@@ -77,3 +82,85 @@ def test_a_short_message_is_refused():
 
 def test_the_keepalive_is_five_bytes():
     assert room.KEEPALIVE == bytes.fromhex("0400020000")
+
+
+def test_every_message_the_game_speaks_is_named_and_the_ids_are_nibble_grouped():
+    assert len(netdata.NAMES) == 65                     # NetDataParser registers exactly 65
+    assert netdata.NAMES[room.JOIN][0] == "NetJoinData"
+    assert netdata.NAMES[room.POS][0] == "NetPosData"
+    # 0x01..0x09, 0x10..0x19, 0x20..0x29 and so on - no id's low nibble reaches 0xA,
+    # so a gap in the numbering is the grouping and not a message this table is missing
+    assert all(ident & 0x0F <= 9 for ident in netdata.NAMES)
+    assert max(netdata.NAMES) == 0x66 and min(netdata.NAMES) == 0x01
+
+
+def test_the_packed_layout_is_what_the_wire_says_and_not_c_sharp_alignment():
+    # JoinData is byte, byte, byte, short, Vector3: 17 packed, 20 aligned. The console sends 17.
+    assert struct.calcsize(room.layout(room.JOIN)) == room.JOIN_BODY_SIZE == 17
+    assert room.parse(JOIN_SP43)["length"] == 17
+
+
+def test_the_two_repeated_small_messages_are_a_request_and_its_own_answer():
+    """The console has been asking for one data id and answering it itself since the first join."""
+    req = room.parse(SMALL_A)
+    assert req["name"] == "NetRequestData"
+    assert req["fields"]["RequestDataID"] == room.MATCH_WAIT == 0x23
+    ans = room.parse(SMALL_B)
+    assert ans["name"] == "NetDataIsMatchWaitData"
+    assert ans["fields"]["isMatchWait"] == 0
+    # and building the answer to the console's own request reproduces the console's own bytes
+    assert room.answer(req) == SMALL_B
+
+
+def test_a_payload_whose_struct_is_not_blittable_has_no_layout_and_says_so():
+    # NetPlayerNameData carries a C# string and NetPosData an array; neither size is in the source
+    for data_id in (room.PLAYER_NAME, room.POS):
+        assert data_id in netdata.OPAQUE
+        assert room.layout(data_id) is None
+        with pytest.raises(ValueError):
+            room.build_fields(data_id, 0)
+    assert room.parse(room.build(room.PLAYER_NAME, b"\x00"))["opaque"] is True
+
+
+def test_the_generic_packer_agrees_with_the_hand_written_builders():
+    assert room.build_request(room.MATCH_WAIT) == SMALL_A
+    assert room.build_match_wait(False) == SMALL_B
+    assert room.parse(room.build_state(2, 1))["fields"] == {"state": 2, "isRecruiment": 1}
+
+
+def test_a_pos_span_covers_the_whole_stride_rather_than_creeping():
+    """sp57: twelve points 0.008 apart made the avatar creep and then jump a tenth of a unit."""
+    span = room.pos_span((0.0, 0.0), (1.2, 0.0), 90)
+    assert len(span) == room.POS_POINTS == 12
+    assert span[0][:2] == (0.0, 0.0)
+    assert round(span[-1][0], 6) == 1.2                 # the endpoint IS sent, so nothing is skipped
+    steps = {round(span[i + 1][0] - span[i][0], 6) for i in range(len(span) - 1)}
+    assert len(steps) == 1                              # evenly spaced, no jump at the seam
+    assert all(rot == 90 for _, _, rot in span)
+
+
+def test_a_span_of_one_point_is_the_start_and_does_not_divide_by_zero():
+    assert room.pos_span((1.0, 2.0), (3.0, 4.0), 0, points=1) == [(1.0, 2.0, 0)]
+    with pytest.raises(ValueError):
+        room.pos_span((0, 0), (1, 1), 0, points=0)
+
+
+def test_the_trainer_card_is_the_biggest_thing_the_room_can_carry_whole():
+    assert struct.calcsize(room.layout(room.TRAINER_CARD)) == 75
+    fields = room.parse_fields(room.TRAINER_CARD, bytes(75))
+    assert fields["fashionId"] == 0 and fields["cardData.tranerId"] == 0
+
+
+OPENDPR = [pathlib.Path("~/opendpr").expanduser(),
+           pathlib.Path(__file__).resolve().parent.parent / "scratchpad" / "opendpr_repo"]
+
+
+def test_the_generator_still_reproduces_the_committed_table():
+    """A table nobody can regenerate is a table nobody can check - session 48's lesson, again."""
+    checkout = next((p for p in OPENDPR if (p / "Assets" / "Scripts").is_dir()), None)
+    if checkout is None:
+        pytest.skip("no opendpr checkout to regenerate the table from")
+    gen = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "gen_bdsp_netdata.py"
+    done = subprocess.run([sys.executable, str(gen), str(checkout), "--check"],
+                          capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr

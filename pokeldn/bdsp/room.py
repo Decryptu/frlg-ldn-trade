@@ -1,49 +1,87 @@
 """BDSP's OWN protocol, above Pia - the messages the Union Room is made of.
 
 The game runs a typed protocol of its own inside the Pia payloads, and `TeamLumi/opendpr` names
-every message in it: `Dpr.NetworkUtils.NetDataParser` lists the classes, each an `ANetData<T>` with
-a `DataID` byte, and each `T` is a plain struct. Reading that beat guessing by a wide margin - the
-six bytes this module first called "a fixed head" are three struct fields and a length.
+every message in it: `Dpr.NetworkUtils.NetDataParser` registers 65 classes, each an `ANetData<T>`
+with a `DataID` byte, and each `T` is a plain struct. Reading that beat guessing by a wide margin -
+the six bytes this module first called "a fixed head" are three struct fields and a length.
+`pokeldn.bdsp.netdata` is the generated table; this is what encodes and decodes.
 
 THE FRAMING, and it fits every payload ever captured:
 
     0x0  1  data id
     0x1  2  payload length, BIG-endian
-    0x3  .  payload - the struct, little-endian, as C# lays it out
+    0x3  .  payload - the struct, little-endian and PACKED
 
     01 0011 08 00 31 5a00 <x><y><z>     NetJoinData    "a player has joined, here"
     02 0048 <12 x 6 bytes>              NetPosData     where a player has been moving
-    12 0001 23                          data id 18, one byte
-    23 0001 00                          data id 35, one byte
+    12 0001 23                          NetRequestData     "send me your data id 0x23"
+    23 0001 00                          NetDataIsMatchWaitData  "I am not waiting for a match"
+
+PACKED IS MEASURED, NOT ASSUMED. `JoinData` is byte, byte, byte, short, Vector3, which is 17 bytes
+packed and 20 aligned - and the console's own message is 17, with the short at offset 3. Every
+payload in every capture agrees with the packed reading, so the whole table decodes on it.
 
 **NetJoinData (id 1) IS THE TWENTY-BYTE MESSAGE**, not a position update, and sending it repeatedly
 is what put a crowd of avatars in a real console's Union Room (sp47, sp48): every one is a fresh
-player arriving. `JoinData` is `byte avatarId, byte colorId, byte cassetVersion, short InitRotY,
-Vector3 InitPos`, and a real console sends avatar 8, colour 0, casset 0x31.
+player arriving. A real console sends avatar 8, colour 0, casset 0x31.
 
 **NetPosData (id 2) is how a player MOVES**, and it is much cheaper: `ushort posX, ushort posZ,
 short rotY` per point, several points to a message, on the unreliable stream. The game's own
 conversion is `pos = (-posX * 0.05, posZ * 0.05)`, so a coordinate is a twentieth of a unit and X is
-NEGATED. A trail decodes to the same place the join message named, which is what says the two
-representations are the same player.
+NEGATED. THE TWELVE POINTS ARE A SPAN, not a burst: they are where the player HAS BEEN since the
+last message, so a walk is one message per stride with the strides interpolated across it. sp57 sent
+twelve points 0.008 apart and the avatar crept and then jumped, which is what `pos_span` fixes.
+
+**THE TWO MESSAGES THE CONSOLE HAS BEEN REPEATING SINCE THE FIRST JOIN ARE A QUESTION AND ITS OWN
+ANSWER.** `12 0001 23` is `NetRequestData{RequestDataID = 0x23}` and 0x23 is itself a data id -
+`OpcManager._RequestNetDataCallback` is an `Action<byte>`, so a request names the message it wants -
+and `23 0001 00` is the console answering its own: `NetDataIsMatchWaitData{isMatchWait = 0}`, "I am
+not waiting to be matched". Nothing this project has sent has ever answered a request.
 
 `docs/bdsp.md` "What the room says".
 """
 
 import struct
 
+from pokeldn.bdsp.netdata import FIELDS, NAMES, OPAQUE
+
 HEADER_SIZE = 3
 
-JOIN = 1                          # NetJoinData
-POS = 2                           # NetPosData
-DATA_ID_NAMES = {JOIN: "NetJoinData", POS: "NetPosData"}
+JOIN = 0x01                       # NetJoinData
+POS = 0x02                        # NetPosData
+EMOTION = 0x03                    # NetEmotionData
+STATE = 0x04                      # NetCharacterStateData
+TRAINER_CARD = 0x05               # NetDataTranerCardData
+REQUEST = 0x12                    # NetRequestData - "send me your <data id>"
+MATCH_WAIT = 0x23                 # NetDataIsMatchWaitData
+PLAYER_NAME = 0x42                # NetPlayerNameData - a string, so the layout is NOT known
 
 JOIN_BODY_SIZE = 17
 POS_POINT_SIZE = 6
+POS_POINTS = 12                   # what a console puts in one message; 12 * 6 is the 0x48 captured
 POS_SCALE = 0.05                  # PosData.pos: -posX * 0.05, posZ * 0.05
 POS_UNIT = 20.0                   # and the setter MULTIPLIES by 20 rather than dividing by 0.05 -
                                   # 10.35 / 0.05 truncates to 206 where 10.35 * 20 gives 207
 KEEPALIVE = bytes.fromhex("0400020000")   # the unreliable stream every 2 s when nothing happens
+
+# The name this project used before opendpr named them, kept so an old log still reads.
+DATA_ID_NAMES = {ident: name for ident, (name, _) in NAMES.items()}
+
+
+def name(data_id):
+    """-> the game's own class name for a data id, or a bare description of the number."""
+    known = NAMES.get(data_id)
+    return known[0] if known else f"data id {data_id:#04x}"
+
+
+def layout(data_id):
+    """-> the struct format for a payload, or None when its struct is not blittable.
+
+    A `None` is a real answer: `NetPlayerNameData` carries a C# string and `NetPosData` an array,
+    and neither has a layout the source decides. They are named in `netdata.OPAQUE`.
+    """
+    fields = FIELDS.get(data_id)
+    return "<" + "".join(fmt for _, _, fmt in fields) if fields else None
 
 
 def parse(data):
@@ -53,12 +91,29 @@ def parse(data):
     data_id = data[0]
     length = struct.unpack_from(">H", data, 1)[0]
     body = data[HEADER_SIZE:HEADER_SIZE + length]
-    out = {"data_id": data_id, "name": DATA_ID_NAMES.get(data_id, f"data id {data_id}"),
-           "length": length, "body": body, "truncated": len(body) < length}
+    out = {"data_id": data_id, "name": name(data_id), "length": length, "body": body,
+           "truncated": len(body) < length, "opaque": data_id in OPAQUE}
+    fields = parse_fields(data_id, body)
+    if fields is not None:
+        out["fields"] = fields
     if data_id == JOIN and len(body) >= JOIN_BODY_SIZE:
         out["join"] = parse_join_body(body)
     elif data_id == POS:
         out["points"] = parse_pos_body(body)
+    return out
+
+
+def parse_fields(data_id, body):
+    """-> {name: value} for any payload the generated table gives a layout, else None."""
+    fmt = layout(data_id)
+    if fmt is None or len(body) < struct.calcsize(fmt):
+        return None
+    values, out = struct.unpack_from(fmt, body), {}
+    i = 0
+    for field, _, sub in FIELDS[data_id]:
+        count = len(struct.unpack("<" + sub, bytes(struct.calcsize("<" + sub))))
+        out[field] = values[i] if count == 1 else values[i:i + count]
+        i += count
     return out
 
 
@@ -85,6 +140,15 @@ def build(data_id, body):
     return bytes([data_id & 0xFF]) + struct.pack(">H", len(body)) + bytes(body)
 
 
+def build_fields(data_id, *values):
+    """Pack a payload from the generated layout. Raises on an id whose struct is not blittable."""
+    fmt = layout(data_id)
+    if fmt is None:
+        raise ValueError(f"{name(data_id)} has no layout this table can decide "
+                         f"({OPAQUE.get(data_id, 'unknown')} is not blittable)")
+    return build(data_id, struct.pack(fmt, *values))
+
+
 def build_join(x, y, z, rot_y=0, avatar_id=8, color_id=0, casset_version=0x31):
     """"A player has joined, here." The defaults are what a real console sends."""
     body = (bytes([avatar_id & 0xFF, color_id & 0xFF, casset_version & 0xFF])
@@ -97,3 +161,56 @@ def build_pos(points):
     body = b"".join(struct.pack("<HHh", int(abs(x * POS_UNIT)), int(abs(z * POS_UNIT)), int(rot))
                     for x, z, rot in points)
     return build(POS, body)
+
+
+def pos_span(start, end, rot_y, points=POS_POINTS):
+    """-> the points for ONE NetPosData covering a whole stride, endpoint included.
+
+    THE TWELVE POINTS SPAN THE MOVEMENT SINCE THE LAST MESSAGE. sp57 sent twelve points 0.008 apart
+    and then jumped 0.1 to the next message's first point, so the avatar crept and stuttered across
+    the room; the fix is not to send more messages but to make each one describe the stride it
+    covers. `start` and `end` are (x, z).
+    """
+    if points < 1:
+        raise ValueError("a NetPosData carries at least one point")
+    (x0, z0), (x1, z1) = start, end
+    last = max(points - 1, 1)
+    return [(x0 + (x1 - x0) * i / last, z0 + (z1 - z0) * i / last, rot_y) for i in range(points)]
+
+
+def build_request(requested_id):
+    """"Send me your <data id>." `RequestData.RequestDataID` is itself one of these ids."""
+    return build_fields(REQUEST, requested_id & 0xFF)
+
+
+def build_match_wait(is_waiting=False):
+    """The console's own repeated answer is 0 - "I am not waiting to be matched"."""
+    return build_fields(MATCH_WAIT, 1 if is_waiting else 0)
+
+
+def build_state(state=0, is_recruitment=0):
+    """`StateData`: what the character is doing, and whether it is recruiting."""
+    return build_fields(STATE, state & 0xFF, is_recruitment & 0xFF)
+
+
+def build_emotion(emotion_id):
+    return build_fields(EMOTION, emotion_id & 0xFF)
+
+
+def answer(message):
+    """-> the reply a NetRequestData asks for, when this module can build one, else None.
+
+    The console has been asking for 0x23 since the first join and has never been answered. An
+    answer is buildable whenever the requested id has a layout; a request for an OPAQUE one is
+    named in the return so a caller can say what it could not answer.
+    """
+    if message.get("data_id") != REQUEST or not message.get("fields"):
+        return None
+    wanted = message["fields"]["RequestDataID"]
+    if wanted == MATCH_WAIT:
+        return build_match_wait(False)
+    if wanted == STATE:
+        return build_state()
+    if layout(wanted) is None:
+        return None
+    return build(wanted, bytes(struct.calcsize(layout(wanted))))

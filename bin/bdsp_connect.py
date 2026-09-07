@@ -135,7 +135,8 @@ async def main_async(args):
               "rtt_requests": 0, "rtt_answers": 0, "reliable": 0, "unreliable": 0,
               "join_acks": 0, "dst_ip": bcast, "dst_var": 0,
               "rel_max_seq": 0, "rel_streams": set(), "rel_control": [],
-              "rel_handshaken": False, "rel_acks": 0, "their_position": None, "their_ack_id": 0}
+              "rel_handshaken": False, "rel_acks": 0, "their_position": None, "their_ack_id": 0,
+              "requests": 0, "request_answers": 0, "last_request": None}
 
         nonce = int.from_bytes(os.urandom(8), "big")
 
@@ -276,12 +277,29 @@ async def main_async(args):
                             st["rel_max_seq"] = max(st["rel_max_seq"], d["sequence_id"])
                             st["rel_streams"].add(d["stream_id"])
                             g = room.parse(d["payload"]) if len(d["payload"]) >= 3 else None
+                            if g:
+                                record(rec="game_message", t=now, data_id=g["data_id"],
+                                       name=g["name"], fields=g.get("fields"),
+                                       payload=d["payload"].hex())
                             if g and "join" in g:
                                 st["their_position"] = g["join"]
                                 print(f"[rx] t={now:6.2f} {g['name']}: avatar "
                                       f"{g['join']['avatar_id']} at "
                                       f"({g['join']['x']:.2f}, {g['join']['z']:.2f}) "
                                       f"facing {g['join']['rot_y']}")
+                            elif g and g.get("fields") is not None:
+                                print(f"[rx] t={now:6.2f} {g['name']}: {g['fields']}")
+                            elif g:
+                                print(f"[rx] t={now:6.2f} {g['name']}, "
+                                      f"{g['length']} B{' (opaque)' if g['opaque'] else ''}")
+                            if g and g["data_id"] == room.REQUEST and g.get("fields"):
+                                # THE CONSOLE HAS BEEN ASKING US FOR A MESSAGE SINCE THE FIRST JOIN.
+                                # `RequestData.RequestDataID` names a data id, and 0x23 is the one
+                                # it answers itself. Nothing this project sent had ever answered it.
+                                st["requests"] += 1
+                                st["last_request"] = g["fields"]["RequestDataID"]
+                                if args.answer_requests:
+                                    await answer_the_request(g, now)
                             if args.reliable_auto_ack and st["rel_handshaken"]:
                                 ack = rl.build_ack_message(st["rel_max_seq"] + 1,
                                                            stream_id=d["stream_id"])
@@ -393,6 +411,35 @@ async def main_async(args):
 
             print("[cx] the data probe was never answered; not acking blind")
 
+        async def answer_the_request(message, now):
+            """Answer a NetRequestData with the message it names, on the reliable stream.
+
+            The sequence id is taken FRESH: the window is shared with the console's own sends and
+            anything below its ack id is discarded in silence (sp53). One send, no retransmission -
+            the console repeats the request, so a lost answer costs nothing and the next request is
+            another chance.
+            """
+            reply = room.answer(message)
+            wanted = message["fields"]["RequestDataID"]
+            if reply is None:
+                print(f"[tx] t={now:6.2f} it asked for {room.name(wanted)} and this table cannot "
+                      f"build one")
+                record(rec="request_unanswerable", t=now, requested=wanted)
+                return
+            seq = st["their_ack_id"]
+            if not seq:
+                record(rec="request_unanswered_no_seq", t=now, requested=wanted)
+                return
+            msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                   | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                   seq, len(reply), lowest_pending=seq) + reply)
+            sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
+                             rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+            st["request_answers"] += 1
+            print(f"[tx] t={now:6.2f} answered its request for {room.name(wanted)} at seq {seq}: "
+                  f"{reply.hex(' ')}")
+            record(rec="request_answered", t=now, requested=wanted, seq=seq, reply=reply.hex())
+
         async def walk_the_room(seq):
             """Put a position of OUR OWN into the room, and see whether the game draws it.
 
@@ -502,8 +549,12 @@ async def main_async(args):
                 print(f"[tx]   ONE avatar should be standing at ({x0:.2f}, {z0:.2f}) now")
                 # and now move it, batched the way the console batches: twelve points a message
                 for i in range(args.room_walk):
-                    x = x0 + 0.15 * i
-                    pts = [(x + 0.012 * k, z0, 90) for k in range(12)]
+                    # THE TWELVE POINTS SPAN THE STRIDE. sp57 sent them 0.012 apart inside a 0.15
+                    # step, so the avatar crept through a twelfth of the way and then jumped the
+                    # rest when the next message arrived. A message describes where the player HAS
+                    # BEEN since the last one, so its points have to reach the next one's first.
+                    x, x_next = x0 + 0.15 * i, x0 + 0.15 * (i + 1)
+                    pts = room.pos_span((x, z0), (x_next, z0), 90)
                     body = room.build_pos(pts)
                     sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(),
                                      body, UNRELIABLE_PROTOCOL, port=0,
@@ -842,10 +893,15 @@ async def main_async(args):
         print(f"[cx] unreliable messages {st['unreliable']} - the game's live state")
         print(f"[cx] reliable acks sent {st['rel_acks']}, their last position "
               f"{st['their_position']}")
+        # A REQUEST IS A QUESTION ADDRESSED TO US. If it stops being asked, we answered it.
+        print(f"[cx] NetRequestData received {st['requests']}"
+              + (f" (last for {room.name(st['last_request'])})" if st["last_request"] else "")
+              + f", answered {st['request_answers']}")
         record(rec="counters", join_responses=st["join_responses"],
                join_acks=st["join_acks"], rtt_requests=st["rtt_requests"],
                rtt_answers=st["rtt_answers"], reliable=st["reliable"],
-               unreliable=st["unreliable"])
+               unreliable=st["unreliable"], requests=st["requests"],
+               request_answers=st["request_answers"], last_request=st["last_request"])
         if st["result"]:
             reg = st["result"]["registered"]
             print(f"[cx] the console said it registers {st['result']['count']} protocols, "
@@ -895,6 +951,10 @@ def main():
                     help="after the reliable handshake, send N position messages of our own and "
                          "watch the console's screen")
     ap.add_argument("--room-walk-gap", type=float, default=1.0)
+    ap.add_argument("--answer-requests", action=argparse.BooleanOptionalAction, default=False,
+                    help="answer the console's NetRequestData with the message it names. It has "
+                         "asked for data id 0x23 in every capture since the first join and has "
+                         "never been answered; this is the probe, so arm it on its own")
     ap.add_argument("--room-pattern", choices=("square", "line", "fixed", "move"), default="square",
                     help="square spawns one avatar per corner; line and fixed ask whether the "
                          "game's idea of identity is the station or the position")
