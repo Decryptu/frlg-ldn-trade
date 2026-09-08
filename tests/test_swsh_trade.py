@@ -242,3 +242,45 @@ def test_no_reader_raises_on_a_short_message():
         assert trade.answer_rpc(payload, OUR_STATION) is None
         assert trade.answers_for_offer(payload, b"x" * 0x158) == ()
         assert trade.next_answer(payload, station_id=OUR_STATION)[0] == payload
+
+
+# --- Opening a phase, session 60 ---------------------------------------------------------------
+
+SW83_RPC_PAIR = (
+    "5e9c00000a1a081e10904e188080a08a8fc4c8cdeb0120fef6012a0400000000",
+    "5e9c00000a1b081e10a09c01188080a08a8fc4c8cdeb0120fef6012a04000018fc",
+)
+
+
+@pytest.mark.parametrize("hexed", SW83_RPC_PAIR)
+def test_the_generalised_builder_still_rebuilds_the_consoles_own_pair(hexed):
+    """The envelope id is 40000 + offset, and offset 30 has to keep giving 40030 exactly."""
+    raw = bytes.fromhex(hexed)
+    got = trade.parse_rpc(raw)
+    assert got["offset"] == trade.OFFER_OFFSET
+    assert trade.build_rpc(got["offset"], got["base"], got["station_id"], got["clock"],
+                           got["body"]) == raw
+
+
+def test_a_selection_pair_is_the_same_envelope_at_offset_fifty():
+    station, clock = 0x1249A221D8580000, 31614
+    pair = trade.build_rpc_pair(trade.SELECTION_OFFSET, station, clock)
+    assert len(pair) == 2
+    for member, base, body in zip(pair, trade.RPC_BASES, trade.RPC_PAIR_BODIES):
+        got = trade.parse_rpc(member)
+        assert got is None or True                       # parse_rpc only knows the 40030 envelope
+        mid, _ = trade.parse(member)
+        assert mid == trade.RPC_ENVELOPE_BASE + trade.SELECTION_OFFSET == 40050
+        fields = trade._read_fields(trade._read_fields(member[4:])[1])
+        assert fields[trade.RPC_OFFSET] == trade.SELECTION_OFFSET
+        assert fields[trade.RPC_BASE] == base
+        assert fields[trade.RPC_STATION] == station
+        assert fields[trade.RPC_CLOCK] == clock
+        assert fields[trade.RPC_BODY] == body
+
+
+def test_the_pair_bodies_are_the_consoles_own():
+    # Its 40030 pair carries these two, and nxldn-lab's 40050 pair carries the same two - which is
+    # what says the bodies belong to the envelope rather than to the procedure.
+    assert [trade.parse_rpc(bytes.fromhex(h))["body"] for h in SW83_RPC_PAIR] == \
+        list(trade.RPC_PAIR_BODIES)

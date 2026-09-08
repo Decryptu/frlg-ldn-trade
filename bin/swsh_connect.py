@@ -180,7 +180,9 @@ async def main_async(args):
               "offered_pk8": None, "our_pk8": None, "offer_pending": None, "offer_seq": None,
               "said_by_port": {}, "ack_by_port": {}, "rpc_out": 0, "rpc_acked": None,
               "trade_ready_sent": False,
-              "our_index": None, "host_index": None,
+              "our_index": None, "host_index": None, "last_update_mesh": None, "rpc_queue": [],
+              "selection_sent": False, "box_queue": [], "box_seen": [],
+              "we_are_host": False, "update_mesh_out": 0,
               "migration_pending": None, "migration_out": 0, "migration_acked": None,
               "said_serial": 0, "serial_by_proto": {}, "serial_by_port": {},
               "block_out": 0, "block_acked": None}
@@ -265,15 +267,52 @@ async def main_async(args):
                           f"host {start['host_index']} names station "
                           f"{start['new_host_index']} as the next host")
                     record(rec="rx_migration_start", t=now, **start)
+                    # AND IT IS THE ONLY RELIABLE "THE PLAYER ACCEPTED" SIGNAL WE HAVE. It arrives
+                    # once, seconds after the accept, in every run where the player pressed it and
+                    # in no other. The console never retransmits it - one transport ack satisfies
+                    # it - so it is a notification, not a question, and using it to TIME something
+                    # is worth more than answering it. sw84, sw87 and sw88 each answered it a
+                    # different way and each made the console give up sooner than ignoring it did.
+                    if args.send_selection and not st["selection_sent"]:
+                        last = st["said_by_port"].get((reliable5.PROTOCOL, args.rpc_port))
+                        got = swsh_trade.parse_rpc(last) if last else None
+                        if got is None or got.get("clock") is None:
+                            print("[tx]     no 40030 pair seen on port 1; cannot time a selection")
+                        else:
+                            clock = got["clock"] + args.rpc_clock_delta
+                            pair = swsh_trade.build_rpc_pair(swsh_trade.SELECTION_OFFSET,
+                                                             our_constant, clock)
+                            st["rpc_queue"].extend(pair)
+                            st["selection_sent"] = True
+                            print(f"[tx]     *** OPENING THE SELECTION PHASE *** 40050 pair on "
+                                  f"0x7c port {args.rpc_port}, clock {clock}\n"
+                                  f"[tx]       {pair[0].hex()}\n[tx]       {pair[1].hex()}")
                     if args.answer_migration and st["migration_pending"] is None:
                         index = st["our_index"]
                         if index is None:
                             index = start["new_host_index"]
                             print("[tx]     no join response gave us an index; using the one the "
                                   "migration start names")
-                        st["migration_pending"] = mesh.build_migration_response(index)
-                        print(f"[tx]     *** ANSWERING WITH MIGRATION_RESPONSE *** "
-                              f"{st['migration_pending'].hex()} (our station index {index})")
+                        # WHICH MESSAGE DEPENDS ON WHETHER IT NAMED US, and sw84 is why. A
+                        # MIGRATION_RESPONSE travels TO the new host - `0x017c3250` takes the
+                        # destination in w1 and its caller passes the new host index - so a station
+                        # that has just been named the next host owes a FINISH, not a response.
+                        # sw84 sent 0x48 to the console: it acked it at the transport, stepped its
+                        # update session 3 -> 4, stopped answering RTT and dropped the link 3.6 s
+                        # later with 2-ALZAA-0016 in front of the player. It was waiting to be told
+                        # the migration was over.
+                        if args.migration_answer == "response" or (
+                                args.migration_answer == "auto"
+                                and start["new_host_index"] != index):
+                            st["migration_pending"] = mesh.build_migration_response(index)
+                            print(f"[tx]     *** ANSWERING WITH MIGRATION_RESPONSE *** "
+                                  f"{st['migration_pending'].hex()} (our station index {index})")
+                        else:
+                            st["migration_pending"] = mesh.build_migration_finish(index)
+                            st["we_are_host"] = True
+                            print(f"[tx]     *** IT NAMED US THE NEXT HOST - SENDING "
+                                  f"MIGRATION_FINISH *** {st['migration_pending'].hex()} "
+                                  f"(we are station {index} and therefore the host now)")
                 finish = mesh.parse_migration_finish(got["payload"])
                 if finish is not None:
                     print(f"\n[rx] t={now:6.2f} *** MIGRATION FINISHED *** host "
@@ -282,6 +321,12 @@ async def main_async(args):
             # EVERY DISTINCT PAYLOAD, not just the last. `--sync-answers` has a rule for some of
             # them and the ones it has no rule for are the finding: they are what the console says
             # next, in its own ids, and they are what turns another project's table into ours.
+            command = swsh_trade.parse_box_command(got["payload"])
+            if command is not None:
+                st["box_seen"].append((round(now, 2), command))
+                print(f"\n[rx] t={now:6.2f} *** BOX SYNC STATE COMMAND {command} *** on the trade "
+                      f"holder - the console naming its own state machine")
+                record(rec="rx_box_command", t=now, command=command)
             offered = swsh_trade.offered_pokemon(got["payload"])
             if offered is not None and st["offered_pk8"] is None:
                 st["offered_pk8"] = offered
@@ -296,6 +341,19 @@ async def main_async(args):
                 # the console said LAST, and the console goes on sending its RPC pair several times
                 # a second - so sw78 saw the offer, printed it, and then answered an RPC instead,
                 # every time. An offer is a one-shot and it has to outrank the running mirror.
+                if args.offer_echo:
+                    # OFFER ITS OWN RECORD BACK, UNCHANGED. sw89: between its offer and the
+                    # teardown the console sends nothing but acks for four and a half seconds - it
+                    # is not waiting to be told something, it is rejecting something - and the only
+                    # thing we put in front of it is a Pokemon. Ours is the player's own level-100
+                    # Ectoplasma wearing an OT we wrote, so its met data, memories and handler
+                    # records name a trainer its ids no longer do. The PK8 the console just sent us
+                    # is byte-perfect and came out of its own save, so a run that offers THAT and
+                    # still aborts says the record is not the problem. `nxldn-lab` ships this as
+                    # its `--echo` mode and its default Pokemon is 344 zero bytes, which is a hint
+                    # about what that client could actually get accepted.
+                    st["our_pk8"] = offered
+                    print("[tx]     *** ECHOING ITS OWN RECORD BACK, unchanged ***")
                 if st["our_pk8"] is not None:
                     st["offer_pending"] = swsh_trade.pokemon_trade(st["our_pk8"])
                     ours = swsh_pokemon.read(st["our_pk8"])
@@ -491,6 +549,9 @@ async def main_async(args):
                             record(rec="rx_join_response", t=now, parsed=got, raw=body.hex())
                         elif kind == mesh.UPDATE_MESH:
                             st["updates_mesh"] += 1
+                            # KEEP THE LAST ONE. After a migration WE send these, and the cheapest
+                            # correct one to send is the console's own with the host index changed.
+                            st["last_update_mesh"] = body
                             try:
                                 got = mesh.parse_update_mesh(body, version4=True)
                             except (IndexError, ValueError) as e:
@@ -862,7 +923,8 @@ async def main_async(args):
                 if seq - args.send_sequence >= args.send_count:
                     break
                 said = st["said_by_proto"].get(args.send_protocol)
-                if args.answer_once and st["offer_pending"] is None:
+                if (args.answer_once and st["offer_pending"] is None
+                        and not st["answer_queue"]):
                     # AN ANSWER IS A REPLY TO SOMETHING, NOT A HEARTBEAT. `said` is the last thing
                     # the console put on this protocol and it stays set for the rest of the run, so
                     # every 0.3 s tick re-derives an answer to a payload already answered. sw83
@@ -870,6 +932,12 @@ async def main_async(args):
                     # 1024 times, where the console sent each of its own messages once; the three
                     # payloads this run repeated are exactly the three phases that stalled, and
                     # every message that moved the game on went out exactly once.
+                    # AND NEVER WHILE A QUEUED ANSWER IS WAITING. sw85: a rule may be more than
+                    # one payload - `ping` is answered `pingReply` then `ping` - and a guard that
+                    # looked only at the serial sent the first, starved the second, and left the
+                    # console repeating its ping ten times at the very first holder. One message
+                    # out in a 327-second run. The queue is work already owed; only an empty one
+                    # means there is nothing to say.
                     serial = st["serial_by_proto"].get(args.send_protocol)
                     if serial is not None and serial == answered_serial:
                         await trio.sleep(args.send_period)
@@ -916,7 +984,23 @@ async def main_async(args):
                     if st["offer_seq"] == seq:
                         print(f"[tx]     *** OUR OFFER WAS ACKNOWLEDGED at sequence {seq} ***")
                         st["offer_pending"], st["offer_seq"] = None, None
-                        if args.trade_ready and not st["trade_ready_sent"]:
+                        if args.box_commands and not st["trade_ready_sent"]:
+                            # SWEEP THE COMMAND, BECAUSE A REFUSAL IS AN INSTRUMENT. The console
+                            # gives up a few seconds after the player accepts, not on a fixed timer
+                            # from its own offer, so there is room to say several things and watch
+                            # which one it answers. Every distinct payload it sends is printed with
+                            # its id, and a box command it sends back is printed with its value.
+                            st["trade_ready_sent"] = True
+                            st["box_queue"] = [int(c, 0) for c in args.box_commands.split(",")]
+                            print(f"[tx]     *** WALKING THE BOX SYNC STATE COMMANDS *** "
+                                  f"{st['box_queue']}")
+                            st["offer_pending"] = swsh_trade.box_sync_state(
+                                st["box_queue"].pop(0))
+                        elif st["box_queue"]:
+                            nxt = st["box_queue"].pop(0)
+                            print(f"[tx]     *** BOX SYNC STATE COMMAND {nxt} ***")
+                            st["offer_pending"] = swsh_trade.box_sync_state(nxt)
+                        elif args.trade_ready and not st["trade_ready_sent"]:
                             st["trade_ready_sent"] = True
                             # AND SAY WE ARE READY, on the trade holder. The console has never sent
                             # us these bytes and nxldn-lab's client waits for them before offering,
@@ -1032,12 +1116,17 @@ async def main_async(args):
             answered_serial = None
             while time.monotonic() < deadline:
                 said = st["said_by_port"].get(key)
-                answer = (swsh_trade.answer_rpc(said, our_constant, args.rpc_clock_delta)
-                          if said else None)
+                # A QUEUED MESSAGE OUTRANKS AN ANSWER, and travels on the same window: this port
+                # has one sequence and one ack counter, so a phase we OPEN has to go through here
+                # rather than beside it.
+                pending = st["rpc_queue"][0] if st["rpc_queue"] else None
+                answer = pending if pending is not None else (
+                    swsh_trade.answer_rpc(said, our_constant, args.rpc_clock_delta)
+                    if said else None)
                 if answer is None:
                     await trio.sleep(0.1)
                     continue
-                if args.answer_once:
+                if args.answer_once and pending is None:
                     # THE SAME RULE AS THE DATA SENDER, and this window is where it cost the most:
                     # sw83 answered a trade RPC 1024 times, roughly fifty of them on their own
                     # sequence ids, to a console that had asked six times.
@@ -1063,6 +1152,8 @@ async def main_async(args):
                        payload=answer.hex())
                 await trio.sleep(args.rpc_period)
                 if st["ack_by_port"].get(key, 0) > seq:
+                    if pending is not None and st["rpc_queue"] and st["rpc_queue"][0] is pending:
+                        st["rpc_queue"].pop(0)
                     if st["rpc_acked"] is None:
                         st["rpc_acked"] = time.monotonic() - t0
                         print(f"\n[rx] *** THE CONSOLE ACKED OUR RPC on port {port} *** "
@@ -1116,13 +1207,57 @@ async def main_async(args):
                         st["migration_acked"] = time.monotonic() - t0
                         print(f"\n[rx] *** IT ACKED OUR MIGRATION RESPONSE, "
                               f"t={st['migration_acked']:.2f} ***")
-                    # ONE MESSAGE, NOT A STREAM. A migration response is answered by the host's
-                    # MIGRATION_FINISH, not by another response; repeating it past the ack is the
-                    # mistake sw83 made with the Pokemon offer.
+                    # ONE MESSAGE, NOT A STREAM. Repeating a state transition past its ack is
+                    # the mistake sw83 made with the Pokemon offer.
                     st["migration_pending"] = None
                     return
             if st["migration_out"] and st["migration_acked"] is None:
                 print(f"\n[tx] {st['migration_out']} migration responses out, nothing acked them")
+
+
+        async def update_mesh_sender():
+            """Once we are the host, do the host's job: broadcast UPDATE_MESH.
+
+            sw87 is the whole argument. The console answered our MIGRATION_FINISH and stayed
+            healthy - RTT still going, our data still acked, its update session counter unchanged,
+            none of sw84's freeze - and then it **stopped sending UPDATE_MESH**, because it had
+            just handed that job to us. 1.3 seconds later the link was gone. It had been sending
+            one roughly every 2 seconds for the whole run.
+
+            We send the console's own last one with byte [2] set to our index and the counter
+            advancing, on 0x18 PORT 0, which is where every one of its own arrived. Building the
+            station table from nothing would mean building two 64-byte locations; editing the one
+            it has been broadcasting all run means every byte we have not read stays its own.
+            """
+            if not args.update_mesh:
+                return
+            deadline = time.monotonic() + args.send_seconds + args.send_after + args.send_wait
+            counter = None
+            while time.monotonic() < deadline:
+                if not (st["we_are_host"] and st["last_update_mesh"] and st["our_index"] is not None):
+                    await trio.sleep(0.1)
+                    continue
+                if counter is None:
+                    try:
+                        counter = mesh.parse_update_mesh(st["last_update_mesh"],
+                                                         version4=True)["update_counter"]
+                    except (IndexError, ValueError) as e:
+                        print(f"[tx] cannot read the console's update mesh: {e}")
+                        return
+                counter += 1
+                body = mesh.rewrite_update_mesh(st["last_update_mesh"], st["our_index"], counter)
+                sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), body,
+                                 mesh.PROTOCOL, args.connect_station_first, port=0,
+                                 message_flags=pia4.MESSAGE_FLAGS,
+                                 destination=args.data_destination),
+                            (host_ip, PIA_PORT))
+                st["update_mesh_out"] += 1
+                if st["update_mesh_out"] == 1:
+                    print(f"\n[tx] *** WE ARE THE HOST NOW - UPDATE_MESH on 0x18 port 0 *** "
+                          f"{len(body)} B, host index {st['our_index']}, counter {counter}")
+                record(rec="tx_update_mesh", t=time.monotonic() - t0, counter=counter,
+                       raw=body.hex())
+                await trio.sleep(args.update_mesh_period)
 
 
         async def block_sender():
@@ -1184,6 +1319,7 @@ async def main_async(args):
             nursery.start_soon(snapshot_sender)
             nursery.start_soon(rpc_sender)
             nursery.start_soon(migration_sender)
+            nursery.start_soon(update_mesh_sender)
             await sender()
             await trio.sleep(args.hold)
             nursery.cancel_scope.cancel()
@@ -1382,6 +1518,32 @@ def build_parser():
                          "pressed accept and the only two that carry `440001` there, and in both "
                          "the console then went silent everywhere: the last thing it asks for is "
                          "not an application message at all, it is two bytes of mesh")
+    ap.add_argument("--migration-answer", choices=("auto", "finish", "response"), default="auto",
+                    help="what to send when the console migrates the mesh. \"auto\" sends "
+                         "MIGRATION_FINISH when the start names US as the next host and a "
+                         "MIGRATION_RESPONSE when it names anyone else, which is what the binary "
+                         "says; \"response\" is sw84's behaviour, kept so the two can be compared")
+    ap.add_argument("--box-commands", default=None, metavar="N,N,...",
+                    help="after our offer is acknowledged, send boxSyncStateCommand{data:N} on the "
+                         "trade holder for each N in turn, one per acknowledged sequence. 20030 is "
+                         "a BoxSyncStateDataHolder and its field 2 is a command enum; this project "
+                         "has only ever sent 1, and nxldn-lab's capture of a real trade has 4 too")
+    ap.add_argument("--offer-echo", action="store_true",
+                    help="offer back the exact PK8 the console just offered us, unchanged, instead "
+                         "of one out of --send-snapshot. The control for \"is it our record it is "
+                         "refusing\": these bytes came out of its own save and cannot be illegal")
+    ap.add_argument("--send-selection", action="store_true",
+                    help="when the console signals the accept, OPEN the selection phase with a "
+                         "40050 pair on 0x7c port 1. It is the same envelope as the 40030 the "
+                         "console sends us, at offset 50 with our own station id - our builder "
+                         "reproduces its 40030 pair byte for byte, so only the offset is new")
+    ap.add_argument("--update-mesh", action="store_true",
+                    help="once the migration makes us the host, broadcast UPDATE_MESH the way the "
+                         "console did - its own last one with the host index set to ours. sw87: "
+                         "the console accepted our MIGRATION_FINISH, stopped sending these, and "
+                         "the mesh was gone 1.3 s later because nothing took over")
+    ap.add_argument("--update-mesh-period", type=float, default=1.0,
+                    help="how often to broadcast it; the console sent one about every 2 s")
     ap.add_argument("--migration-period", type=float, default=0.3,
                     help="how often to retransmit the migration response until it is acked")
     ap.add_argument("--answer-once", action="store_true",

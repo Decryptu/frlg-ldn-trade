@@ -126,17 +126,51 @@ def pokemon_trade(pk8):
 # an offset and that no literal 20030 exists anywhere in the image. It does not need to: the base
 # and the offset travel as separate fields of this envelope, and 20000 + 30 is assembled from them.
 # The deduction session 59 wrote down is now a measurement, and its mechanism is on the wire.
-RPC_ENVELOPE = 40030
+RPC_ENVELOPE_BASE = 40000             # the envelope's own id is this plus the same offset
+RPC_ENVELOPE = 40030                  # the only one the console has ever sent us: offset 30
 RPC_OFFSET, RPC_BASE, RPC_STATION, RPC_CLOCK, RPC_BODY = 1, 2, 3, 4, 5
 RPC_BASES = (10000, 20000)            # the pair the console sends, and the pair it expects back
 
+# THE OFFSET IS THE PROCEDURE, and the envelope's id carries it twice - once as `40000 + offset`
+# and once as field 1. 30 is the offer, the only one measured from our own console. 50 and 40 are
+# `andyjusa/nxldn-lab`'s selection and confirmation, and what makes them more than borrowed
+# constants is the dispatcher at main.bin `0x013b2c00`: a message id is banded and INDEXED, and an
+# id in 40001..60000 indexes its container at `id - 40001`. So 40050 and 40040 are legal ids in
+# the same band as the 40030 the console does send, at indexes 49 and 39.
+OFFER_OFFSET = 30                     # MEASURED, sw75-sw83
+SELECTION_OFFSET = 50                 # nxldn-lab's, structurally consistent, NOT measured here
+CONFIRMATION_OFFSET = 40              # the same
 
-def build_rpc(offset, base, station_id, clock, body=b"\x00\x00\x00\x00"):
-    """-> one member of a trade RPC pair, as the console builds its own."""
+# THE TWO BODIES ARE THE CONSOLE'S OWN. Its 40030 pair carries `00000000` against base 10000 and
+# `000018fc` against base 20000, and nxldn-lab's 40050 pair carries exactly the same two - so the
+# pair's shape is the envelope's, not the procedure's, and building a 40050 is writing one field.
+RPC_PAIR_BODIES = (b"\x00\x00\x00\x00", bytes.fromhex("000018fc"))
+
+
+def build_rpc(offset, base, station_id, clock, body=b"\x00\x00\x00\x00", envelope=None):
+    """-> one member of a trade RPC pair, as the console builds its own.
+
+    `envelope` defaults to `40000 + offset`, which is what makes the offer envelope 40030 and the
+    selection one 40050; pass it only to reproduce bytes that disagree with that rule.
+    """
     inner = (field_varint(RPC_OFFSET, offset) + field_varint(RPC_BASE, base)
              + field_varint(RPC_STATION, station_id) + field_varint(RPC_CLOCK, clock)
              + field(RPC_BODY, body))
-    return message(RPC_ENVELOPE, field(1, inner))
+    if envelope is None:
+        envelope = RPC_ENVELOPE_BASE + offset
+    return message(envelope, field(1, inner))
+
+
+def build_rpc_pair(offset, station_id, clock, bodies=RPC_PAIR_BODIES):
+    """-> the two members of an RPC pair, base 10000 then base 20000, in the order it sends them.
+
+    THIS IS HOW A PHASE IS OPENED. The console opens the offer phase with its 40030 pair and we
+    answer it; nothing here has ever opened one. `nxldn-lab`'s client sends a 40050 pair unprompted
+    to start the selection phase, and its two messages differ from the console's 40030 pair in one
+    field - the offset - plus the station id, which is ours.
+    """
+    return tuple(build_rpc(offset, base, station_id, clock, body)
+                 for base, body in zip(RPC_BASES, bodies))
 
 
 def parse_rpc(payload):
@@ -233,6 +267,50 @@ def answers_for(payload):
     logs the unanswered ones is how this table stops being someone else's.
     """
     return SYNC_ANSWERS.get(bytes(payload), ())
+
+
+# --- 20030 IS A BoxSyncStateDataHolder, AND ITS FIELD 2 IS A COMMAND ENUM --------------------
+#
+# Session 60, and it reframes the whole trade. Two holders in `main`'s own schema have the SAME
+# wire shape, and this project picked the wrong one:
+#
+#     PokemonTradeDataHolder   1 Pokemon{1 bytes serializePokemonParam}
+#     BoxSyncStateDataHolder   1 BoxSendPokemon{1 bytes serializePokemonParam}
+#                              2 BoxSyncStateCommand{1 int32 data}
+#
+# The console's offer, `3e4e0000 0adb02 0ad802 <344 bytes>`, fits both - field 1 of a field 1 - so
+# the offer alone could never tell them apart. **Field 2 can.** `3e4e000012020801` is
+# `boxSyncStateCommand{data: 1}`, and `nxldn-lab`'s capture of a real console-to-console trade has
+# the host sending `data: 4` as well. A holder with only one field cannot carry either, so 20030 is
+# the BOX one and the trade runs over a COMMAND ENUM this project has been sending one guess of.
+#
+# WHAT THAT EXPLAINS. sw90 offered the console its own Pokemon back, byte for byte out of its own
+# save, and it aborted at the same place - so the record was never the problem. Between its offer
+# and the teardown it sends nothing but acks: it is not waiting to be told something in a message
+# it names, it is waiting for the state machine to move, and `data` is what moves it.
+BOX_SEND_POKEMON, BOX_SYNC_STATE_COMMAND = 1, 2
+
+
+def box_sync_state(command):
+    """-> `BoxSyncStateDataHolder{boxSyncStateCommand{data: command}}` on the trade holder.
+
+    `trade_ready()` is this with command 1 under an older name and an older reading.
+    """
+    return message(POKEMON_TRADE,
+                   field(BOX_SYNC_STATE_COMMAND, field_varint(1, command)))
+
+
+def parse_box_command(payload):
+    """-> the command int on the trade holder, or None when the payload is not one."""
+    got = _maybe_parse(payload)
+    if got is None or got[0] != POKEMON_TRADE:
+        return None
+    outer = _read_fields(got[1])
+    inner = outer.get(BOX_SYNC_STATE_COMMAND)
+    if not isinstance(inner, bytes):
+        return None
+    value = _read_fields(inner).get(1)
+    return value if isinstance(value, int) else None
 
 
 def trade_ready(ready=True):

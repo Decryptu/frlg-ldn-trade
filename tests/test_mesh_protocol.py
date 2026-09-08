@@ -317,3 +317,26 @@ def test_the_twelve_bytes_off_the_wire_decode_to_the_answer():
     assert start == {"host_index": 0, "new_host_index": 1}
     # sw83's join response gave our_index 1, and that - not the host's 0 - is what goes back.
     assert mp.build_migration_response(1) == bytes.fromhex("4801")
+
+
+def test_the_station_named_next_host_owes_a_finish_not_a_response():
+    """sw84, and it cost a run to learn: the two messages travel in opposite directions.
+
+    `SendMigrationResponse` (0x017c3250) takes a DESTINATION index in w1 and its only caller
+    (0x017ca1a0) passes `this[0x86]` - which the migration acceptor writes as the NEW host index.
+    So a response goes TO the new host, and the new host closes the migration with a FINISH whose
+    sender (0x017c2e90) refuses to build one unless our own index IS the host index.
+    """
+    start = mp.parse_migration_start(SW83_MIGRATION_START)
+    our_index = 1                                     # sw83 and sw84's join response both said 1
+    assert start["new_host_index"] == our_index       # so the console named US
+    assert mp.build_migration_finish(our_index) == bytes.fromhex("410101")
+    # The flag is read as a bool - 0x017c1014 is `cmp w19, #0; cset w1, ne`.
+    assert mp.build_migration_finish(our_index, ok=False) == bytes.fromhex("410100")
+    assert mp.parse_migration_finish(mp.build_migration_finish(our_index)) == {
+        "host_index": our_index, "flag": 1}
+
+
+def test_a_finish_is_refused_outside_the_station_bound():
+    with pytest.raises(ValueError):
+        mp.build_migration_finish(mp.MAX_STATION_INDEX + 1)

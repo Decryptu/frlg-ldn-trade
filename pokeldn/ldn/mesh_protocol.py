@@ -207,6 +207,32 @@ def parse_update_mesh(data, version4=False):
     return out
 
 
+def rewrite_update_mesh(data, host_index, update_counter=None):
+    """-> the console's own update mesh with the host index (and optionally the counter) changed.
+
+    THE HOST IS THE ONE THAT SENDS THIS, and after a migration that is us. sw87: the console
+    answered our MIGRATION_FINISH, kept its RTT and its acks running - so the finish itself was
+    accepted, where sw84's MIGRATION_RESPONSE froze it - and then **stopped sending UPDATE_MESH**,
+    because it was no longer the host. 1.3 seconds later the mesh was gone and the player saw
+    2-ALZAA-0016. Nothing had taken over the job it had just handed us.
+
+    This EDITS a message the console itself sent rather than building one. The station table is the
+    hard part - two seats, each a 64-byte location with a constant id and an address - and the
+    console has been broadcasting a correct one every two seconds all run. Byte [2] is the host
+    index and [4:8] is the counter; everything else stays its own bytes. The same move as
+    `swsh.pokemon.build_from`, for the same reason.
+    """
+    if len(data) < UPDATE_MESH_HEADER or data[0] != UPDATE_MESH:
+        raise ValueError(f"not a mesh update: {data[:12].hex()}")
+    if not 0 <= host_index <= MAX_STATION_INDEX:
+        raise ValueError(f"station index {host_index} is outside the 32-station bound")
+    out = bytearray(data)
+    out[2] = host_index
+    if update_counter is not None:
+        struct.pack_into(">I", out, 4, update_counter & 0xFFFFFFFF)
+    return bytes(out)
+
+
 def _station_info(data, off, count, version4=False):
     """The mesh table's entries. Two geometries, and the stride is the whole difference.
 
@@ -307,6 +333,25 @@ def build_migration_response(station_index):
     if not 0 <= station_index <= MAX_STATION_INDEX:
         raise ValueError(f"station index {station_index} is outside the 32-station bound")
     return bytes([MIGRATION_RESPONSE, station_index])
+
+
+def build_migration_finish(station_index, ok=True):
+    """-> the three bytes the NEW host broadcasts to close a migration.
+
+    THE RESPONSE GOES TO THE NEW HOST, NOT FROM IT, and sw84 is what taught this project the
+    difference. `SendMigrationResponse` (`0x017c3250`) takes a DESTINATION index in w1 and its only
+    caller (`0x017ca1a0`) passes `this[0x86]`, which the migration acceptor writes as the NEW host
+    index (`0x017c9df0`, from `0x017c9e50`'s third argument). So a station that is named the next
+    host does not answer with 0x48 - it collects them and then sends this.
+
+    `station_index` is ours, because after the migration we ARE the host: the sender at
+    `0x017c2e90` refuses to build one unless `0x017bc430` (mesh+0xAC, our own index) equals the
+    object's host index at +0x38. `ok` is the byte the handler reads as a bool - `0x017c1014`
+    is `cmp w19, #0; cset w1, ne` - so any non-zero means the migration succeeded.
+    """
+    if not 0 <= station_index <= MAX_STATION_INDEX:
+        raise ValueError(f"station index {station_index} is outside the 32-station bound")
+    return bytes([MIGRATION_FINISH, station_index, 1 if ok else 0])
 
 
 def parse_migration_finish(data):
