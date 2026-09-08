@@ -461,6 +461,35 @@ station's RTT once the ring is full.
 **Nothing in this protocol drops a station for staying silent.** A station that never answers simply
 never gets a sample - which is worth knowing before spending a run on the theory that it does.
 
+## Version 4 compresses on flag 0x10, and protocol 0x80 is the broadcast window
+
+FACT, measured over two captures rather than reasoned. **The version-4 zlib flag is 0x10**, where
+5.27-5.45's is 0x20. Across sw29 and sw52, 2835 messages: `flags & 0x10` predicts
+zlib-decompressibility **exactly** - 256 set and every one a valid stream, 2579 clear and not one of
+them decompressing. Every message carrying it is on protocol 0x80.
+
+**And 0x80 is `nn::pia::transport::BroadcastReliableProtocol`** - vfunc4 at `0x0184d880` returns
+0x80. The similarly named `ReliableBroadcastProtocol` is 0x84 and is a different class; do not read
+one for the other.
+
+Read RAW, its 42 bytes are the trap this page already describes one bit to the right: a well-formed
+LOOKING header claiming a payload of `0x6260`. Decompressed they are **625 bytes** - a
+**seventeen-byte** header and then the 0x260 ack payload:
+
+    00 00 0260 ffff 0001 01 1249a221d8580000    flags 0, stream 0, size 0x260, sequence 0xFFFF,
+                                                lowest pending 1, ONE destination, and it is us
+
+so the broadcast header is the ordinary nine bytes with the destination **bitmap** replaced by a
+count and that many **eight-byte station constant ids**. The length settles it without reading the
+disassembly: 5.29's bitmap rule gives a 13-byte header and a 621-byte message, and the message is
+625.
+
+**THE CONSOLE'S OWN ACK HAD BEEN ON THE WIRE SINCE sw29** and was unreadable because nothing
+decompressed it - which is how a protocol we called "not identified" for two sessions turned out to
+be carrying the very structure we were trying to build. It is also what names the 32 slots: the
+console fills **0..7** with the real ack id and leaves 8..31 at zero, and 8 is `max_total` from the
+join response. **One entry per station the mesh can hold.**
+
 ## Version 4's reliable ack is the table 5.29 replaced
 
 FACT, sw30 and the binary. **The header is the same header** - 221887 of a retail Sword's reliable

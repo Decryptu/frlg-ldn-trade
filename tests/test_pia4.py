@@ -252,3 +252,31 @@ def test_swords_rtt_and_reliable_messages_read_through_the_modules_we_have():
     assert (got["sequence_id"], got["lowest_pending"], got["stream_id"]) == (1, 1, 0)
     assert got["header_size"] == 9 and got["payload"] == bytes.fromhex("610000000a00")
     assert not got["truncated"] and not got["is_ack"]
+
+
+SW29_BROADCAST = bytes.fromhex(          # a protocol-0x80 message, zlib, from the console
+    "484b6260604af8ff9f819151c87391e28d0806206064c000834268140c0700000000ffff03005fb204b9")
+
+
+def test_the_version_four_zlib_flag_is_0x10_and_not_5_27s_0x20():
+    assert pia4.MESSAGE_FLAG_ZLIB == 0x10
+    from pokeldn.ldn import pia5
+    assert pia5.MESSAGE_FLAG_ZLIB == 0x20 != pia4.MESSAGE_FLAG_ZLIB
+
+
+def test_a_compressed_payload_is_decompressed_and_says_so():
+    plain = (pia4.build_message(SW29_BROADCAST, protocol=0x80, source=CONSOLE_CONSTANT,
+                                message_flags=0x11))
+    m = pia4.parse_packet(plain)[0]
+    assert m["compressed"] is True
+    assert m["raw_payload"] == SW29_BROADCAST and m["size"] == len(SW29_BROADCAST) == 42
+    assert len(m["payload"]) == 625                      # what the console actually said
+    # and read RAW it is the trap: a well-formed-looking header claiming 0x6260 of payload
+    assert int.from_bytes(SW29_BROADCAST[2:4], "big") == 0x6260
+
+
+def test_an_uncompressed_payload_is_left_alone():
+    plain = pia4.build_message(b"\x01\x02\x03", protocol=0x24, source=CONSOLE_CONSTANT,
+                               message_flags=0x09)
+    m = pia4.parse_packet(plain)[0]
+    assert m["compressed"] is False and m["payload"] == m["raw_payload"] == b"\x01\x02\x03"

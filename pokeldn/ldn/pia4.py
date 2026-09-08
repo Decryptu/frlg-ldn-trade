@@ -26,6 +26,7 @@ exactly, with nothing but 0xFF after it. DEDUCTION: which presence bit owns that
 packet in the capture carries the same presence byte (0x7f), so the capture cannot separate them.
 """
 import struct
+import zlib
 
 from pokeldn.ldn.pia5 import gcm_iv, ldn_session_key, parse_messages as parse_messages5
 
@@ -40,7 +41,7 @@ MESSAGE_HEADER_SIZE = 24
 __all__ = ["MAGIC", "VERSION", "HEADER_SIZE", "TAG_SIZE", "MESSAGE_HEADER_SIZE", "PiaHeader4",
            "ciphertext", "is_pia4", "gcm_iv", "ldn_session_key", "parse_messages5",
            "ALL_FIELDS_PRESENT", "MESSAGE_FLAGS", "build_message", "parse_message_header",
-           "MESSAGE_FIELDS", "message_header_size", "parse_packet",
+           "MESSAGE_FIELDS", "MESSAGE_FLAG_ZLIB", "message_header_size", "parse_packet",
            "pad_payload", "encrypt_payload", "decrypt_payload", "build_packet"]
 
 
@@ -104,6 +105,15 @@ def ciphertext(data):
 MESSAGE_FIELDS = ((0x01, 1, "flags"), (0x02, 2, "size"), (0x04, 4, "proto_port"),
                   (0x08, 8, "destination"), (0x10, 8, "source"))
 
+# AND THE PAYLOAD CAN BE ZLIB, on a flag that is NOT 5.27-5.45's. There the message flag is 0x20;
+# at version 4 it is **0x10**, and the two captures say so without ambiguity: over sw29 and sw52,
+# 2835 messages, `flags & 0x10` predicts zlib-decompressibility exactly - 256 set and every one a
+# valid stream, 2579 clear and not one of them decompressing. Every message carrying it is protocol
+# 0x80, `nn::pia::transport::BroadcastReliableProtocol`, and read raw its 42 bytes look like a
+# well-formed message header claiming a payload of 0x6260. That is the trap `docs/pia.md` describes
+# for 5.27-5.45, one bit to the right.
+MESSAGE_FLAG_ZLIB = 0x10
+
 
 def message_header_size(present):
     """-> the byte length of a message header with this presence byte."""
@@ -151,7 +161,13 @@ def parse_packet(plaintext):
         if end > len(plaintext):
             break
         m["header"] = plaintext[off:p]
-        m["payload"] = plaintext[p:end]
+        m["payload"] = m["raw_payload"] = plaintext[p:end]
+        m["compressed"] = bool(m["flags"] & MESSAGE_FLAG_ZLIB)
+        if m["compressed"]:
+            try:
+                m["payload"] = zlib.decompress(m["raw_payload"])
+            except zlib.error as exc:
+                m["compressed"], m["zlib_error"] = False, str(exc)
         out.append(m)
         prev = m
         off = end + (-end % 4)

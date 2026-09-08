@@ -154,3 +154,43 @@ def test_a_wrongly_sized_ack_payload_is_refused_here_the_way_the_console_refuses
     from pokeldn.ldn import reliable4 as r4
     with pytest.raises(ValueError, match="0x260"):
         r4.parse_ack_payload(b"\0" * 23)          # exactly what sw30 sent, 96 times
+
+
+def test_the_broadcast_reliable_message_is_a_seventeen_byte_header_over_the_same_ack():
+    """sw29's protocol-0x80 body, decompressed. The console's own ack, which had been on the wire
+    since sw29 and was unreadable because nothing decompressed it."""
+    import zlib
+    from pokeldn.ldn import reliable4 as r4
+    raw = bytes.fromhex("484b6260604af8ff9f819151c87391e28d0806206064c000834268140c07"
+                        "00000000ffff03005fb204b9")
+    body = zlib.decompress(raw)
+    assert len(body) == 625
+    got = r4.parse_broadcast_message(body)
+    assert got["is_ack"] and got["flags"] == 0 and got["stream_id"] == 0
+    assert got["sequence_id"] == 0xFFFF and got["lowest_pending"] == 1
+    assert got["destination_count"] == 1
+    assert got["destinations"] == [0x1249A221D8580000]        # our own station constant id
+    # the length is what settles the header: 5.29's bitmap rule would give 13 and the message 621
+    assert got["header_size"] == 17 == r4.BROADCAST_HEADER + r4.BROADCAST_ID_SIZE
+    assert 17 + got["payload_size"] == len(body) == 625
+    assert rl.header_size(1) == 13 and 13 + 608 != 625
+
+
+def test_the_console_fills_one_slot_per_STATION_and_zeroes_the_rest():
+    """Independent confirmation of the 0x260 table, from the console's own transmitter - and it
+    names what the 32 slots are indexed by. The console fills slots 0..7 with the real ack id and
+    leaves 8..31 at zero; 8 is `max_total` from the join response, the mesh's station limit. So the
+    table is indexed by STATION INDEX, one entry per possible station."""
+    import zlib
+    from pokeldn.ldn import reliable4 as r4
+    body = zlib.decompress(bytes.fromhex(
+        "484b6260604af8ff9f819151c87391e28d0806206064c000834268140c07"
+        "00000000ffff03005fb204b9"))
+    theirs = r4.parse_broadcast_message(body)["payload"]
+    assert len(theirs) == r4.ACK_PAYLOAD_SIZE
+    entries = r4.parse_ack_payload(theirs)
+    assert [e["slot"] for e in entries if e["ack_id"] == 1] == list(range(8))
+    assert all(e["stream_id"] == 0 for e in entries)          # even the unused ones
+    assert all(e["mask"] == b"\0" * 16 for e in entries)
+    # ours fills all 32 with the real entry, which is a superset - and is what slid the window
+    assert r4.build_ack_payload(1)[:8 * r4.ACK_ENTRY_SIZE] == theirs[:8 * r4.ACK_ENTRY_SIZE]

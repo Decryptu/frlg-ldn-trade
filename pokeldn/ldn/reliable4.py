@@ -19,7 +19,12 @@ messages. The serialiser `0x0185bfb0` is the layout: a bound of 0x260 on the buf
 and per entry a stream id, an ack id written big-endian into [1] and [2], and sixteen mask bytes
 written as two big-endian u64 halves.
 
-**WHICH OF THE 32 SLOTS IS READ IS A STATION INDEX, AND WHOSE IS NOT SETTLED.** The handler indexes
+**THE 32 SLOTS ARE INDEXED BY STATION, and the console's own ack says so.** Its broadcast ack
+(protocol 0x80, decompressed - see `parse_broadcast_message`) fills slots **0..7** with the real ack
+id and leaves 8..31 at zero, and 8 is `max_total` from the join response: one entry per station the
+mesh can hold. Ours fills all 32, which is a superset of that and is what slid the window at sw52.
+
+**WHICH slot the console READS is still not settled.** The handler indexes
 the table with its fourth argument (`0x01859c1c`: `add x9, x23, w22; ldrb w5, [x9, #8]`) and requires
 that slot's stream id to equal the window's own at `[x21+0x2e]` before it applies the ack id and mask
 at the matching offsets. A 32-slot table addressed by station index is one ack message answering up
@@ -44,6 +49,8 @@ MASK_SIZE = 16
 
 __all__ = ["PROTOCOL", "MESSAGE_FLAGS", "ACK_SEQUENCE", "ACK_ENTRIES", "ACK_ENTRY_SIZE",
            "ACK_PAYLOAD_SIZE", "MASK_SIZE", "build_ack_payload", "parse_ack_payload",
+           "BROADCAST_PROTOCOL", "BROADCAST_HEADER", "BROADCAST_ID_SIZE",
+           "parse_broadcast_message",
            "build_ack_message"]
 
 
@@ -92,3 +99,55 @@ def build_ack_message(ack_id, stream_id=0, mask=b"", slots=None, lowest_pending=
     body = build_ack_payload(ack_id, stream_id=stream_id, mask=mask, slots=slots)
     return reliable5.build_header(0, ACK_SEQUENCE, len(body), lowest_pending=lowest_pending,
                                   stream_id=stream_id) + body
+
+
+# --- The BROADCAST reliable window, protocol 0x80 --------------------------------------------
+#
+# `nn::pia::transport::BroadcastReliableProtocol` (vfunc4 at 0x0184d880 returns 0x80; the similarly
+# named `ReliableBroadcastProtocol` is 0x84 and is NOT this). Every one of its messages in sw29 and
+# sw52 is zlib compressed - see `pia4.MESSAGE_FLAG_ZLIB` - and read raw its 42 bytes look like a
+# well-formed message claiming a payload of 0x6260.
+#
+# Decompressed, it is 625 bytes: a SEVENTEEN-byte header and then the same 0x260 ack payload this
+# module builds. The header is `reliable5`'s nine bytes with the destination BITMAP replaced by a
+# COUNT and that many eight-byte station constant ids:
+#
+#     00 00 0260 ffff 0001 01 1249a221d8580000   flags 0, stream 0, size 0x260, seq 0xFFFF,
+#                                                lowest pending 1, one destination, and it is US
+#
+# The length is what settles the shape rather than a reading of the disassembly: 5.29's rule would
+# make the header 13 bytes for one destination bit and the message 621, and the message is 625.
+BROADCAST_PROTOCOL = 0x80
+BROADCAST_HEADER = 9                      # before the destination ids
+BROADCAST_ID_SIZE = 8
+
+
+def parse_broadcast_message(data):
+    """-> dict. One decompressed protocol-0x80 message: the header, its destinations, its payload.
+
+    THE CONSOLE'S OWN ACK IS IN HERE, and it is the independent confirmation of `build_ack_payload`:
+    all 32 slots filled, every one stream 0 with the same ack id and a zero mask, which is exactly
+    what `slots=None` builds. It had been on the wire since sw29, unreadable because nothing
+    decompressed it.
+    """
+    if len(data) < BROADCAST_HEADER:
+        raise ValueError(f"a broadcast reliable message is at least {BROADCAST_HEADER} bytes")
+    count = data[8]
+    head = BROADCAST_HEADER + count * BROADCAST_ID_SIZE
+    if len(data) < head:
+        raise ValueError(f"{count} destination ids need {head} bytes of header, got {len(data)}")
+    size = struct.unpack_from(">H", data, 2)[0]
+    out = {
+        "flags": data[0], "flag_names": reliable5.flag_names(data[0]), "stream_id": data[1],
+        "payload_size": size,
+        "sequence_id": struct.unpack_from(">H", data, 4)[0],
+        "lowest_pending": struct.unpack_from(">H", data, 6)[0],
+        "destination_count": count,
+        "destinations": [struct.unpack_from(">Q", data, BROADCAST_HEADER + i * BROADCAST_ID_SIZE)[0]
+                         for i in range(count)],
+        "header_size": head,
+    }
+    out["payload"] = data[head:head + size]
+    out["truncated"] = len(out["payload"]) < size
+    out["is_ack"] = not (data[0] & reliable5.FLAG_APPLICATION_DATA)
+    return out

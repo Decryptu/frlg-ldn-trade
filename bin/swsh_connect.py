@@ -166,7 +166,7 @@ async def main_async(args):
               "joins_out": 0, "mesh_in": 0, "join_response": None, "mesh_acks": 0,
               "updates_mesh": 0, "rtt_in": 0, "rtt_out": 0, "reliable_in": 0,
               "reliable_seqs": set(), "reliable_acks": 0, "acked_through": 0,
-              "reliable_last": None}
+              "reliable_last": None, "broadcast_in": 0}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
                                           # only moment a mesh join has ever been answered
@@ -409,6 +409,30 @@ async def main_async(args):
                         record(rec="tx_reliable_ack", t=now, through=through, ack=ack.hex())
                         print(f"[tx]     acked 0x7c through seq {through} "
                               f"(ack id {through + 1}): {ack.hex()}")
+                    elif f["protocol"] == reliable4.BROADCAST_PROTOCOL:
+                        # 0x80, BroadcastReliableProtocol. Every one of these is zlib compressed
+                        # (pia4.MESSAGE_FLAG_ZLIB) and pia4 has already decompressed it; read raw
+                        # its 42 bytes look like a message claiming a payload of 0x6260.
+                        st["broadcast_in"] += 1
+                        try:
+                            got = reliable4.parse_broadcast_message(body)
+                        except ValueError as e:
+                            print(f"[rx] t={now:6.2f} 0x80 {len(body)} B unreadable: {e}")
+                            continue
+                        if st["broadcast_in"] == 1:
+                            print(f"\n[rx] t={now:6.2f} *** 0x80 BROADCAST RELIABLE *** "
+                                  f"{'ACK' if got['is_ack'] else 'DATA'} seq {got['sequence_id']:#06x} "
+                                  f"lowest_pending {got['lowest_pending']} to "
+                                  f"{[hex(d) for d in got['destinations']]}")
+                            if got["is_ack"]:
+                                ents = reliable4.parse_ack_payload(got["payload"])
+                                live = [e for e in ents if e["ack_id"]]
+                                print(f"[rx]     acking slots "
+                                      f"{[e['slot'] for e in live]} at id "
+                                      f"{sorted({e['ack_id'] for e in live})}")
+                        record(rec="rx_broadcast", t=now, parsed={
+                            k: (v if not isinstance(v, bytes) else v.hex())
+                            for k, v in got.items() if k != "payload"})
                     else:
                         # ANYTHING on a protocol the console has never used with us is the finding
                         st["other"].append((now, "proto", f["protocol"], body.hex()))
@@ -568,7 +592,7 @@ async def main_async(args):
               f"{st['mesh_acks']} mesh acks out, {st['rtt_in']} RTT in / {st['rtt_out']} answered, "
               f"{st['reliable_in']} reliable in over "
               f"{len(st['reliable_seqs'])} sequence ids, {st['reliable_acks']} acked "
-              f"(through {st['acked_through']})")
+              f"(through {st['acked_through']}), {st['broadcast_in']} on 0x80")
         if st["answer"]:
             now, phase, proto = st["answer"]
             print(f"[cx] FIRST TRAFFIC ON A NEW PROTOCOL: {proto:#04x} at t={now:.2f} in {phase}")
@@ -581,7 +605,8 @@ async def main_async(args):
                mesh_acks=st["mesh_acks"], join_response=st["join_response"],
                rtt_in=st["rtt_in"], rtt_out=st["rtt_out"], reliable_in=st["reliable_in"],
                reliable_acks=st["reliable_acks"], acked_through=st["acked_through"],
-               reliable_seqs=sorted(st["reliable_seqs"]))
+               reliable_seqs=sorted(st["reliable_seqs"]),
+               broadcast_in=st["broadcast_in"])
     if cap:
         cap.close()
     return 0
