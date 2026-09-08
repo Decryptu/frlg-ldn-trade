@@ -363,13 +363,41 @@ answered `result{}` again and the transfer came back.
 ## The party on 0x84, and it is a PK8
 
 FACT, sw68 and sw70. Protocol 0x84 is `nn::pia::transport::ReliableBroadcastProtocol` - the class
-`docs/pia.md` warns is NOT 0x80 - and it had never spoken in this project. It carries **2965 bytes
-in three fragments** (1404 + 1404 + 157), repeated until acked, and 2956 of those 2965 bytes are
-identical between two runs a session apart.
+`docs/pia.md` warns is NOT 0x80 - and it had never spoken in this project. It carries **3456 bytes
+in three fragments**, repeated until acked, and only three of those bytes differ between two runs a
+session apart.
 
-**THE FIRST 0x810 IS THE PLAYER'S PARTY: six PK8 records at a 0x158 stride.** The stride and the
-count are one reading rather than two guesses, because 6 * 0x158 is 0x810 exactly. Empty slots are
-zero-filled and an empty slot is **an encryption constant of zero**, not a species of zero.
+**THE THIRD FRAGMENT IS COMPRESSED, AND THIS PROJECT MISSED IT FOR A SESSION.** Pia's message flag
+0x10 - version 4's zlib flag, the same one that hid protocol 0x80 for two sessions - is set on it.
+Concatenated raw the three fragments give 1404 + 1404 + 157 = 2965, which looks like a whole
+payload because nothing in it states a length; inflated, the third is 648 bytes and the total is
+exactly 3456. What session 58 wrote up as "a raw-deflate stream at 0xAF9 in the trailer" was that
+fragment, unread, in the middle of the record. `pokeldn/swsh/trade_payload.py` refuses any
+reassembly that is not 3456 bytes, which is the check that was missing.
+
+**THE WHOLE LAYOUT IS NAMED**, and not by us: `kwsch/PokePiaSWSH` and `lincoln-lm/swsh-lan-client`
+are published clients that read this payload over Sword's LAN mode, and session 59 found them by
+searching the game key this project had held since session 53. What verified their layout is our
+own capture, field for field.
+
+    0x000  six PK8 records, party form, 0x158 each          -> 0x810
+    0x810  u32   party count
+    0x814  MyStatus, 272 bytes      TID/SID at 0xA0, trainer name at 0xB0
+    0x924  TrainerCard, 456 bytes   trainer name at 0x00, start date at 0x170
+    0xAEC  660 bytes NOT named by any published client       -> 0xD80 = 3456
+
+MyStatus and TrainerCard are PKHeX save blocks (`Saves/Substructures/Gen8/SWSH/`), so their fields
+come with a map. Ours reads trainer `Gurvan`, ids 56909/48474, game 44 (Sword), language 3, started
+2019-11-15 - **and 0x924 + 0x170 IS 0xA94**, which is where session 58's unexplained "save date"
+came from. It is the date the save was started, not the date it was written.
+
+**THE PARTY IS THE FIRST 0x810: six PK8 records at a 0x158 stride.** The stride and the count are
+one reading rather than two guesses, because 6 * 0x158 is 0x810 exactly. Empty slots are zero-filled
+and an empty slot is **an encryption constant of zero**, not a species of zero - and the explicit
+count at 0x810 agrees with that rule on both runs.
+
+**AND THE TWO HALVES CORROBORATE EACH OTHER**: MyStatus gives ids 56909/48474 and all three PK8s
+carry those same ids, from a different block of the payload.
 
 The format is the Gen-8 entity, the same one BDSP trades - in PKHeX, `PK8` and `PB8` are both
 `G8PKM` and neither overrides a shared offset. `pokeldn/gen8.py` is that format and
@@ -408,14 +436,11 @@ left to get it wrong.
 
 Both runs decode to the same three Pokemon. `scratchpad/sw84_read.py <payload.bin>` is the viewer.
 
-**WHAT IS STILL UNREAD IN THE PAYLOAD**: the six 24-byte records at 0xA00 with `ff ff ff ff`
-terminators, and the raw-deflate stream at 0xAF9. The save date at 0xA94 reads 2019-11-15 22:06:12.
-
-The deflate inflates to 649 bytes, and FACT, from the two runs: the trainer name is at 0x1E in
-UTF-16LE, the last 0x160 bytes are zero, and **exactly three bytes differ between sw68 and sw70** -
-0x51, 0x62 and 0x73, one per 17-byte record in a run of three otherwise identical ones. Within a
-run the byte DECREMENTS by one down the three; between the runs it rose by 19, `4b 4a 49` to
-`5e 5d 5c`.
+**WHAT IS STILL UNREAD**: the 660-byte tail at 0xAEC, which no published client names either. 154
+of its bytes are nonzero, the trainer name appears in it a third time, and FACT, from the two runs:
+**exactly three bytes of the whole 3456 differ between sw68 and sw70**, one per 17-byte record in a
+run of three otherwise identical ones. Within a run the byte DECREMENTS by one down the three;
+between the runs it rose by 19, `4b 4a 49` to `5e 5d 5c`.
 
 HYPOTHESIS, and it is one data point: it counts minutes. The two captures start 19 minutes apart
 (12:25:04 and 12:44:25) and the value moved by 19. THE MEASUREMENT THAT SETTLES IT COSTS NOTHING -
