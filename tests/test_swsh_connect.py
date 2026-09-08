@@ -289,3 +289,17 @@ def test_the_content_opener_can_carry_the_pokemon():
     empty, carried = swsh_trade.open_content(50), swsh_trade.pokemon_offer(50, pk8)
     assert empty == bytes.fromhex("422700000a00")
     assert carried[:4] == empty[:4] and len(carried) > len(empty)
+
+
+def test_the_final_selection_pair_is_off_and_re_arms_with_its_own_delta():
+    """sx50d: our Pokemon reached content 50 and the console answered with a hash. nxldn-lab
+    answers the hash with one member and then the NEXT pair with both, at a larger delta;
+    --rpc-pair latches per envelope so ours has never gone out twice."""
+    args = swsh_connect.build_parser().parse_args([])
+    assert args.selection_final_delta == 0
+    on = swsh_connect.build_parser().parse_args(["--selection-final-delta", "9"])
+    assert on.selection_final_delta == 9
+    member = swsh_trade.build_rpc(50, 10000, 0xdeadbeef, 0x1000)
+    a = swsh_trade.parse_rpc(swsh_trade.answer_rpc(member, 1, 5))
+    b = swsh_trade.parse_rpc(swsh_trade.answer_rpc(member, 1, 9))
+    assert b["clock"] - a["clock"] == 4

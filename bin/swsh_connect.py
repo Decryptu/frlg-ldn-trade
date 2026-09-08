@@ -186,7 +186,7 @@ async def main_async(args):
               "migration_pending": None, "migration_out": 0, "migration_acked": None,
               "said_serial": 0, "serial_by_proto": {}, "serial_by_port": {},
               "rpc_seen": {}, "rpc_pair_sent": set(), "offer_status_answered": set(),
-              "rpc_bodies_answered": set(), "confirmation_opened": False,
+              "rpc_bodies_answered": set(), "confirmation_opened": False, "rpc_pair_delta": {},
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -437,6 +437,22 @@ async def main_async(args):
                         if (seen_body not in st["rpc_bodies_answered"]
                                 and bytes(member["body"]) not in (b"\x00\x00\x00\x00",
                                                                   b"\x00\x00\x18\xfc")):
+                            if (args.selection_final_delta
+                                    and member["envelope"] ==
+                                    swsh_trade.RPC_ENVELOPE_BASE + swsh_trade.SELECTION_OFFSET):
+                                # THE LADDER nxldn-lab CLIMBS AND WE STOP HALFWAY UP. After the
+                                # offer it answers the HASH with one member, and then the NEXT
+                                # 40050 pair with BOTH members at a larger clock delta - its
+                                # `selection_final_delta`, 9. `--rpc-pair` latches per envelope, so
+                                # the second pair has never gone out. sx50d is where this matters:
+                                # our Pokemon reached content 50 (the confirmation named it instead
+                                # of an Oeuf) and the console answered with a hash and an echo of
+                                # our own record on elementId 1, which is the verification step.
+                                st["rpc_pair_sent"].discard(member["envelope"])
+                                st["rpc_pair_delta"][member["envelope"]] = \
+                                    args.selection_final_delta
+                                print(f"[tx]     *** THE HASH - RE-ARMING THE {member['envelope']}"
+                                      f" PAIR AT CLOCK +{args.selection_final_delta} ***")
                             reply = swsh_trade.answer_rpc(got["payload"], our_constant,
                                                           args.rpc_clock_delta)
                             if reply is not None:
@@ -1453,8 +1469,8 @@ async def main_async(args):
                         members = [(envelope, b) for b in swsh_trade.RPC_BASES]
                         if not all(k in st["rpc_seen"] for k in members):
                             continue
-                        both = [swsh_trade.answer_rpc(st["rpc_seen"][k], our_constant,
-                                                      args.rpc_clock_delta)
+                        delta = st["rpc_pair_delta"].get(envelope, args.rpc_clock_delta)
+                        both = [swsh_trade.answer_rpc(st["rpc_seen"][k], our_constant, delta)
                                 for k in members]
                         if all(b is not None for b in both):
                             st["rpc_pair_sent"].add(envelope)
@@ -1913,6 +1929,11 @@ def build_parser():
                          "holder for each N - `382700000a00` for 40, which is exactly the opener "
                          "nxldn-lab's client sends to start the confirmation phase, rebuilt here "
                          "from our own content registry rather than copied")
+    ap.add_argument("--selection-final-delta", type=lambda s: int(s, 0), default=0,
+                    help="after the selection HASH is answered, send the 40050 pair AGAIN - both "
+                         "members - at this clock delta. nxldn-lab's `selection_final_delta` is 9 "
+                         "and it is the rung of the ladder we have never climbed: --rpc-pair "
+                         "latches per envelope, so our second pair has never gone out. 0 is off")
     ap.add_argument("--open-content-offer", action="store_true",
                     help="make --open-content send our PK8 on the 10000-base holder instead of an "
                          "empty `ping`. sx49b: the ping opened content 50 AND was taken as our "
