@@ -118,3 +118,42 @@ def test_the_named_blocks_tile_the_payload_without_overlapping():
     # session 58 read a date at 0xA94 and could not say what it was: it is the start date
     assert trade_payload.TRAINER_CARD_OFFSET + trade_payload.TRAINER_CARD_STARTED == 0xA94
     assert len(trade_payload.read(a_payload())["tail"]) == 660
+
+
+def test_our_snapshot_survives_the_round_trip_the_console_will_put_it_through():
+    """Build it, frame it on 0x84, take it apart the way a receiver does, and read it back.
+
+    This is the whole outgoing path offline, and it is what an association would otherwise pay to
+    discover. `reassemble` is the receiver's rule, so if the sender's chunking disagrees with it the
+    test fails here rather than on the air.
+    """
+    from pokeldn.ldn import broadcast4
+
+    ours = trade_payload.rewrite(a_payload(count=3), trainer_name="PkCamp",
+                                 trainer_id=12345, secret_id=54321)
+    messages = broadcast4.Sender().transfer(ours)
+    control = broadcast4.parse(messages[0][0])
+    assert control["is_control"] and control["total"] == trade_payload.PAYLOAD_LENGTH
+
+    fragments = []
+    for message, compressed in messages[1:]:
+        got = broadcast4.parse(message)
+        fragments.append(zlib.decompress(got["body"]) if compressed else got["body"])
+    assert len(fragments) == trade_payload.FRAGMENT_COUNT
+    assert trade_payload.reassemble(fragments) == ours
+
+    back = trade_payload.read(ours)
+    assert back["trainer_name"] == back["card_name"] == "PkCamp"
+    assert (back["trainer_id"], back["secret_id"]) == (12345, 54321)
+    assert trade_payload.party_matches_trainer(back), "the party must name the trainer we became"
+    assert [p["ot_name"] for p in back["party"] if p] == ["PkCamp"] * 3
+    assert back["party_count"] == 3
+
+
+def test_a_short_session_58_payload_is_repaired_and_anything_else_is_refused():
+    frags = fragments_of(a_payload())
+    short = b"".join(frags)
+    with pytest.raises(ValueError, match="neither whole"):
+        trade_payload.inflate_short(short)          # our synthetic one is not 2965 bytes
+    with pytest.raises(ValueError, match="neither whole"):
+        trade_payload.inflate_short(b"\x00" * 100)

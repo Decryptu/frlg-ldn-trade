@@ -1,0 +1,152 @@
+"""Protocol 0x84, `nn::pia::transport::ReliableBroadcastProtocol` - the version-4 bulk channel.
+
+NOT protocol 0x80. `reliable4.py` carries the warning at length: `BroadcastReliableProtocol` is
+0x80 and is the ack window, and the similarly named `ReliableBroadcastProtocol` is this. Confusing
+them cost session 57 two sessions of reading.
+
+This is where a Sword sends its 3456-byte trade snapshot, and every field below is read off our own
+console's messages (sw71, and sw68/sw70 before it) rather than from any other implementation:
+
+    11 000000 0000 ffff  00000d80 057c 0005 00000000     control, 20 bytes
+    12 000000 0001 ffff  00000000 <1404 bytes>           fragment 0
+    12 000000 0005 ffff  00000002 <157 bytes, deflated>  fragment 2
+
+    0x00  u8    kind: 0x11 control, 0x12 data
+    0x01  3     zero
+    0x04  u16be sequence, ours, counting up across BOTH kinds on this port
+    0x06  u16be the peer's sequence we have seen, 0xFFFF before any
+    0x08        control: u32be total size, u16be chunk size, u16be 5, four zero bytes
+                data:    u32be fragment index, then the fragment body
+
+**THE BODY MAY BE DEFLATED AND THE HEADER NEVER IS.** Pia's message flag 0x10 - version 4's zlib
+flag, the same one that hid protocol 0x80 for two sessions - says the bytes AFTER the twelve-byte
+prefix are a zlib stream. Session 58 concatenated a compressed fragment raw and lost 491 bytes of
+the snapshot without noticing, which is why `swsh.trade_payload.reassemble` refuses a total it does
+not recognise.
+
+`kwsch/PokePiaSWSH` splits at the same twelve bytes and `andyjusa/nxldn-lab` builds the same eight
+byte header; where they and our console differ is the CHUNK SIZE, 1244 against our console's 1404,
+so that is a sender's choice and not a constant of the protocol.
+"""
+import struct
+import zlib
+
+PROTOCOL = 0x84
+HEADER_SIZE = 8
+PREFIX_SIZE = 12                      # header + the fragment index: never compressed
+KIND_CONTROL = 0x11
+KIND_DATA = 0x12
+CONTROL_SIZE = 20
+NO_PEER_SEQUENCE = 0xFFFF
+CONTROL_UNKNOWN = 5                   # the halfword at 0x0E, 5 in every message we have seen
+CHUNK_SIZE = 1404                     # what OUR console uses; nxldn-lab's sender picks 1244
+
+# The console's own deflate settings, from nxldn-lab's sender. A window of 12 bits and level 5 are
+# not arbitrary: an inflater accepts anything, but a 15-bit window from us would be a difference
+# from what the console sends, and this project changes one thing at a time.
+COMPRESS_LAST = "last"                # deflate only the final fragment, as our console does
+COMPRESS_AUTO = "auto"                # deflate whenever it is smaller, as nxldn-lab's sender does
+
+_WBITS = 12
+_LEVEL = 5
+_MEM_LEVEL = 4
+
+
+def build_header(kind, sequence, peer_sequence=NO_PEER_SEQUENCE):
+    return struct.pack(">B3xHH", kind, sequence & 0xFFFF, peer_sequence & 0xFFFF)
+
+
+def build_control(sequence, total, chunk_size=CHUNK_SIZE, peer_sequence=NO_PEER_SEQUENCE):
+    """-> the 20-byte control message that announces a transfer's size."""
+    return (build_header(KIND_CONTROL, sequence, peer_sequence)
+            + struct.pack(">IHH4x", total, chunk_size, CONTROL_UNKNOWN))
+
+
+def deflate(body):
+    """-> (bytes, compressed?). Deflated only when that is actually smaller, as the console does."""
+    c = zlib.compressobj(_LEVEL, zlib.DEFLATED, _WBITS, _MEM_LEVEL)
+    packed = c.compress(bytes(body)) + c.flush(zlib.Z_SYNC_FLUSH) + c.flush(zlib.Z_FINISH)
+    return (packed, True) if len(packed) < len(body) else (bytes(body), False)
+
+
+def build_fragment(sequence, index, body, peer_sequence=NO_PEER_SEQUENCE, compress=True):
+    """-> (payload, compressed?). The caller sets Pia's 0x10 message flag when compressed is True."""
+    packed, done = deflate(body) if compress else (bytes(body), False)
+    return (build_header(KIND_DATA, sequence, peer_sequence)
+            + struct.pack(">I", index) + packed), done
+
+
+def split(payload, chunk_size=CHUNK_SIZE):
+    return [bytes(payload[i:i + chunk_size]) for i in range(0, len(payload), chunk_size)]
+
+
+def parse(message):
+    """-> dict. One 0x84 message, header split from body; a data body is NOT inflated here.
+
+    Inflating belongs to the caller because only Pia's message flag says whether it should happen,
+    and a body that merely looks like a zlib stream is not a reason to treat it as one.
+    """
+    if len(message) < HEADER_SIZE:
+        raise ValueError(f"a 0x84 message is at least {HEADER_SIZE} bytes, got {len(message)}")
+    kind = message[0]
+    sequence, peer = struct.unpack_from(">HH", message, 4)
+    out = {"kind": kind, "sequence": sequence, "peer_sequence": peer,
+           "is_control": kind == KIND_CONTROL, "is_data": kind == KIND_DATA}
+    if kind == KIND_CONTROL:
+        if len(message) < CONTROL_SIZE:
+            raise ValueError(f"a control message is {CONTROL_SIZE} bytes, got {len(message)}")
+        total, chunk, unknown = struct.unpack_from(">IHH", message, 8)
+        out.update(total=total, chunk_size=chunk, unknown=unknown)
+    elif kind == KIND_DATA:
+        if len(message) < PREFIX_SIZE:
+            raise ValueError(f"a data message is at least {PREFIX_SIZE} bytes, got {len(message)}")
+        out.update(index=struct.unpack_from(">I", message, 8)[0], body=message[PREFIX_SIZE:])
+    else:
+        raise ValueError(f"kind {kind:#04x} is neither control ({KIND_CONTROL:#04x}) "
+                         f"nor data ({KIND_DATA:#04x})")
+    return out
+
+
+class Sender:
+    """One port's outgoing side: the sequence counter, and the messages of one transfer.
+
+    The console counts a SINGLE sequence across control and data alike - sw71 shows control at 0,
+    fragment 0 at 1 and fragment 2 at 5 - so the counter lives here rather than in the caller, and
+    the gaps are the retransmits it sends in between.
+    """
+
+    def __init__(self, chunk_size=CHUNK_SIZE):
+        self.sequence = 0
+        self.peer_sequence = NO_PEER_SEQUENCE
+        self.chunk_size = chunk_size
+
+    def _next(self):
+        sequence, self.sequence = self.sequence, (self.sequence + 1) & 0xFFFF
+        return sequence
+
+    def saw(self, sequence):
+        """Record the peer's sequence, which every message of ours then echoes back."""
+        self.peer_sequence = sequence & 0xFFFF
+
+    def transfer(self, payload, compress=COMPRESS_LAST):
+        """-> [(payload, compressed?), ...]: the control message and then every fragment, in order.
+
+        **THE DEFAULT MATCHES WHAT OUR CONSOLE DOES, WHICH IS NOT "COMPRESS WHEN IT HELPS".** sw71
+        sent fragments 0 and 1 plain at the full 1404 bytes and deflated only the short last one -
+        and fragment 1's own bytes deflate to 776, so the console left half of it on the table by
+        choice. Whatever its rule is, "smaller wins" is not it, and a sender that compressed a
+        full-size fragment would differ from the console in a way no run had asked about.
+
+        `COMPRESS_AUTO` is that other policy, kept because nxldn-lab's sender uses it and reaches a
+        trade; `False` sends everything plain. One of these per run, never two.
+        """
+        chunks = split(payload, self.chunk_size)
+        out = [(build_control(self._next(), len(payload), self.chunk_size, self.peer_sequence),
+                False)]
+        for index, chunk in enumerate(chunks):
+            if compress == COMPRESS_LAST:
+                allow = index == len(chunks) - 1
+            else:
+                allow = bool(compress)
+            out.append(build_fragment(self._next(), index, chunk, self.peer_sequence, allow))
+        return out

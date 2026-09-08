@@ -32,12 +32,13 @@ if os.path.isdir(BUNDLED):
 
 import trio, ldn
 from pokeldn.host_support import resolve_keys
-from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4, reliable4,
+from pokeldn.ldn import (broadcast4, local_protocol as lp, mesh_protocol as mesh, pia4, reliable4,
                         reliable5, rtt_protocol as rtt, station4,
                         station_protocol as stp)
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.swsh import COMM_ID, PASSPHRASE, PIA_PORT, packet_iv, session_keys
 from pokeldn.swsh import trade as swsh_trade
+from pokeldn.swsh import trade_payload
 
 SCENE_ACCEPTING = 60001           # what sw01 recorded; kept for the log line, not a gate
 
@@ -171,6 +172,8 @@ async def main_async(args):
               "their_ack_id": 0, "data_seqs": 0,
               "their_payload": None, "ack_by_proto": {}, "said_by_proto": {},
               "seen_by_proto": {}, "answer_queue": [],
+              "snapshot_in": 0, "snapshot_total": None, "snapshot_indexes": set(),
+              "their_sequence": None, "snapshot_out": 0,
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -524,6 +527,25 @@ async def main_async(args):
                         record(rec="rx_broadcast", t=now, parsed={
                             k: (v if not isinstance(v, bytes) else v.hex())
                             for k, v in got.items() if k != "payload"})
+                    elif f["protocol"] == broadcast4.PROTOCOL:
+                        # 0x84, ReliableBroadcastProtocol - the console's trade snapshot. It
+                        # retransmits the whole thing until something acks it, so the count runs
+                        # into the tens of thousands; what is worth keeping is its sequence, which
+                        # every message of OURS has to echo back in its peer-sequence field.
+                        st["snapshot_in"] += 1
+                        try:
+                            got = broadcast4.parse(body)
+                        except ValueError:
+                            continue
+                        st["their_sequence"] = got["sequence"]
+                        if got["is_control"] and st["snapshot_total"] is None:
+                            st["snapshot_total"] = got["total"]
+                            print(f"\n[rx] t={now:6.2f} *** 0x84 SNAPSHOT INCOMING *** "
+                                  f"{got['total']} bytes in chunks of {got['chunk_size']}")
+                        if got["is_data"] and got["index"] not in st["snapshot_indexes"]:
+                            st["snapshot_indexes"].add(got["index"])
+                            print(f"[rx]     fragment {got['index']} of the snapshot, "
+                                  f"{len(got['body'])} B on the wire")
                     else:
                         # ANYTHING on a protocol the console has never used with us is the finding
                         st["other"].append((now, "proto", f["protocol"], body.hex()))
@@ -766,6 +788,63 @@ async def main_async(args):
             st["phase"] = "hold"
 
 
+        async def snapshot_sender():
+            """OUR OWN trade snapshot, back at the console on 0x84.
+
+            THE CLEAN NEGATIVE THAT ASKED FOR THIS: sw71 answered the whole sync set and the
+            console still sent nothing past its snapshot - the same five payloads as sw70. Both
+            published clients that get further send a snapshot of their own before anything else
+            happens, and neither of them ever reaches the trade without it. So the hypothesis is
+            that a trade is symmetric and the console is waiting for OURS.
+
+            What goes out is the console's own snapshot with the identity moved - a name and a
+            trainer id that are not its own, in MyStatus, the trainer card and every party record at
+            once (`swsh.trade_payload.rewrite`). Every byte this project has never read stays a real
+            byte from a real save, which is the same reason `build_from` exists for one Pokemon.
+            """
+            if args.send_snapshot is None:
+                return
+            payload = open(args.send_snapshot, "rb").read()
+            if len(payload) != trade_payload.PAYLOAD_LENGTH:
+                payload = trade_payload.inflate_short(payload)
+            payload = trade_payload.rewrite(payload, trainer_name=args.snapshot_name,
+                                            trainer_id=args.snapshot_tid,
+                                            secret_id=args.snapshot_sid)
+            fields = trade_payload.read(payload)
+            print(f"\n[tx] our snapshot: trainer {fields['trainer_name']!r} "
+                  f"{fields['trainer_id']}/{fields['secret_id']}, party "
+                  f"{[p['nickname'] for p in fields['party'] if p]}, "
+                  f"consistent {trade_payload.party_matches_trainer(fields)}")
+
+            deadline = time.monotonic() + args.send_seconds + args.send_after + args.send_wait
+            while st["snapshot_in"] == 0:
+                if time.monotonic() > deadline:
+                    print("\n[tx] the console never sent its snapshot; ours stayed home")
+                    return
+                await trio.sleep(0.2)
+            print(f"\n[tx] *** SENDING OUR SNAPSHOT on {broadcast4.PROTOCOL:#04x} *** "
+                  f"{len(payload)} bytes")
+            sender4 = broadcast4.Sender()
+            while time.monotonic() < deadline:
+                if st["their_sequence"] is not None:
+                    sender4.saw(st["their_sequence"])
+                for message, compressed in sender4.transfer(payload):
+                    flags = pia4.MESSAGE_FLAGS | (pia4.MESSAGE_FLAG_ZLIB if compressed else 0)
+                    for port in [int(p, 0) for p in _expand(args.snapshot_port)]:
+                        sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), message,
+                                         broadcast4.PROTOCOL, args.connect_station_first,
+                                         port=port, message_flags=flags,
+                                         destination=args.data_destination),
+                                    (host_ip, PIA_PORT))
+                        st["snapshot_out"] += 1
+                    record(rec="tx_snapshot", t=time.monotonic() - t0,
+                           message=message[:16].hex(), compressed=compressed)
+                    await trio.sleep(args.snapshot_period)
+                print(f"[tx]     snapshot sent, {st['snapshot_out']} messages out so far")
+                await trio.sleep(args.snapshot_repeat)
+            print(f"\n[tx] {st['snapshot_out']} snapshot messages out")
+
+
         async def block_sender():
             """The SECOND stream, on the protocol the console chose for it.
 
@@ -822,6 +901,7 @@ async def main_async(args):
             nursery.start_soon(joiner)
             nursery.start_soon(data_sender)
             nursery.start_soon(block_sender)
+            nursery.start_soon(snapshot_sender)
             await sender()
             await trio.sleep(args.hold)
             nursery.cancel_scope.cancel()
@@ -1004,6 +1084,19 @@ def build_parser():
                     help="wait for this payload on --send2-protocol before sending; omit to send "
                          "as soon as the mesh is up")
     ap.add_argument("--send2-count", type=lambda s: int(s, 0), default=200)
+    ap.add_argument("--send-snapshot", default=None, metavar="FILE",
+                    help="a 3456-byte trade snapshot to send back on 0x84 once the console sends "
+                         "its own. A short session-58 payload is inflated first. The identity is "
+                         "REWRITTEN by --snapshot-name/-tid/-sid so we are not the console")
+    ap.add_argument("--snapshot-name", default="PkCamp")
+    ap.add_argument("--snapshot-tid", type=lambda s: int(s, 0), default=12345)
+    ap.add_argument("--snapshot-sid", type=lambda s: int(s, 0), default=54321)
+    ap.add_argument("--snapshot-port", default="0",
+                    help="Pia port(s) for our 0x84 messages; the console sends on 0")
+    ap.add_argument("--snapshot-period", type=float, default=0.05,
+                    help="between our own fragments")
+    ap.add_argument("--snapshot-repeat", type=float, default=2.0,
+                    help="between whole re-sends; the console retransmits its own until acked")
     ap.add_argument("--sync-answers", action="store_true",
                     help="answer with `pokeldn.swsh.trade.SYNC_ANSWERS` instead of echoing one "
                          "payload: the ping, and the three other sync holders the console is "

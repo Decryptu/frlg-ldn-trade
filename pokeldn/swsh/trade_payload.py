@@ -89,6 +89,29 @@ def reassemble(fragments):
     return payload
 
 
+SHORT_LENGTH = 2965                   # session 58's concatenation: 1404 + 1404 + 157 compressed
+FRAGMENT_2_END = 2808                 # where its third fragment begins
+
+
+def inflate_short(payload):
+    """-> a whole payload from one of session 58's short files, which are what is on disk.
+
+    A payload saved before the compressed fragment was understood is 2965 bytes with its third
+    fragment still deflated. Nothing about those files is wrong except that they stop early, so
+    they are repaired rather than thrown away - the party in them is a real console's.
+    """
+    payload = bytes(payload)
+    if len(payload) == PAYLOAD_LENGTH:
+        return payload
+    if len(payload) != SHORT_LENGTH:
+        raise ValueError(f"{len(payload)} bytes: neither whole ({PAYLOAD_LENGTH}) nor one of "
+                         f"session 58's short files ({SHORT_LENGTH})")
+    whole = payload[:FRAGMENT_2_END] + zlib.decompress(payload[FRAGMENT_2_END:])
+    if len(whole) != PAYLOAD_LENGTH:
+        raise ValueError(f"repaired to {len(whole)} bytes, expected {PAYLOAD_LENGTH}")
+    return whole
+
+
 def _text(data, offset):
     return data[offset:offset + NAME_LENGTH].decode("utf-16-le", "replace").split("\x00")[0]
 
@@ -114,6 +137,51 @@ def read(payload):
         # 660 bytes nothing has named. Kept whole rather than guessed at.
         "tail": payload[TAIL_OFFSET:],
     }
+
+
+def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None):
+    """-> the snapshot with a new trainer identity, and every other byte still the console's own.
+
+    THE POINT OF THE PROJECT NEEDS ONE OF THESE AND IT MUST NOT BE THE CONSOLE'S OWN. 3456 bytes
+    hold a trainer card, a status block and six party records, and nearly all of it is fields this
+    project has never read. Building one from nothing would mean inventing every one of them, so
+    ours is the console's snapshot with the identity moved - the same method `swsh.pokemon.build_from`
+    and `bdsp.pokemon.build_from` use on a single Pokemon, for the same reason.
+
+    THE IDENTITY HAS TO MOVE IN THREE PLACES AT ONCE. MyStatus, the trainer card and **every party
+    record** carry the trainer's name and ids, and `party_matches_trainer` is the check that they
+    still agree afterwards - a snapshot whose Pokemon name a different trainer than its status block
+    is one no console would ever produce.
+    """
+    if len(payload) != PAYLOAD_LENGTH:
+        raise ValueError(f"{len(payload)} bytes, expected {PAYLOAD_LENGTH}")
+    out = bytearray(payload)
+
+    if trainer_name is not None:
+        encoded = trainer_name.encode("utf-16-le")
+        if len(encoded) + 2 > NAME_LENGTH:
+            raise ValueError(f"{trainer_name!r} is too long for a {NAME_LENGTH}-byte name field")
+        encoded = encoded.ljust(NAME_LENGTH, b"\x00")
+        ms = MY_STATUS_OFFSET + MY_STATUS_NAME
+        out[ms:ms + NAME_LENGTH] = encoded
+        tc = TRAINER_CARD_OFFSET + TRAINER_CARD_NAME
+        out[tc:tc + NAME_LENGTH] = encoded
+
+    if trainer_id is not None:
+        struct.pack_into("<H", out, MY_STATUS_OFFSET + MY_STATUS_TID, trainer_id)
+    if secret_id is not None:
+        struct.pack_into("<H", out, MY_STATUS_OFFSET + MY_STATUS_SID, secret_id)
+
+    edits = {k: v for k, v in (("ot_name", trainer_name), ("trainer_id", trainer_id),
+                               ("secret_id", secret_id)) if v is not None}
+    if edits:
+        for slot in range(pokemon.PARTY_SLOTS):
+            at = slot * gen8.SIZE_PARTY
+            raw = bytes(out[at:at + gen8.SIZE_PARTY])
+            if struct.unpack_from("<I", raw, 0)[0] == 0:        # an empty slot stays empty
+                continue
+            out[at:at + gen8.SIZE_PARTY] = pokemon.build_from(raw, **edits)
+    return bytes(out)
 
 
 def party_matches_trainer(fields):
