@@ -812,10 +812,29 @@ same is true of the confirmation stages `nxldn-lab` records on 40040: they are r
 belong after the exchange rather than before it.
 
 What that leaves is state 2, and state 2 wants one thing - the partner's Pokemon delivered through
-content 50's receive event, which is what `0x010cc380` turns into `[session+0x140] = 3`. **Which of
-10050, 20050 and 30050 raises that event is the next offline read**, and it is a read, not a run:
-the event source is `[content50+0x20]`, built by `0x5ec690` in the init and subscribed by
-`0x010c58b0` in `0x010d5440`.
+content 50's receive event, which is what `0x010cc380` turns into `[session+0x140] = 3`.
+
+**AND THE RECEIVE HANDLER DISPATCHES ON THE SENDER'S STATION INDEX, WITH A SILENT DROP IF IT CANNOT
+RESOLVE ONE.** Content 50's wrapper vtable is the group at GOT `0x2625988`, and slot 0 -
+`0x010d5e40`, the same position content 30 puts `boxSendPokemon` in - reads like this:
+
+    w0 = 0x006b5850(senderStationId)      Pia: mesh->GetStationIndex(&index, id); -3 (0xfd) on failure
+    if (w0 == 0xfd) { [content+0x1a4] = 1; return; }          NOTHING is parsed, nothing is answered
+    memcpy(stack, body, 0x158)                                0x158 = 344 = the party-form PK8
+    subscriber = [content + 0x30 + index*8]                   one slot per station index
+    if (subscriber == null || its refcount is 0) return       also silent
+    ... invoke it
+
+`0x006b5850` is a two-line wrapper on the mesh's own station-index lookup (`0x01862af0`), and its
+failure value is `-3`. **So a Pokemon that arrives from a station the console's mesh cannot name is
+dropped without a byte of complaint**, which is the shape of every run since the selection phase
+started working: the console acks our offer at the transport, echoes the record, answers with a
+hash, and never advances its trade state.
+
+That makes the next question a measurement about identity rather than about protocol: which station
+id our content-50 message is attributed to, and whether the console's mesh holds an index for it.
+`docs/pia.md` has the station table; `sw94` already cost this project ten bytes of account id.
+
 
 ## What this project has measured, and what it has borrowed
 
