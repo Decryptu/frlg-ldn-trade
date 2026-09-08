@@ -38,6 +38,7 @@ from pokeldn.ldn import (broadcast4, local_protocol as lp, mesh_protocol as mesh
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.swsh import COMM_ID, PASSPHRASE, PIA_PORT, packet_iv, session_keys
 from pokeldn.swsh import trade as swsh_trade
+from pokeldn.swsh import pokemon as swsh_pokemon
 from pokeldn.swsh import trade_payload
 
 SCENE_ACCEPTING = 60001           # what sw01 recorded; kept for the log line, not a gate
@@ -176,6 +177,7 @@ async def main_async(args):
               "their_sequence": None, "snapshot_out": 0, "snapshot_acked": None,
               "snapshot_acks_out": 0, "snapshot_rx": broadcast4.Receiver(),
               "snapshot_fragments": 0, "snapshot_done_sent": False, "snapshot_seq": 0,
+              "offered_pk8": None, "our_pk8": None,
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -237,6 +239,16 @@ async def main_async(args):
             # EVERY DISTINCT PAYLOAD, not just the last. `--sync-answers` has a rule for some of
             # them and the ones it has no rule for are the finding: they are what the console says
             # next, in its own ids, and they are what turns another project's table into ours.
+            offered = swsh_trade.offered_pokemon(got["payload"])
+            if offered is not None and st["offered_pk8"] is None:
+                st["offered_pk8"] = offered
+                read = swsh_pokemon.read(offered)
+                print(f"\n[rx]     *** THE CONSOLE OFFERED US A POKEMON *** species "
+                      f"{read['species']} {read['nickname']!r} level {read['level']} "
+                      f"OT {read['ot_name']!r} ({read['trainer_id']}/{read['secret_id']})")
+                if args.save_offered:
+                    open(args.save_offered, "wb").write(offered)
+                    print(f"[rx]     saved to {args.save_offered}")
             seen = st["seen_by_proto"].setdefault(protocol, [])
             if got["payload"] not in seen:
                 seen.append(got["payload"])
@@ -800,7 +812,7 @@ async def main_async(args):
                     # changes against sw70 is what we say to `ping` and to `pingSynced`.
                     payload, st["answer_queue"] = swsh_trade.next_answer(
                         said, st["answer_queue"], station_id=our_constant,
-                        clock_delta=args.rpc_clock_delta)
+                        clock_delta=args.rpc_clock_delta, offer_pk8=st["our_pk8"])
                 elif args.send_mirror and said:
                     # MIRROR WHAT IT IS SAYING NOW, not what it said first. sw64 moved the game
                     # from state 0x0a to 0x12 and left it there; a peer that follows the state it
@@ -858,6 +870,15 @@ async def main_async(args):
                                             trainer_id=args.snapshot_tid,
                                             secret_id=args.snapshot_sid)
             fields = trade_payload.read(payload)
+            if args.offer_slot:
+                # THE POKEMON WE OFFER COMES OUT OF THE PARTY WE ADVERTISED. Offering one the
+                # console never saw in our snapshot would be a second difference in the same run,
+                # and this way the trainer, the party and the offer all tell one story.
+                at = (args.offer_slot - 1) * swsh_pokemon.SIZE_PARTY
+                st["our_pk8"] = payload[at:at + swsh_pokemon.SIZE_PARTY]
+                ours = swsh_pokemon.read(st["our_pk8"])
+                print(f"[tx] we will offer slot {args.offer_slot}: species {ours['species']} "
+                      f"{ours['nickname']!r} level {ours['level']}")
             print(f"\n[tx] our snapshot: trainer {fields['trainer_name']!r} "
                   f"{fields['trainer_id']}/{fields['secret_id']}, party "
                   f"{[p['nickname'] for p in fields['party'] if p]}, "
@@ -1139,6 +1160,11 @@ def build_parser():
                     help="wait for this payload on --send2-protocol before sending; omit to send "
                          "as soon as the mesh is up")
     ap.add_argument("--send2-count", type=lambda s: int(s, 0), default=200)
+    ap.add_argument("--offer-slot", type=lambda s: int(s, 0), default=0,
+                    help="which party slot of --send-snapshot to offer back, 1-6; 0 offers "
+                         "nothing and only records what the console offers us")
+    ap.add_argument("--save-offered", default=None, metavar="FILE",
+                    help="write the PK8 the console offers to this file")
     ap.add_argument("--rpc-clock-delta", type=lambda s: int(s, 0), default=5,
                     help="how far to advance a trade RPC's clock in our answer. 5 is nxldn-lab's "
                          "and is the one number in this path nothing here has measured")

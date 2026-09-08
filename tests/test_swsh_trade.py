@@ -191,3 +191,42 @@ def test_the_policy_answers_a_trade_rpc_by_rebuilding_it_not_by_echoing_it():
     # and the sync table still wins where it has a rule
     assert trade.next_answer(bytes.fromhex("610000000a00"),
                              station_id=OUR_STATION)[0].hex() == "610000001200"
+
+
+def test_an_offer_is_read_and_rebuilt_from_the_record_it_carries():
+    """sw76's own message: 20030, PokemonTradeDataHolder{pokemon{serializePokemonParam}}."""
+    from pokeldn import gen8
+    plain = bytearray(bytes(range(256)) * 2)[:gen8.SIZE_PARTY]
+    plain[0x04:0x06] = b"\x00\x00"
+    pk8 = pokemon.encrypt(bytes(plain))
+
+    offer = trade.pokemon_trade(pk8)
+    assert trade.parse(offer)[0] == trade.POKEMON_TRADE == 20030
+    assert trade.offered_pokemon(offer) == pk8
+    assert len(offer) == len(pk8) + 10, "four bytes of id and two nested length-delimited fields"
+
+
+def test_an_offer_is_answered_with_an_offer_and_never_with_an_echo():
+    from pokeldn import gen8
+    def a_pk8(species):
+        plain = bytearray(bytes(range(256)) * 2)[:gen8.SIZE_PARTY]
+        plain[0x04:0x06] = b"\x00\x00"
+        struct_pack = __import__("struct").pack_into
+        struct_pack("<H", plain, gen8.OFF_SPECIES, species)
+        return pokemon.encrypt(bytes(plain))
+
+    theirs, ours = a_pk8(841), a_pk8(94)
+    offer = trade.pokemon_trade(theirs)
+    reply, queue = trade.next_answer(offer, offer_pk8=ours)
+    assert reply != offer, "echoing would offer the console back its own Pokemon"
+    assert trade.offered_pokemon(reply) == ours
+    assert queue == []
+    # with nothing to offer, the policy leaves the payload alone rather than inventing one
+    assert trade.next_answer(offer)[0] == offer
+
+
+def test_something_that_is_not_an_offer_yields_no_pokemon():
+    assert trade.offered_pokemon(trade.im_ready()) is None
+    assert trade.offered_pokemon(trade.message(trade.POKEMON_TRADE, b"\x08\x01")) is None
+    assert trade.offered_pokemon(trade.message(trade.POKEMON_TRADE,
+                                               trade.field(1, trade.field(1, b"short")))) is None

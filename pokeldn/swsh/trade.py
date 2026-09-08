@@ -56,7 +56,8 @@ def field_varint(number, value):
 
 SYNC_PING = 97                        # gflnet.p2p.sync.ping.pb.SyncPingDataHolder
 BLOCK = 60000                         # gflnet.p2p.block.pb.BlockDataHolder
-POKEMON_TRADE = 40030                 # DEDUCED, not confirmed - see SYNC_ANSWERS
+POKEMON_TRADE = 20030                 # MEASURED at sw76: the console offered its own Pokemon here
+                                      # (session 59 first wrote 40030, which is the RPC envelope)
 
 PING, PING_REPLY, PING_SYNCED = 1, 2, 3           # SyncPingDataHolder's three fields
 RESULT, IM_READY = 1, 2                           # BlockDataHolder's two
@@ -233,6 +234,33 @@ def answers_for(payload):
     return SYNC_ANSWERS.get(bytes(payload), ())
 
 
+def offered_pokemon(payload):
+    """-> the 0x158 PK8 inside a trade offer, or None when this is not one.
+
+    sw76: the console sent `PokemonTradeDataHolder{pokemon{serializePokemonParam}}` on id 20030
+    holding a 344-byte party-form record, and it decoded to the Pokemon the player had just picked
+    on screen - `Pomdrapi`, level 18, their own trainer name and ids. Rebuilding that message from
+    the record it carried gives the console's bytes back exactly, which is what says the framing is
+    read and not merely guessed.
+    """
+    message_id, body = parse(payload)
+    if message_id != POKEMON_TRADE:
+        return None
+    outer = _read_fields(body)
+    if not isinstance(outer.get(1), bytes):
+        return None
+    inner = _read_fields(outer[1])
+    pk8 = inner.get(1)
+    return pk8 if isinstance(pk8, bytes) and len(pk8) in (0x148, 0x158) else None
+
+
+def answers_for_offer(payload, our_pk8):
+    """-> our own offer, as a one-tuple, when the console has just made one."""
+    if our_pk8 is None or offered_pokemon(payload) is None:
+        return ()
+    return (pokemon_trade(our_pk8),)
+
+
 def answers_for_rpc(payload, station_id, clock_delta=5):
     """-> the reply to a trade RPC as a one-tuple, or () when the payload is not one.
 
@@ -242,7 +270,7 @@ def answers_for_rpc(payload, station_id, clock_delta=5):
     return (answer,) if answer is not None else ()
 
 
-def next_answer(said, queue=(), station_id=None, clock_delta=5):
+def next_answer(said, queue=(), station_id=None, clock_delta=5, offer_pk8=None):
     """-> (what to send now, the queue after it). The table where there is a rule, the mirror else.
 
     THE MIRROR IS THE PROVEN POLICY AND THIS DOES NOT REPLACE IT. sw68 and sw70 reached the trade
@@ -257,6 +285,10 @@ def next_answer(said, queue=(), station_id=None, clock_delta=5):
     queue = list(queue)
     if not queue:
         queue = list(answers_for(said))
+    if not queue:
+        # AN OFFER IS ANSWERED WITH AN OFFER. Echoing this one would hand the console back the very
+        # Pokemon it just offered us, under its own trainer's name.
+        queue = list(answers_for_offer(said, offer_pk8))
     if not queue and station_id is not None:
         # A TRADE RPC IS ANSWERED BY REBUILDING IT, not by echoing it. Mirroring one would send the
         # console its own station id back, which is the one field that has to change.
