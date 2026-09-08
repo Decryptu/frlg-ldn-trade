@@ -508,9 +508,43 @@ level 18. Rebuilding that message from the record it carried gives the console's
 exactly. So the trade message is 20030; **40030 is the envelope that precedes it**, and an earlier
 reading of another client's prefixes that called 40030 the trade message was wrong.
 
-Our own offer, a Pokemon out of the party our snapshot advertised, is acknowledged by the window -
-and the console does not advance past it. What comes after an accepted offer is the open question
-now.
+## The game shows the player our Pokemon, and asks them to confirm
+
+FACT, sw80-sw83. Two things stood between an acknowledged offer and a trade the player can see.
+
+**THE TRADE RPC IS ON A DIFFERENT PIA PORT FROM EVERYTHING ELSE.** The console sends 19145 of its
+40030 pair on **0x7C port 1**, while the ping, the block messages and the Pokemon offer all arrive
+on port 0. Every RPC answer this project had sent went out on port 0 - a window the console does
+not read them on - so the runs that "answered the RPC" had said nothing the game could hear.
+Answered on port 1, with its own reliable window and its own sequence, the console acknowledged one
+for the first time.
+
+**AND THEN `imReady` ON THE TRADE HOLDER.** `3e4e000012020801` is message 20030 carrying
+`imReady{isReady:true}` - the same shape that released the trade snapshot, one holder further
+along. The console has never sent those bytes to us; the published client waits for them before it
+offers, which is what suggested it was our turn to say them. With them sent, **the console
+displayed our Pokemon and asked the player to confirm the trade**, and the player accepted.
+
+**THE RUN THEN CRASHED, AND THE CONSOLE WAS RIGHT ABOUT WHOSE FAULT IT WAS.** At the confirmation
+prompt the console sends a **three-byte** message; the reader raised on it, the receive task died,
+and we stopped transmitting mid-trade. The player saw `la communication avec l'autre joueur a été
+interrompue`, which is exactly what had happened - we were the one who left. **A reader on a live
+run must not raise**, and every reader in `pokeldn/swsh/trade.py` now returns None instead.
+
+## Where it stops
+
+With that fixed the run is clean and the outcome is the same: the console shows our Pokemon, takes
+the player's accept, and then sends **nothing on the application layer for the remaining five
+minutes**. Its last message is the offer.
+
+So the trade stops in a phase we do not speak. `andyjusa/nxldn-lab` has selection RPCs on 40050
+(`729c`), confirmation stages on 40040 (`689c`) and a terminal exchange after this point - and OUR
+console has never sent one of those ids, so they are not messages waiting to be answered. That
+client REPLAYS client-side selection messages captured from a real console-to-console trade;
+deriving ours is a read of the game's own code rather than another run.
+
+Our own offer, a Pokemon out of the party our snapshot advertised, is acknowledged by the reliable
+window throughout.
 
 ## Where a message id comes from, and which ones are ours
 
