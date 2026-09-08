@@ -32,8 +32,9 @@ if os.path.isdir(BUNDLED):
 
 import trio, ldn
 from pokeldn.host_support import resolve_keys
-from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4, reliable5,
-                        rtt_protocol as rtt, station4, station_protocol as stp)
+from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4, reliable4,
+                        reliable5, rtt_protocol as rtt, station4,
+                        station_protocol as stp)
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.swsh import COMM_ID, PASSPHRASE, PIA_PORT, packet_iv, session_keys
 
@@ -377,8 +378,14 @@ async def main_async(args):
                             continue
                         st["reliable_last"] = now
                         if not (got["flags"] & reliable5.FLAG_APPLICATION_DATA):
+                            try:
+                                shape = reliable4.parse_ack_payload(got["payload"])
+                                shape = [e for e in shape if e["stream_id"] != 0xFF]
+                            except ValueError as e:
+                                shape = f"not the version-4 shape: {e}"
                             print(f"\n[rx] t={now:6.2f} *** 0x7c ACK FROM THE CONSOLE *** "
-                                  f"{reliable5.parse_ack_payload(got['payload'])}")
+                                  f"{len(got['payload'])} B: {shape}")
+                            record(rec="rx_reliable_ack", t=now, raw=got["payload"].hex())
                             continue
                         st["reliable_seqs"].add(got["sequence_id"])
                         through = reliable5.contiguous_through(st["reliable_seqs"],
@@ -390,9 +397,9 @@ async def main_async(args):
                             print(f"\n[rx] t={now:6.2f} 0x7c seq {got['sequence_id']} stream "
                                   f"{got['stream_id']} flags {got['flag_names']} payload "
                                   f"{got['payload'].hex()}")
-                        ack = reliable5.build_ack_message(
+                        ack = reliable4.build_ack_message(
                             through + 1, stream_id=got["stream_id"],
-                            lowest_pending=args.ack_lowest_pending)
+                            slots=args.ack_slots, lowest_pending=args.ack_lowest_pending)
                         sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), ack,
                                          reliable5.PROTOCOL, args.connect_station_first,
                                          message_flags=reliable5.MESSAGE_FLAGS,
@@ -662,6 +669,11 @@ def build_parser():
     ap.add_argument("--ack-reliable", action="store_true",
                     help="acknowledge the 0x7C reliable window. The pass signal is the "
                          "retransmits STOPPING and the sequence ids moving on")
+    ap.add_argument("--ack-slots", default=None,
+                    type=lambda v: None if v in ("", "all") else [int(x, 0) for x in v.split(",")],
+                    help="which of the 32 ack slots to fill; \"all\" (the default) fills every "
+                         "one, because only the slot at some station index is read and whose index "
+                         "it is has not been settled. \"0\" is the console, \"1\" is us")
     ap.add_argument("--ack-lowest-pending", type=lambda s: int(s, 0), default=1,
                     help="the header's own 'lowest sequence pending ack'. We have sent nothing on "
                          "this protocol, so 1 (the next id we would use) and 0 are both readings; "

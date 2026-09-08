@@ -105,3 +105,52 @@ def test_build_ack_message_reproduces_it_byte_for_byte():
     # the halfword before the mask defaults to ack_id - 1, which is what the console sent
     assert rl.parse_ack_payload(rl.parse(rl.build_ack_message(9))["payload"]
                                 )["entries"][0]["field_0x50"] == 8
+
+
+# --------------------------------------------------------------------------- version 4
+# Sword/Shield. The header is this module's, unchanged; the ACK PAYLOAD is the fixed table 5.29
+# replaced. Read off the retail binary in session 57 after sw30's 96 acks were refused by size.
+
+def test_the_version_four_ack_payload_is_the_size_the_handler_demands():
+    from pokeldn.ldn import reliable4 as r4
+    assert r4.ACK_PAYLOAD_SIZE == 0x260 == r4.ACK_ENTRIES * r4.ACK_ENTRY_SIZE == 32 * 19
+    assert len(r4.build_ack_payload(21)) == r4.ACK_PAYLOAD_SIZE
+    # and it is NOT the 5.29 size. This is the payload sw30 sent 96 times, refused unread.
+    five = rl.build_ack_payload([{"stream_id": 0, "ack_id": 21, "field_0x50": 20, "mask": b""}])
+    assert len(five) == 2 + rl.ACK_ENTRY_SIZE == 23 != r4.ACK_PAYLOAD_SIZE
+
+
+def test_a_version_four_entry_is_a_stream_an_ack_id_and_a_mask_and_nothing_else():
+    from pokeldn.ldn import reliable4 as r4
+    body = r4.build_ack_payload(0x1234, stream_id=7, mask=bytes(range(16)), slots=[3])
+    entries = r4.parse_ack_payload(body)
+    assert len(entries) == r4.ACK_ENTRIES == 32
+    assert entries[3] == {"slot": 3, "stream_id": 7, "ack_id": 0x1234, "mask": bytes(range(16))}
+    assert body[3 * 19:3 * 19 + 3] == bytes([7, 0x12, 0x34])       # ack id is big-endian at [1]
+    # every other slot is inert: 0xFF cannot match a real stream id
+    assert all(e["stream_id"] == 0xFF for e in entries if e["slot"] != 3)
+
+
+def test_filling_every_slot_answers_both_readings_of_which_one_is_read():
+    from pokeldn.ldn import reliable4 as r4
+    entries = r4.parse_ack_payload(r4.build_ack_payload(21))
+    assert {e["ack_id"] for e in entries} == {21}
+    assert {e["stream_id"] for e in entries} == {0}
+
+
+def test_the_version_four_ack_message_is_this_modules_header_over_that_payload():
+    from pokeldn.ldn import reliable4 as r4
+    msg = r4.build_ack_message(21, lowest_pending=1)
+    got = rl.parse(msg)
+    assert got["is_ack"] and got["flags"] == 0
+    assert got["sequence_id"] == rl.ACK_SEQUENCE == 0xFFFF
+    assert got["payload_size"] == r4.ACK_PAYLOAD_SIZE and got["header_size"] == 9
+    assert len(msg) == 9 + 0x260 == 617
+    assert msg[:9].hex() == "00000260ffff000100"
+    assert r4.parse_ack_payload(got["payload"])[0]["ack_id"] == 21
+
+
+def test_a_wrongly_sized_ack_payload_is_refused_here_the_way_the_console_refuses_it():
+    from pokeldn.ldn import reliable4 as r4
+    with pytest.raises(ValueError, match="0x260"):
+        r4.parse_ack_payload(b"\0" * 23)          # exactly what sw30 sent, 96 times

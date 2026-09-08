@@ -461,6 +461,38 @@ station's RTT once the ring is full.
 **Nothing in this protocol drops a station for staying silent.** A station that never answers simply
 never gets a sample - which is worth knowing before spending a run on the theory that it does.
 
+## Version 4's reliable ack is the table 5.29 replaced
+
+FACT, sw30 and the binary. **The header is the same header** - 221887 of a retail Sword's reliable
+messages went through `reliable5.parse` across sw29 and sw30 without a field out of place. The ACK
+PAYLOAD is not, and it moved BACKWARDS:
+
+    5.29-5.43   1 unknown byte, 1 count, then `count` x 21 bytes
+                    u8 stream id, u16be ack id, u16be the window's field 0x50, 16-byte mask
+    version 4   32 entries of 19 bytes, ALWAYS, and nothing in front of them
+                    u8 stream id, u16be ack id, 16-byte mask
+
+so the payload is **exactly 0x260 bytes**, 32 x 19 - the wiki's original "Ack Data", which 5.29
+replaced with a counted list. The handler `0x01859a84` opens with `ldrh w8, [x2, #0xa]; cmp w8,
+#0x260; b.ne` and answers error 0x2c03 without reading a byte of the body; the serialiser
+`0x0185bfb0` bounds the buffer at 0x260, loops 0x20 times, and writes per entry a stream id, an ack
+id big-endian into [1] and [2], and sixteen mask bytes as two big-endian u64 halves.
+
+**sw30 IS WHAT MADE THAT WORTH LOOKING FOR, and it is a clean negative.** 96 acks in 5.29's 23-byte
+shape, 289 RTT requests answered, 3460 packets and none that failed to decrypt - and the console's
+own `lowest_pending` **never moved off 1**, across both runs and 221887 messages. Its sequence ids
+did grow, 20 to 96, but that is a longer hold and a bigger backlog rather than a window sliding:
+the retransmits went UP, 157 copies of sequence 1 at sw29 against 3093 at sw30. A window that
+advanced would have done the opposite.
+
+**WHICH OF THE 32 SLOTS IS READ IS A STATION INDEX, AND WHOSE IS NOT SETTLED.** The handler indexes
+the table with its fourth argument and requires that slot's stream id to match the window's own
+before applying the ack id and mask (`0x01859c1c`). Thirty-two slots addressed by station index is
+one ack answering up to 32 stations at once, so the slot is either the receiver's (0, the console)
+or the sender's (1, us) - and this site does not say which. `reliable4.build_ack_payload` fills
+EVERY slot with the same entry by default: only one is read, so a table that satisfies both
+readings is correct under either and costs no association to settle.
+
 ## The reliable sliding window (0x7c, and everything above it)
 
 Pia 5.29-5.43 wraps a reliable message like this, and the payload of a reliable message on 0x7c is
