@@ -1017,21 +1017,24 @@ async def main_async(args):
                         elif not st["trade_ready_sent"] and (args.open_content
                                                              or args.box_commands):
                             st["trade_ready_sent"] = True
-                            if args.open_content:
-                                # OPEN THE PHASES NOBODY HAS OPENED. A content at offset N has an
-                                # id at 10000+N as well as the 20000 and 40000 ones this project
-                                # speaks, and nxldn-lab's client opens the confirmation phase by
-                                # sending `ping` on 10040, unprompted. Our console has never sent
-                                # 10040, 10050, 40040 or 40050.
-                                st["box_queue"] = [swsh_trade.open_content(int(c, 0))
-                                                   for c in args.open_content.split(",")]
-                                label = f"OPENING CONTENTS {args.open_content}"
-                            else:
-                                # SWEEP THE COMMAND, BECAUSE A REFUSAL IS AN INSTRUMENT.
-                                st["box_queue"] = [swsh_trade.box_sync_state(int(c, 0))
-                                                   for c in args.box_commands.split(",")]
-                                label = f"WALKING THE BOX COMMANDS {args.box_commands}"
-                            print(f"[tx]     *** {label} *** "
+                            # BOX COMMANDS FIRST, THEN THE OPENERS, AND THE ORDER IS MEASURED.
+                            # sw97 sent the 10040/10050 openers INSTEAD of the box command and the
+                            # console never displayed our Pokemon at all - it sat on "en attente
+                            # d'une reponse" and, notably, did NOT give up: still acking at t=70,
+                            # where every earlier run had torn down seconds after the accept. So
+                            # `3e4e000012020801` after our offer is what makes the console show it
+                            # to the player, and it is not optional.
+                            # SWEEP THE COMMAND, BECAUSE A REFUSAL IS AN INSTRUMENT; OPEN THE
+                            # PHASES NOBODY HAS OPENED, because a content at offset N has an id at
+                            # 10000+N and nxldn-lab's client opens the confirmation with `ping` on
+                            # 10040, unprompted.
+                            st["box_queue"] = (
+                                [swsh_trade.box_sync_state(int(c, 0))
+                                 for c in (args.box_commands or "").split(",") if c.strip()]
+                                + [swsh_trade.open_content(int(c, 0))
+                                   for c in (args.open_content or "").split(",") if c.strip()])
+                            print(f"[tx]     *** AFTER THE OFFER: box {args.box_commands}, "
+                                  f"open {args.open_content} *** "
                                   f"{[p.hex() for p in st['box_queue']]}")
                             st["offer_pending"] = st["box_queue"].pop(0)
                         elif args.trade_ready and not st["trade_ready_sent"]:
