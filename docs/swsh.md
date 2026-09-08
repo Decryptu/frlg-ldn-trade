@@ -326,8 +326,118 @@ says the console decrypted our packet, walked the message, found itself in the d
 accepted a sequence into its window - and a game that then keeps sending the same six bytes is a
 finding about the game rather than the transport.
 
+## Answering it: five steps, and the game hands over its party
+
+FACT, sw68 and sw70, with sw69 as the control. Answer the heartbeat and the game walks its own
+state machine, and **none of the message ids below is guessed**: `main` ships a `FileDescriptorProto`
+for every P2P message set and `scratchpad/swsh_proto.py` extracts all 78 of them. The six bytes the
+console repeated for 2092 messages are a four-byte little-endian message id and a protobuf body:
+
+    61 00 00 00  = message 97     gflnet.p2p.sync.ping.pb.SyncPingDataHolder
+        0a 00        field 1  ping {}
+        12 00        field 2  pingReply {}
+        1a 00        field 3  pingSynced {}
+    60 ea 00 00  = message 60000  gflnet.p2p.block.pb.BlockDataHolder
+        0a 00        field 1  result {}          Result { bool isBlocking }
+        12 02 08 01  field 2  imReady { isReady: true }
+
+It was pinging us. The five steps, all reproduced twice:
+
+    1  answer the ping continuously   --send-data 610000000a00 --send-mirror --send-count N
+    2  ack EVERY reliable window      0x7C, 0x18 port 1, 0x80 - one unacked window kills the mesh
+    3  answer `result{}` on 0x7C      the mirror must be PER PROTOCOL
+    4  answer imReady on 0x80         --send2-data 60ea000012020801
+    5  the console sends its party on 0x84
+
+**ONE MESSAGE IS NOT A STREAM.** sw61 sent a single message, saw `pingReply` once and watched the
+game fall back to pinging; sw64 sent 400, all acked, and the game stayed in the new state. And the
+bytes matter in the other direction too: sw62 sent `pingReply` FIRST, before the console had asked
+for it, and the heartbeat stopped after ten messages with nothing else all run.
+
+**STEP 3 IS NAMED BY A CONTROL RUN, WHICH IS THE ONLY REASON IT IS IN THE LIST.** sw69 did
+everything sw68 did and got no 0x84 at all. The one difference was what we answered on 0x7C: the
+mirror kept a single "what it last said" across all protocols, so once the console spoke on 0x80
+the 0x7C mirror echoed `imReady` back on 0x7C instead of `result{}`. Made per protocol, sw70
+answered `result{}` again and the transfer came back.
+
+## The party on 0x84, and it is a PK8
+
+FACT, sw68 and sw70. Protocol 0x84 is `nn::pia::transport::ReliableBroadcastProtocol` - the class
+`docs/pia.md` warns is NOT 0x80 - and it had never spoken in this project. It carries **2965 bytes
+in three fragments** (1404 + 1404 + 157), repeated until acked, and 2956 of those 2965 bytes are
+identical between two runs a session apart.
+
+**THE FIRST 0x810 IS THE PLAYER'S PARTY: six PK8 records at a 0x158 stride.** The stride and the
+count are one reading rather than two guesses, because 6 * 0x158 is 0x810 exactly. Empty slots are
+zero-filled and an empty slot is **an encryption constant of zero**, not a species of zero.
+
+The format is the Gen-8 entity, the same one BDSP trades - in PKHeX, `PK8` and `PB8` are both
+`G8PKM` and neither overrides a shared offset. `pokeldn/gen8.py` is that format and
+`pokeldn/swsh/pokemon.py` is what is true of Sword alone: **it sends the PARTY form, 0x158, where a
+BDSP trade sends the 0x148 stored form.**
+
+    0x00  u32  encryption constant, in the clear. Seeds the cipher and the block order
+    0x06  u16  checksum, in the clear, over the decrypted body ONLY
+    0x08       four 80-byte blocks, LCG-encrypted and permuted by (EC >> 13) & 31
+    0x148      the party stats, LCG-encrypted with the stream RESTARTED, and never permuted
+
+**THE PARTY STATS RESTART THE LCG.** `PokeCrypto.Decrypt8` calls `CryptArray` twice, both seeded
+from the encryption constant; the stream does not run on across 0x148. A tail decrypted with the
+continued stream gives nothing, which is what levels of 110 and 118 were.
+
+**AND THE BLOCK ORDER IS APPLIED, NOT INVERTED** - `BLOCK_ORDER[sv]` names the block that becomes
+block *i*. This project has now made that same mistake twice, in two modules, three sessions apart
+(session 54 in BDSP's trade path, session 58 in the first 0x84 reader), and both times the checksum
+agreed every single time, because it is a sum of 16-bit words and permuting whole blocks does not
+change a sum. **Sixteen of the 32 sv values - ten of the 24 distinct orderings - are their own
+inverse, so a wrong direction reads perfectly for those and garbles the rest** - which is exactly the shape sw70 showed: one slot right, two
+wrong, six checksums verifying throughout. The format module is shared now so there is one place
+left to get it wrong.
+
+**WHAT THE PARTY READ IS CORROBORATED BY, and not one of them is a checksum:**
+
+- the nicknames decode as French species names, in the console's own language;
+- the species numbers match those names - 94, 254, 149;
+- the levels are 100, 75 and 73, **which the player named before the payload was read**, and they
+  come out of the party-stat tail, a region outside the four shuffled blocks and so independent
+  evidence about the shuffle rather than a restatement of it;
+- the experience agrees with the level on each one's own growth curve;
+- and the **hyper-training byte at 0x126 agrees with the IV word at 0x8C, bit for bit**: slot 1
+  reads `0x24`, DEF and SPE, and DEF and SPE are exactly and only the two IVs below 31. Two fields
+  in different blocks, telling the same story about one Pokemon.
+
+Both runs decode to the same three Pokemon. `scratchpad/sw84_read.py <payload.bin>` is the viewer.
+
+**WHAT IS STILL UNREAD IN THE PAYLOAD**: the six 24-byte records at 0xA00 with `ff ff ff ff`
+terminators, and the raw-deflate stream at 0xAF9. The save date at 0xA94 reads 2019-11-15 22:06:12.
+
+The deflate inflates to 649 bytes, and FACT, from the two runs: the trainer name is at 0x1E in
+UTF-16LE, the last 0x160 bytes are zero, and **exactly three bytes differ between sw68 and sw70** -
+0x51, 0x62 and 0x73, one per 17-byte record in a run of three otherwise identical ones. Within a
+run the byte DECREMENTS by one down the three; between the runs it rose by 19, `4b 4a 49` to
+`5e 5d 5c`.
+
+HYPOTHESIS, and it is one data point: it counts minutes. The two captures start 19 minutes apart
+(12:25:04 and 12:44:25) and the value moved by 19. THE MEASUREMENT THAT SETTLES IT COSTS NOTHING -
+every future run's payload is a third point, and a run taken an hour later should move it by about
+60. Do not write this down as a clock until one does. 0x84's own message header is `11`/`12` as a type
+byte, a counter at [4], and a total of 3456 at [10] that is a capacity and **not** the payload
+length, which is 2965 in three fragments, always.
+
 ## Open questions
 
+- ANSWERED, sw68/sw70, and it is the point of the project's next step. **What the game says once
+  it is answered**: it walks ping -> pingReply -> pingSynced, asks for `result{}` on 0x7C and
+  `imReady` on 0x80, and then sends its own party on 0x84. See the two sections above.
+- **Sending a party back.** Nothing of ours has ever been on 0x84. `pokemon_trade.proto` (package
+  `net_contents.trade.common.pokemon_trade.protocol_buffers`) is `Pokemon { bytes
+  serializePokemonParam }` and `PokemonTradeDataHolder { Pokemon pokemon }`, so a trade message is a
+  serialised PK8 inside one protobuf field. `pokeldn/swsh/pokemon.py` builds and encrypts one;
+  `build_from` edits a record the console itself sent, so every byte we have never read stays a real
+  byte from a real save. What is NOT known is which message id carries it, and on which protocol.
+- **The trailer of the 0x84 payload.** Six 24-byte records at 0xA00 and a raw-deflate stream at
+  0xAF9 that carries the trainer name a third time. Nothing in the schemas has been matched to
+  either yet, and the nine bytes that move between runs are all inside the deflate.
 - **The two unnamed header fields**, the byte at 0x05 and the halfword at 0x06. What writes them is
   `0x017beb74`/`0x017beb78`; what they mean is a deduction until a capture agrees.
 - ANSWERED, sw01. **What seeds the session key** is the advertisement's session parameter, twelve

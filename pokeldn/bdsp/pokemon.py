@@ -1,16 +1,13 @@
 """A BDSP Pokemon on the wire: the 328-byte PB8 a `NetTradePokeData` carries.
 
 The console handed one over in sp82 - a Zubat the player picked out of their own boxes - and the
-whole format is the Gen 6+ one, unchanged since XY:
+whole format is the Gen 6+ one, unchanged since XY. The format ITSELF is `pokeldn.gen8`, because
+Sword/Shield's PK8 is the same class in PKHeX with one extra field; what belongs HERE is what is
+true of BDSP and of nothing else.
 
-    0x00  u32  encryption constant, in the clear. It seeds both the cipher and the block order
-    0x04  u16  sanity, 0 for a stored Pokemon
-    0x06  u16  checksum, in the clear
-    0x08       four 80-byte blocks, encrypted and permuted
-
-An LCG (`seed = seed * 0x41C64E6D + 0x6073`, high half of each step) XORs every 16-bit word from
-0x08 to the end, and the four blocks are then permuted by `(EC >> 13) & 31` into one of the 24
-orderings of four things.
+SIZE_STORED is 328 and that is exactly what the message carried, so **a BDSP trade sends the
+STORED form** and not the party form (which is 0x10 longer and holds the battle stats). Sword sends
+the party form on protocol 0x84, which is the one difference in how the two games use one format.
 
 THE CHECKSUM IS WHAT MAKES THIS SAFE TO BUILD - BUT IT DOES NOT CHECK EVERYTHING. It is stored in
 the clear and is the 16-bit sum of the DECRYPTED body, so a wrong LCG stream cannot produce a match.
@@ -18,210 +15,53 @@ It says NOTHING about the block order: permuting whole 80-byte blocks leaves a s
 untouched, because addition commutes. Session 54 shipped a block-order bug for nine runs behind a
 checksum that agreed every time. What catches a wrong order is reading the fields and seeing whether
 a Pokemon comes out. `docs/bdsp.md`.
-
-SIZE_STORED is 328 and that is exactly what the message carried, so a trade sends the stored form
-and not the party form (which is longer and holds the battle stats).
 """
-import struct
-
-SIZE_STORED = 328
-BLOCK_SIZE = 80
-HEADER_SIZE = 8
-
-# The orderings of four blocks, indexed by (EC >> 13) & 31.
-#
-# THAT INDEX IS 0..31 AND THERE ARE ONLY 24 ORDERINGS, so the table has to be 32 long: entries
-# 24-31 REPEAT 0-7. PKHeX's `PokeCrypto.BlockPosition` is written exactly this way and says why in
-# a comment - "duplicates of 0-7 to eliminate modulus (32 => 24)" - and its first 24 rows are ours,
-# row for row. `BLOCK_ORDER[sv % 24]` is the same function; the repeat is kept because it is what
-# the game does and what every other implementation looks like.
-#
-# sp97 is why this is not a footnote. Every Pokemon this project had ever decoded - sp82's Zubat,
-# through nine runs - happened to have an encryption constant with sv < 24, so a 24-long table
-# worked for months. The third trade of sp97 was a Keunotor whose EC put sv >= 24, `decrypt` raised
-# IndexError inside the trade answer, and the console sat on "veuillez patienter" while we never
-# replied. A lookup table one entry short of its index range is a bug that waits for its input.
-BLOCK_ORDER = (
-    (0, 1, 2, 3), (0, 1, 3, 2), (0, 2, 1, 3), (0, 3, 1, 2), (0, 2, 3, 1), (0, 3, 2, 1),
-    (1, 0, 2, 3), (1, 0, 3, 2), (2, 0, 1, 3), (3, 0, 1, 2), (2, 0, 3, 1), (3, 0, 2, 1),
-    (1, 2, 0, 3), (1, 3, 0, 2), (2, 1, 0, 3), (3, 1, 0, 2), (2, 3, 0, 1), (3, 2, 0, 1),
-    (1, 2, 3, 0), (1, 3, 2, 0), (2, 1, 3, 0), (3, 1, 2, 0), (2, 3, 1, 0), (3, 2, 1, 0),
-    # 24-31: the duplicates
-    (0, 1, 2, 3), (0, 1, 3, 2), (0, 2, 1, 3), (0, 3, 1, 2), (0, 2, 3, 1), (0, 3, 2, 1),
-    (1, 0, 2, 3), (1, 0, 3, 2),
+from pokeldn import gen8
+from pokeldn.gen8 import (                                             # noqa: F401 - the PB8 view
+    BLOCK_ORDER, BLOCK_SIZE, HEADER_SIZE, IV32_EGG, IV32_NICKNAMED, NAME_LENGTH, OFF_ABILITY,
+    OFF_BALL, OFF_CURRENT_HANDLER, OFF_EGG_DATE, OFF_EGG_LOCATION, OFF_EVS, OFF_EXPERIENCE,
+    OFF_FORM, OFF_GENDER, OFF_HELD_ITEM, OFF_HT_FRIENDSHIP, OFF_HT_ID, OFF_HT_LANGUAGE,
+    OFF_HT_NAME, OFF_IVS, OFF_LANGUAGE, OFF_MET_DATE, OFF_MET_LEVEL, OFF_MET_LOCATION,
+    OFF_MOVES, OFF_MOVE_PP, OFF_MOVE_PP_UPS, OFF_NATURE, OFF_NICKNAME, OFF_OT_FRIENDSHIP,
+    OFF_OT_NAME, OFF_PID, OFF_RELEARN, OFF_SID, OFF_SPECIES, OFF_TID, OFF_VERSION,
+    checksum, invert, permute,
 )
-assert len(BLOCK_ORDER) == 32, "the index is 5 bits; the table has to cover all of it"
 
-# offsets into the DECRYPTED, UNSHUFFLED body.
-#
-# The first block is what sp82 confirmed against the console's own two messages. The second is from
-# PKHeX's `PKHeX.Core/PKM/Shared/G8PKM.cs` (PB8 derives from it unchanged), read at
-# `scratchpad/pkhex_repo` - and it is worth saying WHY that is not a guess: PKHeX names 102 fields
-# and **every one of the twelve sp82 read independently agrees**, offset for offset. Twelve out of
-# twelve is not a coincidence, so the other ninety are as good as the twelve.
-#
-# Session 54 needed them because `--trade-nickname` was writing a string the game does not show.
-# The name field is only displayed when IsNicknamed (IV32 bit 31) is set, and sp92 sent a Pokemon
-# with the string changed and the flag clear.
-OFF_SPECIES = 0x08
-OFF_HELD_ITEM = 0x0A
-OFF_TID = 0x0C
-OFF_SID = 0x0E
-OFF_EXPERIENCE = 0x10
-OFF_ABILITY = 0x14
-OFF_PID = 0x1C
-OFF_NATURE = 0x20
-OFF_FORM = 0x24
-OFF_EVS = 0x26
-OFF_NICKNAME = 0x58
-OFF_IVS = 0x8C
-OFF_OT_NAME = 0xF8
-NAME_LENGTH = 26                      # 13 UTF-16LE code units, null terminated
-
-# from PKHeX's G8PKM. IV32 at 0x8C carries two flags above the six 5-bit IVs.
-IV32_EGG = 1 << 30
-IV32_NICKNAMED = 1 << 31
-
-OFF_GENDER = 0x22                     # bits 2-3 of the byte; the rest is FatefulEncounter/Flag2
-OFF_MOVES = 0x72                      # 4 x u16
-OFF_MOVE_PP = 0x7A                    # 4 x u8
-OFF_MOVE_PP_UPS = 0x7E                # 4 x u8
-OFF_RELEARN = 0x82                    # 4 x u16
-OFF_HT_NAME = 0xA8                    # HandlingTrainerName, 26 bytes like the others. PKHeX's
-                                      # `IsUntraded` IS `Data[0xA8] == 0`: an empty handler name is
-                                      # what "never been traded" looks like. sp99 watched a Pokemon
-                                      # cross that line.
-OFF_HT_LANGUAGE = 0xC3
-OFF_CURRENT_HANDLER = 0xC4            # 0 = the original trainer still holds it
-OFF_HT_ID = 0xC6                      # PKHeX writes this one `// unused?`, and sp99 says it is:
-                                      # the console filled in name, language, handler and
-                                      # friendship on a traded Pokemon AND LEFT THIS ZERO.
-OFF_HT_FRIENDSHIP = 0xC8
-OFF_VERSION = 0xDE
-OFF_LANGUAGE = 0xE2
-OFF_OT_FRIENDSHIP = 0x112
-OFF_EGG_DATE = 0x119                  # year-2000, month, day
-OFF_MET_DATE = 0x11C                  # year-2000, month, day
-OFF_EGG_LOCATION = 0x120
-OFF_MET_LOCATION = 0x122
-OFF_BALL = 0x124
-OFF_MET_LEVEL = 0x125                 # low 7 bits; bit 7 is the OT's gender
-
-
-def _crypt(data, seed):
-    """XOR every 16-bit word from 0x08 with the LCG stream. Its own inverse."""
-    out = bytearray(data)
-    for i in range(HEADER_SIZE, len(out), 2):
-        seed = (seed * 0x41C64E6D + 0x00006073) & 0xFFFFFFFF
-        struct.pack_into("<H", out, i,
-                         struct.unpack_from("<H", out, i)[0] ^ ((seed >> 16) & 0xFFFF))
-    return bytes(out)
-
-
-def _permute(data, order):
-    """-> data with its four blocks reordered, `order[i]` naming the block that becomes block i."""
-    out = bytearray(data[:HEADER_SIZE])
-    for src in order:
-        out += data[HEADER_SIZE + src * BLOCK_SIZE: HEADER_SIZE + (src + 1) * BLOCK_SIZE]
-    return bytes(out)
-
-
-def _invert(order):
-    return tuple(order.index(block) for block in range(4))
-
-
-def checksum(plain):
-    """The 16-bit sum of the decrypted body - what the header carries in the clear."""
-    n = (len(plain) - HEADER_SIZE) // 2
-    return sum(struct.unpack_from(f"<{n}H", plain, HEADER_SIZE)) & 0xFFFF
+SIZE_STORED = gen8.SIZE_STORED                # 328 = 0x148, the stored form and what BDSP trades
 
 
 def decrypt(raw):
-    """-> the plain, unshuffled 328 bytes. Raises if the checksum does not agree."""
+    """-> the plain, unshuffled 328 bytes. Raises if the checksum does not agree.
+
+    BLOCK_ORDER[sv] IS THE READ ORDER FOR DECRYPTION, APPLIED DIRECTLY (`gen8.decrypt`). It is not
+    "where each block went", and inverting it - which this function did until session 54 - is wrong
+    for any sv whose permutation is not its own inverse.
+
+    THAT BUG SURVIVED NINE RUNS BECAUSE OF ONE POKEMON. Every PB8 this project had decoded came
+    from sp82's Zubat, EC giving sv=21 and the ordering (3, 1, 2, 0), which IS self-inverse - so
+    the extra inversion was a no-op and the checksum agreed. sp97's Keunotor is sv=28,
+    (0, 2, 3, 1), which is not, and it decoded to a Bidoof with no moves, no ball and its species
+    name in the trainer field.
+
+    AND THE CHECKSUM CANNOT CATCH THIS. It is a sum of 16-bit words over the whole body, and
+    permuting whole 80-byte blocks does not change a sum - addition commutes. It verifies the LCG
+    stream and nothing about the block order.
+    """
     if len(raw) != SIZE_STORED:
         raise ValueError(f"{len(raw)} bytes, expected {SIZE_STORED}")
-    ec = struct.unpack_from("<I", raw, 0)[0]
-    # BLOCK_ORDER[sv] IS THE READ ORDER FOR DECRYPTION, APPLIED DIRECTLY. It is not "where each
-    # block went", and inverting it here - which this function did until session 54 - is wrong for
-    # any sv whose permutation is not its own inverse.
-    #
-    # THAT BUG SURVIVED NINE RUNS BECAUSE OF ONE POKEMON. Every PB8 this project had decoded came
-    # from sp82's Zubat, EC giving sv=21 and the ordering (3, 1, 2, 0), which IS self-inverse - so
-    # the extra inversion was a no-op and the checksum agreed. sp97's Keunotor is sv=28,
-    # (0, 2, 3, 1), which is not, and it decoded to a Bidoof with no moves, no ball and its species
-    # name in the trainer field. PKHeX's `PokeCrypto.DecryptArray` uses BlockPosition[sv] directly
-    # and only its ENCRYPT path goes through BlockPositionInvert; this now matches.
-    #
-    # AND THE CHECKSUM CANNOT CATCH THIS. It is a sum of 16-bit words over the whole body, and
-    # permuting whole 80-byte blocks does not change a sum - addition commutes. It verifies the LCG
-    # stream and nothing about the block order. The module docstring said otherwise; it was wrong.
-    plain = _permute(_crypt(raw, ec), BLOCK_ORDER[(ec >> 13) & 31])
-    want = struct.unpack_from("<H", raw, 6)[0]
-    got = checksum(plain)
-    if got != want:
-        raise ValueError(f"checksum {got:#06x}, header says {want:#06x} - not a valid PB8")
-    return plain
+    return gen8.decrypt(raw)
 
 
 def encrypt(plain):
     """-> the 328 bytes to put on the wire, with the checksum written from the body itself."""
     if len(plain) != SIZE_STORED:
         raise ValueError(f"{len(plain)} bytes, expected {SIZE_STORED}")
-    body = bytearray(plain)
-    struct.pack_into("<H", body, 6, checksum(body))
-    ec = struct.unpack_from("<I", body, 0)[0]
-    return _crypt(_permute(bytes(body), _invert(BLOCK_ORDER[(ec >> 13) & 31])), ec)
-
-
-def _text(plain, offset):
-    return plain[offset:offset + NAME_LENGTH].decode("utf-16-le", "replace").split("\x00")[0]
+    return gen8.encrypt(plain)
 
 
 def read(raw):
-    """-> what a received Pokemon says about itself. Only the fields sp82 confirmed."""
-    plain = decrypt(raw)
-    u16 = lambda o: struct.unpack_from("<H", plain, o)[0]
-    ivs = struct.unpack_from("<I", plain, OFF_IVS)[0]
-    return {
-        "species": u16(OFF_SPECIES),
-        "held_item": u16(OFF_HELD_ITEM),
-        "trainer_id": u16(OFF_TID),
-        "secret_id": u16(OFF_SID),
-        "experience": struct.unpack_from("<I", plain, OFF_EXPERIENCE)[0],
-        "ability": u16(OFF_ABILITY),
-        "pid": struct.unpack_from("<I", plain, OFF_PID)[0],
-        "nature": plain[OFF_NATURE],
-        "form": u16(OFF_FORM),
-        "evs": tuple(plain[OFF_EVS:OFF_EVS + 6]),
-        "ivs": tuple((ivs >> s) & 31 for s in (0, 5, 10, 15, 20, 25)),
-        "nickname": _text(plain, OFF_NICKNAME),
-        "ot_name": _text(plain, OFF_OT_NAME),
-        # THE NAME IS ONLY SHOWN WHEN THIS IS SET. A PB8 always carries a name string - the species
-        # name, if the player never renamed it - so `nickname` alone does not say what the console
-        # displays. sp92 sent 'PKCAMP' with the flag clear and the game showed 'Nosferapti'.
-        "is_nicknamed": bool(ivs & IV32_NICKNAMED),
-        "is_egg": bool(ivs & IV32_EGG),
-        "gender": (plain[OFF_GENDER] >> 2) & 3,
-        "moves": struct.unpack_from("<4H", plain, OFF_MOVES),
-        "move_pp": tuple(plain[OFF_MOVE_PP:OFF_MOVE_PP + 4]),
-        "relearn": struct.unpack_from("<4H", plain, OFF_RELEARN),
-        "current_handler": plain[OFF_CURRENT_HANDLER],
-        "ht_name": _text(plain, OFF_HT_NAME),
-        "ht_language": plain[OFF_HT_LANGUAGE],
-        "ht_id": u16(OFF_HT_ID),
-        "ht_friendship": plain[OFF_HT_FRIENDSHIP],
-        # what PKHeX calls IsUntraded, and it is a real question about a real Pokemon
-        "is_untraded": plain[OFF_HT_NAME] == 0 and plain[OFF_HT_NAME + 1] == 0,
-        "version": plain[OFF_VERSION],
-        "language": plain[OFF_LANGUAGE],
-        "ot_friendship": plain[OFF_OT_FRIENDSHIP],
-        "met_date": tuple(plain[OFF_MET_DATE:OFF_MET_DATE + 3]),
-        "egg_location": u16(OFF_EGG_LOCATION),
-        "met_location": u16(OFF_MET_LOCATION),
-        "ball": plain[OFF_BALL],
-        "met_level": plain[OFF_MET_LEVEL] & 0x7F,
-        "ot_gender": plain[OFF_MET_LEVEL] >> 7,
-    }
+    """-> what a received Pokemon says about itself. sp82's twelve fields and PKHeX's rest."""
+    return gen8.read(decrypt(raw))
 
 
 def build_from(template_raw, **fields):
@@ -235,107 +75,7 @@ def build_from(template_raw, **fields):
 
     The checksum is rewritten from the edited body by `encrypt`, so a template edit cannot leave an
     inconsistent Pokemon behind - and `read` on the result is the check that it did what was asked.
-
-        species, held_item, trainer_id, secret_id, experience, ability, pid,
-        nature, form, evs (6), ivs (6), nickname, ot_name, encryption_constant,
-        is_nicknamed, is_egg, gender, moves (4), move_pp (4), move_pp_ups (4), relearn (4),
-        current_handler, version, language, ot_friendship, met_date (3), egg_location,
-        met_location, ball, met_level, ot_gender, ht_name, ht_language, ht_id, ht_friendship
-
-    Passing `nickname` sets is_nicknamed as a side effect, because a name the flag does not enable
-    is a name the console never draws.
+    `gen8.write` lists the fields; `level` and `stats` are not among them for a PB8, which is the
+    stored form and has no party stats to set.
     """
-    plain = bytearray(decrypt(template_raw))
-    u16 = lambda o, v: struct.pack_into("<H", plain, o, v & 0xFFFF)
-    u32 = lambda o, v: struct.pack_into("<I", plain, o, v & 0xFFFFFFFF)
-
-    def text(offset, value):
-        encoded = value.encode("utf-16-le")
-        if len(encoded) + 2 > NAME_LENGTH:
-            raise ValueError(f"{value!r} is too long for a {NAME_LENGTH}-byte name field")
-        plain[offset:offset + NAME_LENGTH] = encoded.ljust(NAME_LENGTH, b"\x00")
-
-    for key, value in fields.items():
-        if key == "species":
-            u16(OFF_SPECIES, value)
-        elif key == "held_item":
-            u16(OFF_HELD_ITEM, value)
-        elif key == "trainer_id":
-            u16(OFF_TID, value)
-        elif key == "secret_id":
-            u16(OFF_SID, value)
-        elif key == "experience":
-            u32(OFF_EXPERIENCE, value)
-        elif key == "ability":
-            u16(OFF_ABILITY, value)
-        elif key == "pid":
-            u32(OFF_PID, value)
-        elif key == "encryption_constant":
-            u32(0x00, value)
-        elif key == "nature":
-            plain[OFF_NATURE] = value & 0xFF
-        elif key == "form":
-            u16(OFF_FORM, value)
-        elif key == "evs":
-            plain[OFF_EVS:OFF_EVS + 6] = bytes(value)
-        elif key == "ivs":
-            packed = 0
-            for shift, iv in zip((0, 5, 10, 15, 20, 25), value):
-                packed |= (iv & 31) << shift
-            # the top bits of this word are not IVs and are left exactly as the template had them
-            old = struct.unpack_from("<I", plain, OFF_IVS)[0]
-            u32(OFF_IVS, (old & ~0x3FFFFFFF) | packed)
-        elif key == "nickname":
-            text(OFF_NICKNAME, value)
-            # AND SET THE FLAG, or the console shows the species name and the edit is invisible.
-            # An explicit is_nicknamed= after this still wins; dict order is insertion order.
-            u32(OFF_IVS, struct.unpack_from("<I", plain, OFF_IVS)[0] | IV32_NICKNAMED)
-        elif key == "ot_name":
-            text(OFF_OT_NAME, value)
-        elif key == "is_nicknamed":
-            old_iv = struct.unpack_from("<I", plain, OFF_IVS)[0]
-            u32(OFF_IVS, (old_iv | IV32_NICKNAMED) if value else (old_iv & ~IV32_NICKNAMED))
-        elif key == "is_egg":
-            old_iv = struct.unpack_from("<I", plain, OFF_IVS)[0]
-            u32(OFF_IVS, (old_iv | IV32_EGG) if value else (old_iv & ~IV32_EGG))
-        elif key == "gender":
-            plain[OFF_GENDER] = (plain[OFF_GENDER] & ~0x0C) | ((value & 3) << 2)
-        elif key == "moves":
-            struct.pack_into("<4H", plain, OFF_MOVES, *value)
-        elif key == "move_pp":
-            plain[OFF_MOVE_PP:OFF_MOVE_PP + 4] = bytes(value)
-        elif key == "move_pp_ups":
-            plain[OFF_MOVE_PP_UPS:OFF_MOVE_PP_UPS + 4] = bytes(value)
-        elif key == "relearn":
-            struct.pack_into("<4H", plain, OFF_RELEARN, *value)
-        elif key == "current_handler":
-            plain[OFF_CURRENT_HANDLER] = value & 0xFF
-        elif key == "ht_name":
-            text(OFF_HT_NAME, value)
-        elif key == "ht_language":
-            plain[OFF_HT_LANGUAGE] = value & 0xFF
-        elif key == "ht_id":
-            u16(OFF_HT_ID, value)
-        elif key == "ht_friendship":
-            plain[OFF_HT_FRIENDSHIP] = value & 0xFF
-        elif key == "version":
-            plain[OFF_VERSION] = value & 0xFF
-        elif key == "language":
-            plain[OFF_LANGUAGE] = value & 0xFF
-        elif key == "ot_friendship":
-            plain[OFF_OT_FRIENDSHIP] = value & 0xFF
-        elif key == "met_date":
-            plain[OFF_MET_DATE:OFF_MET_DATE + 3] = bytes(value)
-        elif key == "egg_location":
-            u16(OFF_EGG_LOCATION, value)
-        elif key == "met_location":
-            u16(OFF_MET_LOCATION, value)
-        elif key == "ball":
-            plain[OFF_BALL] = value & 0xFF
-        elif key == "met_level":
-            plain[OFF_MET_LEVEL] = (plain[OFF_MET_LEVEL] & 0x80) | (value & 0x7F)
-        elif key == "ot_gender":
-            plain[OFF_MET_LEVEL] = (plain[OFF_MET_LEVEL] & 0x7F) | ((value & 1) << 7)
-        else:
-            raise ValueError(f"unknown field {key!r}")
-    return encrypt(bytes(plain))
+    return encrypt(gen8.write(decrypt(template_raw), **fields))

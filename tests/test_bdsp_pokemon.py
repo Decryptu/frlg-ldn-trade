@@ -60,7 +60,7 @@ def test_a_block_order_that_is_not_its_own_inverse_still_round_trips():
         return (ec >> 13) & 31
 
     self_inverse = [ec for ec in range(0, 1 << 20, 0x2000)
-                    if pokemon.BLOCK_ORDER[sv_of(ec)] == pokemon._invert(pokemon.BLOCK_ORDER[sv_of(ec)])]
+                    if pokemon.BLOCK_ORDER[sv_of(ec)] == pokemon.invert(pokemon.BLOCK_ORDER[sv_of(ec)])]
     assert self_inverse, "the old bug needs at least one of these to have hidden behind"
 
     for ec in range(0, 1 << 20, 0x2000):                      # every one of the 32 sv values
