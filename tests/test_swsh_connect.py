@@ -153,3 +153,34 @@ def test_a_gap_stops_the_run_rather_than_being_skipped():
 def test_neither_answer_happens_unless_it_is_asked_for():
     args = swsh_connect.build_parser().parse_args([])
     assert args.answer_rtt is False and args.ack_reliable is False
+
+
+# --- The post-offer queue, session 60 ----------------------------------------------------------
+#
+# sw95 died in the middle of a trade because this queue held two different kinds of thing: built
+# payloads for --open-content and plain ints for --box-commands, drained through a builder that
+# assumed ints. The second entry raised, the nursery went down, and the player saw the console
+# report the communication as interrupted seconds after our Pokemon reached their screen.
+
+from pokeldn.swsh import trade as swsh_trade                          # noqa: E402
+
+
+def drain(queue):
+    """What the launcher's drain branch does: pop a payload and send it, nothing else."""
+    return queue.pop(0)
+
+
+def test_both_flags_seed_the_queue_with_payloads_and_nothing_else():
+    opens = [swsh_trade.open_content(int(c)) for c in "40,50".split(",")]
+    boxes = [swsh_trade.box_sync_state(int(c)) for c in "1,2,4".split(",")]
+    for queue in (opens, boxes):
+        assert all(isinstance(p, bytes) for p in queue)
+        while queue:
+            payload = drain(queue)
+            assert isinstance(payload, bytes) and len(payload) >= 4
+            swsh_trade.parse(payload)                 # a real message, id and body
+
+
+def test_the_openers_and_the_commands_are_different_ids():
+    assert swsh_trade.parse(swsh_trade.open_content(40))[0] == 10040
+    assert swsh_trade.parse(swsh_trade.box_sync_state(4))[0] == swsh_trade.POKEMON_TRADE

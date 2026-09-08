@@ -22,7 +22,7 @@ in flight when the rebroadcast stops is the answer, and the log timestamps say w
 
 Never pass --verbose to a live run (there is none); use --capture. docs/swsh.md, docs/pia.md.
 """
-import argparse, json, os, socket, struct, sys, time, zlib
+import argparse, json, os, socket, struct, sys, time, traceback, zlib
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -1001,35 +1001,39 @@ async def main_async(args):
                             # goes quiet until the accept; that quiet window is the only room a
                             # phase opener has, and sw89 spent its pair after the window shut.
                             open_phase(swsh_trade.SELECTION_OFFSET, "SELECTION")
-                        if args.open_content and not st["trade_ready_sent"]:
-                            # OPEN THE PHASES NOBODY HAS OPENED. A content registered at offset N
-                            # has an id at 10000+N as well as the 20000 and 40000 ones this project
-                            # speaks, and `nxldn-lab`'s client opens the confirmation phase by
-                            # sending `ping` on 10040 - unprompted, as an opener. Our console has
-                            # never sent 10040, 10050, 40040 or 40050, so every phase after the
-                            # offer is one neither side has opened.
+                        if st["box_queue"]:
+                            # THE QUEUE HOLDS PAYLOADS, NOT RECIPES, AND THAT IS THE WHOLE FIX.
+                            # sw95 seeded it with built payloads for `--open-content` and with
+                            # plain ints for `--box-commands`, and the drain branch called the
+                            # command builder on whatever it found. The second opener went in as
+                            # bytes, came out through `box_sync_state`, raised, and killed the
+                            # nursery at t=25.6 - which the player saw as the console's own error,
+                            # seconds after our Pokemon appeared on their screen. Twice in one
+                            # session a queue of two different things has cost a run; it holds one
+                            # kind of thing now.
+                            st["offer_pending"] = st["box_queue"].pop(0)
+                            print(f"[tx]     *** QUEUED PAYLOAD *** "
+                                  f"{st['offer_pending'].hex()}")
+                        elif not st["trade_ready_sent"] and (args.open_content
+                                                             or args.box_commands):
                             st["trade_ready_sent"] = True
-                            st["box_queue"] = [swsh_trade.open_content(int(c, 0))
-                                               for c in args.open_content.split(",")]
-                            print(f"[tx]     *** OPENING CONTENTS {args.open_content} *** "
+                            if args.open_content:
+                                # OPEN THE PHASES NOBODY HAS OPENED. A content at offset N has an
+                                # id at 10000+N as well as the 20000 and 40000 ones this project
+                                # speaks, and nxldn-lab's client opens the confirmation phase by
+                                # sending `ping` on 10040, unprompted. Our console has never sent
+                                # 10040, 10050, 40040 or 40050.
+                                st["box_queue"] = [swsh_trade.open_content(int(c, 0))
+                                                   for c in args.open_content.split(",")]
+                                label = f"OPENING CONTENTS {args.open_content}"
+                            else:
+                                # SWEEP THE COMMAND, BECAUSE A REFUSAL IS AN INSTRUMENT.
+                                st["box_queue"] = [swsh_trade.box_sync_state(int(c, 0))
+                                                   for c in args.box_commands.split(",")]
+                                label = f"WALKING THE BOX COMMANDS {args.box_commands}"
+                            print(f"[tx]     *** {label} *** "
                                   f"{[p.hex() for p in st['box_queue']]}")
                             st["offer_pending"] = st["box_queue"].pop(0)
-                        elif args.box_commands and not st["trade_ready_sent"]:
-                            # SWEEP THE COMMAND, BECAUSE A REFUSAL IS AN INSTRUMENT. The console
-                            # gives up a few seconds after the player accepts, not on a fixed timer
-                            # from its own offer, so there is room to say several things and watch
-                            # which one it answers. Every distinct payload it sends is printed with
-                            # its id, and a box command it sends back is printed with its value.
-                            st["trade_ready_sent"] = True
-                            st["box_queue"] = [int(c, 0) for c in args.box_commands.split(",")]
-                            print(f"[tx]     *** WALKING THE BOX SYNC STATE COMMANDS *** "
-                                  f"{st['box_queue']}")
-                            st["offer_pending"] = swsh_trade.box_sync_state(
-                                st["box_queue"].pop(0))
-                        elif st["box_queue"]:
-                            nxt = st["box_queue"].pop(0)
-                            print(f"[tx]     *** BOX SYNC STATE COMMAND {nxt} ***")
-                            st["offer_pending"] = swsh_trade.box_sync_state(nxt)
                         elif args.trade_ready and not st["trade_ready_sent"]:
                             st["trade_ready_sent"] = True
                             # AND SAY WE ARE READY, on the trade holder. The console has never sent
@@ -1353,15 +1357,32 @@ async def main_async(args):
             if st["block_acked"] is None and st["block_out"]:
                 print(f"\n[tx] {st['block_out']} out on {args.send2_protocol:#04x}, not acked")
 
+        async def guarded(name, task):
+            """Run one sender and SURVIVE its bugs.
+
+            A LIVE RUN MUST NOT DIE OF OUR OWN EXCEPTION. Session 59 hardened every reader for this
+            and session 60 was killed twice by senders instead: sw85 by a starved queue, sw95 by a
+            builder called on the wrong kind of queue entry. Both times the nursery went down, the
+            transmit stopped mid-trade, and what the player saw was the console reporting the
+            communication as interrupted - which is exactly what had happened, and it was us who
+            left. A task that raises now says so and the rest of the run carries on, so the capture
+            is still worth reading and the association is not wasted.
+            """
+            try:
+                await task()
+            except Exception as exc:                      # noqa: BLE001 - the whole point
+                traceback.print_exc()
+                print(f"\n[tx] *** {name} DIED: {exc!r} *** the run continues without it")
+
         async with trio.open_nursery() as nursery:
             nursery.start_soon(receiver)
-            nursery.start_soon(joiner)
-            nursery.start_soon(data_sender)
-            nursery.start_soon(block_sender)
-            nursery.start_soon(snapshot_sender)
-            nursery.start_soon(rpc_sender)
-            nursery.start_soon(migration_sender)
-            nursery.start_soon(update_mesh_sender)
+            nursery.start_soon(guarded, "joiner", joiner)
+            nursery.start_soon(guarded, "data_sender", data_sender)
+            nursery.start_soon(guarded, "block_sender", block_sender)
+            nursery.start_soon(guarded, "snapshot_sender", snapshot_sender)
+            nursery.start_soon(guarded, "rpc_sender", rpc_sender)
+            nursery.start_soon(guarded, "migration_sender", migration_sender)
+            nursery.start_soon(guarded, "update_mesh_sender", update_mesh_sender)
             await sender()
             await trio.sleep(args.hold)
             nursery.cancel_scope.cancel()
