@@ -32,8 +32,8 @@ if os.path.isdir(BUNDLED):
 
 import trio, ldn
 from pokeldn.host_support import resolve_keys
-from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4, station4,
-                        station_protocol as stp)
+from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4, reliable5,
+                        rtt_protocol as rtt, station4, station_protocol as stp)
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.swsh import COMM_ID, PASSPHRASE, PIA_PORT, packet_iv, session_keys
 
@@ -74,14 +74,17 @@ def make_socket(ifname):
 
 
 def wrap(keys, our_mac, our_constant, nonce8, payload, protocol, station, port=0,
-         message_flags=pia4.MESSAGE_FLAGS):
+         message_flags=pia4.MESSAGE_FLAGS, destination=0):
     """A version-4 packet carrying one message, framed the way the console frames its own.
 
     The station byte goes in the header AND in the IV's source-id byte - the coupling 5.27 makes
     and the reason `--station` moves one knob rather than two.
+
+    `destination` is a station BITMAP, not an index: every 0x58 and 0x7C message the console sent us
+    in sw29 carries 2, the bit for station index 1, which is our seat. Ours back at it is 1.
     """
     body = pia4.build_message(payload, protocol=protocol, source=our_constant, port=port,
-                              message_flags=message_flags)
+                              message_flags=message_flags, destination=destination)
     iv = packet_iv(keys, our_mac, nonce8, source_id=station)
     return pia4.build_packet(keys.session_key, iv, body, station=station, nonce8=nonce8)
 
@@ -160,7 +163,9 @@ async def main_async(args):
               "requests": 0, "requests_in": 0, "responses": 0, "their_request": None,
               "our_variable_id": 0, "responses_in": 0, "acks_out": 0,
               "joins_out": 0, "mesh_in": 0, "join_response": None, "mesh_acks": 0,
-              "updates_mesh": 0}
+              "updates_mesh": 0, "rtt_in": 0, "rtt_out": 0, "reliable_in": 0,
+              "reliable_seqs": set(), "reliable_acks": 0, "acked_through": 0,
+              "reliable_last": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
                                           # only moment a mesh join has ever been answered
@@ -336,6 +341,67 @@ async def main_async(args):
                             st["mesh_acks"] += 1
                             record(rec="tx_mesh_ack", t=now, protocol=proto, ack=payload.hex())
                             print(f"[tx]     acked it on {proto:#04x}: {payload.hex()}")
+                    elif f["protocol"] == rtt.PROTOCOL and args.answer_rtt:
+                        # 0x58. Sixteen bytes at version 4, not BDSP's thirteen, and the answer
+                        # echoes every byte we do not read (rtt_protocol.response_for_v4).
+                        st["rtt_in"] += 1
+                        try:
+                            got = rtt.parse_v4(body)
+                        except ValueError as e:
+                            print(f"[rx] t={now:6.2f} 0x58 {len(body)} B, not the shape read off "
+                                  f"the binary: {e}")
+                            continue
+                        if got["kind"] != rtt.REQUEST:
+                            continue
+                        reply = rtt.response_for_v4(body)
+                        sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), reply,
+                                         rtt.PROTOCOL, args.connect_station_first,
+                                         message_flags=rtt.MESSAGE_FLAGS,
+                                         destination=args.data_destination),
+                                    (addr[0], PIA_PORT))
+                        st["rtt_out"] += 1
+                        record(rec="tx_rtt", t=now, timestamp=got["timestamp"], reply=reply.hex())
+                        if st["rtt_out"] <= 3:
+                            print(f"[rx] t={now:6.2f} 0x58 RTT request, timestamp "
+                                  f"{got['timestamp']:#014x}")
+                            print(f"[tx]     answered: {reply.hex()}")
+                    elif f["protocol"] == reliable5.PROTOCOL and args.ack_reliable:
+                        # 0x7C. reliable5 was written for BDSP and reads version 4 unchanged.
+                        # THE PASS SIGNAL IS THE RETRANSMITS STOPPING, the same shape as every
+                        # other layer here: the console repeats a sequence until it is acked.
+                        st["reliable_in"] += 1
+                        try:
+                            got = reliable5.parse(body)
+                        except ValueError as e:
+                            print(f"[rx] t={now:6.2f} 0x7c {len(body)} B unreadable: {e}")
+                            continue
+                        st["reliable_last"] = now
+                        if not (got["flags"] & reliable5.FLAG_APPLICATION_DATA):
+                            print(f"\n[rx] t={now:6.2f} *** 0x7c ACK FROM THE CONSOLE *** "
+                                  f"{reliable5.parse_ack_payload(got['payload'])}")
+                            continue
+                        st["reliable_seqs"].add(got["sequence_id"])
+                        through = reliable5.contiguous_through(st["reliable_seqs"],
+                                                              st["acked_through"])
+                        if through == st["acked_through"]:
+                            continue                  # nothing new is contiguous; do not re-ack
+                        st["acked_through"] = through
+                        if st["reliable_acks"] == 0:
+                            print(f"\n[rx] t={now:6.2f} 0x7c seq {got['sequence_id']} stream "
+                                  f"{got['stream_id']} flags {got['flag_names']} payload "
+                                  f"{got['payload'].hex()}")
+                        ack = reliable5.build_ack_message(
+                            through + 1, stream_id=got["stream_id"],
+                            lowest_pending=args.ack_lowest_pending)
+                        sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), ack,
+                                         reliable5.PROTOCOL, args.connect_station_first,
+                                         message_flags=reliable5.MESSAGE_FLAGS,
+                                         destination=args.data_destination),
+                                    (addr[0], PIA_PORT))
+                        st["reliable_acks"] += 1
+                        record(rec="tx_reliable_ack", t=now, through=through, ack=ack.hex())
+                        print(f"[tx]     acked 0x7c through seq {through} "
+                              f"(ack id {through + 1}): {ack.hex()}")
                     else:
                         # ANYTHING on a protocol the console has never used with us is the finding
                         st["other"].append((now, "proto", f["protocol"], body.hex()))
@@ -492,7 +558,10 @@ async def main_async(args):
               f"{st['requests_in']} of them requests, {st['responses_in']} connection responses "
               f"in, {st['responses']} responses out, {st['acks_out']} station acks out, "
               f"{st['joins_out']} join requests out, {st['mesh_in']} messages on 0x18, "
-              f"{st['mesh_acks']} mesh acks out")
+              f"{st['mesh_acks']} mesh acks out, {st['rtt_in']} RTT in / {st['rtt_out']} answered, "
+              f"{st['reliable_in']} reliable in over "
+              f"{len(st['reliable_seqs'])} sequence ids, {st['reliable_acks']} acked "
+              f"(through {st['acked_through']})")
         if st["answer"]:
             now, phase, proto = st["answer"]
             print(f"[cx] FIRST TRAFFIC ON A NEW PROTOCOL: {proto:#04x} at t={now:.2f} in {phase}")
@@ -502,7 +571,10 @@ async def main_async(args):
                requests_in=st["requests_in"], responses=st["responses"],
                responses_in=st["responses_in"], acks_out=st["acks_out"],
                joins_out=st["joins_out"], mesh_in=st["mesh_in"],
-               mesh_acks=st["mesh_acks"], join_response=st["join_response"])
+               mesh_acks=st["mesh_acks"], join_response=st["join_response"],
+               rtt_in=st["rtt_in"], rtt_out=st["rtt_out"], reliable_in=st["reliable_in"],
+               reliable_acks=st["reliable_acks"], acked_through=st["acked_through"],
+               reliable_seqs=sorted(st["reliable_seqs"]))
     if cap:
         cap.close()
     return 0
@@ -584,6 +656,19 @@ def build_parser():
                          "instrument that says the handler was reached")
     ap.add_argument("--join-ack-id", type=lambda s: int(s, 0), default=None,
                     help="fixed ack id for the join request; random when omitted")
+    ap.add_argument("--answer-rtt", action="store_true",
+                    help="answer the console's 0x58 RTT requests. Sixteen bytes at version 4, and "
+                         "the reply echoes the seven bytes nothing has read yet")
+    ap.add_argument("--ack-reliable", action="store_true",
+                    help="acknowledge the 0x7C reliable window. The pass signal is the "
+                         "retransmits STOPPING and the sequence ids moving on")
+    ap.add_argument("--ack-lowest-pending", type=lambda s: int(s, 0), default=1,
+                    help="the header's own 'lowest sequence pending ack'. We have sent nothing on "
+                         "this protocol, so 1 (the next id we would use) and 0 are both readings; "
+                         "the console itself sends 1 while waiting on its own first message")
+    ap.add_argument("--data-destination", type=lambda s: int(s, 0), default=1,
+                    help="the station BITMAP on 0x58 and 0x7C. The console sends 2 to us, station "
+                         "index 1; 1 is the bit for station 0, which is the console")
     ap.add_argument("--hold", type=float, default=30.0)
     ap.add_argument("--capture", default=None)
     return ap

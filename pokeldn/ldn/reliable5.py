@@ -168,6 +168,20 @@ def parse_ack_payload(data):
 ACK_SEQUENCE = 0xFFFF             # a control message has no sequence of its own
 
 
+def contiguous_through(sequence_ids, start=0):
+    """-> the highest sequence id such that every id from `start` + 1 up to it has been received.
+
+    A bulk ack names ONE id and a mask; the id is one past the end of the contiguous run, so a gap
+    stops the run rather than being skipped over. Keeping this separate from the receive loop is
+    what lets a capture replay it - sw29's own 1637 messages go through it offline.
+    """
+    have = set(sequence_ids)
+    through = start
+    while through + 1 in have:
+        through += 1
+    return through
+
+
 def build_ack_message(ack_id, stream_id=0, field_0x50=None, mask=b"", lowest_pending=None,
                       unknown0=0):
     """A whole bulk-acknowledgement message, header and payload, as sp44 caught the console send it.

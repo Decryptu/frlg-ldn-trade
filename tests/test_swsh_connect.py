@@ -10,8 +10,8 @@ import struct
 
 import swsh_connect
 
-from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4,
-                        station_protocol as stp)
+from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4, reliable5,
+                        rtt_protocol as rtt, station_protocol as stp)
 from pokeldn.swsh.session import packet_iv, session_keys
 
 APP_DATA = bytes.fromhex("0330112400000000051800008b718ac6")     # sw01's own advertisement
@@ -96,3 +96,60 @@ def test_joining_is_off_unless_it_is_asked_for():
     # An unasked-for join would change two things at once on a run bought for the handshake.
     assert swsh_connect.build_parser().parse_args([]).join is False
     assert swsh_connect.build_parser().parse_args(["--join"]).join is True
+
+
+# --------------------------------------------------------------------------- answering sw29
+# The two protocols the console left unanswered. Both send paths are checked as BYTES, decrypted
+# back through the console's own derivation, because that is what a run will actually put on the air.
+
+SW29_RTT = bytes.fromhex("000000000000000000000e7840e6df87")
+
+
+def _data(payload, protocol, station=0, nonce8=b"\x03" * 8, destination=1, flags=0x01):
+    keys = session_keys(_Net())
+    return swsh_connect.wrap(keys, OUR_MAC, stp.ldn_constant_id(OUR_MAC), nonce8, payload,
+                             protocol, station, message_flags=flags, destination=destination)
+
+
+def test_the_rtt_answer_is_sixteen_bytes_and_echoes_what_we_do_not_read():
+    h, fields, body = _read_back(_data(rtt.response_for_v4(SW29_RTT), rtt.PROTOCOL))
+    assert fields["protocol"] == rtt.PROTOCOL == 0x58
+    assert len(body) == rtt.SIZE_V4 == 16
+    assert body[0] == rtt.RESPONSE and body[1:] == SW29_RTT[1:]
+    assert rtt.parse_v4(body)["timestamp"] == rtt.parse_v4(SW29_RTT)["timestamp"]
+
+
+def test_our_data_messages_carry_the_bitmap_bit_for_the_console():
+    # the console sends 2 to us at station index 1; the bit for station 0 is 1
+    _, fields, _ = _read_back(_data(rtt.response_for_v4(SW29_RTT), rtt.PROTOCOL))
+    assert fields["destination"] == 1
+    assert swsh_connect.build_parser().parse_args([]).data_destination == 1
+
+
+def test_replaying_sw29s_own_stream_acks_it_through_sequence_twenty():
+    """The 1637 messages sw29 received are 20 sequence ids. One ack per advance, never a re-ack."""
+    seen, acks, through = set(), [], 0
+    for seq in [1] + list(range(2, 21)) * 8:          # the retransmit train, in arrival order
+        seen.add(seq)
+        nxt = reliable5.contiguous_through(seen, through)
+        if nxt != through:
+            through = nxt
+            acks.append(reliable5.build_ack_message(through + 1, lowest_pending=1))
+    assert through == 20
+    assert len(acks) == 20                            # one per advance, not one per message
+    last = reliable5.parse(acks[-1])
+    assert last["is_ack"] and last["sequence_id"] == reliable5.ACK_SEQUENCE == 0xFFFF
+    entry = reliable5.parse_ack_payload(last["payload"])["entries"][0]
+    assert entry["ack_id"] == 21 and entry["field_0x50"] == 20
+    assert entry["mask"] == b"\0" * 16                # a contiguous run leaves nothing in the mask
+
+
+def test_a_gap_stops_the_run_rather_than_being_skipped():
+    assert reliable5.contiguous_through({1, 2, 4, 5}) == 2
+    assert reliable5.contiguous_through({2, 3}) == 0   # nothing contiguous from the start
+    assert reliable5.contiguous_through({2, 3}, start=1) == 3
+
+
+def test_neither_answer_happens_unless_it_is_asked_for():
+    args = swsh_connect.build_parser().parse_args([])
+    assert args.answer_rtt is False and args.ack_reliable is False
