@@ -178,6 +178,8 @@ async def main_async(args):
               "snapshot_acks_out": 0, "snapshot_rx": broadcast4.Receiver(),
               "snapshot_fragments": 0, "snapshot_done_sent": False, "snapshot_seq": 0,
               "offered_pk8": None, "our_pk8": None, "offer_pending": None, "offer_seq": None,
+              "said_by_port": {}, "ack_by_port": {}, "rpc_out": 0, "rpc_acked": None,
+              "trade_ready_sent": False,
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -227,6 +229,12 @@ async def main_async(args):
                     st["their_ack_id"] = max(st["their_ack_id"], e["ack_id"])
                     st["ack_by_proto"][protocol] = max(st["ack_by_proto"].get(protocol, 0),
                                                        e["ack_id"])
+                    # AND PER PORT. sw79 found the console sends its trade RPC pair on 0x7C PORT 1
+                    # and its Pokemon offer on port 0, so a single per-protocol counter conflates
+                    # two independent windows - and every RPC answer this project sent went out on
+                    # the port the console does not read them on.
+                    st["ack_by_port"][(protocol, port)] = max(
+                        st["ack_by_port"].get((protocol, port), 0), e["ack_id"])
                 if (st["data_acked"] is None and st["data_out"]
                         and protocol == args.send_protocol):
                     # THE PASS SIGNAL. The console answers application data and nothing else, so
@@ -236,6 +244,7 @@ async def main_async(args):
                 return
             st["their_payload"] = got["payload"]
             st["said_by_proto"][protocol] = got["payload"]
+            st["said_by_port"][(protocol, port)] = got["payload"]
             # EVERY DISTINCT PAYLOAD, not just the last. `--sync-answers` has a rule for some of
             # them and the ones it has no rule for are the finding: they are what the console says
             # next, in its own ids, and they are what turns another project's table into ours.
@@ -853,6 +862,15 @@ async def main_async(args):
                     if st["offer_seq"] == seq:
                         print(f"[tx]     *** OUR OFFER WAS ACKNOWLEDGED at sequence {seq} ***")
                         st["offer_pending"], st["offer_seq"] = None, None
+                        if args.trade_ready and not st["trade_ready_sent"]:
+                            st["trade_ready_sent"] = True
+                            # AND SAY WE ARE READY, on the trade holder. The console has never sent
+                            # us these bytes and nxldn-lab's client waits for them before offering,
+                            # so either it wants them from us or the roles differ. It is the same
+                            # shape that released the snapshot, one holder further along.
+                            st["offer_pending"] = swsh_trade.trade_ready()
+                            print(f"[tx]     *** SAYING imReady ON THE TRADE HOLDER *** "
+                                  f"{st['offer_pending'].hex()}")
                     seq += 1
                     st["data_seqs"] += 1
                     if st["data_seqs"] <= 3 or st["data_seqs"] % 25 == 0:
@@ -938,6 +956,58 @@ async def main_async(args):
             print(f"\n[tx] {st['snapshot_out']} snapshot messages out")
 
 
+        async def rpc_sender():
+            """Answer the trade RPC pair ON THE PORT THE CONSOLE SENDS IT.
+
+            sw79 counted 19145 of these on 0x7C **port 1** while every other application message -
+            the ping, the block messages, the Pokemon offer - came in on port 0. Every RPC answer
+            before this went out on port 0, which is a window the console does not read them on, so
+            the runs that "answered the RPC" had in fact said nothing the game could hear.
+
+            The window on port 1 is its own: its own sequence, its own acks. `reliable_window`
+            already keys by (protocol, port); the ack counter now does too.
+            """
+            if not args.rpc_port_answers:
+                return
+            port = args.rpc_port
+            key = (reliable5.PROTOCOL, port)
+            dests = [host_constant] if args.send_destinations != "none" else []
+            deadline = time.monotonic() + args.send_seconds + args.send_after + args.send_wait
+            seq = reliable4.FIRST_SEQUENCE
+            last_answered = None
+            while time.monotonic() < deadline:
+                said = st["said_by_port"].get(key)
+                answer = (swsh_trade.answer_rpc(said, our_constant, args.rpc_clock_delta)
+                          if said else None)
+                if answer is None:
+                    await trio.sleep(0.1)
+                    continue
+                if answer != last_answered:
+                    last_answered = answer
+                body = reliable4.build_data_message(answer, sequence_id=seq, destinations=dests,
+                                                   stream_id=args.send_stream)
+                sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), body,
+                                 reliable5.PROTOCOL, args.connect_station_first, port=port,
+                                 message_flags=pia4.MESSAGE_FLAGS,
+                                 destination=args.data_destination),
+                            (host_ip, PIA_PORT))
+                st["rpc_out"] += 1
+                if st["rpc_out"] == 1:
+                    print(f"\n[tx] *** ANSWERING THE TRADE RPC on 0x7c port {port} *** "
+                          f"{answer.hex()}")
+                record(rec="tx_rpc", t=time.monotonic() - t0, port=port, sequence=seq,
+                       payload=answer.hex())
+                await trio.sleep(args.rpc_period)
+                if st["ack_by_port"].get(key, 0) > seq:
+                    if st["rpc_acked"] is None:
+                        st["rpc_acked"] = time.monotonic() - t0
+                        print(f"\n[rx] *** THE CONSOLE ACKED OUR RPC on port {port} *** "
+                              f"sequence {seq}")
+                    seq += 1
+            print(f"\n[tx] {st['rpc_out']} RPC answers out on port {port}, "
+                  f"{'acknowledged' if st['rpc_acked'] else 'NOTHING acknowledged them'}")
+
+
         async def block_sender():
             """The SECOND stream, on the protocol the console chose for it.
 
@@ -995,6 +1065,7 @@ async def main_async(args):
             nursery.start_soon(data_sender)
             nursery.start_soon(block_sender)
             nursery.start_soon(snapshot_sender)
+            nursery.start_soon(rpc_sender)
             await sender()
             await trio.sleep(args.hold)
             nursery.cancel_scope.cancel()
@@ -1177,6 +1248,16 @@ def build_parser():
                     help="wait for this payload on --send2-protocol before sending; omit to send "
                          "as soon as the mesh is up")
     ap.add_argument("--send2-count", type=lambda s: int(s, 0), default=200)
+    ap.add_argument("--trade-ready", action="store_true",
+                    help="after our offer is acknowledged, send imReady on the TRADE holder "
+                         "(20030). The console has never sent these bytes and the published client "
+                         "waits for them before it offers, so it may be our turn to say them")
+    ap.add_argument("--rpc-port-answers", action="store_true",
+                    help="answer the trade RPC on its OWN Pia port with its own reliable window. "
+                         "sw79: the console sends 19145 of them on 0x7C port 1 and every answer "
+                         "this project had sent went out on port 0, where it does not read them")
+    ap.add_argument("--rpc-port", type=lambda s: int(s, 0), default=1)
+    ap.add_argument("--rpc-period", type=float, default=0.3)
     ap.add_argument("--offer-slot", type=lambda s: int(s, 0), default=0,
                     help="which party slot of --send-snapshot to offer back, 1-6; 0 offers "
                          "nothing and only records what the console offers us")

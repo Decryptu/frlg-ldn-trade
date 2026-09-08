@@ -230,3 +230,15 @@ def test_something_that_is_not_an_offer_yields_no_pokemon():
     assert trade.offered_pokemon(trade.message(trade.POKEMON_TRADE, b"\x08\x01")) is None
     assert trade.offered_pokemon(trade.message(trade.POKEMON_TRADE,
                                                trade.field(1, trade.field(1, b"short")))) is None
+
+
+def test_no_reader_raises_on_a_short_message():
+    """sw81 died here. The console sent three bytes at the confirmation prompt, this module raised,
+    and the run stopped transmitting mid-trade - so the console was right to report the
+    communication as interrupted. A reader on a live run returns None; it does not raise."""
+    for payload in (b"", b"\x00", b"\x3e\x4e\x00", b"\x5e\x9c\x00"):
+        assert trade.offered_pokemon(payload) is None
+        assert trade.parse_rpc(payload) is None
+        assert trade.answer_rpc(payload, OUR_STATION) is None
+        assert trade.answers_for_offer(payload, b"x" * 0x158) == ()
+        assert trade.next_answer(payload, station_id=OUR_STATION)[0] == payload

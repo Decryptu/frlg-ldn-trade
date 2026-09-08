@@ -141,9 +141,10 @@ def build_rpc(offset, base, station_id, clock, body=b"\x00\x00\x00\x00"):
 
 def parse_rpc(payload):
     """-> the five members of a trade RPC, or None if this is not one."""
-    message_id, body = parse(payload)
-    if message_id != RPC_ENVELOPE:
+    got = _maybe_parse(payload)
+    if got is None or got[0] != RPC_ENVELOPE:
         return None
+    _, body = got
     outer = _read_fields(body)
     if not isinstance(outer.get(1), bytes):
         return None
@@ -234,6 +235,35 @@ def answers_for(payload):
     return SYNC_ANSWERS.get(bytes(payload), ())
 
 
+def trade_ready(ready=True):
+    """`imReady{isReady:true}` on the TRADE holder, 20030 - the same shape as the block one.
+
+    NOT MEASURED FROM OUR CONSOLE, and the reasoning is worth writing down. `nxldn-lab`'s client
+    waits for exactly these bytes before it sends its own Pokemon, and then echoes them back. Ours
+    never sends them: across sw76, sw79 and sw80 the only thing the console ever put on 20030 was
+    the offer itself. So either it is waiting for this from us, or the roles in their capture are
+    not ours.
+
+    It is the same shape that unlocked the snapshot - `imReady` on the block holder - one holder
+    further along, which is the reason to try it before anything more elaborate.
+    """
+    return message(POKEMON_TRADE, field(IM_READY, field_varint(1, 1 if ready else 0)))
+
+
+def _maybe_parse(payload):
+    """-> (id, body), or None for anything too short to be one.
+
+    **A READER ON A LIVE RUN MUST NOT RAISE.** sw81 reached the confirmation prompt - the player
+    saw our Pokemon and pressed accept - and then the console sent a THREE-BYTE message, this
+    module raised, and the run died mid-trade. The console reported the communication as
+    interrupted, which is exactly what had happened: we were the one who left.
+    """
+    payload = bytes(payload)
+    if len(payload) < 4:
+        return None
+    return struct.unpack_from("<I", payload, 0)[0], payload[4:]
+
+
 def offered_pokemon(payload):
     """-> the 0x158 PK8 inside a trade offer, or None when this is not one.
 
@@ -243,9 +273,10 @@ def offered_pokemon(payload):
     the record it carried gives the console's bytes back exactly, which is what says the framing is
     read and not merely guessed.
     """
-    message_id, body = parse(payload)
-    if message_id != POKEMON_TRADE:
+    got = _maybe_parse(payload)
+    if got is None or got[0] != POKEMON_TRADE:
         return None
+    _, body = got
     outer = _read_fields(body)
     if not isinstance(outer.get(1), bytes):
         return None
