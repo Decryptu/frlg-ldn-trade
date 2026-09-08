@@ -947,6 +947,60 @@ a `+0x168` exist in content 50's code:
 inert by construction, so sx39 was void rather than a negative, and 30050 (sx45) reaches a handler
 that is not the Pokemon receive.
 
+## The 40000 family is routed on (elementId, ownerId), and kind is the port
+
+Still session 63, and it finishes the layer above. `0x006d44e0` builds the 40030/40040/40050 holder
+the same way the content holders are built - id at `+0x160`, listener at `+0x168` - but it registers
+it with `0x006daf40(manager, &holder, 1, 0)`, **`w2 = 1`**, where every content holder registers with
+`w2 = 0`. `w2` is `entry[8]`, the drain's kind, and `0x006a8490` / `0x006a84f0` turn a kind into a
+mesh port: `[pia+0xd0+kind*4]` on Pia 0x7C and `[pia+0xd8+kind*4]` on 0x80.
+
+**So "port 0" and "port 1" are kind 0 and kind 1, and they are not two windows of one thing: port 0
+carries the CONTENT holders (20030, 10050, the pings) and port 1 carries the framework's own
+40000-family envelopes.** That is exactly what every capture shows, and it is now read rather than
+observed.
+
+**AND THE ENVELOPE IS ROUTED ON A PAIR OF KEYS.** The 40000 holder's listener is `element+0x18` and
+its slot 0 is `0x006d59f0`, which is eleven instructions of routing:
+
+    [Data+0x14] == [listener+0x10]        field 1, syncId, against the element's own offset 30/40/50
+    walk [listener+0x28] .. [+0x30]       the element's sub-elements, 0x90 bytes each
+      [Data+0x18] == [sub+0x62]           field 2, elementId, against the sub-element's u16 id
+      [Data+0x20] == [sub+0x68]           field 3, ownerId,   against the sub-element's u64 owner
+    sub->vtable at 0x48, called with (sub, body, len, [Data+0x28])   field 5 and field 4:
+                                          the body and the CLOCK
+    otherwise: ret                        NOTHING, silently
+
+**A `Data` whose (elementId, ownerId) is not a registered sub-element is dropped without a byte of
+complaint**, and the sub-element that does own the pair is handed the body **and the clock**.
+Content 50's own send confirms the layout from the other end: `0x010d6000` passes
+`[x+0x62]` and `[x+0x68]` to the transport alongside the Pokemon, so a sub-element sends with the
+same id and owner it is addressed by.
+
+## What nxldn-lab does in the selection phase and this project does not
+
+`scratchpad/nxldn-lab` is replay-with-substitution off a console-to-console capture, so it is a map
+rather than a derivation - but the map records two moves that have no counterpart here, and both are
+about the clock and the pair the section above says the console routes on.
+
+**IT OPENS THE SELECTION PHASE ITSELF.** On `820000001a00` - id 130, `pingSynced` - its client sends
+two 40050 `Data`s on port 1, elementId 10000 and 20000, its own `ownerId`, and the console's own two
+four-byte bodies. Our own captures carry that payload every run: `sx45r1_6` has it at t=31.30,
+**0.3 s before the console's own 40050 burst at t=31.60**, and this project has only ever echoed it.
+
+**AND IT ANSWERS THE PAIR TWICE, THE SECOND TIME AT CLOCK + 2.** The console's selection burst is
+the same three messages sent three times with the clock advanced by 2 each time - `sx45r1_6`:
+`0x1cb4`, `0x1cb6`, `0x1cb8`. Every answer this project has sent carries ONE clock and is then
+retransmitted unchanged until it is acked, so our state has never moved while the console's did.
+
+`bin/swsh_connect.py --selection-start` and `--rpc-pair-advance 2` are those two moves, each behind
+its own flag so a run changes one of them.
+
+**AND ONE HYPOTHESIS DIED CHEAPLY.** nxldn-lab sends every application message on Pia **0x7C**, and
+`--send-protocol`'s default is 0x80 - but `scratchpad/launcher_logs/sx45r1_6_launcher.log` shows
+every run since session 61 passes `--send-protocol 0x7c` already. The offer's protocol is not the
+difference, and no run needs to be spent finding that out.
+
 **WHAT IS LEFT IS INSIDE `0x010d5e40` AND IT IS TWO SILENT RETURNS.** With the id right, the header
 right, the type right and the listener installed, a correct 10050 that changes nothing can only be
 dying at `0x006b5850` returning `0xfd` - the mesh cannot name the sending station - or at

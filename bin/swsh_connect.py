@@ -288,6 +288,14 @@ async def main_async(args):
             st["their_payload"] = got["payload"]
             st["said_by_proto"][protocol] = got["payload"]
             st["said_by_port"][(protocol, port)] = got["payload"]
+            # AND THE ONE CUE nxldn-lab ACTS ON THAT WE NEVER HAVE. Its client opens the selection
+            # phase itself when the console says `820000001a00` - id 130, pingSynced - and only
+            # then answers the console's own burst. Our captures carry that payload 0.3 s ahead of
+            # the burst every run (sx45r1_6, t=31.30 against t=31.60), and this project has only
+            # ever echoed it. `open_phase` latches, so this fires once.
+            if args.selection_start and got["payload"] == swsh_trade.sync(
+                    130, swsh_trade.PING_SYNCED):
+                open_phase(swsh_trade.SELECTION_OFFSET, "SELECTION, ON THE 130 PINGSYNCED")
             # THE 40030 RPC IS A PAIR AND WE HAVE ONLY EVER ANSWERED HALF OF IT. The console sends
             # TWO members, one per base - 10000 and 20000 - and `said_by_port` keeps only the LAST
             # thing said, so sx15 sent 459 copies of one member and never the other. Keep each
@@ -1432,11 +1440,28 @@ async def main_async(args):
                                 for k in members]
                         if all(b is not None for b in both):
                             st["rpc_pair_sent"].add(envelope)
-                            # PREPENDED, as sx17 did it - the run that got past the commit. A
-                            # phase answer outranks whatever else is waiting on this window.
-                            st["rpc_queue"] = list(both) + st["rpc_queue"]
+                            queued = list(both)
                             print(f"[tx]     *** ANSWERING THE {envelope} PAIR, BOTH MEMBERS *** "
                                   f"{[b.hex() for b in both]}")
+                            if args.rpc_pair_advance:
+                                # THE SAME PAIR AGAIN, ONE STATE LATER. `0x006d59f0` routes a
+                                # 40000-family Data on (elementId, ownerId) and hands the body and
+                                # the CLOCK to the sub-element that owns that pair; the console's
+                                # own pair goes out three times with the clock +2 each burst, and
+                                # ours has always gone out once and then been retransmitted
+                                # unchanged. A repeated clock is a repeated state.
+                                again = [swsh_trade.answer_rpc(
+                                    st["rpc_seen"][k], our_constant,
+                                    args.rpc_clock_delta + args.rpc_pair_advance)
+                                    for k in members]
+                                if all(a is not None for a in again):
+                                    queued += list(again)
+                                    print(f"[tx]     *** AND THE {envelope} PAIR AGAIN AT CLOCK "
+                                          f"+{args.rpc_pair_advance} *** "
+                                          f"{[a.hex() for a in again]}")
+                            # PREPENDED, as sx17 did it - the run that got past the commit. A
+                            # phase answer outranks whatever else is waiting on this window.
+                            st["rpc_queue"] = queued + st["rpc_queue"]
                 pending = st["rpc_queue"][0] if st["rpc_queue"] else None
                 answer = pending if pending is not None else (
                     swsh_trade.answer_rpc(said, our_constant, args.rpc_clock_delta)
@@ -2024,6 +2049,18 @@ def build_parser():
     ap.add_argument("--rpc-clock-delta", type=lambda s: int(s, 0), default=5,
                     help="how far to advance a trade RPC's clock in our answer. 5 is nxldn-lab's "
                          "and is the one number in this path nothing here has measured")
+    ap.add_argument("--rpc-pair-advance", type=lambda s: int(s, 0), default=0,
+                    help="after answering an RPC pair, send BOTH members again with the clock "
+                         "advanced by this much. The console advances its own pair's clock by 2 "
+                         "each burst (sx45r1_6: b41c, b61c, b81c) and every answer this project "
+                         "has sent carries ONE clock, repeated - so our state never moves. "
+                         "nxldn-lab sends the pair and then the pair again at +2, which is the "
+                         "only thing in its selection sequence we have never done. 0 is off")
+    ap.add_argument("--selection-start", action="store_true",
+                    help="send our own 40050 pair the moment the console says id 130 pingSynced, "
+                         "before its own selection burst. nxldn-lab's client opens the selection "
+                         "phase this way and nothing here has ever opened one; the console sends "
+                         "820000001a00 in our own captures 0.3 s before its 40050 burst")
     ap.add_argument("--ack-snapshot", action="store_true",
                     help="ACK the console's 0x84 fragments (kind 0x21, a contiguous base and a "
                          "bitmask). Nothing here has ever acked this protocol, which is why the "

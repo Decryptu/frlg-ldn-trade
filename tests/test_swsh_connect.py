@@ -228,3 +228,51 @@ def test_a_spaced_queue_drains_every_entry_and_not_just_the_first():
     spaced = run(drain_in_ack=False)
     gaps = [round(b[0] - a[0], 1) for a, b in zip(spaced, spaced[1:])]
     assert all(g >= 5.0 for g in gaps), gaps
+
+
+# --- The two moves nxldn-lab makes and we never have, session 63 -------------------------------
+#
+# `0x006d59f0` routes a 40000-family `Data` on (elementId, ownerId) and hands the sub-element that
+# owns the pair its body AND its clock. The console's own selection pair goes out three times with
+# the clock advanced by 2 each burst (sx45r1_6, t=31.60: b41c, b61c, b81c); every answer this
+# project has sent carries ONE clock and is then retransmitted unchanged. And nxldn-lab's client
+# OPENS the selection phase on `820000001a00` - id 130, pingSynced - which our own captures carry
+# 0.3 s before the console's burst and which nothing here has ever acted on.
+
+def test_the_two_missing_selection_moves_are_off_unless_they_are_asked_for():
+    args = swsh_connect.build_parser().parse_args([])
+    assert args.rpc_pair_advance == 0 and args.selection_start is False
+    on = swsh_connect.build_parser().parse_args(["--selection-start", "--rpc-pair-advance", "2"])
+    assert on.rpc_pair_advance == 2 and on.selection_start is True
+
+
+def test_advancing_the_pair_moves_the_clock_and_nothing_else():
+    """The second copy of a pair member must differ from the first in the clock alone - that is
+    what makes it a new state rather than a retransmission."""
+    member = swsh_trade.build_rpc(50, 10000, 0xdeadbeef, 0x1cb4)
+    first = swsh_trade.answer_rpc(member, 0x1249a221d8580000, 5)
+    again = swsh_trade.answer_rpc(member, 0x1249a221d8580000, 5 + 2)
+    assert first is not None and again is not None and first != again
+    a, b = swsh_trade.parse_rpc(first), swsh_trade.parse_rpc(again)
+    assert b["clock"] - a["clock"] == 2
+    for key in ("envelope", "offset", "base", "station_id", "body"):
+        assert a[key] == b[key], key
+
+
+def test_the_selection_start_cue_is_the_console_payload_we_capture():
+    """The trigger is id 130's pingSynced, byte for byte - the payload sx45r1_6 records at t=31.30,
+    0.3 s ahead of the console's own 40050 burst."""
+    assert swsh_trade.sync(130, swsh_trade.PING_SYNCED) == bytes.fromhex("820000001a00")
+
+
+def test_the_selection_start_pair_is_the_shape_nxldn_lab_sends():
+    """Two members on 40050, elementId 10000 then 20000, our ownerId in both, and the console's own
+    two four-byte bodies."""
+    pair = swsh_trade.build_rpc_pair(swsh_trade.SELECTION_OFFSET, 0x1249a221d8580000, 1511)
+    assert len(pair) == 2
+    got = [swsh_trade.parse_rpc(p) for p in pair]
+    assert [g["envelope"] for g in got] == [40050, 40050]
+    assert [g["offset"] for g in got] == [50, 50]
+    assert [g["base"] for g in got] == list(swsh_trade.RPC_BASES)
+    assert all(g["station_id"] == 0x1249a221d8580000 for g in got)
+    assert [bytes(g["body"]) for g in got] == list(swsh_trade.RPC_PAIR_BODIES)
