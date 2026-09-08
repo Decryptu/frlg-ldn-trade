@@ -692,20 +692,34 @@ the player list. So **exactly one of the two sides emits command 3 on its first 
 trade session is built, and which one is decided by a role bit.** Command 3 is the only value in
 1..5 this project has never put on the air.
 
-**THE TRADE STATE IS `[session+0x140]`, 1..9, and its table is at `0x2067b68`:**
+**THE TRADE STATE IS `[session+0x140]` and its table is at `0x2067b68`.** The table decodes to
+seven live entries and **state 10 is one of them**, so the range is 1..10 rather than the 1..9 an
+earlier reading of this page gave:
 
-    1  0x010c9c78  entry, calls the callback at session+0x2e8
+    1  0x010c9c78  -> 0x010ca0a0: start content 50 and send our Pokemon. true -> 2, false -> 9
     2  wait        5  wait        7  wait
     3  0x010c9f60  the Pokemon exchange - 0x010d54b0 on content 50 - then state 4, or 9 on error
     4  0x010c9c9c  the big one; 0x01109320 decides, and false goes to state 6
-    6  0x010c9f84  the callback at session+0x188
-    8  0x010c9fa8  the save sync - 0x010dac90 on content 40 - then state 9
+    6  0x010c9f84  -> 0x010ca1ac: install four delegates and START CONTENT 40
+    8  0x010c9fa8  content 40's TEARDOWN - 0x010dac90 - then state 9
     9  0x010c9ef4  terminal: [+0x144] set means failure, and the listeners are told event 8
+    10 0x010ca838
 
-The console has never sent a 40050 or a 40040, which are content 50's and content 40's own ids, so
-**it has never entered state 3 or state 8**. It aborts before the exchange begins, not during it.
 `[session+0x140]` also gates the whole box callback: `0x010ca800` drops every event unless the
 state is 0, so once an error is recorded the session stops listening.
+
+**STATE 2 DOES NOT LEAVE ITSELF, AND THAT IS THE WHOLE POINT.** Nothing in the update writes state
+3. The write is in a delegate the state-1 branch installs at `session+0x2e0`, and the delegate is
+`0x010cc380`: it takes the object it is handed, stores it at `session+0x70` (`0x766390`, and +0x70
+is where the docs above put the PARTNER's Pokemon), builds a 0x60-byte record from it
+(`0x010f5cc0`) and writes `[session+0x140] = 3`. **What moves the console out of state 2 is our
+Pokemon arriving through content 50's own receive event - not a ping, not a confirmation, not a box
+command.**
+
+**AND STATE 8 IS NOT THE SAVE SYNC.** `0x010c9fa8` calls `0x010dac90(content40, session+0x170,
+session+0x210)`, which walks the listener vectors at `[content+0x20]+0x60` and `[content+0x28]+0x60`,
+removes those two, and tail-calls `0x010daac0` - the release, which drops the holder at +0x18 and
+both event sources. It is content 40's teardown, and the state after it is 9.
 
 None of this is in `nxldn-lab`, `PokePiaSWSH`, `swsh-lan-client` or `PSD` - all four encode the
 holder and none of them names a command value. The wire format was published; the state machine
@@ -727,11 +741,81 @@ order was wrong, so the run measures the order and not the value. `--box-open` s
 at the 0x84 snapshot ack instead, which is before either side offers anything.
 
 **AND STATE 1 IS WHERE THE ABORT LIVES.** `0x010ca0a0` calls `0x010d5440`, content 50's send, which
-opens with `bl 0x010d4d90` and **does nothing whatever if that returns false**. The caller then
+opens with `bl 0x010d4d90` and **does nothing whatever if that returns false**. `0x010d4d90` is not
+a gate on a send: it is content 50's own INIT, the twin of content 40's `0x010da470`, and it
+registers with `mov w2, #0x32` - fifty. The caller then
 takes the false branch to `[session+0x144] = 1`, which is state 9, error, listeners told event 8 -
 the interrupted-communication message. The console has never put a 40050 on the air, so it has
 never completed state 1: the accept runs, content 50 declines to send, and the session errors out
 without a byte on the application layer. Every run since sw83 has that shape.
+
+## A content is three holders, and 40000+offset is minted in the framework
+
+Session 62, read out of Shield 1.3.2's `main` with no association spent. The three trade contents
+are not three message ids; each one is a small family, and the family is built the same way for all
+three.
+
+**EVERY CONTENT REGISTERS THREE HOLDERS.** The registrar is one function per content -
+`0x010ccd90` for 30, `0x010da7d0` for 40, `0x010d5150` for 50 - and each of them does the same
+three things, reading the content's own offset from the halfword at `[content+0x372]`:
+
+    ldrh w8, [x19, #0x372] ; mov w9, #0x2710 ; add w8, w8, w9    id = 10000 + offset  -> 0x010dd910
+    ldrh w8, [x19, #0x372] ; mov w9, #0x4e20 ; add w8, w8, w9    id = 20000 + offset  -> 0x010d85f0
+    ldrh w8, [x19, #0x372] ; mov w9, #0x7530 ; add w8, w8, w9    id = 30000 + offset  -> 0x010d0980
+
+each handed to `0x006daeb0(manager, &holder, flag)` with flag 1, 0 and 0 in that order. **The
+30000 family - 30030, 30040, 30050 - exists in every content this project has spoken to, and we
+have never seen one on the air or sent one.**
+
+**AND THE 40000 FAMILY IS MINTED ONE LAYER DOWN, WHICH IS WHY THE SEARCH FOR IT FAILED.** The base
+class those holders hang off is constructed by `0x006d3f80`, which stores the content offset as a
+BYTE at `[base+0x28]` (30, 40 or 50) and the constant `0xfc18` as a halfword at `[base+0xac]`. The
+framework's start call `0x006d44e0` then reads that byte back and builds the id:
+
+    ldrb w20, [x0, #0x28]          the content offset, 30 / 40 / 50
+    mov  w9, #-0x63c0              a MOVN: w9 = 0xffff9c40
+    add  w24, w20, w9
+    strh w24, [x20, #0x160]        the low 16 bits: 0x9c5e / 0x9c68 / 0x9c72 = 40030 / 40040 / 40050
+
+**40030, 40040 and 40050 are therefore measured in the image and no longer borrowed from
+`nxldn-lab`.** `swsh_msgid.py` reported that no 40000 exists in `main` because it looked for a MOVZ
+of 40000; the constant is a **MOVN of -0x63c0**, and 40000 never appears as a literal at all. Any
+future id hunt has to accept that encoding.
+
+`0x006d44e0` also opens with `strh w1, [x0, #0xac]`, overwriting the `0xfc18` the constructor put
+there with its caller's argument - and `0xfc18` is exactly the `000018fc` that one member of the
+observed 40030 pair carries in field 5, where the other carries `00000000`. That the constant and
+both writes exist is FACT; that this field is where the pair's two values come from is a DEDUCTION.
+
+## When each content starts, and why a 40040 cannot come early
+
+**CONTENT 40 IS NOT BUILT WITH THE TRADE SESSION.** `0x010c9280` runs its small constructor
+`0x010da3f0`, which does nothing but set two vtables, keep its arguments and zero its fields. The
+init that registers 10040/20040/30040 and makes `0x006d44e0` mint 40040 is `0x010da470`, reached
+only through `0x010dabc0` - and `0x010dabc0`'s only caller inside the session update is at
+`0x010ca288`, in the **state 6** branch (`0x010c9f84` -> `0x010ca1ac`). Content 50's init
+`0x010d4d90` is likewise reached only from state 1.
+
+    state 1   content 50 starts: 10050, 20050, 30050 registered, 40050 minted
+    state 6   content 40 starts: 10040, 20040, 30040 registered, 40040 minted
+
+**SO NO 40040 OF ANY KIND CAN EXIST UNTIL THE TRADE HAS PASSED STATES 1, 2, 3 AND 4.** State 6 is
+downstream of the Pokemon exchange (state 3) and of the state-4 decision at `0x01109320`, where the
+game allocates a 0x90-byte record (`0x783c20`) and hands it `session+0x68` and `session+0x70` - our
+Pokemon and theirs. Content 40 is `SyncSaveDataHolder`, and it is started after the swap has been
+decided, not before it.
+
+Three hardware runs were spent on the other reading: sx28 pinged content 40's 10000-base holder,
+sx31 sent the sync-120 ping, sx32 was launched to send a 40040 RPC pair. **The console was never
+going to answer any of them, because the object that would answer had not been constructed.** The
+same is true of the confirmation stages `nxldn-lab` records on 40040: they are real, and they
+belong after the exchange rather than before it.
+
+What that leaves is state 2, and state 2 wants one thing - the partner's Pokemon delivered through
+content 50's receive event, which is what `0x010cc380` turns into `[session+0x140] = 3`. **Which of
+10050, 20050 and 30050 raises that event is the next offline read**, and it is a read, not a run:
+the event source is `[content50+0x20]`, built by `0x5ec690` in the init and subscribed by
+`0x010c58b0` in `0x010d5440`.
 
 ## What this project has measured, and what it has borrowed
 
