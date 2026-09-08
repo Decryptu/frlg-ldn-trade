@@ -181,7 +181,7 @@ async def main_async(args):
               "said_by_port": {}, "ack_by_port": {}, "rpc_out": 0, "rpc_acked": None,
               "trade_ready_sent": False,
               "our_index": None, "host_index": None, "last_update_mesh": None, "rpc_queue": [],
-              "selection_sent": False, "box_queue": [], "box_seen": [],
+              "selection_sent": False, "box_queue": [], "box_seen": [], "box_next": 0.0,
               "we_are_host": False, "update_mesh_out": 0,
               "migration_pending": None, "migration_out": 0, "migration_acked": None,
               "said_serial": 0, "serial_by_proto": {}, "serial_by_port": {},
@@ -1013,7 +1013,7 @@ async def main_async(args):
                             # goes quiet until the accept; that quiet window is the only room a
                             # phase opener has, and sw89 spent its pair after the window shut.
                             open_phase(swsh_trade.SELECTION_OFFSET, "SELECTION")
-                        if st["box_queue"]:
+                        if st["box_queue"] and time.monotonic() >= st["box_next"]:
                             # THE QUEUE HOLDS PAYLOADS, NOT RECIPES, AND THAT IS THE WHOLE FIX.
                             # sw95 seeded it with built payloads for `--open-content` and with
                             # plain ints for `--box-commands`, and the drain branch called the
@@ -1024,6 +1024,7 @@ async def main_async(args):
                             # session a queue of two different things has cost a run; it holds one
                             # kind of thing now.
                             st["offer_pending"] = st["box_queue"].pop(0)
+                            st["box_next"] = time.monotonic() + args.box_period
                             print(f"[tx]     *** QUEUED PAYLOAD *** "
                                   f"{st['offer_pending'].hex()}")
                         elif not st["trade_ready_sent"] and (args.open_content
@@ -1049,6 +1050,7 @@ async def main_async(args):
                                   f"open {args.open_content} *** "
                                   f"{[p.hex() for p in st['box_queue']]}")
                             st["offer_pending"] = st["box_queue"].pop(0)
+                            st["box_next"] = time.monotonic() + args.box_period
                         elif args.trade_ready and not st["trade_ready_sent"]:
                             st["trade_ready_sent"] = True
                             # AND SAY WE ARE READY, on the trade holder. The console has never sent
@@ -1606,6 +1608,13 @@ def build_parser():
                          "holder for each N - `382700000a00` for 40, which is exactly the opener "
                          "nxldn-lab's client sends to start the confirmation phase, rebuilt here "
                          "from our own content registry rather than copied")
+    ap.add_argument("--box-period", type=float, default=0.0,
+                    help="seconds to wait between the queued post-offer payloads. THE POINT IS TO "
+                         "SPAN THE ACCEPT. sw91 sent eight box commands inside 2.5 s, so every one "
+                         "of them landed BEFORE the player pressed accept; the console tears down "
+                         "on the accept, not on a timer, so a command that only means something "
+                         "after it has never been sent. Spread them and the player accepts in the "
+                         "middle of the sweep")
     ap.add_argument("--box-commands", default=None, metavar="N,N,...",
                     help="after our offer is acknowledged, send boxSyncStateCommand{data:N} on the "
                          "trade holder for each N in turn, one per acknowledged sequence. 20030 is "
