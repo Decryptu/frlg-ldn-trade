@@ -616,6 +616,123 @@ and that is a DEDUCTION, not a confirmation. An unaligned single occurrence of o
 in 40 MB is what four random bytes do, and counting it as evidence would make "the id is in the
 binary" true of ids that are not.
 
+## The box state machine, read out of the binary
+
+Sixteen hardware runs swept box command values blind. This is the code that receives them, and it
+settles what each one means without another association. Everything here is Shield 1.3.2's `main`,
+addresses as `tools/switch/nso_read.py` writes them.
+
+**THE TRADE SESSION IS ONE CLASS AND ITS SETUP IS `0x010c9280`.** One function constructs all three
+trade contents in order and stores them in the session object:
+
+    +0x120   content 30, the box exchange       ctor 0x010cca10, registers offset 30 at 0x010ce4f0
+    +0x148   content 40, SyncSaveDataHolder     ctor 0x010da3f0
+    +0x2b0   content 50, PokemonTradeDataHolder ctor 0x010d4d40
+    +0x60    an event source, listeners in a vector at its own +0x60
+    +0x68    our Pokemon        +0x70  theirs
+    +0x140   the trade state, 1..9             +0x144  the error code
+    +0x418   send-command-3-on-the-first-frame  +0x419  the role bit that suppresses it
+
+It also writes four function pointers into `+0x90..+0xa8` and the session pointer into `+0xb0`.
+That is a delegate, and it is the thing session 60 could not find: `0x010cc250` is its invoke
+thunk and it tail-calls **`0x010ca800`**, the session's box callback, as `(session, code, payload)`.
+
+**COMMANDS ARE 1..6 AND NOTHING ELSE.** `onBoxSyncStateCommand` is `0x010ce180`, vtable slot 1 of
+the 0x50-byte wrapper at session+0x120 (vtable group `0x2625808`). It does three things:
+
+1. `if (sender == our own station) return` - it ignores its own echo, `[[0x2616a30]]+0xf0`.
+2. `w8 = msg->data`, then `if ((w8 - 1) > 5) return`. **0, 7, 8 and anything higher are dropped
+   silently**, which is why sw91's sweep of 1..8 provoked nothing for half its values.
+3. a six-entry jump table at `0x2067bec`, one case per command, each notifying every listener with
+   the command value unchanged. The map is the identity: wire command N becomes event N.
+
+Field 1 of the same holder - `boxSendPokemon` - goes to vtable slot 0, `0x010ce080`, and notifies
+with event **0**. That is why the receive dispatcher takes 0..6 while the sender only ever emits
+1..5: 0 is not a command, it is the Pokemon.
+
+**AND THE COMMANDS COME IN TOGGLE PAIRS.** The listener is `0x00c8d900`. It keeps one flag byte per
+event in an array at `+0x218`, `[owner + 0x218 + code] = 1` - and before it sets the new flag it
+clears another:
+
+    code 2 clears the flag for code 1        (+0x219)
+    code 5 clears the flag for code 4        (+0x21c)
+
+So the enum is not a list of unrelated pokes. **1 offers, 2 withdraws the offer; 4 confirms, 5
+withdraws the confirmation.** Two facts measured on hardware fall out of that and stop being
+mysteries: sx03 sent 1 then 2 and the console began leaving four seconds later - it was not a crash
+and not a refusal, **we cancelled our own offer**; and sx07 put 4, 5 and 6 into the post-accept
+window, where the 5 retracted the 4 about a second after it landed.
+
+**THE SENDER IS `0x010cda70(content, command)`** and the game reaches it through five one-line
+wrappers, `0x010cde90` .. `0x010cded0`, which are commands 1, 2, 3, 4 and 5 in address order. The
+scene drives them from a six-way jump table at `0x00a96d10` keyed on its own action field `+0x78`:
+
+    action 1  ->  command 3
+    action 2  ->  the Pokemon (0x010ca430), then command 1
+    action 3  ->  command 2
+    action 4  ->  command 5
+    action 5  ->  command 4
+    action 6  ->  0x010ca640, which stores our Pokemon and sets the trade state to 1
+
+Two gates sit in front of the send, and both fail SILENTLY - the console looks identical on the air
+whether it sent nothing or refused to:
+
+    [content+0x48] holds a pending command; a DIFFERENT one arriving sets the error byte
+                   [content+0x4d] and sends nothing at all
+    [content+0x4c] is the channel-ready bool, set by 0x010ce040 on a zero result code; while it is
+                   clear the command is parked in +0x48 and never goes out
+
+**THERE IS AN OPENER AND WE HAVE NEVER SENT IT.** The session's per-frame update is `0x010c9bb0`,
+and before it switches on the trade state it does this:
+
+    if ([session+0x418]) { if (![session+0x419]) send command 3; [session+0x418] = 0; }
+
+`+0x418` is set to 1 by the setup at `0x010c9280` and `+0x419` to `0x00dceea0() & 1`, which walks
+the player list. So **exactly one of the two sides emits command 3 on its first frame after the
+trade session is built, and which one is decided by a role bit.** Command 3 is the only value in
+1..5 this project has never put on the air.
+
+**THE TRADE STATE IS `[session+0x140]`, 1..9, and its table is at `0x2067b68`:**
+
+    1  0x010c9c78  entry, calls the callback at session+0x2e8
+    2  wait        5  wait        7  wait
+    3  0x010c9f60  the Pokemon exchange - 0x010d54b0 on content 50 - then state 4, or 9 on error
+    4  0x010c9c9c  the big one; 0x01109320 decides, and false goes to state 6
+    6  0x010c9f84  the callback at session+0x188
+    8  0x010c9fa8  the save sync - 0x010dac90 on content 40 - then state 9
+    9  0x010c9ef4  terminal: [+0x144] set means failure, and the listeners are told event 8
+
+The console has never sent a 40050 or a 40040, which are content 50's and content 40's own ids, so
+**it has never entered state 3 or state 8**. It aborts before the exchange begins, not during it.
+`[session+0x140]` also gates the whole box callback: `0x010ca800` drops every event unless the
+state is 0, so once an error is recorded the session stops listening.
+
+None of this is in `nxldn-lab`, `PokePiaSWSH`, `swsh-lan-client` or `PSD` - all four encode the
+holder and none of them names a command value. The wire format was published; the state machine
+behind it was not.
+
+**WHAT THE AIR SAYS BACK, sx09 and sx10.** Two runs tested the reading and both are one-variable
+steps from the last:
+
+    sx09  command 4 alone, sent on MIGRATION_START     acked; console still left 5 s later
+    sx10  command 3 before the offer command, late     console left 3.5 s later, player still
+                                                       picking, and the screen said the partner
+                                                       had cancelled rather than the usual
+                                                       communication error
+
+sx09 is a clean negative for "4 is the confirmation the console is waiting for". sx10 is NOT a
+result about command 3's meaning: `--box-commands` fires after our offer is acknowledged, and the
+game emits its own 3 ten seconds earlier, on the first frame after the trade session exists. The
+order was wrong, so the run measures the order and not the value. `--box-open` sends box commands
+at the 0x84 snapshot ack instead, which is before either side offers anything.
+
+**AND STATE 1 IS WHERE THE ABORT LIVES.** `0x010ca0a0` calls `0x010d5440`, content 50's send, which
+opens with `bl 0x010d4d90` and **does nothing whatever if that returns false**. The caller then
+takes the false branch to `[session+0x144] = 1`, which is state 9, error, listeners told event 8 -
+the interrupted-communication message. The console has never put a 40050 on the air, so it has
+never completed state 1: the accept runs, content 50 declines to send, and the session errors out
+without a byte on the application layer. Every run since sw83 has that shape.
+
 ## What this project has measured, and what it has borrowed
 
 FACT, sw70's own capture (`scratchpad/sw_app_payloads.py` walks it): the console sent **five

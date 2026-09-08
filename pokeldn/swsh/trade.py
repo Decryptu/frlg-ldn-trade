@@ -128,6 +128,8 @@ def pokemon_trade(pk8):
 # The deduction session 59 wrote down is now a measurement, and its mechanism is on the wire.
 RPC_ENVELOPE_BASE = 40000             # the envelope's own id is this plus the same offset
 RPC_ENVELOPE = 40030                  # the only one the console has ever sent us: offset 30
+RPC_PREFIX = struct.pack("<I", RPC_ENVELOPE)      # its four-byte header, for recognising a member
+                                      # of the pair on the wire before parsing it
 RPC_OFFSET, RPC_BASE, RPC_STATION, RPC_CLOCK, RPC_BODY = 1, 2, 3, 4, 5
 RPC_BASES = (10000, 20000)            # the pair the console sends, and the pair it expects back
 
@@ -210,14 +212,18 @@ def build_rpc_pair(offset, station_id, clock, bodies=RPC_PAIR_BODIES):
 def parse_rpc(payload):
     """-> the five members of a trade RPC, or None if this is not one."""
     got = _maybe_parse(payload)
-    if got is None or got[0] != RPC_ENVELOPE:
+    # ANY ENVELOPE IN THE BAND, NOT JUST 40030. sx17 is the first run to get past the offer phase:
+    # the console opened the SELECTION phase and started sending 40050 pairs, and a parser that
+    # only knew 40030 had no answer for them. The envelope's id is 40000 + the same offset its
+    # field 1 carries, so the band is the test and the offset is read from the message.
+    if got is None or not (RPC_ENVELOPE_BASE < got[0] <= RPC_ENVELOPE_BASE + 1000):
         return None
     _, body = got
     outer = _read_fields(body)
     if not isinstance(outer.get(1), bytes):
         return None
     inner = _read_fields(outer[1])
-    return {"offset": inner.get(RPC_OFFSET), "base": inner.get(RPC_BASE),
+    return {"envelope": got[0], "offset": inner.get(RPC_OFFSET), "base": inner.get(RPC_BASE),
             "station_id": inner.get(RPC_STATION), "clock": inner.get(RPC_CLOCK),
             "body": inner.get(RPC_BODY, b"")}
 
@@ -234,7 +240,12 @@ def answer_rpc(payload, station_id, clock_delta=5):
     somebody else's, and the run that answers an RPC is what tests it.
     """
     got = parse_rpc(payload)
-    if got is None or got["clock"] is None:
+    # EVERY FIELD OR NOTHING. Widening the parser to the whole 40000 band let members through that
+    # 40030-only parsing never saw: the console's Pokemon rides a 40050 envelope with NO base field
+    # at all, and its echo of ours carries base 1. `varint(None)` raised inside both senders at
+    # sx25 and killed them mid-trade. A reader must not raise on a live run - session 59's rule -
+    # and "I cannot answer this" is a None, not an exception.
+    if got is None or any(got[k] is None for k in ("offset", "base", "clock")):
         return None
     return build_rpc(got["offset"], got["base"], station_id, got["clock"] + clock_delta,
                      got["body"])
@@ -341,6 +352,22 @@ CONTENT_BASE_LOW = 10000              # the fourth id a content gets, and the on
 def open_content(offset, which=PING):
     """-> `ping` on content `offset`'s 10000-base holder: `382700000a00` for offset 40."""
     return message(CONTENT_BASE_LOW + offset, field(which, b""))
+
+
+def pokemon_offer(offset, pk8):
+    """-> PokemonTradeDataHolder on content `offset`'s 10000-base holder: id 10050 for offset 50.
+
+    MEASURED AT sx20, from the console's side. Once the selection phase's pair is answered the
+    console offers ITS Pokemon as a 344-byte PK8 in field 5 of a 40050 envelope and then sends a
+    status whose body ends `0100`. `nxldn-lab`'s client answers that status by putting its own
+    Pokemon here - `4227` little-endian is 10050 - on reliable PORT 0, not on the 20030 holder the
+    offer phase uses. The offer phase and the selection phase each carry a Pokemon and they are
+    different messages on different windows.
+    """
+    pk8 = bytes(pk8)
+    if len(pk8) not in (0x148, 0x158):
+        raise ValueError(f"{len(pk8)} bytes is not a PK8 (0x148 stored or 0x158 party)")
+    return message(CONTENT_BASE_LOW + offset, field(1, field(1, pk8)))
 
 
 def box_sync_state(command):

@@ -324,3 +324,12 @@ def test_a_content_fifty_envelope_carries_the_pk8_in_field_five():
 def test_a_content_fifty_envelope_refuses_anything_that_is_not_a_pk8():
     with pytest.raises(ValueError):
         trade.build_rpc_pokemon(trade.SELECTION_OFFSET, 20000, 1, 1, bytes(100))
+
+
+def test_answer_rpc_refuses_a_member_with_no_base():
+    """sx25: the console's Pokemon rides a 40050 envelope with no base field, and its echo of ours
+    carries base 1. Both reached `answer_rpc` once the parser accepted the whole 40000 band, and
+    `varint(None)` killed the sender mid-trade. Answering is optional; raising is not allowed."""
+    no_base = bytes.fromhex("729c00000a0a08322a0400000000")
+    assert trade.parse_rpc(no_base)["base"] is None
+    assert trade.answer_rpc(no_base, 0x1234, 5) is None

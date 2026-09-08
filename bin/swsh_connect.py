@@ -179,12 +179,14 @@ async def main_async(args):
               "snapshot_fragments": 0, "snapshot_done_sent": False, "snapshot_seq": 0,
               "offered_pk8": None, "our_pk8": None, "offer_pending": None, "offer_seq": None,
               "said_by_port": {}, "ack_by_port": {}, "rpc_out": 0, "rpc_acked": None,
-              "trade_ready_sent": False,
+              "trade_ready_sent": False, "box_open_sent": False, "pk8_offer_sent": False,
               "our_index": None, "host_index": None, "last_update_mesh": None, "rpc_queue": [],
               "selection_sent": False, "box_queue": [], "box_seen": [], "box_next": 0.0,
               "we_are_host": False, "update_mesh_out": 0,
               "migration_pending": None, "migration_out": 0, "migration_acked": None,
               "said_serial": 0, "serial_by_proto": {}, "serial_by_port": {},
+              "rpc_seen": {}, "rpc_pair_sent": set(), "offer_status_answered": set(),
+              "rpc_bodies_answered": set(), "confirmation_opened": False,
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -286,6 +288,119 @@ async def main_async(args):
             st["their_payload"] = got["payload"]
             st["said_by_proto"][protocol] = got["payload"]
             st["said_by_port"][(protocol, port)] = got["payload"]
+            # THE 40030 RPC IS A PAIR AND WE HAVE ONLY EVER ANSWERED HALF OF IT. The console sends
+            # TWO members, one per base - 10000 and 20000 - and `said_by_port` keeps only the LAST
+            # thing said, so sx15 sent 459 copies of one member and never the other. Keep each
+            # member by its BASE so the sender can answer both.
+            #
+            # NOT BY nxldn-lab's KIND BYTE. That client tests `payload[5] in (0x19, 0x1A)`, which is
+            # the INNER LENGTH, and the length depends on how many bytes the sender's station id
+            # varint takes: sx15's console sent 0x19/0x1A and sx16's sent 0x1A/0x1B. Their constant
+            # is an artefact of the capture they worked from. The base is a field, so read it.
+            if protocol == reliable5.PROTOCOL:
+                member = swsh_trade.parse_rpc(got["payload"])
+                if member is not None and member["base"] in swsh_trade.RPC_BASES:
+                    # KEYED BY ENVELOPE AND BASE. Each phase has its own envelope - 40030 the offer,
+                    # 40050 the selection, 40040 the confirmation - and each sends the same two
+                    # members. sx17 answered 40030's pair, the console opened the selection phase,
+                    # and then sent 40050 pairs to a client that only knew about 40030.
+                    st["rpc_seen"][(member["envelope"], member["base"])] = got["payload"]
+                    # AND THE STATUS THAT FOLLOWS THE CONSOLE'S OWN POKEMON. sx20: once the 40050
+                    # pair is answered the console puts a 344-byte PK8 in field 5 of a 40050
+                    # envelope and then sends a status whose four-byte body ends `0100` instead of
+                    # the `18fc` every other member carries. That status is the cue to offer ours
+                    # on the 10000-base holder of the SAME content - id 10050, reliable port 0 -
+                    # and to answer the status itself on port 1.
+                    if (args.selection_offer and member["base"] == swsh_trade.RPC_BASES[1]
+                            and member["body"][-2:] == b"\x01\x00" and len(member["body"]) == 4
+                            and not st["offer_status_answered"]
+                            and st["our_pk8"] is not None):
+                        # A HARD LATCH, NOT A PER-ENVELOPE SET. sx23 printed this branch 48 times
+                        # in a run where exactly ONE payload satisfies the condition - re-checked
+                        # offline against every RPC payload in its own log. Whatever the cause, a
+                        # set keyed on a parsed field was not holding it, and this project has lost
+                        # more runs to a message repeated than to any message missing. One offer
+                        # per run, and the trigger is printed so the next log can be read.
+                        st["offer_status_answered"].add(True)
+                        # THE POKEMON GOES OUT ON THE PORT-0 WINDOW and the status answer on the
+                        # port-1 one; `box_queue` drains into `offer_pending` on port 0 and
+                        # `rpc_queue` is the port-1 sender's own.
+                        st["box_queue"] = st["box_queue"] + [
+                            swsh_trade.pokemon_offer(member["offset"], st["our_pk8"])]
+                        st["box_next"] = 0.0
+                        status = swsh_trade.answer_rpc(got["payload"], our_constant,
+                                                       args.rpc_clock_delta)
+                        if status is not None:
+                            st["rpc_queue"] = [status] + st["rpc_queue"]
+                        st["rpc_bodies_answered"].add(
+                            (member["envelope"], member["base"], bytes(member["body"])))
+                        print(f"[tx]     *** THE SELECTION OFFER STATUS *** offering our "
+                              f"Pokemon on {swsh_trade.CONTENT_BASE_LOW + member['offset']} "
+                              f"port 0 and answering the status on port 1, triggered by "
+                              f"{got['payload'].hex()}")
+                    # AND EVERY OTHER DISTINCT BODY, ONCE. sx21: with the pair answered and our
+                    # Pokemon offered, the console echoes ours back and then sends a member whose
+                    # field 5 is a HASH - `c7772899` where every earlier member carried `00000000`
+                    # or `000018fc`. The per-envelope guard had already fired, so nothing answered
+                    # it. The clock advances on every message, so the payload cannot be the key;
+                    # (envelope, base, BODY) can, and it answers each new thing the console says
+                    # exactly once while ignoring the retransmissions.
+                    elif (args.rpc_bodies and member["clock"] is not None
+                            and len(member["body"]) == 4):
+                        seen_body = (member["envelope"], member["base"],
+                                     bytes(member["body"]))
+                        if (seen_body not in st["rpc_bodies_answered"]
+                                and bytes(member["body"]) not in (b"\x00\x00\x00\x00",
+                                                                  b"\x00\x00\x18\xfc")):
+                            reply = swsh_trade.answer_rpc(got["payload"], our_constant,
+                                                          args.rpc_clock_delta)
+                            if reply is not None:
+                                st["rpc_bodies_answered"].add(seen_body)
+                                st["rpc_queue"] = st["rpc_queue"] + [reply]
+                                # AND OPEN THE NEXT PHASE, BECAUSE NOBODY ELSE WILL. sx24: the
+                                # console stopped sending 40050 ENTIRELY the moment this answer
+                                # went out - no retransmission, which in Pia means satisfied, not
+                                # ignored. It then said nothing at all. `nxldn-lab`'s client opens
+                                # the confirmation itself with `ping` on the content's 10000-base
+                                # holder (`382700000a00`, id 10040), and this project has never
+                                # opened a phase unprompted.
+                                if (args.pair_after_hash is not None
+                                        and not st["confirmation_opened"]):
+                                    # OPEN THE PHASE THE WAY THIS CONSOLE OPENS ONE: WITH A PAIR.
+                                    # sx28 and sx31 both measured the negatives - a bare `ping` on
+                                    # content 40's 10000-base holder (`382700000a00`) and a bare
+                                    # sync-120 ping (`780000000a00`) were each ignored completely.
+                                    # What HAS opened a phase on this console, twice, is the two
+                                    # RPC members with the standard bodies: 40030 opened the offer
+                                    # and 40050 the selection, both as a pair on the RPC window.
+                                    # `build_rpc_pair` builds ours with our own station id and the
+                                    # clock the console is already using.
+                                    st["confirmation_opened"] = True
+                                    clock = (member["clock"] or 0) + args.rpc_clock_delta
+                                    pair = swsh_trade.build_rpc_pair(
+                                        args.pair_after_hash, our_constant, clock)
+                                    st["rpc_queue"] = st["rpc_queue"] + list(pair)
+                                    print(f"[tx]     *** OPENING THE {40000 + args.pair_after_hash}"
+                                          f" PHASE WITH A PAIR *** {[p.hex() for p in pair]}")
+                                elif (args.sync_after_hash is not None
+                                        and not st["confirmation_opened"]):
+                                    # START THE SYNC NOBODY HAS EVER STARTED. sx28: the chain runs
+                                    # 97 -> 60000 -> 110 -> 130, and the console opens the
+                                    # SELECTION phase itself the moment 130's pingSynced lands.
+                                    # **id 120 never appears at all** - and 120 is the confirmation's
+                                    # trigger. The console started 110 and 130; nothing has ever
+                                    # started 120, and `SYNC_ANSWERS` only knows how to ANSWER it.
+                                    # Opening content 40 directly (sx28, `382700000a00`) changed
+                                    # nothing, which fits: the phase follows its sync, not the ping.
+                                    st["confirmation_opened"] = True
+                                    opener = swsh_trade.sync(args.sync_after_hash,
+                                                             swsh_trade.PING)
+                                    st["box_queue"] = st["box_queue"] + [opener]
+                                    st["box_next"] = 0.0
+                                    print(f"[tx]     *** STARTING SYNC {args.sync_after_hash} "
+                                          f"AFTER THE HASH *** {opener.hex()}")
+                                print(f"[tx]     *** ANSWERING A NEW {member['envelope']} BODY "
+                                      f"{bytes(member['body']).hex()} *** {reply.hex()}")
             # AND WHEN IT SAID IT. `--answer-once` needs to tell "the console has said something
             # new" from "the console said that once, a minute ago" - see its argument help. The
             # senders read the payload AND this counter, and a sender that has already answered
@@ -393,6 +508,7 @@ async def main_async(args):
                     print("[tx]     *** ECHOING ITS OWN RECORD BACK, unchanged ***")
                 if st["our_pk8"] is not None:
                     st["offer_pending"] = swsh_trade.pokemon_trade(st["our_pk8"])
+                    st["pk8_offer_sent"] = True
                     ours = swsh_pokemon.read(st["our_pk8"])
                     print(f"[tx]     *** OFFERING species {ours['species']} "
                           f"{ours['nickname']!r} level {ours['level']} BACK ***")
@@ -722,6 +838,29 @@ async def main_async(args):
                                 print(f"\n[rx] t={now:6.2f} *** IT ACKED OUR SNAPSHOT: base "
                                       f"{got['base']} mask {got['mask']:#x} *** - the first 0x84 "
                                       f"ack this project has ever been sent")
+                                if ((args.box_open or args.open_early)
+                                        and not st["box_open_sent"]):
+                                    # THE OPENER GOES HERE BECAUSE ORDER IS WHAT KILLED sx10.
+                                    # The game emits its own command 3 on the FIRST FRAME after the
+                                    # trade session is built (0x010c9bb0, gated on the role bit at
+                                    # session+0x419) - before either player has picked anything.
+                                    # sx10 sent 3 after both offers instead and the console left
+                                    # while the player was still in the menu, the same shape command
+                                    # 2 produced at sx03. The snapshot ack is the earliest one-shot
+                                    # this client has, and it lands about ten seconds before the
+                                    # console's own offer.
+                                    st["box_open_sent"] = True
+                                    st["box_queue"] = ([swsh_trade.box_sync_state(int(c, 0))
+                                                        for c in (args.box_open or "").split(",")
+                                                        if c.strip()]
+                                                       + [swsh_trade.open_content(int(c, 0))
+                                                          for c in (args.open_early or "").split(",")
+                                                          if c.strip()]
+                                                       + st["box_queue"])
+                                    st["box_next"] = 0.0
+                                    print(f"[tx]     *** OPENING WITH box {args.box_open}, "
+                                          f"content {args.open_early} *** "
+                                          f"{[p.hex() for p in st['box_queue']]}")
                             # ITS BASE IS A COUNT OF WHAT IT HOLDS, and when that reaches all of
                             # our fragments the transfer is done and the sender says so ONCE with
                             # a 0x19. sw74 watched the base walk 0 -> 1 -> 2 -> 3 and then repeat
@@ -1051,8 +1190,15 @@ async def main_async(args):
                             # session a queue of two different things has cost a run; it holds one
                             # kind of thing now.
                             pass
-                        elif not st["trade_ready_sent"] and (args.open_content
-                                                             or args.box_commands):
+                        elif (st["pk8_offer_sent"] and not st["trade_ready_sent"]
+                                and (args.open_content or args.box_commands)):
+                            # ONLY AFTER THE POKEMON, AND sx11 IS WHY. `--box-open` (session 61)
+                            # puts a payload in the same queue ten seconds earlier, its ack came
+                            # through this branch, and command 1 went out at t=14 with no offer
+                            # behind it - so nothing was said after the real offer at t=24 and the
+                            # player sat on "en attente d'une reponse" for the whole hold. The
+                            # branch means "after OUR POKEMON was acknowledged", never "after any
+                            # queued payload was".
                             st["trade_ready_sent"] = True
                             # BOX COMMANDS FIRST, THEN THE OPENERS, AND THE ORDER IS MEASURED.
                             # sw97 sent the 10040/10050 openers INSTEAD of the box command and the
@@ -1074,7 +1220,8 @@ async def main_async(args):
                                   f"open {args.open_content} *** "
                                   f"{[p.hex() for p in st['box_queue']]}")
                             st["box_next"] = 0.0        # the sender loop takes it from here
-                        elif args.trade_ready and not st["trade_ready_sent"]:
+                        elif (args.trade_ready and st["pk8_offer_sent"]
+                                and not st["trade_ready_sent"]):
                             st["trade_ready_sent"] = True
                             # AND SAY WE ARE READY, on the trade holder. The console has never sent
                             # us these bytes and nxldn-lab's client waits for them before offering,
@@ -1205,12 +1352,40 @@ async def main_async(args):
                 # A QUEUED MESSAGE OUTRANKS AN ANSWER, and travels on the same window: this port
                 # has one sequence and one ack counter, so a phase we OPEN has to go through here
                 # rather than beside it.
+                if args.rpc_pair:
+                    # BOTH MEMBERS, IN ORDER, ONCE PER ENVELOPE. The pair is one act; half of it
+                    # repeated is not a slower version of it. Each phase gets answered exactly once.
+                    for envelope in sorted({e for e, _ in st["rpc_seen"]}):
+                        if envelope in st["rpc_pair_sent"]:
+                            continue
+                        # NOT `keys` - that name is the session crypto in this scope, and sx19
+                        # rebound it to a list of tuples and killed the sender one line later.
+                        members = [(envelope, b) for b in swsh_trade.RPC_BASES]
+                        if not all(k in st["rpc_seen"] for k in members):
+                            continue
+                        both = [swsh_trade.answer_rpc(st["rpc_seen"][k], our_constant,
+                                                      args.rpc_clock_delta)
+                                for k in members]
+                        if all(b is not None for b in both):
+                            st["rpc_pair_sent"].add(envelope)
+                            # PREPENDED, as sx17 did it - the run that got past the commit. A
+                            # phase answer outranks whatever else is waiting on this window.
+                            st["rpc_queue"] = list(both) + st["rpc_queue"]
+                            print(f"[tx]     *** ANSWERING THE {envelope} PAIR, BOTH MEMBERS *** "
+                                  f"{[b.hex() for b in both]}")
                 pending = st["rpc_queue"][0] if st["rpc_queue"] else None
                 answer = pending if pending is not None else (
                     swsh_trade.answer_rpc(said, our_constant, args.rpc_clock_delta)
                     if said else None)
                 if answer is None:
                     await trio.sleep(0.1)
+                    continue
+                if args.rpc_pair and pending is None and st["rpc_pair_sent"]:
+                    # Every phase seen so far has been answered; anything further on this window is
+                    # the flood sx15 measured. A NEW envelope re-arms the branch above.
+                    # ANSWERED ONCE AND THAT IS THE WHOLE ANSWER. Anything further on this window
+                    # is the flood sx15 measured.
+                    await trio.sleep(args.rpc_period)
                     continue
                 if args.answer_once and pending is None:
                     # THE SAME RULE AS THE DATA SENDER, and this window is where it cost the most:
@@ -1644,6 +1819,68 @@ def build_parser():
                          "on the accept, not on a timer, so a command that only means something "
                          "after it has never been sent. Spread them and the player accepts in the "
                          "middle of the sweep")
+    ap.add_argument("--selection-offer", action="store_true",
+                    help="when the console follows its selection-phase Pokemon with the status "
+                         "whose body ends `0100`, offer OUR Pokemon on that content's 10000-base "
+                         "holder (id 10050) on reliable port 0 and answer the status on port 1. "
+                         "sx20 is where the console first sent that pair of things and held")
+    ap.add_argument("--pair-after-hash", type=int, default=None, metavar="N",
+                    help="once a hash body has been answered, open content N's phase by sending "
+                         "the two-member RPC pair for it - 40 is the confirmation, so `689c...`. "
+                         "THIS IS THE ONLY THING THAT HAS EVER OPENED A PHASE ON THIS CONSOLE: "
+                         "40030 opened the offer and 40050 the selection, both as a pair. sx28 "
+                         "ruled out a bare content ping (`382700000a00`) and sx31 a bare sync-120 "
+                         "ping (`780000000a00`) - the console answered neither")
+    ap.add_argument("--sync-after-hash", type=int, default=None, metavar="N",
+                    help="once a hash body has been answered, send `ping` on sync holder N (120 "
+                         "is the confirmation's) on port 0. sx28 measured the whole chain: the "
+                         "console drives 97, 60000, 110 and 130 itself and opens the selection "
+                         "phase the instant 130's pingSynced lands - and **120 never appears at "
+                         "all**. `SYNC_ANSWERS` knows how to answer 120; nothing has ever started "
+                         "it. Opening content 40 directly did nothing, which fits: the phase "
+                         "follows its sync")
+    ap.add_argument("--open-after-hash", type=int, default=None, metavar="N",
+                    help="once a hash body has been answered, `ping` content N's 10000-base holder "
+                         "on port 0 to open the next phase - 40 is the confirmation, so this sends "
+                         "`382700000a00`. sx24 is why: the console stopped sending 40050 the "
+                         "instant our hash answer went out and then said nothing at all, and Pia "
+                         "retransmits anything it is still waiting on, so silence there means "
+                         "satisfied. Something has to open the phase after it")
+    ap.add_argument("--rpc-bodies", action="store_true",
+                    help="answer every DISTINCT (envelope, base, field-5 body) in the 40000 band "
+                         "once, on top of the opening pair. The clock advances on every message so "
+                         "the payload cannot be the key, but the body can: `00000000` and "
+                         "`000018fc` are the openers and anything else is something new. sx21 "
+                         "stalled on a 40050 member whose body was the hash `c7772899`, which the "
+                         "per-envelope guard had already stopped answering")
+    ap.add_argument("--rpc-pair", action="store_true",
+                    help="answer the console's 40030 RPC as the PAIR it is: collect both members "
+                         "one per base, 10000 then 20000 - keyed on the BASE FIELD, because "
+                         "nxldn-lab's `payload[5] in (0x19, 0x1A)` is the inner length and it moves "
+                         "with the sender's station-id varint: sx16's console sent 0x1A/0x1B - "
+                         "send both once in that order, and then say nothing more on this window. "
+                         "sx15 measured what we do instead - 459 copies of ONE member and never "
+                         "the other - because `said_by_port` keeps only the last thing said. "
+                         "`nxldn-lab`, which completes trades against a real console, sends the "
+                         "pair once and only when both members are in hand")
+    ap.add_argument("--open-early", default=None, metavar="N,N,...",
+                    help="`ping` content N's 10000-base holder at the 0x84 snapshot ack, before "
+                         "either side offers. **CONTENT 30 HAS NEVER BEEN OPENED** - sw98 tried 40 "
+                         "and 50 and nobody tried the box content's own. The console's box SEND is "
+                         "gated on a ready bool at content+0x4c which only `0x010ce040` sets, on a "
+                         "zero result code, and until it is set every command the game tries to "
+                         "send is parked in content+0x48 and never goes out. A parked command that "
+                         "does not match the next one sets the error byte +0x4d, and the session "
+                         "update `0x010c9bb0` turns that into trade state 9 - error, abort, nothing "
+                         "on the application layer. That is the observed failure exactly")
+    ap.add_argument("--box-open", default=None, metavar="N,N,...",
+                    help="send these box commands as soon as the console acks our 0x84 snapshot - "
+                         "BEFORE either side offers a Pokemon. The game sends command 3 exactly "
+                         "once, on the first frame after its trade session is built and only when "
+                         "the role bit at session+0x419 is clear (0x010c9bb0), so one of the two "
+                         "sides owes the other an opener before anything else happens. sx10 sent 3 "
+                         "AFTER both offers and the console left while the player was still "
+                         "picking - the value may be right and the order wrong")
     ap.add_argument("--box-commands", default=None, metavar="N,N,...",
                     help="after our offer is acknowledged, send boxSyncStateCommand{data:N} on the "
                          "trade holder for each N in turn, one per acknowledged sequence. 20030 is "
