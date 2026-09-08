@@ -389,6 +389,12 @@ def pokemon_offer(offset, pk8):
     Pokemon here - `4227` little-endian is 10050 - on reliable PORT 0, not on the 20030 holder the
     offer phase uses. The offer phase and the selection phase each carry a Pokemon and they are
     different messages on different windows.
+
+    **AND SESSION 63 CONFIRMED THE SHAPE OUT OF THE BINARY.** Content 50's 10000-base holder parses
+    its body with `0x010d9ee0`, which accepts tag 0x0a and nothing else, and the submessage's
+    descriptor at `0x1bdb460` is `Pokemon { 1 bytes serializePokemonParam }`. This is the one
+    message content 50's receive event can be fed. `docs/swsh.md`, "The whole path from the radio
+    to content 50's receive event".
     """
     pk8 = bytes(pk8)
     if len(pk8) not in (0x148, 0x158):
@@ -404,10 +410,14 @@ def pokemon_offer_high(offset, pk8):
     the exchange that reaches the player. In the selection phase it sends its pair on 40050 and its
     own Pokemon on 40050, the sync layer's own envelope.
 
+    **DEAD, MEASURED, SESSION 63.** `0x010d81d0` returns silently when `[holder+0x168]` is null, and
+    content 50 installs a listener on its 10000-base holder (`0x010d50ac`) and its 30000-base one
+    (`0x010d533c`) and **never on the 20000-base one**. sx39 addressed an object with nothing behind
+    it: it is a void run, not a negative. Kept because the run log names the flag.
+
     sx36 offered ours as a five-field Data on 40050 and sx37 as the console's own three-field one,
     byte-identical in shape and length; both were acknowledged on every sequence and neither moved
-    the console's trade state. sx34 offered it as this holder on 10050. **20050 is untried**, and
-    it is the id the box phase's own Pokemon rides one content over.
+    the console's trade state. sx34 offered it as this holder on 10050.
     """
     pk8 = bytes(pk8)
     if len(pk8) not in (0x148, 0x158):

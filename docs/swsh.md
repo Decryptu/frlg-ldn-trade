@@ -862,6 +862,100 @@ So what to build next is a `Data` on 40050 carrying our own `ownerId` and the 34
 `body`, rather than `PokemonTradeDataHolder{pokemon{...}}` on 10050 with no owner in it at all -
 which is what `pokemon_offer` has been sending. It is buildable and provable offline.
 
+**THAT PARAGRAPH IS WRONG AND THE SECTION BELOW IS THE MEASUREMENT THAT RETIRES IT.** The sender
+`0x010d5e40` resolves is not a field of the message at all: it is a pointer the transport hands
+down. Session 63 walked the dispatch instead of guessing at it.
+
+## The whole path from the radio to content 50's receive event
+
+Session 63, read out of Shield 1.3.2's `main`, no association spent. Every step below is a function
+in the image and the argument registers are named where they are set.
+
+    0x006a9a20   the sync pump, called from the trade session update (0x01108ed0, 0x011092f0)
+    0x006db3b0   the poll: for every registered entry, take its byte at +8 and drain both streams
+    0x006a8490   stream A for that byte: mesh port [pia+0xd0+kind*4] on Pia PROTOCOL 0x7C
+    0x006a84f0   stream B for that byte: mesh port [pia+0xd8+kind*4] on Pia PROTOCOL 0x80
+    0x006db9c0   drain one stream: slot 0x78 fills (sender*, length) and the buffer at manager+0xf0
+    0x006db620   the dispatch: match the entry, then call the holder's vtable slot 8
+    0x010d81d0   content 50's 10000-base holder: parse the body, then call the listener's slot 0
+    0x010d5e40   the listener: resolve the sender to a station index, memcpy 0x158, invoke it
+
+**THE APPLICATION HEADER IS FOUR BYTES AND THE THIRD ONE IS NOT PADDING.** `0x006db840` builds a
+message at `manager+0x240f0`:
+
+    manager+0x240f0   u16   the message id            strh w3
+    manager+0x240f2   u8    a discriminator           from manager+0x480f0
+    manager+0x240f3   u8    zero                      strb wzr
+    manager+0x240f4   ...   the body
+
+and `0x006db620` takes it apart the same way - `ldrh w24,[x2]` is the id, `ldrb w9,[x2,#2]` is the
+discriminator, `add x23,x2,#4` is the body and `sub w9,w3,#4` its length. This project has been
+sending `<u16 id><u16 0000>` since session 56 and byte 2 has always been zero.
+
+**THE DISPATCH HAS THREE GATES, AND ONLY ONE HOLDER IN THREE IS SUBJECT TO THE THIRD.** A
+registration entry is 16 bytes: the holder, then a byte at +8 and a byte at +9. `0x006daeb0(manager,
+&holder, flag)` passes `w2 = 0` and `w3 = flag`, and `0x006db358` / `0x006db35c` store them in that
+order, so **+8 is always 0 and +9 is the flag** - and the flag is 1 for the 10000+offset holder and
+0 for the 20000 and 30000 ones (`0x010d5150`, three calls). The gates:
+
+    id == holder->slot7()          slot 7 is the getter that returns [holder+0x160], the id
+    entry[8] == the drain's kind   both 0
+    entry[9] ? header[2] == [manager+0x480f0] : no check
+
+**So the 10000-base holder is the only one whose header byte 2 is validated**, and each content's
+registrar sets `[manager+0x480f0]` to zero on its way out (`0x010d53a0`: `mov w1,wzr; bl 0x6db470`).
+Our zero passes. The check exists; it is not what is stopping us.
+
+**THE SENDER IS A POINTER FROM THE TRANSPORT, NOT A FIELD OF THE MESSAGE.** `0x006db9c0` reads it
+out of the stream (`[sp+0x28]`, filled by the stream's own slot 0x78) and passes it as `x2`;
+`0x006db620` forwards it as `x3`; `0x010d81d0` forwards it as `x2` to `0x010d5e40`, which hands it
+straight to `0x006b5850`. The loopback path shows what kind of thing it is: `0x006db8e8` passes
+`[[0x2616a30]]+0xf0`, our own station record - the same address content 30's echo check compares
+against. **`Data.ownerId` has nothing to do with the 10050 path**, and sx36, sx37 and sx45's
+ownerId variations were varying a field this handler never reads.
+
+**AND THE MESSAGE TYPE IS NOW READ RATHER THAN INFERRED.** `0x010d81d0` constructs a 0x28-byte
+protobuf (`0x010d9c90`), calls `ParseFromArray` (`0x0070c180`, the usual Clear / slot 0x58 /
+IsInitialized triple) and then passes `[msg+0x18]` to the listener. Its
+`MergePartialFromCodedStream` is `0x010d9ee0` and it accepts **tag 0x0a and nothing else**: field 1,
+wire type 2, `operator new(0x28)` for the submessage, `[msg+0x24] = 1` for the oneof case and
+`[msg+0x18]` for the pointer. The submessage's own default instance is registered by `0x010d8ed0`,
+whose descriptor is the string at `0x1bdb460`:
+
+    pokemon_trade.proto   net_contents.trade.common.pokemon_trade.protocol_buffers
+      Pokemon
+        1  bytes  serializePokemonParam
+
+129 bytes, no NUL, ending in `proto3` - one message, one field. The listener reads
+`[Pokemon+0x18]` as a libc++ `std::string` (byte 0 bit 0 selects the heap pointer at +0x10) and
+memcpys `0x158` out of it.
+
+**SO `PokemonTradeDataHolder{pokemon{serializePokemonParam: <344-byte PK8>}}` ON 10050 IS EXACTLY
+RIGHT, AND IT IS WHAT `pokemon_offer` HAS BEEN BUILDING SINCE SESSION 61.** The shape was never the
+problem. sx34 sent the correct message.
+
+**AND TWO OF THE THREE HOLDERS CANNOT DELIVER A POKEMON AT ALL.** `0x010d81d0` opens with
+`ldr x8,[x0,#0x168]; cbz x8, out` - no listener, silent return, nothing parsed. Only three stores to
+a `+0x168` exist in content 50's code:
+
+    0x010d50ac   content+0x2a8, the 10000-base holder -> the delegate at session+0x2b0,
+                 whose slot 0 is 0x010d5e40. Installed by the init that state 1 runs.
+    0x010d533c   content+0x2b8, the 30000-base holder -> content+0x68, a different listener
+    0x010d5660   the teardown, clearing the first one
+
+**`content+0x2b0` - the 20000-base holder - is registered and never given a listener.** 20050 is
+inert by construction, so sx39 was void rather than a negative, and 30050 (sx45) reaches a handler
+that is not the Pokemon receive.
+
+**WHAT IS LEFT IS INSIDE `0x010d5e40` AND IT IS TWO SILENT RETURNS.** With the id right, the header
+right, the type right and the listener installed, a correct 10050 that changes nothing can only be
+dying at `0x006b5850` returning `0xfd` - the mesh cannot name the sending station - or at
+`[delegate + 0x30 + index*8]` being null. Content 50's init writes exactly two of those slots,
+`+0x30` and `+0x38` (`0x010d5034`, `0x010d5080`, both built by `0x010d7960` off a counter at
+`content+0x100`), so **any station index above 1 reads zeroed memory and returns**. That is the next
+read.
+
+
 
 ## What this project has measured, and what it has borrowed
 
