@@ -1011,6 +1011,48 @@ read.
 
 
 
+## The console must answer a Pokemon with a Pokemon, and it never has
+
+Session 63, sx46 / sx47 / sx48b, three runs and three clean negatives - and one of them settles
+where the message is lost.
+
+**THE HANDLER SENDS BACK.** `0x010d5e40` does not merely record what arrives. Having resolved the
+sender and copied the 0x158 bytes out, it calls `0x010d6000` - **content 50's own send** - on the
+subscriber it just found, and then `0x006a24a0(content+0x2a0, sender, 1)`. Receiving a Pokemon on
+the 10000-base holder makes the console put its own on the same holder immediately.
+
+**IT NEVER DOES.** Every application id the console sends across a whole run, counted out of
+`sx48b_1_pia.jsonl`: 97, 110, 130, 20030, 40030, 40050, 60000. **No 10050, ever, in any run.** So
+our offer is not being answered-and-ignored: it is not reaching `0x010d5e40` at all. That is a
+measurement, not a reading.
+
+**AND THREE MORE THINGS ARE DEAD.**
+
+- **The clock.** `--rpc-pair-advance 2` (sx46) sent the 40050 pair and then the pair again one state
+  later, the way the console's own burst advances. Acked, inert.
+- **Opening the phase ourselves.** `--selection-start` (sx47) put our own 40050 pair on port 1 the
+  moment the console said id 130 `pingSynced`, ahead of its burst, the way `nxldn-lab` does. Acked,
+  inert.
+- **The record.** `--offer-echo` (sx48b) handed back the console's own Pomdrapi, byte for byte, out
+  of its own save. Acked, inert. **So it is not our PK8** - not the encryption, not the checksum,
+  not legality, not the slot.
+
+**AND THE DISCRIMINATOR IS RULED OUT BY MEASUREMENT TOO.** `0x008b6670` shows what the header's
+third byte is: a generation counter, `[content+0x370] = ([content+0x370] + 1) mod 255`, pushed into
+`[manager+0x480f0]` and stamped into every outgoing message by `0x006db840`. If it ever advanced,
+our fixed zero would fail the one gate that applies to the 10000-base holder and nothing else. It
+does not advance: **every one of the 107 application payloads the console sent in sx48b carries zero
+in byte 2**, on every id. Our zero is the right value.
+
+So the id matches, the kind matches, the discriminator matches, the listener is installed by content
+50's init, our station index is 1 and init writes that subscriber slot - and the message still does
+not arrive. What is left is to stop deducing and probe it: **a bare `ping` on 10050**
+(`422700000a00`, `--open-content 50`) parses as an empty holder, takes `0x010d81d0`'s
+default-instance branch, and still reaches the listener - so if the holder is being fed at all, the
+console must answer it with a 10050 of its own. Against the same probe on 20030, which we know is
+delivered because the box exchange works, that separates "the 10000-base holder is not being fed"
+from "nothing of ours reaches the sync manager".
+
 ## What this project has measured, and what it has borrowed
 
 FACT, sw70's own capture (`scratchpad/sw_app_payloads.py` walks it): the console sent **five
