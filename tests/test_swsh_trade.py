@@ -132,3 +132,62 @@ def test_the_policy_changes_exactly_two_things_against_sw70s_mirror():
     assert follow_ups["610000001a00"] == [trade.result()], "pingSynced gains a result{} behind it"
     assert follow_ups["610000000a00"] == [bytes.fromhex("610000000a00")]
     assert follow_ups["610000001200"] == [] and follow_ups["60ea00000a00"] == []
+
+
+# sw75, off the wire: the two members of the trade RPC pair the console sent when the trade screen
+# opened. The station id in them is the console's own, and our seat record holds the same number.
+SW75_RPC_10000 = bytes.fromhex(
+    "5e9c00000a19081e10904e188080a08a8fc4c8cdeb0120c0502a0400000000")
+SW75_RPC_20000 = bytes.fromhex(
+    "5e9c00000a1a081e10a09c01188080a08a8fc4c8cdeb0120c0502a04000018fc")
+SW75_HOST_STATION = 16977200745185542144
+OUR_STATION = 1317762632229847040
+
+
+def test_the_consoles_own_rpcs_are_read_and_rebuilt_byte_for_byte():
+    """The test that makes the reader trustworthy: build back what it took apart."""
+    for raw, base, body in ((SW75_RPC_10000, 10000, "00000000"),
+                            (SW75_RPC_20000, 20000, "000018fc")):
+        got = trade.parse_rpc(raw)
+        assert got["offset"] == 30, "40030 is 40000 + 30 and the message says so"
+        assert got["base"] == base
+        assert got["station_id"] == SW75_HOST_STATION, "field 3 is the SENDER's station id"
+        assert got["clock"] == 10304
+        assert got["body"].hex() == body
+        assert trade.build_rpc(got["offset"], got["base"], got["station_id"],
+                               got["clock"], got["body"]) == raw
+
+
+def test_the_pair_carries_both_bases_and_the_same_clock():
+    a, b = trade.parse_rpc(SW75_RPC_10000), trade.parse_rpc(SW75_RPC_20000)
+    assert (a["base"], b["base"]) == trade.RPC_BASES == (10000, 20000)
+    assert a["clock"] == b["clock"], "a pair shares its clock"
+    assert a["station_id"] == b["station_id"]
+
+
+def test_our_answer_carries_our_station_id_and_advances_the_clock():
+    answer = trade.answer_rpc(SW75_RPC_10000, OUR_STATION, clock_delta=5)
+    got = trade.parse_rpc(answer)
+    assert got["station_id"] == OUR_STATION, "it must not be the console's own id"
+    assert got["clock"] == 10304 + 5
+    # everything else is the console's, unchanged
+    assert (got["offset"], got["base"], got["body"]) == (30, 10000, b"\x00\x00\x00\x00")
+
+
+def test_answering_something_that_is_not_an_rpc_gives_nothing():
+    assert trade.answer_rpc(trade.im_ready(), OUR_STATION) is None
+    assert trade.parse_rpc(bytes.fromhex("610000000a00")) is None
+    assert trade.parse_rpc(trade.message(trade.RPC_ENVELOPE, b"\x08\x01")) is None
+
+
+def test_the_policy_answers_a_trade_rpc_by_rebuilding_it_not_by_echoing_it():
+    """Echoing an RPC would hand the console its own station id back - the one field that moves."""
+    payload, queue = trade.next_answer(SW75_RPC_10000, station_id=OUR_STATION)
+    assert payload != SW75_RPC_10000, "an echo is exactly what must not happen here"
+    assert trade.parse_rpc(payload)["station_id"] == OUR_STATION
+    assert queue == []
+    # without a station id there is nothing to build with, so the policy falls back to the mirror
+    assert trade.next_answer(SW75_RPC_10000)[0] == SW75_RPC_10000
+    # and the sync table still wins where it has a rule
+    assert trade.next_answer(bytes.fromhex("610000000a00"),
+                             station_id=OUR_STATION)[0].hex() == "610000001200"

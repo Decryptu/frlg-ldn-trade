@@ -107,6 +107,97 @@ def pokemon_trade(pk8):
     return message(POKEMON_TRADE, field(1, field(1, pk8)))
 
 
+# --- the trade RPC envelope, MEASURED at sw75 -------------------------------------------------
+
+# sw75 is where the trade screen opened and the console started talking, and these are its own
+# bytes. Message id 40030 carries ONE nested field whose five members decode without a guess:
+#
+#     id 40030          = 40000 + 30, and field 1 below is that same 30
+#       1  offset       30
+#       2  base         10000 in one member of the pair, 20000 in the other
+#       3  station id   THE SENDER'S, and it is byte-identical to the `host_constant` our own
+#                       seat record holds - which is what turns a 6-byte find-and-replace into a
+#                       field we can simply write
+#       4  clock        a counter that advances between messages
+#       5  bytes(4)     00000000 for the 10000 member, 000018fc for the 20000 one
+#
+# **AND THIS IS WHERE 20030 COMES FROM.** `swsh_msgid.py` found that the high ids are a base plus
+# an offset and that no literal 20030 exists anywhere in the image. It does not need to: the base
+# and the offset travel as separate fields of this envelope, and 20000 + 30 is assembled from them.
+# The deduction session 59 wrote down is now a measurement, and its mechanism is on the wire.
+RPC_ENVELOPE = 40030
+RPC_OFFSET, RPC_BASE, RPC_STATION, RPC_CLOCK, RPC_BODY = 1, 2, 3, 4, 5
+RPC_BASES = (10000, 20000)            # the pair the console sends, and the pair it expects back
+
+
+def build_rpc(offset, base, station_id, clock, body=b"\x00\x00\x00\x00"):
+    """-> one member of a trade RPC pair, as the console builds its own."""
+    inner = (field_varint(RPC_OFFSET, offset) + field_varint(RPC_BASE, base)
+             + field_varint(RPC_STATION, station_id) + field_varint(RPC_CLOCK, clock)
+             + field(RPC_BODY, body))
+    return message(RPC_ENVELOPE, field(1, inner))
+
+
+def parse_rpc(payload):
+    """-> the five members of a trade RPC, or None if this is not one."""
+    message_id, body = parse(payload)
+    if message_id != RPC_ENVELOPE:
+        return None
+    outer = _read_fields(body)
+    if not isinstance(outer.get(1), bytes):
+        return None
+    inner = _read_fields(outer[1])
+    return {"offset": inner.get(RPC_OFFSET), "base": inner.get(RPC_BASE),
+            "station_id": inner.get(RPC_STATION), "clock": inner.get(RPC_CLOCK),
+            "body": inner.get(RPC_BODY, b"")}
+
+
+def answer_rpc(payload, station_id, clock_delta=5):
+    """-> the same RPC with OUR station id and the clock advanced, or None if it is not one.
+
+    THE STATION ID IS THE WHOLE POINT AND IT IS NOT A PATCH. `nxldn-lab` replaces six bytes it
+    found by searching for a known identity, because it works from a capture; sw75 says those six
+    bytes are the high half of a varint-encoded station constant id, so the field is written rather
+    than hunted for. Ours is the constant id the mesh already gave us.
+
+    `clock_delta` is nxldn-lab's 5 and is NOT measured. It is the one number here that is still
+    somebody else's, and the run that answers an RPC is what tests it.
+    """
+    got = parse_rpc(payload)
+    if got is None or got["clock"] is None:
+        return None
+    return build_rpc(got["offset"], got["base"], station_id, got["clock"] + clock_delta,
+                     got["body"])
+
+
+def _read_fields(data):
+    """-> {field number: value} for a flat protobuf message. Varints and byte fields only."""
+    out, i = {}, 0
+    while i < len(data):
+        tag, i = _varint(data, i)
+        number, wire = tag >> 3, tag & 7
+        if wire == WIRE_VARINT:
+            out[number], i = _varint(data, i)
+        elif wire == WIRE_BYTES:
+            size, i = _varint(data, i)
+            out[number], i = data[i:i + size], i + size
+        else:
+            break
+    return out
+
+
+def _varint(data, i):
+    value = shift = 0
+    while i < len(data):
+        byte = data[i]
+        i += 1
+        value |= (byte & 0x7F) << shift
+        if not byte & 0x80:
+            return value, i
+        shift += 7
+    raise ValueError("truncated varint")
+
+
 # --- the sync conversation ---------------------------------------------------------------------
 
 # **NOT OURS AND NOT YET MEASURED.** This project has only ever seen the console's ping and the two
@@ -142,7 +233,16 @@ def answers_for(payload):
     return SYNC_ANSWERS.get(bytes(payload), ())
 
 
-def next_answer(said, queue=()):
+def answers_for_rpc(payload, station_id, clock_delta=5):
+    """-> the reply to a trade RPC as a one-tuple, or () when the payload is not one.
+
+    Kept in the same shape as `answers_for` so a caller can treat both the same way.
+    """
+    answer = answer_rpc(payload, station_id, clock_delta)
+    return (answer,) if answer is not None else ()
+
+
+def next_answer(said, queue=(), station_id=None, clock_delta=5):
     """-> (what to send now, the queue after it). The table where there is a rule, the mirror else.
 
     THE MIRROR IS THE PROVEN POLICY AND THIS DOES NOT REPLACE IT. sw68 and sw70 reached the trade
@@ -157,6 +257,10 @@ def next_answer(said, queue=()):
     queue = list(queue)
     if not queue:
         queue = list(answers_for(said))
+    if not queue and station_id is not None:
+        # A TRADE RPC IS ANSWERED BY REBUILDING IT, not by echoing it. Mirroring one would send the
+        # console its own station id back, which is the one field that has to change.
+        queue = list(answers_for_rpc(said, station_id, clock_delta))
     if queue:
         return queue[0], queue[1:]
     return said, []

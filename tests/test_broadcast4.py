@@ -42,7 +42,7 @@ def test_parsing_the_console_messages_gives_back_what_they_say():
 
 
 def test_a_message_of_an_unknown_kind_is_refused_rather_than_read_as_data():
-    with pytest.raises(ValueError, match="neither control"):
+    with pytest.raises(ValueError, match="is none of control"):
         broadcast4.parse(b"\x13\x00\x00\x00\x00\x01\xff\xff")
     with pytest.raises(ValueError, match="at least 8"):
         broadcast4.parse(b"\x11\x00")
@@ -125,3 +125,51 @@ def test_the_default_policy_matches_what_our_console_actually_did():
 
     never = broadcast4.Sender().transfer(payload, compress=False)
     assert [c for _, c in never] == [False, False, False, False]
+
+
+def test_the_receiver_acks_every_fragment_with_a_base_and_a_mask():
+    """0x21, the kind nothing in this project had ever sent - which is why 0x84 repeats forever."""
+    rx = broadcast4.Receiver()
+    assert rx.feed(broadcast4.build_control(0, 3456, 1404)) == []
+    assert rx.total == 3456 and rx.chunk_size == 1404
+
+    # fragment 0 arrives: contiguous through 0, so base 1 and nothing early
+    ack = broadcast4.parse(rx.feed(broadcast4.build_fragment(1, 0, b"a" * 1404,
+                                                             compress=False)[0])[0])
+    assert ack["kind"] == broadcast4.KIND_ACK and (ack["base"], ack["mask"]) == (1, 0)
+
+    # fragment 2 arrives before 1: base stays 1 and bit 0 of the mask says "2 is here"
+    ack = broadcast4.parse(rx.feed(broadcast4.build_fragment(2, 2, b"c" * 648,
+                                                             compress=False)[0])[0])
+    assert (ack["base"], ack["mask"]) == (1, 1)
+    assert rx.complete() is False
+
+    # and the hole fills
+    ack = broadcast4.parse(rx.feed(broadcast4.build_fragment(3, 1, b"b" * 1404,
+                                                             compress=False)[0])[0])
+    assert (ack["base"], ack["mask"]) == (3, 0)
+    assert rx.complete() is True
+    assert rx.payload() == b"a" * 1404 + b"b" * 1404 + b"c" * 648
+
+
+def test_an_ack_echoes_the_peer_sequence_of_the_fragment_it_answers():
+    rx = broadcast4.Receiver()
+    rx.feed(broadcast4.build_fragment(0x1234, 0, b"x", compress=False)[0])
+    ack = broadcast4.parse(rx.feed(broadcast4.build_fragment(0x1235, 1, b"y",
+                                                             compress=False)[0])[0])
+    assert ack["peer_sequence"] == 0x1235
+
+
+def test_a_done_message_is_answered_and_an_ack_is_not():
+    rx = broadcast4.Receiver()
+    reply = rx.feed(broadcast4.build_done(7))
+    assert broadcast4.parse(reply[0])["kind"] == broadcast4.KIND_DONE_ACK
+    assert rx.feed(broadcast4.build_ack(8, 3, 0)) == [], "their ack needs no answer of ours"
+
+
+def test_ack_fields_says_what_a_receiver_holds():
+    assert broadcast4.ack_fields(set()) == (0, 0)
+    assert broadcast4.ack_fields({0}) == (1, 0)
+    assert broadcast4.ack_fields({0, 2}) == (1, 1)          # base 1, and index 2 is bit 0
+    assert broadcast4.ack_fields({1}) == (0, 1)             # nothing contiguous, index 1 is bit 0
+    assert broadcast4.ack_fields({0, 1, 2}) == (3, 0)

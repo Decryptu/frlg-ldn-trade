@@ -173,7 +173,9 @@ async def main_async(args):
               "their_payload": None, "ack_by_proto": {}, "said_by_proto": {},
               "seen_by_proto": {}, "answer_queue": [],
               "snapshot_in": 0, "snapshot_total": None, "snapshot_indexes": set(),
-              "their_sequence": None, "snapshot_out": 0,
+              "their_sequence": None, "snapshot_out": 0, "snapshot_acked": None,
+              "snapshot_acks_out": 0, "snapshot_rx": broadcast4.Receiver(),
+              "snapshot_fragments": 0, "snapshot_done_sent": False, "snapshot_seq": 0,
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -546,6 +548,50 @@ async def main_async(args):
                             st["snapshot_indexes"].add(got["index"])
                             print(f"[rx]     fragment {got['index']} of the snapshot, "
                                   f"{len(got['body'])} B on the wire")
+                        if got["kind"] == broadcast4.KIND_ACK:
+                            if st["snapshot_acked"] is None:
+                                st["snapshot_acked"] = now
+                                print(f"\n[rx] t={now:6.2f} *** IT ACKED OUR SNAPSHOT: base "
+                                      f"{got['base']} mask {got['mask']:#x} *** - the first 0x84 "
+                                      f"ack this project has ever been sent")
+                            # ITS BASE IS A COUNT OF WHAT IT HOLDS, and when that reaches all of
+                            # our fragments the transfer is done and the sender says so ONCE with
+                            # a 0x19. sw74 watched the base walk 0 -> 1 -> 2 -> 3 and then repeat
+                            # 3 four hundred times: it had the whole snapshot and was waiting for
+                            # a word we never said.
+                            if (st["snapshot_fragments"]
+                                    and got["base"] >= st["snapshot_fragments"]
+                                    and not st["snapshot_done_sent"]):
+                                st["snapshot_done_sent"] = True
+                                done = broadcast4.build_done(st["snapshot_seq"], got["sequence"])
+                                sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), done,
+                                                 broadcast4.PROTOCOL,
+                                                 args.connect_station_first, port=f["port"],
+                                                 message_flags=pia4.MESSAGE_FLAGS,
+                                                 destination=args.data_destination),
+                                            (host_ip, PIA_PORT))
+                                print(f"\n[tx] *** IT HAS ALL {got['base']} OF OUR FRAGMENTS - "
+                                      f"sending 0x19, the transfer is complete *** {done.hex()}")
+                        elif got["kind"] in (broadcast4.KIND_DONE, broadcast4.KIND_DONE_ACK):
+                            print(f"[rx] t={now:6.2f} 0x84 kind {got['kind']:#04x} "
+                                  f"seq {got['sequence']}")
+                        # ACK IT. Nothing in this project had ever acked 0x84 and the console
+                        # retransmits until something does - 19142 messages of one snapshot on
+                        # sw71. Every other window here had to be answered before the layer above
+                        # it would move; there is no reason this one is different.
+                        if args.ack_snapshot:
+                            # `body` is already inflated: pia4 acts on the message's own 0x10 flag
+                            # before this point, the same way it does for 0x80.
+                            for reply in st["snapshot_rx"].feed(body):
+                                sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), reply,
+                                                 broadcast4.PROTOCOL,
+                                                 args.connect_station_first, port=f["port"],
+                                                 message_flags=pia4.MESSAGE_FLAGS,
+                                                 destination=args.data_destination),
+                                            (host_ip, PIA_PORT))
+                                st["snapshot_acks_out"] += 1
+                                if st["snapshot_acks_out"] <= 4:
+                                    print(f"[tx]     acked 0x84 {reply[:16].hex()}")
                     else:
                         # ANYTHING on a protocol the console has never used with us is the finding
                         st["other"].append((now, "proto", f["protocol"], body.hex()))
@@ -753,7 +799,8 @@ async def main_async(args):
                     # where it has one and the echo stands everywhere else. The one variable this
                     # changes against sw70 is what we say to `ping` and to `pingSynced`.
                     payload, st["answer_queue"] = swsh_trade.next_answer(
-                        said, st["answer_queue"])
+                        said, st["answer_queue"], station_id=our_constant,
+                        clock_delta=args.rpc_clock_delta)
                 elif args.send_mirror and said:
                     # MIRROR WHAT IT IS SAYING NOW, not what it said first. sw64 moved the game
                     # from state 0x0a to 0x12 and left it there; a peer that follows the state it
@@ -825,9 +872,17 @@ async def main_async(args):
             print(f"\n[tx] *** SENDING OUR SNAPSHOT on {broadcast4.PROTOCOL:#04x} *** "
                   f"{len(payload)} bytes")
             sender4 = broadcast4.Sender()
+            st["snapshot_fragments"] = len(broadcast4.split(payload, sender4.chunk_size))
             while time.monotonic() < deadline:
+                if st["snapshot_done_sent"]:
+                    # THE CONSOLE HAS IT ALL AND HAS BEEN TOLD SO. Retransmitting past that is how
+                    # a sender talks over the answer it was waiting for.
+                    print(f"\n[tx] snapshot complete and acknowledged after "
+                          f"{st['snapshot_out']} messages; the window is quiet now")
+                    return
                 if st["their_sequence"] is not None:
                     sender4.saw(st["their_sequence"])
+                st["snapshot_seq"] = sender4.sequence
                 for message, compressed in sender4.transfer(payload):
                     flags = pia4.MESSAGE_FLAGS | (pia4.MESSAGE_FLAG_ZLIB if compressed else 0)
                     for port in [int(p, 0) for p in _expand(args.snapshot_port)]:
@@ -1084,6 +1139,13 @@ def build_parser():
                     help="wait for this payload on --send2-protocol before sending; omit to send "
                          "as soon as the mesh is up")
     ap.add_argument("--send2-count", type=lambda s: int(s, 0), default=200)
+    ap.add_argument("--rpc-clock-delta", type=lambda s: int(s, 0), default=5,
+                    help="how far to advance a trade RPC's clock in our answer. 5 is nxldn-lab's "
+                         "and is the one number in this path nothing here has measured")
+    ap.add_argument("--ack-snapshot", action="store_true",
+                    help="ACK the console's 0x84 fragments (kind 0x21, a contiguous base and a "
+                         "bitmask). Nothing here has ever acked this protocol, which is why the "
+                         "console retransmits one snapshot 19142 times and never moves on")
     ap.add_argument("--send-snapshot", default=None, metavar="FILE",
                     help="a 3456-byte trade snapshot to send back on 0x84 once the console sends "
                          "its own. A short session-58 payload is inflated first. The identity is "

@@ -36,6 +36,12 @@ HEADER_SIZE = 8
 PREFIX_SIZE = 12                      # header + the fragment index: never compressed
 KIND_CONTROL = 0x11
 KIND_DATA = 0x12
+# THE THREE KINDS SESSION 58 AND 59 NEVER SAW, because nothing here ever acked this protocol and
+# the console therefore never got past retransmitting. Read off `andyjusa/nxldn-lab`'s receiver.
+KIND_ACK = 0x21                       # base index + a bitmask of what arrived out of order
+KIND_DONE = 0x19                      # a transfer is complete
+KIND_DONE_ACK = 0x28                  # and its answer
+ACK_SIZE = HEADER_SIZE + 12
 CONTROL_SIZE = 20
 NO_PEER_SEQUENCE = 0xFFFF
 CONTROL_UNKNOWN = 5                   # the halfword at 0x0E, 5 in every message we have seen
@@ -101,10 +107,49 @@ def parse(message):
         if len(message) < PREFIX_SIZE:
             raise ValueError(f"a data message is at least {PREFIX_SIZE} bytes, got {len(message)}")
         out.update(index=struct.unpack_from(">I", message, 8)[0], body=message[PREFIX_SIZE:])
+    elif kind == KIND_ACK:
+        if len(message) < ACK_SIZE:
+            raise ValueError(f"an ack is {ACK_SIZE} bytes, got {len(message)}")
+        base, mask = struct.unpack_from(">IQ", message, 8)
+        out.update(base=base, mask=mask)
+    elif kind in (KIND_DONE, KIND_DONE_ACK):
+        pass
     else:
-        raise ValueError(f"kind {kind:#04x} is neither control ({KIND_CONTROL:#04x}) "
-                         f"nor data ({KIND_DATA:#04x})")
+        raise ValueError(f"kind {kind:#04x} is none of control ({KIND_CONTROL:#04x}), "
+                         f"data ({KIND_DATA:#04x}), ack ({KIND_ACK:#04x}), done "
+                         f"({KIND_DONE:#04x}) or done-ack ({KIND_DONE_ACK:#04x})")
     return out
+
+
+def build_ack(sequence, base, mask=0, peer_sequence=NO_PEER_SEQUENCE):
+    """-> the 0x21 ack: how far the transfer is contiguous, and a bitmask of what came early.
+
+    `base` is the first index NOT yet received, so it is a count of the contiguous run from zero,
+    and `mask` bit n is index `base + 1 + n`. A receiver that has 0 and 2 acks base 1, mask 1.
+    """
+    return (build_header(KIND_ACK, sequence, peer_sequence)
+            + struct.pack(">IQ", base, mask))
+
+
+def build_done(sequence, peer_sequence=NO_PEER_SEQUENCE):
+    return build_header(KIND_DONE, sequence, peer_sequence)
+
+
+def build_done_ack(sequence, peer_sequence=NO_PEER_SEQUENCE):
+    return build_header(KIND_DONE_ACK, sequence, peer_sequence)
+
+
+def ack_fields(indexes):
+    """-> (base, mask) for a set of received fragment indexes."""
+    received = set(indexes)
+    base = 0
+    while base in received:
+        base += 1
+    mask = 0
+    for index in received:
+        if index > base:
+            mask |= 1 << (index - base - 1)
+    return base, mask
 
 
 class Sender:
@@ -150,3 +195,59 @@ class Sender:
                 allow = bool(compress)
             out.append(build_fragment(self._next(), index, chunk, self.peer_sequence, allow))
         return out
+
+
+class Receiver:
+    """The incoming side of one port: what has arrived, and the ack that says so.
+
+    **NOTHING IN THIS PROJECT HAD EVER ACKED 0x84, AND THAT IS WHY IT REPEATS.** sw68 counted 15460
+    messages of the same snapshot and sw71 19142, because the console retransmits until a receiver
+    tells it what it has. Every other window here behaves the same way and every one of them had to
+    be answered before the layer above it would move - the mesh's own reliable window took the
+    session down in four seconds when sw59 left it unacked.
+    """
+
+    def __init__(self):
+        self.indexes = set()
+        self.total = None
+        self.chunk_size = None
+        self.sequence = 0
+        self.peer_sequence = NO_PEER_SEQUENCE
+        self.fragments = {}
+
+    def _next(self):
+        sequence, self.sequence = self.sequence, (self.sequence + 1) & 0xFFFF
+        return sequence
+
+    def feed(self, message, body=None):
+        """-> the replies to send for one received 0x84 message, in order.
+
+        `body` is the fragment already inflated when Pia's 0x10 flag was set; the caller owns that
+        decision because only the flag decides it.
+        """
+        got = parse(message)
+        self.peer_sequence = got["sequence"]
+        if got["is_control"]:
+            self.total, self.chunk_size = got["total"], got["chunk_size"]
+            return []
+        if got["kind"] == KIND_DATA:
+            self.indexes.add(got["index"])
+            self.fragments[got["index"]] = body if body is not None else got["body"]
+            base, mask = ack_fields(self.indexes)
+            return [build_ack(self._next(), base, mask, self.peer_sequence)]
+        if got["kind"] == KIND_DONE:
+            return [build_done_ack(self._next(), self.peer_sequence)]
+        return []
+
+    def complete(self):
+        """-> True when every fragment the control message promised has arrived."""
+        if self.total is None or self.chunk_size is None:
+            return False
+        expected = -(-self.total // self.chunk_size)
+        return self.indexes >= set(range(expected))
+
+    def payload(self):
+        """-> the reassembled bytes, or None until the transfer is complete."""
+        if not self.complete():
+            return None
+        return b"".join(self.fragments[i] for i in sorted(self.fragments))
