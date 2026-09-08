@@ -27,6 +27,7 @@ first. A dump aimed there is asked for by the console's own scripts rather than 
 several unknowns usually share one 1 KB window. docs/frlg_rom_buffer_script.md.
 """
 import argparse
+import gzip
 import os
 import pathlib
 import re
@@ -61,12 +62,21 @@ def dumps(directory):
     so a single base would put fifteen of the sixteen kilobytes in the wrong place."""
     directory = pathlib.Path(directory)
     found = []
-    for log in sorted((directory / "launcher_logs").glob("*_launcher.log")):
-        tag = log.name[: -len("_launcher.log")]
+    # BOTH NAMES, BECAUSE THE ARCHIVE IS GZIPPED. `scratchpad/launcher_logs` holds 652 logs and
+    # every one of them is `*_launcher.log.gz`; a glob for the uncompressed name matched none, so
+    # `every_dump` returned nothing and every reading built on it came back empty. That is a silent
+    # failure with a loud symptom: `test_worker_names.py` regenerates the shipped table from these
+    # dumps and got an empty table. Read whichever name is on disk rather than re-expanding 652
+    # files - this box is short of disk, and the logs are an archive that is only ever read.
+    logs = sorted((directory / "launcher_logs").glob("*_launcher.log*"))
+    for log in logs:
+        name = log.name[: -len(".gz")] if log.suffix == ".gz" else log.name
+        tag = name[: -len("_launcher.log")]
         dump = directory / f"{tag}_dump.bin"
         if not dump.exists():
             continue
-        text = log.read_text()
+        text = (gzip.decompress(log.read_bytes()).decode("utf-8", "replace")
+                if log.suffix == ".gz" else log.read_text())
         data, console = dump.read_bytes(), dump_console(tag, text)
         scatter = re.search(r"--dump-scatter\s+([0-9A-Fa-fx,]+)", text)
         if scatter:
