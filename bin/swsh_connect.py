@@ -32,7 +32,8 @@ if os.path.isdir(BUNDLED):
 
 import trio, ldn
 from pokeldn.host_support import resolve_keys
-from pokeldn.ldn import local_protocol as lp, pia4, station4, station_protocol as stp
+from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4, station4,
+                        station_protocol as stp)
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.swsh import COMM_ID, PASSPHRASE, PIA_PORT, packet_iv, session_keys
 
@@ -157,8 +158,11 @@ async def main_async(args):
               "updates": 0, "phase": "listen", "station": None, "acks": 0,
               "rx": 0, "undecrypted": 0, "other": [], "answer": None, "station_replies": 0,
               "requests": 0, "requests_in": 0, "responses": 0, "their_request": None,
-              "our_variable_id": 0, "responses_in": 0, "acks_out": 0}
+              "our_variable_id": 0, "responses_in": 0, "acks_out": 0,
+              "joins_out": 0, "mesh_in": 0, "join_response": None, "mesh_acks": 0}
 
+        accepted = trio.Event()           # set when the station handshake closes, which is the
+                                          # only moment a mesh join has ever been answered
         nonce = int.from_bytes(os.urandom(8), "big")
 
         def next_nonce():
@@ -259,6 +263,8 @@ async def main_async(args):
                             st["responses_in"] += 1
                             if result == 0 and st["responses_in"] == 1:
                                 print(f"[rx]     *** ACCEPTED INTO THE MESH *** {len(body)} B")
+                            if result == 0:
+                                accepted.set()
                             trailing = station4.ack_id_of(body)
                             theirs = (st["their_request"] or {}).get("station", {}).get(
                                 "variable_id", 0)
@@ -274,6 +280,46 @@ async def main_async(args):
                             if st["acks_out"] <= 4:
                                 print(f"[tx]     acked with {ack_id:#010x} "
                                       f"({'the message tail' if use_trailing else 'their variable id'})")
+                    elif f["protocol"] == mesh.PROTOCOL:
+                        # 0x18. The join response carries the whole mesh; version 4's entries are
+                        # 64 bytes with the index at 0x3E, which is the one thing that differs from
+                        # BDSP's (mesh_protocol, main.bin 0x017b4830).
+                        st["mesh_in"] += 1
+                        st["answer"] = st["answer"] or (now, st["phase"], f["protocol"])
+                        kind, kname = mesh.parse_message(body)
+                        st["other"].append((now, "mesh", kind, body.hex()))
+                        print(f"\n[rx] t={now:6.2f} *** MESH PROTOCOL 0x18, {kname} *** "
+                              f"{len(body)} B, phase {st['phase']}\n     {body[:64].hex()}")
+                        if kind == mesh.JOIN_RESPONSE:
+                            try:
+                                got = mesh.parse_join_response(body, version4=True)
+                            except (IndexError, ValueError) as e:
+                                print(f"[rx]     could not parse it: {e}")
+                                got = None
+                            if got and got.get("refused"):
+                                print(f"[rx]     REFUSED, reason {got['reason']}")
+                            elif got:
+                                print(f"[rx]     stations={got['stations']} "
+                                      f"host_index={got['host_index']} "
+                                      f"our_index={got['our_index']} "
+                                      f"fragment {got['fragment_index'] + 1}/{got['fragments']} "
+                                      f"counter={got['update_counter']}")
+                                for e in got["station_info"]:
+                                    loc = e.get("location") or {}
+                                    print(f"[rx]       index {e['station_index']}: "
+                                          f"{loc.get('private')} constant "
+                                          f"{loc.get('constant_id', 0):#018x}")
+                            st["join_response"] = st["join_response"] or (now, body.hex())
+                            record(rec="rx_join_response", t=now, parsed=got, raw=body.hex())
+                        reply = mesh.ack_for(body)
+                        if reply and args.join:
+                            proto, payload = reply
+                            sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), payload,
+                                             proto, args.connect_station_first),
+                                        (addr[0], PIA_PORT))
+                            st["mesh_acks"] += 1
+                            record(rec="tx_mesh_ack", t=now, protocol=proto, ack=payload.hex())
+                            print(f"[tx]     acked it on {proto:#04x}: {payload.hex()}")
                     else:
                         # ANYTHING on a protocol the console has never used with us is the finding
                         st["other"].append((now, "proto", f["protocol"], body.hex()))
@@ -378,8 +424,48 @@ async def main_async(args):
             print(f"[tx] {st['requests']} requests, no 0x14 reply. Silence is what a wrong "
                   f"constant id, a wrong count or a malformed location all look like.")
 
+        async def joiner():
+            """The six-byte join request, once the station handshake has closed.
+
+            THE ORDER IS THE FINDING BDSP LEFT: nothing is answered on 0x18 until the console has
+            accepted us as a station on 0x14, so this waits for that acceptance rather than firing
+            on a timer. Pia's own joiner retransmits every 500 ms and gives up after ten seconds,
+            and the response is acked on 0x14 - the mesh protocol never acks with a mesh message
+            (`mesh_protocol.ack_for`, and version 4 builds the same eight bytes at 0x017c6dd0).
+            """
+            if not args.join:
+                return
+            with trio.move_on_after(args.join_wait):
+                await accepted.wait()
+            if not accepted.is_set():
+                print(f"\n[tx] no station acceptance in {args.join_wait:.0f}s - not joining. "
+                      f"A join before the handshake closes is silence, and an unclassifiable run.")
+                return
+            ack_id = args.join_ack_id if args.join_ack_id is not None else \
+                int.from_bytes(os.urandom(4), "big")
+            payload = mesh.build_join_request(ack_id, station_index=args.join_station_index)
+            st["phase"] = "join"
+            print(f"\n[tx] *** MESH JOIN on 0x18 *** {payload.hex()} (ack id {ack_id:#010x}, "
+                  f"calling ourselves {args.join_station_index}) -> {host_ip}, every "
+                  f"{args.join_gap:.2f}s for {args.join_seconds:.0f}s")
+            deadline = time.monotonic() + args.join_seconds
+            while time.monotonic() < deadline and st["join_response"] is None:
+                sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), payload,
+                                 mesh.PROTOCOL, args.connect_station_first,
+                                 port=args.join_port),
+                            (host_ip, PIA_PORT))
+                st["joins_out"] += 1
+                record(rec="tx_join", t=time.monotonic() - t0, ack_id=ack_id,
+                       port=args.join_port, request=payload.hex())
+                await trio.sleep(args.join_gap)
+            if st["join_response"] is None:
+                print(f"[tx] {st['joins_out']} join requests, nothing back on 0x18. "
+                      f"{st['mesh_in']} mesh messages in all.")
+            st["phase"] = "hold"
+
         async with trio.open_nursery() as nursery:
             nursery.start_soon(receiver)
+            nursery.start_soon(joiner)
             await sender()
             await trio.sleep(args.hold)
             nursery.cancel_scope.cancel()
@@ -388,7 +474,9 @@ async def main_async(args):
               f"{st['updates']} update sessions, {st['acks']} acks out, "
               f"{st['requests']} connection requests, {st['station_replies']} messages on 0x14, "
               f"{st['requests_in']} of them requests, {st['responses_in']} connection responses "
-              f"in, {st['responses']} responses out, {st['acks_out']} station acks out")
+              f"in, {st['responses']} responses out, {st['acks_out']} station acks out, "
+              f"{st['joins_out']} join requests out, {st['mesh_in']} messages on 0x18, "
+              f"{st['mesh_acks']} mesh acks out")
         if st["answer"]:
             now, phase, proto = st["answer"]
             print(f"[cx] FIRST TRAFFIC ON A NEW PROTOCOL: {proto:#04x} at t={now:.2f} in {phase}")
@@ -396,7 +484,9 @@ async def main_async(args):
                undecrypted=st["undecrypted"], phase=st["phase"], answer=st["answer"],
                requests=st["requests"], station_replies=st["station_replies"],
                requests_in=st["requests_in"], responses=st["responses"],
-               responses_in=st["responses_in"], acks_out=st["acks_out"])
+               responses_in=st["responses_in"], acks_out=st["acks_out"],
+               joins_out=st["joins_out"], mesh_in=st["mesh_in"],
+               mesh_acks=st["mesh_acks"], join_response=st["join_response"])
     if cap:
         cap.close()
     return 0
@@ -461,6 +551,23 @@ def build_parser():
                     help="clear [3], which makes the console skip the variable-id comparison")
     ap.add_argument("--unicast", action="store_true",
                     help="send to the console rather than the broadcast address")
+    ap.add_argument("--join", action="store_true",
+                    help="after the station handshake closes, send the Mesh Protocol (0x18) join "
+                         "request and ack whatever comes back")
+    ap.add_argument("--join-wait", type=float, default=45.0,
+                    help="how long to wait for the station acceptance before giving up on joining")
+    ap.add_argument("--join-seconds", type=float, default=10.0,
+                    help="how long to retransmit the join request; Pia's own joiner gives up at 10")
+    ap.add_argument("--join-gap", type=float, default=0.5,
+                    help="Pia retransmits an unacknowledged join request every 500 ms")
+    ap.add_argument("--join-port", type=int, default=mesh.PORT_UNRELIABLE,
+                    help="the Pia port the join travels on; the update mesh uses the reliable one")
+    ap.add_argument("--join-station-index", type=lambda s: int(s, 0),
+                    default=mesh.STATION_INDEX_INVALID,
+                    help="byte [1]. 0xFD is what 0x017c1700 compares against; anything else is the "
+                         "instrument that says the handler was reached")
+    ap.add_argument("--join-ack-id", type=lambda s: int(s, 0), default=None,
+                    help="fixed ack id for the join request; random when omitted")
     ap.add_argument("--hold", type=float, default=30.0)
     ap.add_argument("--capture", default=None)
     return ap

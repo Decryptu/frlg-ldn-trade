@@ -144,3 +144,73 @@ def test_the_update_mesh_is_always_the_full_eight_seats():
 def test_a_wrong_type_is_refused():
     with pytest.raises(ValueError):
         mp.parse_update_mesh(bytes([mp.JOIN_RESPONSE]) + bytes(20))
+
+
+# --------------------------------------------------------------------------- version 4
+# Sword/Shield. Read off the retail binary in session 57 (scratchpad/swsh/main.bin); the addresses
+# are in mesh_protocol's own comments. Synthetic, like everything above.
+
+def _success_v4(stations=2, our_index=1, fragments=1, fragment_entries=None, base=0):
+    """A version-4 join response: the same 16-byte header, 64-byte entries, index at 0x3E."""
+    count = stations if fragments == 1 else fragment_entries
+    head = bytes([mp.JOIN_RESPONSE, stations, 0, our_index, fragments, 0,
+                  fragment_entries or 0, base, 8, 0, 8, 0]) + struct.pack(">I", 42)
+    body = b""
+    for i in range(count):
+        loc = stp.station_location(f"169.254.14.{i + 1}", 12345, 0x1122334455667788 + i,
+                                   0xAABB0000 + i, 0xCCDD0000 + i)
+        entry = bytearray(mp.STATION_INFO_SIZE_V4)
+        entry[:len(loc)] = loc
+        entry[mp.INDEX_FIELD_V4] = base + i
+        body += bytes(entry)
+    return head + body + struct.pack(">I", 0x17CAD56C)
+
+
+def test_the_version_four_entry_is_sixty_four_bytes_with_the_index_at_0x3e():
+    assert mp.STATION_INFO_SIZE_V4 == 0x40 and mp.INDEX_FIELD_V4 == 0x3E
+    out = mp.parse_join_response(_success_v4(stations=3), version4=True)
+    assert [e["station_index"] for e in out["station_info"]] == [0, 1, 2]
+    assert out["station_info"][0]["location"]["private"] == ("169.254.14.1", 12345)
+    assert out["station_info"][2]["location"]["variable_id"] == 0xAABB0002
+    assert "join_order" not in out["station_info"][0]      # the byte at 0x3F is never read
+
+
+def test_the_version_four_length_bound_is_the_thirty_two_station_table():
+    # The parser refuses anything over 0x810, and 0x810 IS the full table - which is what says the
+    # stride is 0x40 rather than 68 without trusting the disassembly of the loop alone.
+    assert mp.JOIN_RESPONSE_MAX_V4 == 0x10 + mp.MAX_STATIONS_V4 * mp.STATION_INFO_SIZE_V4
+    assert len(_success_v4(stations=mp.MAX_STATIONS_V4)) - 4 == mp.JOIN_RESPONSE_MAX_V4
+
+
+def test_an_unfragmented_version_four_response_counts_by_stations_not_by_field_six():
+    # 0x017b48f4 walks `stations` from base 0 and never reads [6] or [7]. A host that leaves them
+    # zero would make the 5.31-5.45 reading return nothing at all.
+    raw = bytearray(_success_v4(stations=2))
+    raw[6] = raw[7] = 0
+    out = mp.parse_join_response(bytes(raw), version4=True)
+    assert out["entry_count"] == 2 and out["entry_base"] == 0
+    assert len(out["station_info"]) == 2
+    assert len(mp.parse_join_response(bytes(raw))["station_info"]) == 0    # 5.31-5.45 reads [6]
+
+
+def test_a_fragmented_version_four_response_counts_by_field_six_into_slot_seven():
+    out = mp.parse_join_response(_success_v4(stations=5, fragments=2, fragment_entries=2, base=3),
+                                 version4=True)
+    assert out["entry_count"] == 2 and out["entry_base"] == 3
+    assert [e["station_index"] for e in out["station_info"]] == [3, 4]
+
+
+def test_the_version_four_message_table_is_the_same_one_without_the_two_dummies():
+    assert len(mp.MESH_TYPES_V4) == 19                     # the jump table's live entries
+    assert mp.DUMMY_MESSAGE not in mp.MESH_TYPES_V4
+    assert mp.DUMMY_ACK not in mp.MESH_TYPES_V4
+    named = {v for v, k in mp.TYPE_NAMES.items() if not k.startswith(("PROTOCOL", "PORT_"))}
+    assert mp.MESH_TYPES_V4 == named - {mp.DUMMY_MESSAGE, mp.DUMMY_ACK}
+
+
+def test_the_version_four_join_request_is_the_one_we_already_build():
+    # 0x017c1700 compares byte [1] against 0xFD and reads the ack id as the last four bytes.
+    req = mp.build_join_request(0x11223344)
+    assert req[1] == 0xFD
+    assert mp.read_ack_id(req) == 0x11223344
+    assert mp.ack_for(req) == (stp.PROTOCOL, stp.build_ack(0x11223344))

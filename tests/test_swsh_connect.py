@@ -6,9 +6,12 @@ on a question rather than on a typo. There is no capture of one of our version-4
 this is a self-consistency check with the receiver's derivation on the other side of it.
 """
 
+import struct
+
 import swsh_connect
 
-from pokeldn.ldn import local_protocol as lp, pia4, station_protocol as stp
+from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4,
+                        station_protocol as stp)
 from pokeldn.swsh.session import packet_iv, session_keys
 
 APP_DATA = bytes.fromhex("0330112400000000051800008b718ac6")     # sw01's own advertisement
@@ -63,3 +66,33 @@ def test_the_packet_is_padded_the_way_the_console_pads_its_own():
                                  pia4.ciphertext(packet), h.tag)
     used = pia4.MESSAGE_HEADER_SIZE + 0x14                       # the ack is twenty bytes
     assert set(plain[used:]) <= {0xFF}
+
+
+def _join(ack_id=0x11223344, station=0, nonce8=b"\x02" * 8, port=0):
+    keys = session_keys(_Net())
+    return swsh_connect.wrap(keys, OUR_MAC, stp.ldn_constant_id(OUR_MAC), nonce8,
+                             mesh.build_join_request(ack_id), mesh.PROTOCOL, station, port=port)
+
+
+def test_the_join_request_the_run_sends_is_what_0x017c1700_checks():
+    """Sword's type-1 handler reads byte [1] and the last four bytes, and nothing else."""
+    h, fields, body = _read_back(_join())
+    assert fields["protocol"] == mesh.PROTOCOL == 0x18
+    assert body == bytes([mesh.JOIN_REQUEST, 0xFD]) + struct.pack(">I", 0x11223344)
+    assert mesh.read_ack_id(body) == 0x11223344
+
+
+def test_the_join_travels_on_the_unreliable_port_by_default():
+    # `--join-port` exists because the update mesh uses the reliable one and the join does not;
+    # the default has to be the port the request is actually sent on.
+    args = swsh_connect.build_parser().parse_args([])
+    assert args.join_port == mesh.PORT_UNRELIABLE == 0
+    assert args.join_station_index == mesh.STATION_INDEX_INVALID == 0xFD
+    _, fields, _ = _read_back(_join(port=args.join_port))
+    assert fields["port"] == 0
+
+
+def test_joining_is_off_unless_it_is_asked_for():
+    # An unasked-for join would change two things at once on a run bought for the handshake.
+    assert swsh_connect.build_parser().parse_args([]).join is False
+    assert swsh_connect.build_parser().parse_args(["--join"]).join is True

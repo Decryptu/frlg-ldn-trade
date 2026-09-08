@@ -63,6 +63,38 @@ STATION_INFO_SIZE = 68            # 5.31-5.45: a 64-byte location, an index, a j
 LOCATION_FIELD = 64
 ACK_PROTOCOL = stp.PROTOCOL       # 0x14 - a mesh message is acked on the STATION protocol
 
+# ---------------------------------------------------------------------------
+# Version 4 (Sword/Shield), read off the retail binary in session 57. Addresses are
+# scratchpad/swsh/main.bin, and docs/swsh.md "The Mesh Protocol" carries the disassembly.
+#
+# The MESSAGE TABLE IS THE SAME TABLE. The version-4 dispatcher is `MeshProtocol::vfunc9`
+# (0x017bfc30) -> 0x017c0c80: `type - 1`, a 0x80 bound, and the jump table at 0x02081564. Its
+# nineteen live entries are exactly the constants above MINUS 0x22 and 0x23 - version 4 has no
+# DUMMY_MESSAGE and no DUMMY_ACK, and those two fall to the default case.
+#
+# THE JOIN REQUEST NEEDS NO CHANGE. The version-4 handler for type 1 is 0x017c1700: it reads the
+# ack id as the message's last four bytes (0x017d5750, `size - 4` then a big-endian load) and
+# compares byte [1] against 0xFD at 0x017c1800 - the same six bytes `build_join_request` already
+# sends. It answers on 0x14 with the eight-byte ack built at 0x017c6dd0, so `ack_for` holds too.
+#
+# WHAT DID CHANGE IS THE ENTRY STRIDE: 64 bytes, not 68, and the index sits at 0x3E inside it
+# rather than after a 64-byte location. The parser at 0x017b4830 is self-proving on this - it
+# rejects a response longer than 0x810 bytes, and 0x810 is exactly 0x10 + 32 * 0x40 against the
+# 32-station bound at 0x017bfa34. The loop is `add x20, x20, #0x4e` (0x10 + 0x3E), then
+# `ldrb w8, [x20], #0x40` per entry.
+MESH_TYPES_V4 = frozenset([
+    JOIN_REQUEST, JOIN_RESPONSE, LEAVE_REQUEST, LEAVE_RESPONSE,
+    DESTROY_MESH, DESTROY_RESPONSE, UPDATE_MESH, KICKOUT_NOTICE,
+    CONNECTION_FAILURE_NOTICE, INCONSISTENT_NOTICE,
+    GREETING, MIGRATION_FINISH, GREETING_RESPONSE, MIGRATION_START,
+    MIGRATION_RESPONSE, MULTI_MIGRATION_START, MULTI_MIGRATION_RANK_DECISION,
+    CONNECTION_REPORT, RELAY_ROUTE_DIRECTIONS,
+])
+STATION_INFO_SIZE_V4 = 0x40
+INDEX_FIELD_V4 = 0x3E
+MAX_STATIONS_V4 = 32
+JOIN_RESPONSE_MAX_V4 = 0x810      # 0x10 + MAX_STATIONS_V4 * STATION_INFO_SIZE_V4, checked inline
+
 
 def build_join_request(ack_id, station_index=STATION_INDEX_INVALID):
     """Six bytes. 253 is what a station that is not yet in a mesh calls itself."""
@@ -97,11 +129,20 @@ def ack_for(data):
     return ACK_PROTOCOL, stp.build_ack(read_ack_id(data))
 
 
-def parse_join_response(data):
+def parse_join_response(data, version4=False):
     """-> dict. A refusal is `02 00 ff ff <reason>`; a success carries the mesh.
 
     The refusal is recognised by its two 0xFF bytes where a success has the fragment counts, which
-    is the only thing that tells the two apart.
+    is the only thing that tells the two apart. The sixteen-byte header is the SAME header in
+    version 4 - Sword's parser (main.bin 0x017b4830) reads [1] [2] [3] refusal-first in that order,
+    packs [8] [9] [0xa] into one big-endian 24-bit value and loads the update counter at 0xC, all
+    where 5.31-5.45 has them. `version4` changes the ENTRIES, not the header: see `_station_info`.
+
+    WHICH FIELD COUNTS THE ENTRIES IS NOT THE SAME IN BOTH PATHS, and version 4 is read here the
+    way its own parser reads it rather than the way 5.31-5.45's is written. An unfragmented
+    response (`fragments == 1`, 0x017b48f4) walks `stations` entries from base 0 and never touches
+    [6] or [7]; a fragmented one (0x017b4b6c) walks [6] entries into slot [7]. On 5.31-5.45 [6] is
+    read in both cases, which is what this function did before.
     """
     if len(data) < 5 or data[0] != JOIN_RESPONSE:
         raise ValueError(f"not a mesh join response: {data[:8].hex()}")
@@ -123,7 +164,11 @@ def parse_join_response(data):
         "max_total": data[10],
         "update_counter": struct.unpack_from(">I", data, 12)[0],
     }
-    out["station_info"] = _station_info(data, 16, out["entries"])
+    count, base = out["entries"], out["base_index"]
+    if version4 and out["fragments"] == 1:
+        count, base = out["stations"], 0
+    out["entry_count"], out["entry_base"] = count, base
+    out["station_info"] = _station_info(data, 16, count, version4=version4)
     out["ack_id"] = read_ack_id(data)
     return out
 
@@ -132,7 +177,7 @@ UPDATE_MESH_HEADER = 12
 UPDATE_MESH_SIZE = UPDATE_MESH_HEADER + 8 * STATION_INFO_SIZE      # 556: always the full 8 seats
 
 
-def parse_update_mesh(data):
+def parse_update_mesh(data, version4=False):
     """-> dict. The host's periodic statement of who is in the mesh.
 
     BDSP sends this about once a second and always at the FULL 556 bytes - twelve bytes of header
@@ -150,25 +195,38 @@ def parse_update_mesh(data):
         "entries": data[10],
         "base_index": data[11],
     }
-    out["station_info"] = _station_info(data, UPDATE_MESH_HEADER, out["entries"])
+    out["station_info"] = _station_info(data, UPDATE_MESH_HEADER, out["entries"],
+                                        version4=version4)
     return out
 
 
-def _station_info(data, off, count):
-    """The 5.31-5.45 entry: a 64-byte location, the index, a big-endian join order, one pad."""
+def _station_info(data, off, count, version4=False):
+    """The mesh table's entries. Two geometries, and the stride is the whole difference.
+
+        5.31-5.45   68 bytes: a 64-byte location, the index, a big-endian join order, one pad
+        version 4   64 bytes: the location, then the index at 0x3E
+
+    Version 4's stride is `ldrb w8, [x20], #0x40` at main.bin 0x017b4a24 with the cursor started at
+    0x10 + 0x3E, and it is confirmed by the length bound the same function applies: it refuses a
+    response over 0x810 bytes, which is 0x10 + 32 * 0x40 against the 32-station limit. There is no
+    join order in it - the byte at 0x3F is not read on either path.
+    """
+    size = STATION_INFO_SIZE_V4 if version4 else STATION_INFO_SIZE
+    index_field = INDEX_FIELD_V4 if version4 else LOCATION_FIELD
     infos = []
     for _ in range(count):
-        if off + STATION_INFO_SIZE > len(data):
+        if off + size > len(data):
             break
-        blob = data[off:off + STATION_INFO_SIZE]
-        entry = {"station_index": blob[LOCATION_FIELD],
-                 "join_order": struct.unpack_from(">H", blob, LOCATION_FIELD + 1)[0]}
+        blob = data[off:off + size]
+        entry = {"station_index": blob[index_field]}
+        if not version4:
+            entry["join_order"] = struct.unpack_from(">H", blob, index_field + 1)[0]
         try:
-            entry["location"] = stp.parse_station_location(blob[:LOCATION_FIELD])
+            entry["location"] = stp.parse_station_location(blob[:index_field])
         except ValueError as exc:
             entry["location_error"] = str(exc)
         infos.append(entry)
-        off += STATION_INFO_SIZE
+        off += size
     return infos
 
 

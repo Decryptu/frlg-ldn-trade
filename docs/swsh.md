@@ -320,8 +320,13 @@ own bytes: given the console's values it reproduces the console's 24-byte header
   was needed - the capture could not have separated them, and the code states it outright.
 - ANSWERED, sw02/sw03. **What protocol 0x24 is**: Pia's Local Protocol, BDSP's numbering exactly,
   and the console acts on what we send it there.
-- **The Mesh Station Protocol (0x14) request.** The ack is bookkeeping; 0x14 is the layer a station
-  actually joins on, and it is where BDSP got its first reply. Sword registers the protocol under
-  the same id, but its request layout has not been read off this binary yet - the loop at
-  `0x0185c5c0` reads a 32-entry table of `{u8, u16be, u64be, u64be}` = 19 bytes each and is a
-  station table, not the request.
+- ANSWERED, sw20/sw21/sw24. **The Mesh Station Protocol (0x14) request.** Version 4 puts a flag
+  byte at [3] and every field after it moves; clearing it is what got a request answered, and the
+  console then completed the handshake and accepted us as a station. `docs/pia.md` "The version-4
+  Mesh Station Protocol" and `pokeldn/ldn/station4.py`. The loop at `0x0185c5c0` reads a 32-entry
+  table of `{u8, u16be, u64be, u64be}` = 19 bytes each and is a station table, not the request.
+- ANSWERED, session 57, offline. **The Mesh Protocol (0x18) join.** Its dispatcher is `0x017c0c80`
+  off `MeshProtocol::vfunc9`, its message table is BDSP's without 0x22 and 0x23, its join-request
+  handler (`0x017c1700`) checks the same six bytes we already send, and its join-response parser
+  (`0x017b4830`) has the same sixteen-byte header over **64-byte** entries with the index at 0x3E.
+  `docs/pia.md` "The version-4 Mesh Protocol". NOT yet sent - `bin/swsh_connect.py --join`.

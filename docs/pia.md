@@ -203,6 +203,53 @@ message's own tail, and the Mesh Station Protocol is closed in both directions.
     LDN association  ->  Local Protocol ack  ->  connection request ([3] = 0)
                      ->  answer its request  ->  ack its acceptance   = a station in the mesh
 
+## The version-4 Mesh Protocol (0x18), and the one field that moved
+
+Read off a retail Sword binary in session 57, offline, no run. The station protocol was the
+cautionary tale here - protocol 0x14 kept its number across versions and changed its message, and
+sending BDSP's request at Sword would have put every field a byte early. So 0x18 was read the same
+way before anything was sent, and this time **almost nothing had moved**.
+
+**The message table is the same table, minus two.** The dispatcher is `MeshProtocol::vfunc9`
+(`0x017bfc30`, reached through the receive slot the station protocol uses at the same index), and it
+tail-calls `0x017c0c80`: message type at byte [0], `type - 1`, a bound of 0x80, and a jump table at
+`0x02081564`. Nineteen of its 129 entries are live, and they are exactly BDSP's constants **except
+that 0x22 DUMMY_MESSAGE and 0x23 DUMMY_ACK are absent** - version 4 has no dummy message and both
+fall to the default case.
+
+**The join request needs no change at all.** Version 4's handler for type 1 is `0x017c1700`. It
+reads the ack id with `0x017d5750` - `size - 4`, then a big-endian load, the same four instructions
+BDSP has - and compares **byte [1] against 0xFD** at `0x017c1800`. That is the six bytes
+`mesh_protocol.build_join_request()` already builds. It answers with the eight-byte type-5 ack built
+at `0x017c6dd0`, on 0x14, so "a mesh message is acknowledged on the station protocol" holds here too.
+
+**The join response header is the same sixteen bytes.** The parser is `0x017b4830`. It reads the
+refusal shape first - `[1] == 0`, `[2] == 0xFF`, `[3] == 0xFF`, reason at [4] - then the station
+count at [1] against its own maximum, packs [8] [9] [0xA] into one big-endian 24-bit value, and
+loads the update counter big-endian at **0xC**. Every field where 5.31-5.45 has it.
+
+**WHAT MOVED IS THE ENTRY: 64 bytes, not 68, with the index at 0x3E.** The loop starts its cursor at
+`0x10 + 0x3E` (`add x20, x20, #0x4e`) and reads `ldrb w8, [x20], #0x40` per station. There is no
+join order - the byte at 0x3F is not read on either path.
+
+That stride does not rest on reading one loop. The same function refuses a response longer than
+**0x810** bytes, and `0x810 = 0x10 + 32 * 0x40` against the 32-station bound at `0x017bfa34`: the
+header size, the entry stride and the station limit are three numbers that only agree on one
+reading. A 68-byte entry would make the bound 0x890.
+
+**AND THE ENTRY COUNT IS READ FROM A DIFFERENT FIELD IN EACH PATH.** An unfragmented response
+(`fragments == 1`, `0x017b48f4`) walks `stations` entries from base 0 and never touches [6] or [7];
+a fragmented one (`0x017b4b6c`) walks [6] entries into slot [7], and checks [1] [2] [3] [4] against
+the first fragment before it accepts one. Version 4 allows at most **three** fragments. The
+5.31-5.45 reading takes [6] in both cases, so a host that leaves it zero on a single-fragment
+response would hand that reading an empty mesh - which is why `parse_join_response(version4=True)`
+follows the binary's two paths rather than the one.
+
+`pokeldn/ldn/mesh_protocol.py` carries all of it: `STATION_INFO_SIZE_V4`, `INDEX_FIELD_V4`,
+`MESH_TYPES_V4` and the `version4` flag on both parsers. UNKNOWN until a run: nothing above has been
+on the air, and the ORDER - that nothing is answered on 0x18 until the 0x14 handshake has closed -
+is BDSP's finding carried over, not a version-4 measurement.
+
 ## Two families of session key
 
 The session key is not one algorithm. Pia carries a separate implementation per network type, and
