@@ -114,13 +114,16 @@ def pokemon_trade(pk8):
 # bytes. Message id 40030 carries ONE nested field whose five members decode without a guess:
 #
 #     id 40030          = 40000 + 30, and field 1 below is that same 30
-#       1  offset       30
-#       2  base         10000 in one member of the pair, 20000 in the other
-#       3  station id   THE SENDER'S, and it is byte-identical to the `host_constant` our own
-#                       seat record holds - which is what turns a 6-byte find-and-replace into a
-#                       field we can simply write
+#       1  syncId       30            the game's own names, session 62: this envelope is
+#       2  elementId    10000 / 20000 `gflnet.p2p.sync.pb.Data`, and the schema is in
+#       3  ownerId      THE SENDER'S  `scratchpad/swsh_schema.txt` at data.proto
 #       4  clock        a counter that advances between messages
-#       5  bytes(4)     00000000 for the 10000 member, 000018fc for the 20000 one
+#       5  body         00000000 / 000018fc here; a 344-byte PK8 in the console's own 40050
+#
+# `ownerId` is byte-identical to the `host_constant` our own seat record holds, which is what turns
+# a 6-byte find-and-replace into a field we can simply write. It is also what the RECEIVING side
+# resolves to a station index before it will look at a body: `docs/swsh.md`, "A content is three
+# holders", on `0x010d5e40`.
 #
 # **AND THIS IS WHERE 20030 COMES FROM.** `swsh_msgid.py` found that the high ids are a base plus
 # an offset and that no literal 20030 exists anywhere in the image. It does not need to: the base
@@ -337,8 +340,10 @@ BOX_SEND_POKEMON, BOX_SYNC_STATE_COMMAND = 1, 2
 
 # --- OPENING A CONTENT, WHICH IS WHAT `nxldn-lab`'s CLIENT DOES AND OURS NEVER HAS -------------
 #
-# A content registered at offset N gets FOUR ids - 10000+N, 20000+N, 40000+N and 60000+N - and this
-# project has only ever spoken the 20000 and 40000 ones. Their client opens the confirmation phase
+# A content registered at offset N gets four ids, and session 62 read where each comes from: its
+# registrar builds holders for 10000+N, 20000+N and **30000+N** (the third has never been seen on
+# the air here), and the framework's own start call mints 40000+N. This project has only ever
+# spoken the 20000 and 40000 ones. Their client opens the confirmation phase
 # by sending `382700000a00` on port 0, and that is id 10040: **10000 + 40**, the `ping` field of
 # content 40's holder. It sends it unprompted, as an opener, exactly as it sends the 40050 pair.
 #

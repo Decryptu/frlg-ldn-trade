@@ -831,9 +831,36 @@ dropped without a byte of complaint**, which is the shape of every run since the
 started working: the console acks our offer at the transport, echoes the record, answers with a
 hash, and never advances its trade state.
 
-That makes the next question a measurement about identity rather than about protocol: which station
-id our content-50 message is attributed to, and whether the console's mesh holds an index for it.
-`docs/pia.md` has the station table; `sw94` already cost this project ten bytes of account id.
+**AND THE ENVELOPE HAS THE GAME'S OWN NAMES FOR ITS FIELDS.** `scratchpad/swsh_schema.txt`,
+`data.proto`, package `gflnet.p2p.sync.pb` - the message this project has been calling the trade
+RPC envelope is `Data`, and its five fields are named in the binary:
+
+    1  uint32  syncId        what we called the offset      30 / 40 / 50
+    2  uint32  elementId     what we called the base        10000 / 20000
+    3  uint64  ownerId       what we called the station id  THE SENDER'S
+    4  uint64  clock
+    5  bytes   body          four bytes in the pair; a 344-byte PK8 in the console's own 40050
+
+**`ownerId` is the sender, by the game's own naming, and the receive handler above resolves a
+sender to a station index or drops.** That the two are the same value is a DEDUCTION and not yet a
+measurement - the handler's third argument is a station id, and `Data.ownerId` is the only station
+id in the message - but it is the reading that predicts what we see, and it is cheap to act on.
+
+**THE SEND SIDE SAYS THE SAME THING FROM THE OTHER END.** Content 50's own send is `0x010d6000`:
+it asks Pia for its own id (`0x01766740`, which returns -1 while the session state is 3 and
+`[session+0x158]` otherwise), **gives up entirely if that is -1**, copies the 344-byte PK8 into
+`[content+0x88]`, and hands the transport `(body, 0x158, thatId, [content+0x62], [content+0x68])`.
+The id travels with the Pokemon by construction; the console stamps its own on every offer.
+
+**AND IT EXPLAINS AN ASYMMETRY THIS PROJECT HAS MEASURED.** Content 30's slot 0, `0x010ce080`,
+does not resolve an index at all - it compares the sender against our own id
+(`[[0x2616a30]]+0xf0`) and returns if they are equal, which is the echo check. **A sender id that
+is merely not-ours passes content 30 and fails content 50.** The offer phase worked; the selection
+phase does not; and that is the difference between the two handlers.
+
+So what to build next is a `Data` on 40050 carrying our own `ownerId` and the 344-byte PK8 in
+`body`, rather than `PokemonTradeDataHolder{pokemon{...}}` on 10050 with no owner in it at all -
+which is what `pokemon_offer` has been sending. It is buildable and provable offline.
 
 
 ## What this project has measured, and what it has borrowed
