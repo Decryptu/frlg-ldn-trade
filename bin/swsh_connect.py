@@ -234,6 +234,24 @@ async def main_async(args):
                   f"[tx]       {pair[0].hex()}\n[tx]       {pair[1].hex()}")
 
 
+        def _opener_for(offset):
+            """-> what to send on content `offset`'s 10000-base holder to open it.
+
+            SX49B IS WHY THIS IS NOT ALWAYS A PING. `--open-content 30,50` sent `422700000a00` -
+            an EMPTY PokemonTradeDataHolder - and the console went further than it ever had: it
+            sent id 120 and the 40040 pair, which `docs/swsh.md` says cannot exist before the
+            exchange has completed. It had accepted the empty record AS our Pokemon, which is why
+            the player was asked to trade their Pomdrapi for an **Oeuf**. `0x010d81d0` takes the
+            default-instance branch when the body carries no field 1 and calls the listener
+            anyway, so a ping and a Pokemon reach the same handler and only one of them carries a
+            Pokemon. With `--open-content-offer` the opener for a content we have a PK8 for is the
+            PK8.
+            """
+            if args.open_content_offer and st["our_pk8"] is not None:
+                return swsh_trade.pokemon_offer(offset, st["our_pk8"])
+            return swsh_trade.open_content(offset)
+
+
         def reliable_window(protocol, port, body, now):
             """One version-4 reliable window, on whatever protocol and port it arrives.
 
@@ -1286,7 +1304,7 @@ async def main_async(args):
                             st["box_queue"] = (
                                 [swsh_trade.box_sync_state(int(c, 0))
                                  for c in (args.box_commands or "").split(",") if c.strip()]
-                                + [swsh_trade.open_content(int(c, 0))
+                                + [_opener_for(int(c, 0))
                                    for c in (args.open_content or "").split(",") if c.strip()])
                             print(f"[tx]     *** AFTER THE OFFER: box {args.box_commands}, "
                                   f"open {args.open_content} *** "
@@ -1895,6 +1913,12 @@ def build_parser():
                          "holder for each N - `382700000a00` for 40, which is exactly the opener "
                          "nxldn-lab's client sends to start the confirmation phase, rebuilt here "
                          "from our own content registry rather than copied")
+    ap.add_argument("--open-content-offer", action="store_true",
+                    help="make --open-content send our PK8 on the 10000-base holder instead of an "
+                         "empty `ping`. sx49b: the ping opened content 50 AND was taken as our "
+                         "Pokemon - the console reached the confirmation phase and asked the "
+                         "player to trade theirs for an Oeuf, an empty record. Same moment, same "
+                         "holder, a Pokemon in it")
     ap.add_argument("--box-on-accept", default=None, metavar="N,N,...",
                     help="send these box commands the moment MIGRATION_START arrives - the only "
                          "signal that says the player pressed accept. sx05: the console keeps "

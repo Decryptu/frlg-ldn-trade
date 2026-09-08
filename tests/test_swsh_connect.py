@@ -276,3 +276,16 @@ def test_the_selection_start_pair_is_the_shape_nxldn_lab_sends():
     assert [g["base"] for g in got] == list(swsh_trade.RPC_BASES)
     assert all(g["station_id"] == 0x1249a221d8580000 for g in got)
     assert [bytes(g["body"]) for g in got] == list(swsh_trade.RPC_PAIR_BODIES)
+
+
+def test_the_content_opener_can_carry_the_pokemon():
+    """sx49b: the empty opener on content 50's 10000-base holder was accepted AS our Pokemon - the
+    console reached the confirmation phase and offered the player an Oeuf. Same holder, same
+    moment; the flag decides whether the body is empty or a PK8."""
+    args = swsh_connect.build_parser().parse_args([])
+    assert args.open_content_offer is False
+    assert swsh_connect.build_parser().parse_args(["--open-content-offer"]).open_content_offer
+    pk8 = bytes(0x158)
+    empty, carried = swsh_trade.open_content(50), swsh_trade.pokemon_offer(50, pk8)
+    assert empty == bytes.fromhex("422700000a00")
+    assert carried[:4] == empty[:4] and len(carried) > len(empty)
