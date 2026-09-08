@@ -193,13 +193,14 @@ async def main_async(args):
                     record(rec="rx_undecrypted", t=now, src=addr[0], station=h.station,
                            raw=data[:48].hex())
                     continue
-                msgs = pia4.parse_messages(pt)
+                msgs = pia4.parse_packet(pt)
                 record(rec="rx", t=now, src=addr[0], station=h.station, session=h.session_id,
                        phase=st["phase"],
-                       msgs=[{**pia4.parse_message_header(hd), "payload": b.hex()}
-                             for hd, b in msgs])
-                for hd, body in msgs:
-                    f = pia4.parse_message_header(hd)
+                       msgs=[{k: (sorted(v) if k == "inherited" else
+                                  v.hex() if isinstance(v, (bytes, bytearray)) else v)
+                              for k, v in m.items()} for m in msgs])
+                for f in msgs:
+                    body = f["payload"]
                     if f["protocol"] == lp.PROTOCOL and len(body) >= 2 \
                             and body[1] == lp.UPDATE_SESSION:
                         us = lp.parse_update_session(body)

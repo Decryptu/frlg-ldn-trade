@@ -171,3 +171,67 @@ def test_the_tag_refuses_a_packet_built_under_the_wrong_station_byte():
                                body, station=1, nonce8=nonce8)
     assert pia4.decrypt_payload(keys.session_key, packet_iv(keys, OUR_MAC, nonce8, source_id=0),
                                 pia4.ciphertext(packet), pia4.PiaHeader4.parse(packet).tag) is None
+
+
+# --------------------------------------------------------------------------- more than one message
+# sw29, the first capture in which a Sword ever put two messages in one packet. Both vectors are
+# the decrypted plaintext of a real packet, taken from the capture rather than typed.
+
+SW29_RELIABLE = bytes.fromhex(          # RTT, then three reliable-window messages
+    "7f010010580000000000000000000002eb9b2220f14800000000000000000000"
+    "00000e7840e6df8706000f7c0000000f0000060001000100610000000a000000"
+    "00070000060002000100610000000a0000070000060003000100610000000a00")
+
+SW29_TWO_PORTS = bytes.fromhex(         # the same 42-byte body on port 0 and then port 1
+    "7f11002a800000000000000000000002eb9b2220f1480000484b6260604af8ff"
+    "9f819151c87391e28d0806206064c000834268140c0700000000ffff03005fb2"
+    "04b900000480000001484b6260604af8ff9f819151c87391e28d0806206064c0"
+    "00834268140c0700000000ffff03005fb204b900ffffffffffffffffffffffff")
+
+
+def test_a_header_is_as_long_as_its_presence_byte_says():
+    assert pia4.message_header_size(0x7F) == pia4.MESSAGE_HEADER_SIZE == 24
+    assert pia4.message_header_size(0x06) == 1 + 2 + 4      # size and protocol|port only
+    assert pia4.message_header_size(0x04) == 1 + 4          # protocol|port only
+    assert pia4.message_header_size(0x00) == 1              # everything inherited
+    # bits 0x20 and 0x40 own no field, which is why 0x7F and 0x1F are the same length
+    assert pia4.message_header_size(0x1F) == pia4.message_header_size(0x7F)
+
+
+def test_a_presence_byte_of_zero_is_a_message_and_not_the_end_of_the_packet():
+    """The console's own walk stops at 0xFF alone (0x01852da0). Stopping at 0x00 as well threw
+    away two of the three reliable messages in this packet. Over sw29 the old walk found
+    247 messages where there are 1740, and left a non-padding tail on 159 of 238 packets."""
+    msgs = pia4.parse_packet(SW29_RELIABLE)
+    assert [m["present"] for m in msgs] == [0x7F, 0x06, 0x00, 0x00]
+    assert [m["protocol"] for m in msgs] == [0x58, 0x7C, 0x7C, 0x7C]
+    assert [m["header_size"] for m in msgs] == [24, 7, 1, 1]
+    last = msgs[-1]
+    used = last["at"] + last["header_size"] + last["size"]
+    assert used == len(SW29_RELIABLE)                       # every byte accounted for
+
+
+def test_an_omitted_field_comes_from_the_previous_message_in_the_packet():
+    """0x01853050, bit by bit: flags, size, protocol|port, destination and source in turn."""
+    first, second = pia4.parse_packet(SW29_TWO_PORTS)
+    assert first["present"] == 0x7F and second["present"] == 0x04
+    assert second["inherited"] == {"flags", "size", "destination", "source"}
+    assert second["size"] == first["size"] == 42            # inherited, not "the rest of the packet"
+    assert second["payload"] == first["payload"]
+    assert (first["protocol"], first["port"]) == (0x80, 0)  # the one field it does state
+    assert (second["protocol"], second["port"]) == (0x80, 1)
+    assert second["source"] == first["source"] == CONSOLE_CONSTANT
+
+
+def test_the_walk_consumes_each_packet_up_to_its_ff_padding():
+    for plain in (SW29_RELIABLE, SW29_TWO_PORTS):
+        last = pia4.parse_packet(plain)[-1]
+        used = last["at"] + last["header_size"] + last["size"]
+        assert set(plain[used + (-used % 4):]) <= {0xFF}
+
+
+def test_parse_messages_still_hands_back_the_header_as_sent():
+    # every caller and capture tool speaks this; a short header stays short
+    assert [len(h) for h, _ in pia4.parse_messages(SW29_RELIABLE)] == [24, 7, 1, 1]
+    assert pia4.parse_message_header(pia4.parse_messages(SW29_TWO_PORTS)[1][0]) == {
+        "present": 0x04, "proto_port": 0x80000001, "protocol": 0x80, "port": 1}

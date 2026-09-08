@@ -40,6 +40,7 @@ MESSAGE_HEADER_SIZE = 24
 __all__ = ["MAGIC", "VERSION", "HEADER_SIZE", "TAG_SIZE", "MESSAGE_HEADER_SIZE", "PiaHeader4",
            "ciphertext", "is_pia4", "gcm_iv", "ldn_session_key", "parse_messages5",
            "ALL_FIELDS_PRESENT", "MESSAGE_FLAGS", "build_message", "parse_message_header",
+           "MESSAGE_FIELDS", "message_header_size", "parse_packet",
            "pad_payload", "encrypt_payload", "decrypt_payload", "build_packet"]
 
 
@@ -84,25 +85,87 @@ def ciphertext(data):
     return data[CT_OFF:]
 
 
-def parse_messages(plaintext):
-    """Split a decrypted version-4 payload into messages.
+# A MESSAGE HEADER IS NOT A FIXED 24 BYTES. The presence byte at [0] says which fields follow, in
+# bit order, and the size is the arithmetic the library inlines at eighteen sites (session 56):
+#
+#     1 + (bit0: flags, 1) + (bit1: size, 2) + (bit2: protocol|port, 4)
+#       + (bit3: destination, 8) + (bit4: source, 8)
+#
+# so 0x7F gives 24 and bits 0x20/0x40 own nothing. Every packet of sw01, sw02 and sw03 carried ONE
+# message with every field present, which is why a fixed 24 held for three sessions.
+#
+# AND A FIELD THE PRESENCE BYTE OMITS IS INHERITED FROM THE PREVIOUS MESSAGE IN THE SAME PACKET,
+# not defaulted and not implied by the remaining length. `0x01853050` is that rule bit by bit: it
+# takes the newly parsed header and the previous one and, for each clear bit, copies flags at +9,
+# size at +0xA, protocol|port at +0xC, destination at +0x10 and source at +0x18. `0x01852da0` is
+# what saves the previous header before parsing the next. sw29 is the first capture with any of it:
+# its 0x80 packets carry the same 42-byte body twice, port 0 then port 1, and the second message's
+# header is FIVE bytes - `04 80 00 00 01`.
+MESSAGE_FIELDS = ((0x01, 1, "flags"), (0x02, 2, "size"), (0x04, 4, "proto_port"),
+                  (0x08, 8, "destination"), (0x10, 8, "source"))
 
-    -> [(header_bytes, body)]. The header is 24 bytes and the body `size` bytes, big-endian at
-    offset 2, with the message padded to a multiple of four - the arithmetic that accounts for all
-    484 packets of sw01 exactly. The walk stops at 0xFF padding, the way 5.27's does.
+
+def message_header_size(present):
+    """-> the byte length of a message header with this presence byte."""
+    return 1 + sum(width for bit, width, _ in MESSAGE_FIELDS if present & bit)
+
+
+def parse_packet(plaintext):
+    """Split a decrypted version-4 payload into messages, resolving inherited fields.
+
+    -> [dict], each with the resolved `flags`, `size`, `protocol`, `port`, `destination`, `source`
+    and `payload`, plus `present`, `header_size`, `at` and the set of names it `inherited`. A
+    message is padded to a multiple of four.
+
+    THE WALK STOPS AT 0xFF AND AT NOTHING ELSE. `0x01852da0` reads the presence byte and compares
+    it against 0xFF alone; a presence byte of **0x00 is a legal one-byte header** that inherits
+    every field, and stopping on it throws away real messages. sw29's reliable-window packets are
+    where that shows: they carry three 0x7C messages, the second and third of them one byte of
+    header each, and a walk that stops at 0x00 sees only the first and leaves 32 bytes of the
+    plaintext unaccounted for.
     """
-    out, off = [], 0
-    while off + MESSAGE_HEADER_SIZE <= len(plaintext):
-        if plaintext[off] in (0x00, 0xFF):
+    out, off, prev = [], 0, None
+    while off < len(plaintext):
+        present = plaintext[off]
+        if present == 0xFF:
             break
-        size = struct.unpack_from(">H", plaintext, off + 2)[0]
-        end = off + MESSAGE_HEADER_SIZE + size
+        if present == 0 and prev is None:
+            break                             # nothing to inherit; not a shape the console sends
+        size = message_header_size(present)
+        if off + size > len(plaintext):
+            break
+        m = {"at": off, "present": present, "header_size": size, "inherited": set()}
+        p = off + 1
+        for bit, width, name in MESSAGE_FIELDS:
+            if present & bit:
+                m[name] = int.from_bytes(plaintext[p:p + width], "big")
+                p += width
+            elif prev is not None:
+                m[name] = prev[name]
+                m["inherited"].add(name)
+            else:
+                m[name] = 0                   # nothing to inherit from; the console never does this
+                m["inherited"].add(name)
+        m["protocol"], m["port"] = m["proto_port"] >> 24, m["proto_port"] & 0xFFFFFF
+        end = p + m["size"]
         if end > len(plaintext):
             break
-        out.append((plaintext[off:off + MESSAGE_HEADER_SIZE],
-                    plaintext[off + MESSAGE_HEADER_SIZE:end]))
+        m["header"] = plaintext[off:p]
+        m["payload"] = plaintext[p:end]
+        out.append(m)
+        prev = m
         off = end + (-end % 4)
     return out
+
+
+def parse_messages(plaintext):
+    """-> [(header_bytes, body)], the raw header of each message and its body.
+
+    Kept because it is what every caller and capture tool already speaks. `header_bytes` is the
+    header AS SENT, so it is 24 bytes only when the message states every field; use `parse_packet`
+    when the resolved values are what matter.
+    """
+    return [(m["header"], m["payload"]) for m in parse_packet(plaintext)]
 
 
 # --- Building one. Session 56: the first version-4 packet OUT. ---------------------------------
@@ -142,14 +205,24 @@ def build_message(payload, protocol, source, port=0, message_flags=MESSAGE_FLAGS
 
 
 def parse_message_header(header):
-    """-> dict of the 24 bytes, so a capture can be read field by field."""
-    if len(header) != MESSAGE_HEADER_SIZE:
-        raise ValueError(f"a version-4 message header is {MESSAGE_HEADER_SIZE} bytes")
-    return {"present": header[0], "flags": header[1],
-            "size": struct.unpack_from(">H", header, 2)[0],
-            "protocol": header[4], "port": int.from_bytes(header[5:8], "big"),
-            "destination": struct.unpack_from(">Q", header, 8)[0],
-            "source": struct.unpack_from(">Q", header, SOURCE_OFF)[0]}
+    """-> dict of the fields this header STATES, so a capture can be read field by field.
+
+    A header that omits fields carries no values for them - what they resolve to depends on the
+    message before it in the packet, which a lone header cannot know. `parse_packet` is what
+    resolves them; anything absent here is simply missing from the dict.
+    """
+    present = header[0]
+    if len(header) != message_header_size(present):
+        raise ValueError(f"a header with presence {present:#04x} is "
+                         f"{message_header_size(present)} bytes, this is {len(header)}")
+    out, off = {"present": present}, 1
+    for bit, width, name in MESSAGE_FIELDS:
+        if present & bit:
+            out[name] = int.from_bytes(header[off:off + width], "big")
+            off += width
+    if "proto_port" in out:
+        out["protocol"], out["port"] = out["proto_port"] >> 24, out["proto_port"] & 0xFFFFFF
+    return out
 
 
 def pad_payload(plaintext):

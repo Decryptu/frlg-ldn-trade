@@ -101,6 +101,36 @@ Two independent fields agree in sw01: the message header's source and the Local 
 session's own `host_constant_id`, which is the same integer written the other way round (the Pia
 message header is big-endian, the Local Protocol's body little-endian).
 
+### A presence byte of 0x00 is a message, and an omitted field is inherited
+
+FACT, sw29 and the binary together, and it is a CORRECTION: for three sessions this project read a
+version-4 message header as a fixed 24 bytes, because every packet it had ever seen carried exactly
+one message with every field present. The moment a Sword had something to say it stopped being true,
+and the old walk found **247 messages where sw29 carries 1740** - 1487 of the missing ones on the
+reliable window - while inventing eight on a "protocol 0x01" that does not exist, out of the bytes
+of the message after them.
+
+Two rules, both read off `0x01852da0` and `0x01853050`:
+
+- **The walk stops at 0xFF and at nothing else.** `0x01852da0` compares the presence byte against
+  0xFF alone. **0x00 is a legal one-byte header** that states no field at all, and sw29's reliable
+  packets are made of them: one full header and then up to nineteen more messages of one byte each.
+- **A field the presence byte omits is taken from the PREVIOUS message in the same packet** - not
+  defaulted, and not implied by the remaining length. `0x01853050` is that rule bit by bit, copying
+  flags at +9, size at +0xA, protocol|port at +0xC, destination at +0x10 and source at +0x18 for
+  each clear bit. An inherited size is bounds-checked against **0x589**.
+
+The shapes sw29 actually carries:
+
+    7f -> 0x58 16B | 06 -> 0x7c 15B | 00 | 00        RTT, then three reliable messages
+    7f -> 0x80 42B | 04 -> 0x80 42B                  the same body on port 0 and then port 1
+    7f -> 0x7c 15B | 00 x19                          twenty reliable messages, 19 bytes of header
+
+`pia4.parse_packet()` resolves the inheritance and is what to read a capture with;
+`pia4.parse_messages()` still hands back each header as it was sent. The check that matters is that
+the walk consumes each packet exactly up to its 0xFF padding - all 238 of sw29's do, and the old walk
+left a non-padding tail on **159** of them.
+
 ### Sending one
 
 sw02, session 56: a version-4 packet built by `pia4.build_packet` and sent from our seat was
