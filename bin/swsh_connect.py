@@ -196,6 +196,30 @@ async def main_async(args):
             nonce = (nonce + 1) & ((1 << 64) - 1)
             return nonce.to_bytes(8, "big")
 
+        def open_phase(offset, label):
+            """Queue an RPC pair that OPENS a phase, built from the console's own 40030 envelope.
+
+            WHEN THIS GOES OUT IS THE WHOLE QUESTION, and sw89 got it wrong. It sent the 40050 pair
+            on the migration start - which is the console's TEARDOWN, the last thing it ever says -
+            so the pair went out after the console had stopped reading, was never acked, and the
+            run tested nothing. A phase is opened while the conversation is still running.
+            """
+            if st["selection_sent"]:
+                return
+            last = st["said_by_port"].get((reliable5.PROTOCOL, args.rpc_port))
+            got = swsh_trade.parse_rpc(last) if last else None
+            if got is None or got.get("clock") is None:
+                print("[tx]     no 40030 pair seen on port 1; cannot build a phase opener")
+                return
+            clock = got["clock"] + args.rpc_clock_delta
+            pair = swsh_trade.build_rpc_pair(offset, our_constant, clock)
+            st["rpc_queue"].extend(pair)
+            st["selection_sent"] = True
+            print(f"\n[tx]     *** OPENING THE {label} PHASE *** {40000 + offset} pair on "
+                  f"0x7c port {args.rpc_port}, clock {clock}\n"
+                  f"[tx]       {pair[0].hex()}\n[tx]       {pair[1].hex()}")
+
+
         def reliable_window(protocol, port, body, now):
             """One version-4 reliable window, on whatever protocol and port it arrives.
 
@@ -273,20 +297,8 @@ async def main_async(args):
                     # it - so it is a notification, not a question, and using it to TIME something
                     # is worth more than answering it. sw84, sw87 and sw88 each answered it a
                     # different way and each made the console give up sooner than ignoring it did.
-                    if args.send_selection and not st["selection_sent"]:
-                        last = st["said_by_port"].get((reliable5.PROTOCOL, args.rpc_port))
-                        got = swsh_trade.parse_rpc(last) if last else None
-                        if got is None or got.get("clock") is None:
-                            print("[tx]     no 40030 pair seen on port 1; cannot time a selection")
-                        else:
-                            clock = got["clock"] + args.rpc_clock_delta
-                            pair = swsh_trade.build_rpc_pair(swsh_trade.SELECTION_OFFSET,
-                                                             our_constant, clock)
-                            st["rpc_queue"].extend(pair)
-                            st["selection_sent"] = True
-                            print(f"[tx]     *** OPENING THE SELECTION PHASE *** 40050 pair on "
-                                  f"0x7c port {args.rpc_port}, clock {clock}\n"
-                                  f"[tx]       {pair[0].hex()}\n[tx]       {pair[1].hex()}")
+                    if args.send_selection == "migration":
+                        open_phase(swsh_trade.SELECTION_OFFSET, "SELECTION")
                     if args.answer_migration and st["migration_pending"] is None:
                         index = st["our_index"]
                         if index is None:
@@ -984,6 +996,11 @@ async def main_async(args):
                     if st["offer_seq"] == seq:
                         print(f"[tx]     *** OUR OFFER WAS ACKNOWLEDGED at sequence {seq} ***")
                         st["offer_pending"], st["offer_seq"] = None, None
+                        if args.send_selection == "offer":
+                            # EARLY, WHILE IT IS STILL TALKING. The console acks our offer and then
+                            # goes quiet until the accept; that quiet window is the only room a
+                            # phase opener has, and sw89 spent its pair after the window shut.
+                            open_phase(swsh_trade.SELECTION_OFFSET, "SELECTION")
                         if args.box_commands and not st["trade_ready_sent"]:
                             # SWEEP THE COMMAND, BECAUSE A REFUSAL IS AN INSTRUMENT. The console
                             # gives up a few seconds after the player accepts, not on a fixed timer
@@ -1536,8 +1553,11 @@ def build_parser():
                     help="offer back the exact PK8 the console just offered us, unchanged, instead "
                          "of one out of --send-snapshot. The control for \"is it our record it is "
                          "refusing\": these bytes came out of its own save and cannot be illegal")
-    ap.add_argument("--send-selection", action="store_true",
-                    help="when the console signals the accept, OPEN the selection phase with a "
+    ap.add_argument("--send-selection", default=None, choices=("offer", "migration"),
+                    help="WHEN to open the selection phase with a 40050 pair on 0x7c port 1. "
+                         "\"offer\" sends it as soon as our offer is acknowledged, which is the "
+                         "only window the console is still reading in; \"migration\" is sw89's "
+                         "timing and went out after the console had already stopped. OPEN the "
                          "40050 pair on 0x7c port 1. It is the same envelope as the 40030 the "
                          "console sends us, at offset 50 with our own station id - our builder "
                          "reproduces its 40030 pair byte for byte, so only the offset is new")
