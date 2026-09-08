@@ -303,6 +303,19 @@ async def main_async(args):
                           f"host {start['host_index']} names station "
                           f"{start['new_host_index']} as the next host")
                     record(rec="rx_migration_start", t=now, **start)
+                    if args.box_on_accept:
+                        # THE ONLY WAY TO SPEAK AFTER THE ACCEPT. The migration start is the one
+                        # signal that says the player pressed the button, and sx05 shows the
+                        # console keeps acking for about five seconds after it - so there IS a
+                        # window, and this project has never put anything in it. Everything tried
+                        # so far landed BEFORE the accept, which is a different state.
+                        st["box_queue"] = [swsh_trade.box_sync_state(int(c, 0))
+                                           for c in args.box_on_accept.split(",")]
+                        st["box_next"] = 0.0
+                        st["offer_pending"] = None
+                        print(f"[tx]     *** ANSWERING THE ACCEPT *** box commands "
+                              f"{args.box_on_accept}: "
+                              f"{[p.hex() for p in st['box_queue']]}")
                     # AND IT IS THE ONLY RELIABLE "THE PLAYER ACCEPTED" SIGNAL WE HAVE. It arrives
                     # once, seconds after the accept, in every run where the player pressed it and
                     # in no other. The console never retransmits it - one transport ack satisfies
@@ -1618,6 +1631,12 @@ def build_parser():
                          "holder for each N - `382700000a00` for 40, which is exactly the opener "
                          "nxldn-lab's client sends to start the confirmation phase, rebuilt here "
                          "from our own content registry rather than copied")
+    ap.add_argument("--box-on-accept", default=None, metavar="N,N,...",
+                    help="send these box commands the moment MIGRATION_START arrives - the only "
+                         "signal that says the player pressed accept. sx05: the console keeps "
+                         "acking for about five seconds after it, and nothing has ever been sent "
+                         "into that window. Every command tried so far landed before the accept, "
+                         "which is a different state of the same machine")
     ap.add_argument("--box-period", type=float, default=0.0,
                     help="seconds to wait between the queued post-offer payloads. THE POINT IS TO "
                          "SPAN THE ACCEPT. sw91 sent eight box commands inside 2.5 s, so every one "
