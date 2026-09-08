@@ -184,3 +184,37 @@ def test_both_flags_seed_the_queue_with_payloads_and_nothing_else():
 def test_the_openers_and_the_commands_are_different_ids():
     assert swsh_trade.parse(swsh_trade.open_content(40))[0] == 10040
     assert swsh_trade.parse(swsh_trade.box_sync_state(4))[0] == swsh_trade.POKEMON_TRADE
+
+
+def test_a_spaced_queue_drains_every_entry_and_not_just_the_first():
+    """sx02's bug, as a model of the two loops rather than a re-read of the code.
+
+    The drain has to sit where a payload is CHOSEN - a loop that runs every period - and not
+    where a queued payload is ACKNOWLEDGED. In the ack branch the first "not yet" leaves nothing
+    pending, so nothing is queued, so no queued payload is ever acked again and the drain never
+    runs a second time: one command in 46 seconds where eight were meant to span the accept.
+    """
+    def run(drain_in_ack, ticks=200, period=5.0, tick=0.3):
+        # The first entry is seeded directly when our own offer is acknowledged, which is why
+        # sx02 sent command 1 and then nothing: the seeding worked and the DRAIN did not.
+        queue, sent, now = [2, 3, 4], [], 0.0
+        pending, box_next = 1, period
+        for _ in range(ticks):
+            if not drain_in_ack and pending is None and queue and now >= box_next:
+                pending, box_next = queue.pop(0), now + period
+            if pending is not None:
+                sent.append((now, pending))
+                acked = pending
+                pending = None
+                if drain_in_ack and queue and now >= box_next:
+                    pending, box_next = queue.pop(0), now + period
+                del acked
+            now += tick
+        return sent
+
+    assert [p for _, p in run(drain_in_ack=False)] == [1, 2, 3, 4]
+    assert [p for _, p in run(drain_in_ack=True)] == [1]          # the shape sx02 shipped
+
+    spaced = run(drain_in_ack=False)
+    gaps = [round(b[0] - a[0], 1) for a, b in zip(spaced, spaced[1:])]
+    assert all(g >= 5.0 for g in gaps), gaps

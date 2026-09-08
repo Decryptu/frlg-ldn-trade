@@ -967,6 +967,19 @@ async def main_async(args):
                         await trio.sleep(args.send_period)
                         continue
                     answered_serial = serial
+                if (st["offer_pending"] is None and st["box_queue"]
+                        and time.monotonic() >= st["box_next"]):
+                    # THE QUEUE IS DRAINED HERE, WHERE A PAYLOAD IS CHOSEN, and not in the ack
+                    # branch. sx02 put the timer in the ack branch, which only runs on the ack of a
+                    # QUEUED payload: the first gate that said "not yet" left nothing pending, so
+                    # nothing was queued, so no queued payload was ever acked again and the drain
+                    # never ran a second time. One command in 46 seconds where eight were meant to
+                    # span the accept. This loop runs every period regardless of what was sent, so
+                    # the timer belongs in it.
+                    st["offer_pending"] = st["box_queue"].pop(0)
+                    st["box_next"] = time.monotonic() + args.box_period
+                    print(f"[tx]     *** QUEUED PAYLOAD *** {st['offer_pending'].hex()} "
+                          f"({len(st['box_queue'])} left)")
                 if st["offer_pending"] is not None:
                     # STICKY UNTIL THE WINDOW MOVES PAST IT. A payload swapped out mid-sequence is
                     # a payload the console may never have seen whole.
@@ -1013,7 +1026,8 @@ async def main_async(args):
                             # goes quiet until the accept; that quiet window is the only room a
                             # phase opener has, and sw89 spent its pair after the window shut.
                             open_phase(swsh_trade.SELECTION_OFFSET, "SELECTION")
-                        if st["box_queue"] and time.monotonic() >= st["box_next"]:
+                        if st["box_queue"]:
+                            # DRAINED IN THE SENDER LOOP NOW - see the note there. Nothing to do.
                             # THE QUEUE HOLDS PAYLOADS, NOT RECIPES, AND THAT IS THE WHOLE FIX.
                             # sw95 seeded it with built payloads for `--open-content` and with
                             # plain ints for `--box-commands`, and the drain branch called the
@@ -1023,10 +1037,7 @@ async def main_async(args):
                             # seconds after our Pokemon appeared on their screen. Twice in one
                             # session a queue of two different things has cost a run; it holds one
                             # kind of thing now.
-                            st["offer_pending"] = st["box_queue"].pop(0)
-                            st["box_next"] = time.monotonic() + args.box_period
-                            print(f"[tx]     *** QUEUED PAYLOAD *** "
-                                  f"{st['offer_pending'].hex()}")
+                            pass
                         elif not st["trade_ready_sent"] and (args.open_content
                                                              or args.box_commands):
                             st["trade_ready_sent"] = True
@@ -1049,8 +1060,7 @@ async def main_async(args):
                             print(f"[tx]     *** AFTER THE OFFER: box {args.box_commands}, "
                                   f"open {args.open_content} *** "
                                   f"{[p.hex() for p in st['box_queue']]}")
-                            st["offer_pending"] = st["box_queue"].pop(0)
-                            st["box_next"] = time.monotonic() + args.box_period
+                            st["box_next"] = 0.0        # the sender loop takes it from here
                         elif args.trade_ready and not st["trade_ready_sent"]:
                             st["trade_ready_sent"] = True
                             # AND SAY WE ARE READY, on the trade holder. The console has never sent
