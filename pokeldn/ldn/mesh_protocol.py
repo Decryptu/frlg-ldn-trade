@@ -95,6 +95,12 @@ INDEX_FIELD_V4 = 0x3E
 MAX_STATIONS_V4 = 32
 JOIN_RESPONSE_MAX_V4 = 0x810      # 0x10 + MAX_STATIONS_V4 * STATION_INFO_SIZE_V4, checked inline
 
+# CONFIRMED ON THE WIRE, sw29, and by length alone. A retail Sword's join response is 148 bytes for
+# two stations - 0x10 + 2 * 0x40 + 4 - where a 68-byte entry would give 156; and its update mesh is
+# 524 bytes, 12 + 8 * 0x40, where BDSP's eight 68-byte seats are 556. Two message shapes, two
+# lengths, one stride. docs/pia.md "The version-4 Mesh Protocol".
+JOIN_RESPONSE_TWO_STATIONS_V4 = 0x10 + 2 * STATION_INFO_SIZE_V4 + 4        # 148
+
 
 def build_join_request(ack_id, station_index=STATION_INDEX_INVALID):
     """Six bytes. 253 is what a station that is not yet in a mesh calls itself."""
@@ -175,6 +181,7 @@ def parse_join_response(data, version4=False):
 
 UPDATE_MESH_HEADER = 12
 UPDATE_MESH_SIZE = UPDATE_MESH_HEADER + 8 * STATION_INFO_SIZE      # 556: always the full 8 seats
+UPDATE_MESH_SIZE_V4 = UPDATE_MESH_HEADER + 8 * STATION_INFO_SIZE_V4        # 524, measured at sw29
 
 
 def parse_update_mesh(data, version4=False):

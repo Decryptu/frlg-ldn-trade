@@ -159,7 +159,8 @@ async def main_async(args):
               "rx": 0, "undecrypted": 0, "other": [], "answer": None, "station_replies": 0,
               "requests": 0, "requests_in": 0, "responses": 0, "their_request": None,
               "our_variable_id": 0, "responses_in": 0, "acks_out": 0,
-              "joins_out": 0, "mesh_in": 0, "join_response": None, "mesh_acks": 0}
+              "joins_out": 0, "mesh_in": 0, "join_response": None, "mesh_acks": 0,
+              "updates_mesh": 0}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
                                           # only moment a mesh join has ever been answered
@@ -311,6 +312,20 @@ async def main_async(args):
                                           f"{loc.get('constant_id', 0):#018x}")
                             st["join_response"] = st["join_response"] or (now, body.hex())
                             record(rec="rx_join_response", t=now, parsed=got, raw=body.hex())
+                        elif kind == mesh.UPDATE_MESH:
+                            st["updates_mesh"] += 1
+                            try:
+                                got = mesh.parse_update_mesh(body, version4=True)
+                            except (IndexError, ValueError) as e:
+                                print(f"[rx]     could not parse it: {e}")
+                                continue
+                            if st["updates_mesh"] == 1:
+                                print(f"[rx]     stations={got['stations']} "
+                                      f"host_index={got['host_index']} "
+                                      f"counter={got['update_counter']} "
+                                      f"({len(body)} B; {mesh.UPDATE_MESH_SIZE_V4} is the full "
+                                      f"eight seats at version 4)")
+                            record(rec="rx_update_mesh", t=now, parsed=got, raw=body.hex())
                         reply = mesh.ack_for(body)
                         if reply and args.join:
                             proto, payload = reply

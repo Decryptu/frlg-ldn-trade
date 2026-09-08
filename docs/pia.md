@@ -246,9 +246,27 @@ response would hand that reading an empty mesh - which is why `parse_join_respon
 follows the binary's two paths rather than the one.
 
 `pokeldn/ldn/mesh_protocol.py` carries all of it: `STATION_INFO_SIZE_V4`, `INDEX_FIELD_V4`,
-`MESH_TYPES_V4` and the `version4` flag on both parsers. UNKNOWN until a run: nothing above has been
-on the air, and the ORDER - that nothing is answered on 0x18 until the 0x14 handshake has closed -
-is BDSP's finding carried over, not a version-4 measurement.
+`MESH_TYPES_V4` and the `version4` flag on both parsers.
+
+### Confirmed on the console, and the stride twice by length alone
+
+FACT, sw29. One join request out, one JOIN_RESPONSE back, **accepted, `our_index` 1** - and then a
+retail Sword opened its data plane: 238 packets, none of which failed to decrypt, on seven protocols
+at once (0x24, 0x14, 0x18, 0x7C, 0x58, 0x80 and a zero-length 0x01). Nothing was adjusted between
+reading the binary and the console answering.
+
+**The two lengths only fit a 64-byte entry**, and neither number needs the disassembly:
+
+    join response   148 B  =  0x10 + 2 * 0x40 + 4        68-byte entries would give 156
+    update mesh     524 B  =  12   + 8 * 0x40            BDSP's eight 68-byte seats are 556
+
+**And the ack rule carried over intact.** The response was answered with `05 00 00 00 3e3b1c08` on
+0x14 and the console sent it exactly once. An unacknowledged join response arrives eleven and
+eighteen times on BDSP, so one copy is the pass signal, not an absence of one.
+
+WHAT sw29 DID NOT SEPARATE: the console set [6] and [7] on its single-fragment response, so the
+version-4 entry-count path and the 5.31-5.45 one agree on this capture. That they differ is read
+off `0x017b48f4`, not measured. Nothing fragmented either - `fragments` was 1.
 
 ## Two families of session key
 

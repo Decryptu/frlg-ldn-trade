@@ -214,3 +214,32 @@ def test_the_version_four_join_request_is_the_one_we_already_build():
     assert req[1] == 0xFD
     assert mp.read_ack_id(req) == 0x11223344
     assert mp.ack_for(req) == (stp.PROTOCOL, stp.build_ack(0x11223344))
+
+
+def test_the_lengths_sw29_measured_only_fit_the_sixty_four_byte_entry():
+    """The wire confirms the stride twice, by length alone - no disassembly in either number."""
+    assert mp.JOIN_RESPONSE_TWO_STATIONS_V4 == 148            # sw29's join response
+    assert 0x10 + 2 * mp.STATION_INFO_SIZE + 4 == 156         # what 68-byte entries would give
+    assert mp.UPDATE_MESH_SIZE_V4 == 524                      # sw29's update mesh
+    assert mp.UPDATE_MESH_SIZE == 556                         # BDSP's, unchanged
+
+
+def test_the_real_version_four_join_response_reads_back_as_the_mesh_the_console_named():
+    """sw29, byte for byte off the console. Two stations, us at index 1."""
+    raw = bytes.fromhex(
+        "0202000101000200020008000000000002060000a9fe5f013039000000000000"
+        "eb9b2220f148000069a75e26597bc2a300000001000000000000000000000000"
+        "000000000000000000000000000000000606a9fe5f023039a9fe5f0230390000"
+        "000000001249a221d858000050af6c5a32669aea050100010000000000000000"
+        "000000000000000000000000000001003e3b1c08")
+    assert len(raw) == mp.JOIN_RESPONSE_TWO_STATIONS_V4
+    out = mp.parse_join_response(raw, version4=True)
+    assert out["refused"] is False
+    assert (out["stations"], out["host_index"], out["our_index"]) == (2, 0, 1)
+    assert out["fragments"] == 1 and out["update_counter"] == 0
+    assert out["ack_id"] == 0x3E3B1C08
+    assert [e["station_index"] for e in out["station_info"]] == [0, 1]
+    assert out["station_info"][0]["location"]["private"] == ("169.254.95.1", 12345)
+    assert out["station_info"][1]["location"]["private"] == ("169.254.95.2", 12345)
+    assert out["station_info"][0]["location"]["constant_id"] == 0xEB9B2220F1480000
+    assert mp.ack_for(raw) == (stp.PROTOCOL, bytes.fromhex("050000003e3b1c08"))

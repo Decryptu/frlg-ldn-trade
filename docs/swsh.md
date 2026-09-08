@@ -329,4 +329,5 @@ own bytes: given the console's values it reproduces the console's 24-byte header
   off `MeshProtocol::vfunc9`, its message table is BDSP's without 0x22 and 0x23, its join-request
   handler (`0x017c1700`) checks the same six bytes we already send, and its join-response parser
   (`0x017b4830`) has the same sixteen-byte header over **64-byte** entries with the index at 0x3E.
-  `docs/pia.md` "The version-4 Mesh Protocol". NOT yet sent - `bin/swsh_connect.py --join`.
+  `docs/pia.md` "The version-4 Mesh Protocol". SENT AND ANSWERED at sw29: one request, one
+  acceptance, `our_index` 1, and the console then opened seven protocols at us.
