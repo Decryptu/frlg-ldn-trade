@@ -711,11 +711,16 @@ async def main_async(args):
             while time.monotonic() < deadline:
                 if seq - args.send_sequence >= args.send_count:
                     break
-                if args.send_mirror and st["their_payload"]:
+                if args.send_mirror and st["said_by_proto"].get(args.send_protocol):
                     # MIRROR WHAT IT IS SAYING NOW, not what it said first. sw64 moved the game
                     # from state 0x0a to 0x12 and left it there; a peer that follows the state it
                     # is being told is the next thing it can be given.
-                    payload = st["their_payload"]
+                    # PER PROTOCOL. A single "what it last said" is shared between windows, so
+                    # once the console spoke on 0x80 the 0x7C mirror started echoing THAT back on
+                    # 0x7C: sw68 answered `result{}` on 0x7C and got the trainer data, sw69
+                    # answered `imReady` there instead and got nothing, and the flag was the only
+                    # difference between the two runs.
+                    payload = st["said_by_proto"][args.send_protocol]
                 body = reliable4.build_data_message(payload, sequence_id=seq, destinations=dests,
                                                     stream_id=args.send_stream)
                 wire = zlib.compress(body) if args.send_zlib else body
