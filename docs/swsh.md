@@ -449,6 +449,62 @@ every future run's payload is a third point, and a run taken an hour later shoul
 byte, a counter at [4], and a total of 3456 at [10] that is a capacity and **not** the payload
 length, which is 2965 in three fragments, always.
 
+## Where a message id comes from, and which ones are ours
+
+FACT, off `main` (`scratchpad/swsh_msgid.py`). A P2P message is four bytes of little-endian id and a
+protobuf body, and the ids come from two different places - which decides what is measured and what
+is inferred.
+
+**THE LOW IDS ARE A REGISTRATION TABLE.** 838 records of 24 bytes at `0x01BBFFA0`,
+`{u64 handler slot, u32 0x402, u32 id, u64 0}`, ids 1..880. The slot pointers step by eight through
+an array of identical thunks, so the table is id -> handler and nothing more. **97** (the ping
+holder), **110**, **120** and **130** are all in it.
+
+**THE HIGH IDS ARE COMPUTED, base plus offset**, which is why searching for one finds nothing.
+20030, 40030, 40040 and 40050 appear NOWHERE in the image - not as an aligned word, not as a
+MOVZ/MOVK/MOVN immediate - while 20000, 40000 and 60000 do, and the code around them adds a
+register:
+
+    mov w9, #0x4e20          ; 20000
+    add w27, w22, w9         ; id = 20000 + w22
+
+    ldrh w8, [x19, #0x372]
+    mov w9, #0x4e20
+    add w8, w8, w9           ; id = 20000 + a halfword out of the object
+
+60000 is the one high id we have measured, and it is base + 0, a MOVZ at 41 sites.
+
+**SO THE TRADE IDS ARE STRUCTURALLY CONSISTENT AND INDIVIDUALLY UNCONFIRMED.** `andyjusa/nxldn-lab`
+names a trade flow over 20030/40030/40040/40050; the right bases exist and the offsets are small,
+and that is a DEDUCTION, not a confirmation. An unaligned single occurrence of one of those values
+in 40 MB is what four random bytes do, and counting it as evidence would make "the id is in the
+binary" true of ids that are not.
+
+## What this project has measured, and what it has borrowed
+
+FACT, sw70's own capture (`scratchpad/sw_app_payloads.py` walks it): the console sent **five
+distinct application payloads and no others** across the whole run -
+
+    0x7C  id 97     0a00        ping            x20
+    0x7C  id 97     1200        pingReply        x2
+    0x7C  id 97     1a00        pingSynced       x3
+    0x7C  id 60000  0a00        result{}         x2
+    0x80  id 60000  12020801    imReady{true}    x2
+
+Those five are ours. **Everything past the trade snapshot is not.** `pokeldn/swsh/trade.py` carries
+`SYNC_ANSWERS`, a table of what to answer for the other sync holders, and it is `nxldn-lab`'s
+reading of a console-to-console capture, reproduced with its source named. Its ids are real and its
+bytes for 97 and 60000 agree with ours exactly, which is the only part of it we can check.
+
+**THE MEASUREMENT THAT MAKES IT OURS COSTS NO EXTRA ASSOCIATION.** `bin/swsh_connect.py
+--sync-answers` answers the table where it has a rule and keeps sw68/sw70's proven per-protocol
+echo everywhere else, and it PRINTS every distinct payload it has no rule for. The console names
+its own ids; the run is what asks it to.
+
+Against sw70 that changes exactly two things: the first thing we say to `ping` becomes `pingReply`
+rather than an echo, and `pingSynced` gains a `result{}` behind it. Nothing else about the run
+moves, which is what one variable means here.
+
 ## Open questions
 
 - ANSWERED, sw68/sw70, and it is the point of the project's next step. **What the game says once

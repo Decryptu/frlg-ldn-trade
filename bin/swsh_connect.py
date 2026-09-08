@@ -37,6 +37,7 @@ from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4, reli
                         station_protocol as stp)
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.swsh import COMM_ID, PASSPHRASE, PIA_PORT, packet_iv, session_keys
+from pokeldn.swsh import trade as swsh_trade
 
 SCENE_ACCEPTING = 60001           # what sw01 recorded; kept for the log line, not a gate
 
@@ -169,6 +170,7 @@ async def main_async(args):
               "broadcast_ack_ids": set(), "broadcast_stray_ids": set(), "windows": {},
               "their_ack_id": 0, "data_seqs": 0,
               "their_payload": None, "ack_by_proto": {}, "said_by_proto": {},
+              "seen_by_proto": {}, "answer_queue": [],
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -227,6 +229,15 @@ async def main_async(args):
                 return
             st["their_payload"] = got["payload"]
             st["said_by_proto"][protocol] = got["payload"]
+            # EVERY DISTINCT PAYLOAD, not just the last. `--sync-answers` has a rule for some of
+            # them and the ones it has no rule for are the finding: they are what the console says
+            # next, in its own ids, and they are what turns another project's table into ours.
+            seen = st["seen_by_proto"].setdefault(protocol, [])
+            if got["payload"] not in seen:
+                seen.append(got["payload"])
+                if args.sync_answers and not swsh_trade.answers_for(got["payload"]):
+                    print(f"[rx]     *** NO RULE for {got['payload'].hex()} on {protocol:#04x} "
+                          f"- id {swsh_trade.parse(got['payload'])[0] if len(got['payload']) >= 4 else '?'} ***")
             if w["through"] is None:
                 w["through"] = got["sequence_id"] - 1
                 print(f"\n[rx] t={now:6.2f} {protocol:#04x}/{port} stream opens at seq "
@@ -711,7 +722,17 @@ async def main_async(args):
             while time.monotonic() < deadline:
                 if seq - args.send_sequence >= args.send_count:
                     break
-                if args.send_mirror and st["said_by_proto"].get(args.send_protocol):
+                said = st["said_by_proto"].get(args.send_protocol)
+                if args.sync_answers and said:
+                    # THE TABLE ON TOP OF THE MIRROR, NEVER INSTEAD OF IT. sw68 and sw70 got the
+                    # trade snapshot with a plain per-protocol echo, and that is the only answer
+                    # policy this project has ever proven. `SYNC_ANSWERS` covers four payloads and
+                    # would leave the other two of sw70's unanswered, so a rule REPLACES the echo
+                    # where it has one and the echo stands everywhere else. The one variable this
+                    # changes against sw70 is what we say to `ping` and to `pingSynced`.
+                    payload, st["answer_queue"] = swsh_trade.next_answer(
+                        said, st["answer_queue"])
+                elif args.send_mirror and said:
                     # MIRROR WHAT IT IS SAYING NOW, not what it said first. sw64 moved the game
                     # from state 0x0a to 0x12 and left it there; a peer that follows the state it
                     # is being told is the next thing it can be given.
@@ -983,6 +1004,11 @@ def build_parser():
                     help="wait for this payload on --send2-protocol before sending; omit to send "
                          "as soon as the mesh is up")
     ap.add_argument("--send2-count", type=lambda s: int(s, 0), default=200)
+    ap.add_argument("--sync-answers", action="store_true",
+                    help="answer with `pokeldn.swsh.trade.SYNC_ANSWERS` instead of echoing one "
+                         "payload: the ping, and the three other sync holders the console is "
+                         "expected to raise after the trade snapshot. A payload with no rule is "
+                         "REPORTED and left unanswered - that report is the point of the run")
     ap.add_argument("--send-mirror", action="store_true",
                     help="send back whatever the console last said on this protocol, rather than "
                          "the fixed --send-data. --send-data is still the FIRST payload, before it "
