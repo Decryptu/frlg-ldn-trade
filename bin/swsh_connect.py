@@ -1057,7 +1057,13 @@ async def main_async(args):
             if len(payload) != trade_payload.PAYLOAD_LENGTH:
                 payload = trade_payload.inflate_short(payload)
             was = trade_payload.read(payload)["trainer_name"]
-            payload = trade_payload.rewrite(payload, old_name=was,
+            # AND THE ACCOUNT ID THE TAIL REPEATS. It is the console's own, and every snapshot
+            # before session 60 handed it straight back - which the trade screen never shows,
+            # because it draws the partner from MyStatus.
+            theirs = trade_payload.tail_account_id(payload, was)
+            ours = (bytes(a ^ b for a, b in zip(theirs, b"\x5a" * len(theirs)))
+                    if theirs and args.snapshot_account else None)
+            payload = trade_payload.rewrite(payload, old_name=was, account_id=ours,
                                             trainer_name=args.snapshot_name,
                                             trainer_id=args.snapshot_tid,
                                             secret_id=args.snapshot_sid)
@@ -1072,7 +1078,9 @@ async def main_async(args):
                 print(f"[tx] we will offer slot {args.offer_slot}: species {ours['species']} "
                       f"{ours['nickname']!r} level {ours['level']}")
             left = payload.count(was.encode("utf-16-le")) if was else 0
-            print(f"[tx] the snapshot was {was!r}; {left} copies of that name left in it")
+            print(f"[tx] the snapshot was {was!r}; {left} copies of that name left in it, "
+                  f"and {payload.count(theirs) if theirs else '?'} of its account id "
+                  f"{theirs.hex() if theirs else '(not found)'}")
             print(f"\n[tx] our snapshot: trainer {fields['trainer_name']!r} "
                   f"{fields['trainer_id']}/{fields['secret_id']}, party "
                   f"{[p['nickname'] for p in fields['party'] if p]}, "
@@ -1549,6 +1557,11 @@ def build_parser():
                          "trade holder for each N in turn, one per acknowledged sequence. 20030 is "
                          "a BoxSyncStateDataHolder and its field 2 is a command enum; this project "
                          "has only ever sent 1, and nxldn-lab's capture of a real trade has 4 too")
+    ap.add_argument("--snapshot-account", action="store_true",
+                    help="replace the ten-byte account id the snapshot's tail repeats either side "
+                         "of the trainer name. It is the CONSOLE'S OWN and we have been handing it "
+                         "back all along; a console that refuses to trade with itself would refuse "
+                         "exactly where this one does, after the screen has already drawn PkCamp")
     ap.add_argument("--offer-echo", action="store_true",
                     help="offer back the exact PK8 the console just offered us, unchanged, instead "
                          "of one out of --send-snapshot. The control for \"is it our record it is "

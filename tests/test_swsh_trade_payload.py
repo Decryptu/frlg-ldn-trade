@@ -209,3 +209,46 @@ def test_a_longer_name_cannot_overwrite_the_tail_record():
     payload = a_payload_with_a_tail_name()
     with pytest.raises(ValueError):
         trade_payload.rewrite(payload, old_name="Gurvan", trainer_name="Gurvanne")
+
+
+def a_payload_with_a_player_record(name="Gurvan", account=b"\x6a\x95\xe0\x43\x55\xa2\xd4\x7b\x04\x10"):
+    """The tail record sw70's payload carries: id, key, name, id - around 0xB14."""
+    out = bytearray(a_payload(name=name))
+    at = TAIL_NAME_AT
+    out[at - trade_payload.ACCOUNT_ID_LENGTH - 16:at - 16] = account
+    out[at - 16:at] = bytes(range(0x40, 0x50))
+    planted = name.encode("utf-16-le") + b"\x00\x00"
+    out[at:at + len(planted)] = planted
+    out[at + len(planted):at + len(planted) + trade_payload.ACCOUNT_ID_LENGTH] = account
+    return bytes(out)
+
+
+def test_the_tail_record_repeats_an_account_id_either_side_of_the_name():
+    payload = a_payload_with_a_player_record()
+    got = trade_payload.tail_account_id(payload, "Gurvan")
+    assert got == bytes.fromhex("6a95e04355a2d47b0410")
+    assert payload.count(got) == 2
+
+
+def test_replacing_the_account_id_leaves_none_of_the_consoles_own():
+    payload = a_payload_with_a_player_record()
+    theirs = trade_payload.tail_account_id(payload, "Gurvan")
+    ours = bytes(a ^ 0x5A for a in theirs)
+    out = trade_payload.rewrite(payload, old_name="Gurvan", trainer_name="PkCamp",
+                                account_id=ours)
+    assert out.count(theirs) == 0 and out.count(ours) == 2
+    assert len(out) == len(payload)
+
+
+def test_an_account_id_needs_the_name_it_sits_around_and_the_right_length():
+    payload = a_payload_with_a_player_record()
+    with pytest.raises(ValueError):
+        trade_payload.rewrite(payload, trainer_name="PkCamp", account_id=bytes(10))
+    with pytest.raises(ValueError):
+        trade_payload.rewrite(payload, old_name="Gurvan", trainer_name="PkCamp",
+                              account_id=bytes(9))
+
+
+def test_a_tail_without_the_repeated_id_reads_as_none():
+    # The name is there but nothing repeats around it, which is a payload this has not read.
+    assert trade_payload.tail_account_id(a_payload_with_a_tail_name(), "Gurvan") is None

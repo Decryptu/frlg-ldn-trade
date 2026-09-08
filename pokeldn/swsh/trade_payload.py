@@ -139,7 +139,24 @@ def read(payload):
     }
 
 
-def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None, old_name=None):
+ACCOUNT_ID_LENGTH = 10                # the repeated id either side of the tail's name field
+
+
+def tail_account_id(payload, name):
+    """-> the id the tail's player record repeats, or None when the record is not that shape.
+
+    Structural, not an offset: the ten bytes after the name's terminator, checked against the ten
+    that precede the record. A payload where those two do not agree is one this has not read.
+    """
+    at = bytes(payload).find(name.encode("utf-16-le") + b"\x00\x00", TAIL_OFFSET)
+    if at < 0:
+        return None
+    after = bytes(payload[at + len(name) * 2 + 2:][:ACCOUNT_ID_LENGTH])
+    return after if len(after) == ACCOUNT_ID_LENGTH and payload.count(after) == 2 else None
+
+
+def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None, old_name=None,
+            account_id=None):
     """-> the snapshot with a new trainer identity, and every other byte still the console's own.
 
     THE POINT OF THE PROJECT NEEDS ONE OF THESE AND IT MUST NOT BE THE CONSOLE'S OWN. 3456 bytes
@@ -164,6 +181,21 @@ def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None, old_
     The tail copy is found by SEARCHING for the name being replaced rather than by offset: 0xB14 is
     where it lands in one payload and the record around it is not read well enough to promise that
     it is fixed. `old_name` is what to look for; without it the tail is left alone.
+
+    AND THE RECORD AROUND THE NAME CARRIES AN ID, TWICE. In sw70's payload the same ten bytes sit
+    immediately before the name's block and immediately after its terminator, and they appear
+    nowhere else in the whole snapshot:
+
+        0x0AFA  <10-byte id>                the record opens with it
+        0x0B04  16 bytes, high entropy      a key or a hash over the record
+        0x0B14  "Gurvan\0" UTF-16           the name, null-terminated
+        0x0B22  <the same 10-byte id>       and closes with it
+
+    That is a player record, and it is the CONSOLE'S OWN. Every snapshot this project has sent
+    handed the console back its own account identity - which the trade screen never draws, because
+    it draws the partner from MyStatus. `account_id` replaces both copies. The sixteen bytes at
+    0x0B04 are not understood and are left alone; if they authenticate the id then this cannot be
+    made to work by editing, and a run that changes the id and fails the same way says so.
     """
     if len(payload) != PAYLOAD_LENGTH:
         raise ValueError(f"{len(payload)} bytes, expected {PAYLOAD_LENGTH}")
@@ -191,6 +223,20 @@ def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None, old_
             while at >= 0:
                 out[at:at + len(was)] = now
                 at = out.find(was, at + len(was))
+
+    if account_id is not None:
+        if old_name is None:
+            raise ValueError("the tail's account id is found from the name it sits around")
+        old_id = tail_account_id(payload, old_name)
+        if old_id is None:
+            raise ValueError("the tail carries no repeated id around that name")
+        account_id = bytes(account_id)
+        if len(account_id) != ACCOUNT_ID_LENGTH:
+            raise ValueError(f"an account id is {ACCOUNT_ID_LENGTH} bytes")
+        at = out.find(old_id)
+        while at >= 0:
+            out[at:at + ACCOUNT_ID_LENGTH] = account_id
+            at = out.find(old_id, at + ACCOUNT_ID_LENGTH)
 
     if trainer_id is not None:
         struct.pack_into("<H", out, MY_STATUS_OFFSET + MY_STATUS_TID, trainer_id)
