@@ -187,6 +187,7 @@ async def main_async(args):
               "said_serial": 0, "serial_by_proto": {}, "serial_by_port": {},
               "rpc_seen": {}, "rpc_pair_sent": set(), "offer_status_answered": set(),
               "rpc_bodies_answered": set(), "confirmation_opened": False, "rpc_pair_delta": {},
+              "confirm_status_answered": set(),
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -331,13 +332,51 @@ async def main_async(args):
                     # members. sx17 answered 40030's pair, the console opened the selection phase,
                     # and then sent 40050 pairs to a client that only knew about 40030.
                     st["rpc_seen"][(member["envelope"], member["base"])] = got["payload"]
+                    # AND THE SAME CUE ONE CONTENT ALONG, WHICH sx51b MEASURED AND ONLY HALF
+                    # ANSWERED. With the selection ladder climbed the console sends a 40040/20000
+                    # member whose body also ends `0100` - the confirmation content saying the same
+                    # thing the selection content said. Its log says exactly what happened to it:
+                    # line 367 fired the selection cue, spending `offer_status_answered`, which is
+                    # ONE latch for the whole run; line 443 then answered the 40040 body through
+                    # the generic `--rpc-bodies` branch below. So the STATUS was answered on port 1
+                    # and NOTHING was ever sent on port 0. In the selection phase it took both.
+                    #
+                    # THE ANSWER IS NOT ANOTHER POKEMON. Content 40's 10000-base holder parses with
+                    # `0x010df6d0`, which takes `SyncSaveDataHolder{syncCommand{data:int32}}` and
+                    # nothing else - session 64, read out of the image and agreeing with the game's
+                    # own descriptors. `swsh_trade.SYNC_COMMANDS` says which values its own state
+                    # machine sends. Its own latch, so the two cues cannot swallow each other.
+                    answered_confirmation = False
+                    if (args.confirm_command is not None
+                            and member["envelope"] == (swsh_trade.RPC_ENVELOPE_BASE
+                                                       + swsh_trade.CONFIRMATION_OFFSET)
+                            and member["base"] == swsh_trade.RPC_BASES[1]
+                            and member["body"][-2:] == b"\x01\x00" and len(member["body"]) == 4
+                            and not st["confirm_status_answered"]):
+                        st["confirm_status_answered"].add(True)
+                        answered_confirmation = True
+                        st["box_queue"] = st["box_queue"] + [
+                            swsh_trade.sync_command(member["offset"], args.confirm_command)]
+                        st["box_next"] = 0.0
+                        status = swsh_trade.answer_rpc(got["payload"], our_constant,
+                                                       args.rpc_clock_delta)
+                        if status is not None:
+                            st["rpc_queue"] = [status] + st["rpc_queue"]
+                        st["rpc_bodies_answered"].add(
+                            (member["envelope"], member["base"], bytes(member["body"])))
+                        print(f"[tx]     *** THE CONFIRMATION STATUS *** sending "
+                              f"syncCommand{{data:{args.confirm_command}}} on "
+                              f"{swsh_trade.CONTENT_BASE_LOW + member['offset']} port 0 and "
+                              f"answering the status on port 1, triggered by "
+                              f"{got['payload'].hex()}")
                     # AND THE STATUS THAT FOLLOWS THE CONSOLE'S OWN POKEMON. sx20: once the 40050
                     # pair is answered the console puts a 344-byte PK8 in field 5 of a 40050
                     # envelope and then sends a status whose four-byte body ends `0100` instead of
                     # the `18fc` every other member carries. That status is the cue to offer ours
                     # on the 10000-base holder of the SAME content - id 10050, reliable port 0 -
                     # and to answer the status itself on port 1.
-                    if (args.selection_offer and member["base"] == swsh_trade.RPC_BASES[1]
+                    if (args.selection_offer and not answered_confirmation
+                            and member["base"] == swsh_trade.RPC_BASES[1]
                             and member["body"][-2:] == b"\x01\x00" and len(member["body"]) == 4
                             and not st["offer_status_answered"]
                             and st["our_pk8"] is not None):
@@ -1929,6 +1968,15 @@ def build_parser():
                          "holder for each N - `382700000a00` for 40, which is exactly the opener "
                          "nxldn-lab's client sends to start the confirmation phase, rebuilt here "
                          "from our own content registry rather than copied")
+    ap.add_argument("--confirm-command", type=lambda s: int(s, 0), default=None,
+                    metavar="N",
+                    help="when the CONFIRMATION envelope (40040) sends a four-byte status whose "
+                         "body ends `0100` - the same cue the selection content sends before its "
+                         "Pokemon - reply with SyncSaveDataHolder{syncCommand{data:N}} on that "
+                         "content's 10000-base holder, id 10040, reliable port 0, and answer the "
+                         "status itself on port 1. Content 40 takes a command and not a Pokemon: "
+                         "its parser 0x010df6d0 accepts one submessage carrying one int32. Its own "
+                         "machine sends 0, 1, 2 and 3 in that order (swsh_trade.SYNC_COMMANDS)")
     ap.add_argument("--selection-final-delta", type=lambda s: int(s, 0), default=0,
                     help="after the selection HASH is answered, send the 40050 pair AGAIN - both "
                          "members - at this clock delta. nxldn-lab's `selection_final_delta` is 9 "

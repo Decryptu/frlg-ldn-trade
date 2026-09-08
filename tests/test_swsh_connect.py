@@ -303,3 +303,74 @@ def test_the_final_selection_pair_is_off_and_re_arms_with_its_own_delta():
     a = swsh_trade.parse_rpc(swsh_trade.answer_rpc(member, 1, 5))
     b = swsh_trade.parse_rpc(swsh_trade.answer_rpc(member, 1, 9))
     assert b["clock"] - a["clock"] == 4
+
+
+def test_the_confirmation_answer_is_off_unless_it_is_asked_for():
+    args = swsh_connect.build_parser().parse_args([])
+    assert args.confirm_command is None
+    on = swsh_connect.build_parser().parse_args(["--confirm-command", "1"])
+    assert on.confirm_command == 1
+    assert swsh_connect.build_parser().parse_args(
+        ["--confirm-command", "0x2"]).confirm_command == 2
+
+
+def test_the_confirmation_cue_is_the_selection_cue_one_content_along():
+    """sx51b's last unanswered message is a 40040/20000 member whose four-byte body ends `0100` -
+    the same shape that, on 40050, was the cue to send our Pokemon. The two differ in the envelope
+    alone, which is why the branch keys on it and why one shared latch swallowed the second."""
+    body = bytes.fromhex("00000100")
+    selection = swsh_trade.build_rpc(swsh_trade.SELECTION_OFFSET, swsh_trade.RPC_BASES[1],
+                                     0x1249a221d8580000, 0x14c4, body)
+    confirmation = swsh_trade.build_rpc(swsh_trade.CONFIRMATION_OFFSET, swsh_trade.RPC_BASES[1],
+                                        0x1249a221d8580000, 0x14c4, body)
+    a, b = swsh_trade.parse_rpc(selection), swsh_trade.parse_rpc(confirmation)
+    assert a["envelope"] == 40050 and b["envelope"] == 40040
+    assert bytes(a["body"]) == bytes(b["body"]) == body
+    assert a["base"] == b["base"] == swsh_trade.RPC_BASES[1]
+
+
+def test_the_confirmation_answer_rides_the_content_holder_and_the_status_the_envelope():
+    """Two windows, as the selection phase uses: the command goes on the content's 10000-base
+    holder on port 0, and the status answer is a 40040 envelope on port 1."""
+    command = swsh_trade.sync_command(swsh_trade.CONFIRMATION_OFFSET, 1)
+    assert swsh_trade.parse(command)[0] == 10040
+    member = swsh_trade.build_rpc(swsh_trade.CONFIRMATION_OFFSET, swsh_trade.RPC_BASES[1],
+                                  0x1249a221d8580000, 0x14c4, bytes.fromhex("00000100"))
+    status = swsh_trade.answer_rpc(member, 0x1249a221d8580000, 5)
+    assert status is not None and swsh_trade.parse_rpc(status)["envelope"] == 40040
+
+
+# sx51b's own 40040 traffic, out of `scratchpad/sx51b_1_cx.log.gz`. The first two are the cue - a
+# four-byte body ending `0100` on elementId 20000 - and the third is the `18fc` every other member
+# of the pair carries. Real bytes, so the condition is tested against what the console actually
+# sent rather than against a reconstruction of it.
+SX51B_CONFIRMATION_CUES = (
+    "689c00000a19082810a09c01188080e0c29dc4e8a41220c9142a0400000100",
+    "689c00000a1a082810a09c01188080a08a8fc4c8cdeb0120c4142a0400000100")
+SX51B_CONFIRMATION_PAIR = "689c00000a19082810a09c01188080e0c29dc4e8a41220a5142a04000018fc"
+
+
+def _is_confirmation_cue(payload):
+    """The launcher's `--confirm-command` condition, transcribed."""
+    member = swsh_trade.parse_rpc(bytes.fromhex(payload))
+    return (member is not None
+            and member["envelope"] == (swsh_trade.RPC_ENVELOPE_BASE
+                                       + swsh_trade.CONFIRMATION_OFFSET)
+            and member["base"] == swsh_trade.RPC_BASES[1]
+            and len(member["body"]) == 4 and bytes(member["body"])[-2:] == b"\x01\x00")
+
+
+def test_the_condition_fires_on_sx51bs_own_confirmation_cues():
+    """Both of the run's `0100` members on 40040 match, and the pair's `18fc` member does not."""
+    assert all(_is_confirmation_cue(p) for p in SX51B_CONFIRMATION_CUES)
+    assert not _is_confirmation_cue(SX51B_CONFIRMATION_PAIR)
+    first = swsh_trade.parse_rpc(bytes.fromhex(SX51B_CONFIRMATION_CUES[0]))
+    assert first["offset"] == swsh_trade.CONFIRMATION_OFFSET and first["clock"] == 2633
+
+
+def test_the_confirmation_cue_is_not_a_selection_one_and_cannot_be_taken_for_it():
+    """sx51b answered the 40040 status on port 1 and sent nothing on port 0, because one latch
+    served both contents. The envelope is what separates them, and it is read from the message."""
+    for payload in SX51B_CONFIRMATION_CUES:
+        member = swsh_trade.parse_rpc(bytes.fromhex(payload))
+        assert member["envelope"] != swsh_trade.RPC_ENVELOPE_BASE + swsh_trade.SELECTION_OFFSET

@@ -376,3 +376,53 @@ def test_answer_rpc_refuses_a_member_with_no_base():
     no_base = bytes.fromhex("729c00000a0a08322a0400000000")
     assert trade.parse_rpc(no_base)["base"] is None
     assert trade.answer_rpc(no_base, 0x1234, 5) is None
+
+
+def test_the_confirmation_content_takes_a_command_and_not_a_pokemon():
+    """Session 64, out of Shield 1.3.2's `main`, no run spent.
+
+    Content 40's 10000-base holder parses with `0x010df6d0`, which accepts tag 0x0a and nothing
+    else, and its submessage's parser `0x010debc0` accepts tag 0x08 and nothing else - one
+    length-delimited field carrying one varint. The game's own descriptors say the same thing:
+    `SyncSaveDataHolder{1 SyncCommand syncCommand}` over `SyncCommand{1 int32 data}`. Two readings,
+    one shape, and it is NOT the Pokemon holder that content 50 has.
+    """
+    assert trade.sync_command(trade.CONFIRMATION_OFFSET, 1) == bytes.fromhex("382700000a020801")
+    mid, body = trade.parse(trade.sync_command(trade.CONFIRMATION_OFFSET, 0))
+    assert mid == 10040
+    assert body == trade.field(trade.SYNC_SAVE_COMMAND,
+                               trade.field_varint(trade.SYNC_COMMAND_DATA, 0))
+
+
+def test_the_confirmation_command_shares_the_openers_id_and_differs_in_the_body():
+    """The opener and the command ride the SAME holder - `382700000a00` and `382700000a020801` -
+    which is the whole point: sx49b proved an empty body on a content's 10000-base holder is
+    accepted as that content's record, so the command goes where the ping went."""
+    opener = trade.open_content(trade.CONFIRMATION_OFFSET)
+    command = trade.sync_command(trade.CONFIRMATION_OFFSET, 1)
+    assert opener[:4] == command[:4] == bytes.fromhex("38270000")
+    assert len(command) > len(opener)
+
+
+def test_every_command_the_consoles_own_machine_sends_round_trips():
+    """`0x010dae70` is the only caller of the send `0x010db840`, and it passes 0, 1, 2 and 3."""
+    assert sorted(trade.SYNC_COMMANDS) == [0, 1, 2, 3]
+    for data in trade.SYNC_COMMANDS:
+        assert trade.parse_sync_command(trade.sync_command(trade.CONFIRMATION_OFFSET, data)) == data
+
+
+def test_a_negative_command_is_refused_rather_than_encoded():
+    """`data` is an int32 and a negative one is ten varint bytes, which is not a shape the console
+    has ever sent. Refuse it here rather than put it on the air."""
+    with pytest.raises(ValueError):
+        trade.sync_command(trade.CONFIRMATION_OFFSET, -1)
+
+
+def test_the_command_reader_takes_any_content_and_no_reader_raises():
+    """The holder shape is the content's, not content 40's alone - and a reader on a live run must
+    not raise, which is the trap sw81 set (see `_maybe_parse`)."""
+    assert trade.parse_sync_command(trade.sync_command(trade.SELECTION_OFFSET, 2)) == 2
+    assert trade.parse_sync_command(trade.open_content(trade.CONFIRMATION_OFFSET)) is None
+    assert trade.parse_sync_command(trade.im_ready()) is None
+    assert trade.parse_sync_command(b"\x38\x27") is None
+    assert trade.parse_sync_command(b"") is None

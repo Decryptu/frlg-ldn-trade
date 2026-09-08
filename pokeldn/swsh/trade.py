@@ -425,6 +425,63 @@ def pokemon_offer_high(offset, pk8):
     return message(RPC_BASES[1] + offset, field(1, field(1, pk8)))
 
 
+# --- content 40, the confirmation ----------------------------------------------------------------
+
+SYNC_SAVE_COMMAND = 1                 # SyncSaveDataHolder's only field
+SYNC_COMMAND_DATA = 1                 # SyncCommand's only field
+
+# THE FOUR THE CONSOLE ITSELF SENDS, read out of content 40's state machine `0x010dae70`, which is
+# the only caller of the send `0x010db840(delegate, data, flag)`. Each send parks the machine in an
+# idle state, so the four are a handshake and not a burst: the partner's own command is what moves
+# it on. The flag argument is always `data + 1` and is not part of the message.
+SYNC_COMMANDS = {0: "0x010db308, out of state 1  -> state 2",
+                 1: "0x010db0b0, out of state 3  -> state 4",
+                 2: "0x010db0dc / 0x010db104, states 6 and 8 -> states 7 and 9",
+                 3: "0x010db16c, out of state 12 -> state 0, and the machine is done"}
+
+
+def sync_command(offset, data):
+    """-> `SyncSaveDataHolder{syncCommand{data: <int32>}}` on content `offset`'s 10000-base holder.
+
+    **THE CONFIRMATION CONTENT DOES NOT TAKE A POKEMON, IT TAKES ONE int32**, and session 64 read
+    that out of the image rather than borrowing it. Content 40's 10000-base holder parses its body
+    with `0x010df6d0`, which accepts tag 0x0a and nothing else; the submessage's own parser
+    `0x010debc0` accepts tag 0x08 and nothing else and stores the varint at `+0x14`. The game's own
+    descriptors agree, which is two independent readings of one shape:
+
+        sync_save_data_holder.proto   SyncSaveDataHolder { 1 SyncCommand syncCommand }
+        sync_command.proto            SyncCommand        { 1 int32       data       }
+
+    Both are `net_contents.trade.common.sync_save.protocol_buffers`. `SYNC_COMMANDS` says which
+    values the console's own machine sends. The walk is `docs/swsh.md`, "The confirmation content
+    takes a command, not a Pokemon".
+
+    It is the same `holder{command{data}}` shape as `box_sync_state`, one content along - and that
+    one is the shape that reached the player in the offer phase.
+    """
+    if data < 0:
+        raise ValueError(f"{data} is not one of the commands the machine sends: {sorted(SYNC_COMMANDS)}")
+    return message(CONTENT_BASE_LOW + offset,
+                   field(SYNC_SAVE_COMMAND, field_varint(SYNC_COMMAND_DATA, data)))
+
+
+def parse_sync_command(payload):
+    """-> the command int on a content's 10000-base holder, or None when the payload is not one.
+
+    The mirror of `parse_box_command`, and it is what reads the console's own confirmation traffic
+    back out of a capture. Any content's 10000-base id is accepted, not just 10040: the shape is
+    the holder's, and which content sent it is the id the caller already has.
+    """
+    got = _maybe_parse(payload)
+    if got is None or got[0] not in {CONTENT_BASE_LOW + o for o in CONTENT_HOLDERS}:
+        return None
+    inner = _read_fields(got[1]).get(SYNC_SAVE_COMMAND)
+    if not isinstance(inner, bytes):
+        return None
+    value = _read_fields(inner).get(SYNC_COMMAND_DATA)
+    return value if isinstance(value, int) else None
+
+
 SELECTION_SWEEP_NOTE = """The shapes left after sx34-sx44, and why they are swept together.
 
 Every one of these was acknowledged at the transport and moved nothing: the holder on 10050 (sx34),

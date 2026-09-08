@@ -1053,6 +1053,101 @@ console must answer it with a 10050 of its own. Against the same probe on 20030,
 delivered because the box exchange works, that separates "the 10000-base holder is not being fed"
 from "nothing of ours reaches the sync manager".
 
+## The confirmation content takes a command, not a Pokemon
+
+Session 64, read out of Shield 1.3.2's `main`, no association spent. The walk is content 50's, run
+again one content along - and it is the same seven steps, so only the last two are new here.
+
+**CONTENT 40 IS BUILT EXACTLY LIKE CONTENT 50, AND THE REGISTRAR SAYS SO.** `0x010da7d0` registers
+its three holders off `[content+0x372]` in the same order and with the same flags as `0x010d5150`:
+10040 through the builder `0x010dd910` into `content+0x2a8` with flag 1, 20040 through `0x010d85f0`
+into `content+0x2b0` with flag 0, 30040 through `0x010d0980` into `content+0x2b8` with flag 0. The
+builders differ per content, which is what makes the holders different types - content 50's
+10000-base builder is `0x010d7fc0` and content 30's is `0x010d0310`.
+
+**AND THE SAME TWO HOLDERS ARE LIVE, THE SAME ONE DEAD.** Every `str Xt,[Xn,#0x168]` between
+`0x010c0000` and `0x010e0000` is an install or a teardown, and the three contents line up one for
+one:
+
+    content 30   0x010ccc94  0x010ccca4  0x010ccf7c        installs
+    content 40   0x010da6d0  0x010da9bc                    installs, and 0x010dab10 clears
+    content 50   0x010d50ac  0x010d533c                    installs, and 0x010d5660 clears
+
+`0x010da6d0` is inside content 40's init `0x010da470` and writes the DELEGATE - the object the init
+belongs to - into the 10040 holder; `0x010da9bc` is in the registrar and writes `content+0x68` into
+the 30040 holder. **Nothing ever writes the 20040 holder's `+0x168`, so 20040 is inert by
+construction**, exactly as 20050 is. A run addressed at it would be void rather than negative.
+
+**THE HOLDER'S VTABLE SLOT 8 IS THE PARSE, AND THE TWO CONTENTS ARE STRUCTURALLY IDENTICAL.**
+`0x010dd910` finishes by storing `[0x2625b00] + 0x10` at the object and the id at `+0x160`, so the
+10040 holder's vtable is `0x2580148`; slot 8 is `0x010ddb20`. The same arithmetic on content 50's
+group `0x257fc30` gives `0x010d81d0`, which is what session 63 measured - the method checks itself
+before it is used on the new content.
+
+**AND `0x010ddb20` IS `0x010d81d0` INSTRUCTION FOR INSTRUCTION** down to the register allocation:
+`ldr x8,[x0,#0x168]; cbz` out, construct a 0x28-byte protobuf (`0x010df480`), `ParseFromArray`
+(`0x0070c180`), read the oneof case at `[msg+0x24]`, and call the listener's slot 0 with the
+submessage and the transport's sender pointer.
+
+**THE MESSAGE IS NOT A POKEMON.** Content 40's `MergePartialFromCodedStream` is `0x010df6d0` and it
+accepts **tag 0x0a and nothing else**, `operator new(0x20)` for the submessage; the submessage's own
+parser `0x010debc0` accepts **tag 0x08 and nothing else** and stores the varint at `+0x14`. One
+length-delimited field over one varint. The game's own descriptors say the same thing from the other
+side, both in `net_contents.trade.common.sync_save.protocol_buffers`:
+
+    sync_save_data_holder.proto   SyncSaveDataHolder { 1 SyncCommand syncCommand }
+    sync_command.proto            SyncCommand        { 1 int32       data       }
+
+So the message content 40's receive event can be fed is
+`SyncSaveDataHolder{syncCommand{data:<int32>}}` on **10040**, and `swsh_trade.sync_command` builds
+it. It is the same `holder{command{data}}` shape as content 30's `BoxSyncStateDataHolder`, which is
+the shape that reached the player in the offer phase.
+
+**THE HANDLER HAS CONTENT 50's GATE, AND THE SAME TWO-SLOT LIMIT.** The delegate's vtable is
+`[0x2625a68]+0x10` and its slot 0 is `0x010dbc90`:
+
+    w0 = 0x006b5850(senderPointer)     Pia: the mesh's station index; -3 (0xfd) on failure
+    if (w0 == 0xfd) { [delegate+0x64] = 1; return; }        nothing parsed, nothing answered
+    w8 = [SyncCommand + 0x14]                               the int32, and that is all it keeps
+    subscriber = [delegate + 0x38 + index*8]
+    if (subscriber == null || its refcount is 0) return     also silent
+
+Content 50 memcpys 0x158 bytes at the same point and reads its subscriber from `+0x30 + index*8`.
+Content 40's init writes `+0x38` and `+0x40` and no others, so **any station index above 1 reads
+zeroed memory and returns**, which is the identical limit session 63 found on content 50.
+
+**AND THE FOUR COMMANDS ARE THE CONSOLE'S OWN.** `0x010db840(delegate, data, flag)` builds the
+SyncCommand, stores `data` at `+0x14` and hands it to `0x010dbab0`; its only caller is content 40's
+state machine `0x010dae70`, which dispatches on `[delegate+0x5c]` through a 14-entry jump table at
+`0x2067ed0`. Five send sites, four values:
+
+    state 1   -> send(0)  -> state 2       0x010db308
+    state 3   -> send(1)  -> state 4       0x010db0b0
+    state 6   -> send(2)  -> state 7       0x010db0dc
+    state 8   -> send(2)  -> state 9       0x010db104, behind a countdown at [delegate+0x60]
+    state 12  -> send(3)  -> state 0       0x010db16c, and the machine is done
+
+The `flag` argument is always `data + 1` and never reaches the message. States 2, 4, 7 and 9 are the
+table's do-nothing entries, so **each send parks the machine and something else has to move it on** -
+which is what makes 0, 1, 2, 3 a handshake rather than a burst.
+
+**THE SUB-ELEMENT SEND IS THE FOUR-BYTE 40040 BODY.** `0x010dbe20` asks Pia for its own id
+(`0x01766740`), gives up if it is -1, copies the int32 to `[x+0x88]` and hands the transport
+`(body, 4, thatId, [x+0x62], [x+0x68])` - the same shape as content 50's `0x010d6000` with 4 bytes
+where the Pokemon goes. That is the layer the 40040 pair rides on.
+
+### What sx51b did with the cue, and what it did not
+
+sx51b's last unanswered message is a 40040/20000 member whose four-byte body ends `0100` - the same
+shape that, on 40050, was the cue to send our Pokemon. Its own log says what happened to it: line
+367 fired the selection cue and spent `offer_status_answered`, which is one latch for the whole run,
+and line 443 then answered the 40040 body through the generic `--rpc-bodies` branch. **So the status
+was answered on port 1 and nothing was ever sent on port 0.** The selection phase needed both.
+
+`bin/swsh_connect.py --confirm-command N` is that missing half: on the confirmation envelope's cue
+it sends `SyncSaveDataHolder{syncCommand{data:N}}` on 10040 reliable port 0 and answers the status
+on port 1, with its own latch so the two cues cannot swallow each other.
+
 ## What this project has measured, and what it has borrowed
 
 FACT, sw70's own capture (`scratchpad/sw_app_payloads.py` walks it): the console sent **five
@@ -1083,6 +1178,13 @@ moves, which is what one variable means here.
 - ANSWERED, sw68/sw70, and it is the point of the project's next step. **What the game says once
   it is answered**: it walks ping -> pingReply -> pingSynced, asks for `result{}` on 0x7C and
   `imReady` on 0x80, and then sends its own party on 0x84. See the two sections above.
+- ANSWERED, session 64, offline. **What the confirmation content accepts.** Content 40's
+  10000-base holder takes `SyncSaveDataHolder{syncCommand{data:int32}}` and nothing else, its
+  handler `0x010dbc90` has content 50's station-index gate and its own two-slot limit, and its state
+  machine sends 0, 1, 2 and 3 as a handshake. See "The confirmation content takes a command, not a
+  Pokemon". **What is NOT known is which of the four to send first**, because nothing has yet
+  observed the console's own confirmation sequence from the other side - the four are what its
+  machine sends, not what it expects from us, and only a run separates them.
 - **Sending a party back.** Nothing of ours has ever been on 0x84. `pokemon_trade.proto` (package
   `net_contents.trade.common.pokemon_trade.protocol_buffers`) is `Pokemon { bytes
   serializePokemonParam }` and `PokemonTradeDataHolder { Pokemon pokemon }`, so a trade message is a
