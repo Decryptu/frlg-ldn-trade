@@ -177,7 +177,7 @@ async def main_async(args):
               "their_sequence": None, "snapshot_out": 0, "snapshot_acked": None,
               "snapshot_acks_out": 0, "snapshot_rx": broadcast4.Receiver(),
               "snapshot_fragments": 0, "snapshot_done_sent": False, "snapshot_seq": 0,
-              "offered_pk8": None, "our_pk8": None,
+              "offered_pk8": None, "our_pk8": None, "offer_pending": None, "offer_seq": None,
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -249,6 +249,15 @@ async def main_async(args):
                 if args.save_offered:
                     open(args.save_offered, "wb").write(offered)
                     print(f"[rx]     saved to {args.save_offered}")
+                # AND ANSWER IT, AHEAD OF EVERYTHING ELSE. The sender otherwise looks only at what
+                # the console said LAST, and the console goes on sending its RPC pair several times
+                # a second - so sw78 saw the offer, printed it, and then answered an RPC instead,
+                # every time. An offer is a one-shot and it has to outrank the running mirror.
+                if st["our_pk8"] is not None:
+                    st["offer_pending"] = swsh_trade.pokemon_trade(st["our_pk8"])
+                    ours = swsh_pokemon.read(st["our_pk8"])
+                    print(f"[tx]     *** OFFERING species {ours['species']} "
+                          f"{ours['nickname']!r} level {ours['level']} BACK ***")
             seen = st["seen_by_proto"].setdefault(protocol, [])
             if got["payload"] not in seen:
                 seen.append(got["payload"])
@@ -803,7 +812,12 @@ async def main_async(args):
                 if seq - args.send_sequence >= args.send_count:
                     break
                 said = st["said_by_proto"].get(args.send_protocol)
-                if args.sync_answers and said:
+                if st["offer_pending"] is not None:
+                    # STICKY UNTIL THE WINDOW MOVES PAST IT. A payload swapped out mid-sequence is
+                    # a payload the console may never have seen whole.
+                    payload = st["offer_pending"]
+                    st["offer_seq"] = seq
+                elif args.sync_answers and said:
                     # THE TABLE ON TOP OF THE MIRROR, NEVER INSTEAD OF IT. sw68 and sw70 got the
                     # trade snapshot with a plain per-protocol echo, and that is the only answer
                     # policy this project has ever proven. `SYNC_ANSWERS` covers four payloads and
@@ -836,6 +850,9 @@ async def main_async(args):
                        sequence=seq, message=body.hex(), payload=payload.hex())
                 await trio.sleep(args.send_period)
                 if st["ack_by_proto"].get(args.send_protocol, 0) > seq:
+                    if st["offer_seq"] == seq:
+                        print(f"[tx]     *** OUR OFFER WAS ACKNOWLEDGED at sequence {seq} ***")
+                        st["offer_pending"], st["offer_seq"] = None, None
                     seq += 1
                     st["data_seqs"] += 1
                     if st["data_seqs"] <= 3 or st["data_seqs"] % 25 == 0:

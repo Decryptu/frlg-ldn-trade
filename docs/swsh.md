@@ -449,6 +449,69 @@ every future run's payload is a third point, and a run taken an hour later shoul
 byte, a counter at [4], and a total of 3456 at [10] that is a capacity and **not** the payload
 length, which is 2965 in three fragments, always.
 
+## The trade screen opens, and what it took
+
+FACT, sw72-sw79, one variable per run. After the console sends its snapshot it waits, and what it
+waits for is not another sync message - sw71 answered the whole sync set and the console said
+nothing new at all. It is waiting for **its own transfer to be acknowledged and ours to arrive**.
+
+    sw72   send our snapshot, nothing else        no change: the same five payloads
+    sw73   ACK the console's 0x84 fragments       19142 messages -> 13, and it sent 0x19, DONE
+    sw74   put ours on Pia PORT 1                 its ack base walks 0 -> 1 -> 2 -> 3
+    sw75   tell it OUR transfer is complete       THE TRADE SCREEN OPENS
+    sw76   answer the trade RPC                   it offers the Pokemon the player picked
+    sw79   offer one back                         our offer is acknowledged
+
+**NOTHING IN THIS PROJECT HAD EVER ACKED 0x84 AND THAT IS WHY IT REPEATED.** The protocol has more
+kinds than the two sessions 58 and 59 saw, because a receiver that never answers never sees them:
+0x21 is an ack carrying a contiguous BASE and a bitmask of what arrived early, 0x19 says a transfer
+is complete and 0x28 answers it. `pokeldn/ldn/broadcast4.py`.
+
+**AND THE TWO DIRECTIONS DO NOT SHARE A PIA PORT.** The console sends its snapshot on port 0 and
+acks ours on port 1; ours went out on port 0 for a whole run and was never acknowledged. On port 1
+its ack base walked to 3 and then repeated 3 four hundred and twenty-seven times - it had the whole
+thing and was waiting for the 0x19 we had not learned to send.
+
+**THE PLAYER SEES OUR INVENTED TRAINER.** The snapshot we send is the console's own with the
+identity moved in MyStatus, the trainer card and every party record at once
+(`swsh.trade_payload.rewrite`, 57 bytes of 3456), and the trade screen names that trainer as the
+partner.
+
+## The trade RPC, and where 20030 really comes from
+
+FACT, sw75 and sw76. When the trade screen opens the console sends **message id 40030** as a PAIR,
+several times a second, and it decodes without a guess:
+
+    id 40030 = 40000 + 30
+      1  offset      30            - the same 30 the id is built from
+      2  base        10000, and 20000 in the other member of the pair
+      3  station id  THE SENDER'S, byte-identical to the host_constant our own seat record holds
+      4  clock       a counter that advances between messages
+      5  bytes(4)    00000000 for the 10000 member, 000018fc for the 20000 one
+
+**THIS IS WHERE THE HIGH IDS COME FROM, AND IT SETTLES THE OPEN QUESTION ABOVE.** `swsh_msgid.py`
+found that no literal 20030 or 40030 exists anywhere in `main`, only the bases 10000/20000/40000
+and code that adds a register to them. The envelope shows why: **the base and the offset travel as
+separate fields**, and 20000 + 30 is assembled from them on the wire. A deduction became a
+measurement, and its mechanism is visible rather than inferred.
+
+Because field 3 is a station id and we know our own, answering is WRITING a field. `nxldn-lab`
+reaches the same bytes by searching a capture for six known bytes and replacing them - that works
+because these ids end in zeros, so a varint of one differs from a varint of another only in its
+high bytes. Both of the console's own messages rebuild byte for byte from the parsed fields, which
+is what makes the reader trustworthy. `pokeldn/swsh/trade.py`.
+
+**AND THEN IT OFFERS A POKEMON, ON 20030.** `PokemonTradeDataHolder{pokemon{serializePokemonParam}}`
+holding a **344-byte party-form PK8**, and it decoded to the Pokemon the player had picked on
+screen a moment earlier - species 841, `Pomdrapi`, level 18, their own trainer name and ids, met at
+level 18. Rebuilding that message from the record it carried gives the console's bytes back
+exactly. So the trade message is 20030; **40030 is the envelope that precedes it**, and an earlier
+reading of another client's prefixes that called 40030 the trade message was wrong.
+
+Our own offer, a Pokemon out of the party our snapshot advertised, is acknowledged by the window -
+and the console does not advance past it. What comes after an accepted offer is the open question
+now.
+
 ## Where a message id comes from, and which ones are ours
 
 FACT, off `main` (`scratchpad/swsh_msgid.py`). A P2P message is four bytes of little-endian id and a
