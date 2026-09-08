@@ -297,3 +297,30 @@ def test_the_confirmation_opener_rebuilds_nxldn_labs_bytes_from_our_own_registry
     assert trade.CONTENT_BASE_LOW + trade.CONFIRMATION_OFFSET == 10040
     mid, body = trade.parse(trade.open_content(trade.SELECTION_OFFSET))
     assert mid == 10050 and body == trade.field(trade.PING, b"")
+
+
+def test_the_three_trade_contents_pair_off_with_the_three_holders():
+    """Each pairing is forced by something on the wire, not chosen.
+
+    Content 30 carries a FIELD 2 (`3e4e000012020801`) and only BoxSyncStateDataHolder has one;
+    content 50 carries a 344-byte PK8 in field 5 of its envelope, which is the Pokemon holder; 40
+    is what is left, and a save sync is what a finished trade runs.
+    """
+    assert trade.CONTENT_HOLDERS[trade.OFFER_OFFSET] == "BoxSyncStateDataHolder"
+    assert trade.CONTENT_HOLDERS[trade.SELECTION_OFFSET] == "PokemonTradeDataHolder"
+    assert trade.CONTENT_HOLDERS[trade.CONFIRMATION_OFFSET] == "SyncSaveDataHolder"
+
+
+def test_a_content_fifty_envelope_carries_the_pk8_in_field_five():
+    pk8 = bytes(range(256)) * 2
+    pk8 = pk8[:0x158]
+    m = trade.build_rpc_pokemon(trade.SELECTION_OFFSET, 20000, 0x1249A221D8580000, 1234, pk8)
+    assert trade.parse(m)[0] == 40050
+    inner = trade._read_fields(trade._read_fields(trade.parse(m)[1])[1])
+    assert inner[trade.RPC_POKEMON_FIELD] == pk8
+    assert inner[trade.RPC_OFFSET] == trade.SELECTION_OFFSET
+
+
+def test_a_content_fifty_envelope_refuses_anything_that_is_not_a_pk8():
+    with pytest.raises(ValueError):
+        trade.build_rpc_pokemon(trade.SELECTION_OFFSET, 20000, 1, 1, bytes(100))

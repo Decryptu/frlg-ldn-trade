@@ -213,6 +213,18 @@ async def main_async(args):
                 return
             clock = got["clock"] + args.rpc_clock_delta
             pair = swsh_trade.build_rpc_pair(offset, our_constant, clock)
+            if args.offer_on_50 and st["our_pk8"] is not None:
+                # AND PUT THE POKEMON IN IT. Content 50 is `PokemonTradeDataHolder` - the transfer
+                # itself - where content 30, everything this project has done since sw75, is the
+                # BOX exchange that shows each other a Pokemon. nxldn-lab reads a 344-byte PK8 out
+                # of field 5 of a 40050 envelope, so field 5 is a variable slot and on this content
+                # it carries the entity. sw93 sent this pair with the 40030 pair's four-byte bodies
+                # and the console ignored it; an empty envelope on the transfer content is an
+                # envelope with nothing in it.
+                pair = (pair[0], swsh_trade.build_rpc_pokemon(
+                    offset, swsh_trade.RPC_BASES[1], our_constant, clock, st["our_pk8"]))
+                print(f"[tx]     the second member carries our PK8 in field "
+                      f"{swsh_trade.RPC_POKEMON_FIELD}, {len(pair[1])} bytes")
             st["rpc_queue"].extend(pair)
             st["selection_sent"] = True
             print(f"\n[tx]     *** OPENING THE {label} PHASE *** {40000 + offset} pair on "
@@ -1608,6 +1620,11 @@ def build_parser():
                     help="offer back the exact PK8 the console just offered us, unchanged, instead "
                          "of one out of --send-snapshot. The control for \"is it our record it is "
                          "refusing\": these bytes came out of its own save and cannot be illegal")
+    ap.add_argument("--offer-on-50", action="store_true",
+                    help="put our PK8 in field 5 of the 40050 pair's second member. Content 50 is "
+                         "PokemonTradeDataHolder - the transfer - where content 30 is the box "
+                         "exchange this project has been doing since sw75; nxldn-lab reads a "
+                         "344-byte PK8 out of exactly that field")
     ap.add_argument("--send-selection", default=None, choices=("offer", "migration"),
                     help="WHEN to open the selection phase with a 40050 pair on 0x7c port 1. "
                          "\"offer\" sends it as soon as our offer is acknowledged, which is the "

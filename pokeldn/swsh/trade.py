@@ -141,6 +141,27 @@ OFFER_OFFSET = 30                     # MEASURED, sw75-sw83
 SELECTION_OFFSET = 50                 # nxldn-lab's, structurally consistent, NOT measured here
 CONFIRMATION_OFFSET = 40              # the same
 
+# WHICH CONTENT IS WHICH, and it reframes what this project has been sending. `main` ships three
+# trade holders and the registry has three trade contents, so they pair off - and each pairing is
+# forced by something on the wire rather than chosen:
+#
+#   content 30  BoxSyncStateDataHolder   1 boxSendPokemon, 2 boxSyncStateCommand
+#               MEASURED. `3e4e000012020801` is a FIELD 2 on 20030 and only this holder has one.
+#   content 50  PokemonTradeDataHolder   1 Pokemon{1 serializePokemonParam}
+#               nxldn-lab's `decode_rpc_pokemon_offer` pulls a 344-byte PK8 out of FIELD 5 of a
+#               40050 envelope, so content 50 is the one that carries a Pokemon.
+#   content 40  SyncSaveDataHolder       1 syncCommand{int32 data}
+#               what is left, and a save sync is what a finished trade would run.
+#
+# **SO 20030 IS THE BOX EXCHANGE - SHOWING EACH OTHER A POKEMON - AND NOT THE TRADE.** Everything
+# sw75 onward has done is content 30. The transfer itself is content 50, which this project has
+# never spoken with a Pokemon in it, and the save sync is content 40. That is what the console
+# runs out of after the accept.
+CONTENT_HOLDERS = {OFFER_OFFSET: "BoxSyncStateDataHolder",
+                   SELECTION_OFFSET: "PokemonTradeDataHolder",
+                   CONFIRMATION_OFFSET: "SyncSaveDataHolder"}
+RPC_POKEMON_FIELD = 5                 # where a PK8 rides inside the envelope's inner message
+
 # THE TWO BODIES ARE THE CONSOLE'S OWN. Its 40030 pair carries `00000000` against base 10000 and
 # `000018fc` against base 20000, and nxldn-lab's 40050 pair carries exactly the same two - so the
 # pair's shape is the envelope's, not the procedure's, and building a 40050 is writing one field.
@@ -159,6 +180,19 @@ def build_rpc(offset, base, station_id, clock, body=b"\x00\x00\x00\x00", envelop
     if envelope is None:
         envelope = RPC_ENVELOPE_BASE + offset
     return message(envelope, field(1, inner))
+
+
+def build_rpc_pokemon(offset, base, station_id, clock, pk8):
+    """-> an RPC envelope carrying a PK8 in field 5, the shape the console uses on content 50.
+
+    `nxldn-lab`'s `decode_rpc_pokemon_offer` reads exactly this: walk the envelope's inner message
+    and take field 5 when it is 344 bytes. So field 5 is not always the four-byte body the 40030
+    pair carries - it is a variable-length slot, and on content 50 it holds the Pokemon.
+    """
+    pk8 = bytes(pk8)
+    if len(pk8) not in (0x148, 0x158):
+        raise ValueError(f"{len(pk8)} bytes is not a PK8 (0x148 stored or 0x158 party)")
+    return build_rpc(offset, base, station_id, clock, pk8)
 
 
 def build_rpc_pair(offset, station_id, clock, bodies=RPC_PAIR_BODIES):
