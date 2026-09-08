@@ -296,6 +296,36 @@ own; `--station-sweep` walks other readings if one is ever needed. What we send 
 `pia4.build_message` / `pia4.build_packet`, and `tests/test_pia4.py` checks it against the console's
 own bytes: given the console's values it reproduces the console's 24-byte header exactly.
 
+## The game layer, and the first application data
+
+FACT, sw52 and the binary. Every layer beneath the game is closed in both directions - LDN
+association, Local Protocol 0x24, the station handshake 0x14, the mesh join 0x18, RTT 0x58, the
+reliable window 0x7C and the broadcast reliable window 0x80. Over 120 seconds the console sent
+**455 application messages carrying one distinct payload**, six bytes, sequence ids 1..233:
+
+    61 00 00 00 0a 00
+
+That is a heartbeat, and the game is waiting for something we have never sent. **Nothing of ours
+has ever been application data on either window**, and both of them are waiting for our sequence 1:
+
+- **0x80 says so out loud.** Its ack asks for ack id 1 in every filled slot, once a second, in sw29
+  and sw52 alike - 256 messages, never moving. A window that has received nothing.
+- **0x7C says so by its silence.** The console has never sent us an ack on 0x7C, not one in 2092
+  messages, because that protocol only answers application data and we had only ever acked.
+
+`bin/swsh_connect.py --send-data HEX` is the first application data of the project, on either
+protocol (`--send-protocol`), retransmitting until it is acknowledged the way a window does. What
+it builds is `reliable4.build_data_message`, and the offline proof is that it reproduces the
+console's own sequence 1 byte for byte. `docs/pia.md` "Version 4's reliable header" has the five
+checks the receive path applies in silence; `scratchpad/sw_validate_msg.py` runs the exact bytes we
+are about to send through all five before an association is spent on them.
+
+**THE PASS SIGNAL IS DIFFERENT ON EACH PROTOCOL AND NEITHER NEEDS THE GAME TO AGREE WITH US.** On
+0x80 the ack id moves off 1 for the first time; on 0x7C the console sends an ack at all. Either
+says the console decrypted our packet, walked the message, found itself in the destination list and
+accepted a sequence into its window - and a game that then keeps sending the same six bytes is a
+finding about the game rather than the transport.
+
 ## Open questions
 
 - **The two unnamed header fields**, the byte at 0x05 and the halfword at 0x06. What writes them is

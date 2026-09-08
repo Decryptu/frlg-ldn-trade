@@ -22,7 +22,7 @@ in flight when the rebroadcast stops is the answer, and the log timestamps say w
 
 Never pass --verbose to a live run (there is none); use --capture. docs/swsh.md, docs/pia.md.
 """
-import argparse, json, os, socket, struct, sys, time
+import argparse, json, os, socket, struct, sys, time, zlib
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -166,7 +166,8 @@ async def main_async(args):
               "joins_out": 0, "mesh_in": 0, "join_response": None, "mesh_acks": 0,
               "updates_mesh": 0, "rtt_in": 0, "rtt_out": 0, "reliable_in": 0,
               "reliable_seqs": set(), "reliable_acks": 0, "acked_through": 0,
-              "reliable_last": None, "broadcast_in": 0}
+              "reliable_last": None, "broadcast_in": 0, "data_out": 0, "data_acked": None,
+              "broadcast_ack_ids": set()}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
                                           # only moment a mesh join has ever been answered
@@ -386,6 +387,13 @@ async def main_async(args):
                             print(f"\n[rx] t={now:6.2f} *** 0x7c ACK FROM THE CONSOLE *** "
                                   f"{len(got['payload'])} B: {shape}")
                             record(rec="rx_reliable_ack", t=now, raw=got["payload"].hex())
+                            if st["data_acked"] is None and args.send_protocol == reliable5.PROTOCOL:
+                                # THE PASS SIGNAL ON 0x7C. The console has never sent an ack on this
+                                # protocol - not one in sw29 or sw52, 2092 messages - because it
+                                # only answers application data and we had never sent any.
+                                st["data_acked"] = now
+                                print(f"[rx]     *** IT ANSWERED OUR DATA. First 0x7c ack of the "
+                                      f"project, t={now:.2f} ***")
                             continue
                         st["reliable_seqs"].add(got["sequence_id"])
                         through = reliable5.contiguous_through(st["reliable_seqs"],
@@ -430,6 +438,22 @@ async def main_async(args):
                                 print(f"[rx]     acking slots "
                                       f"{[e['slot'] for e in live]} at id "
                                       f"{sorted({e['ack_id'] for e in live})}")
+                        if got["is_ack"] and len(got["payload"]) == reliable4.ACK_PAYLOAD_SIZE:
+                            # THE PASS SIGNAL ON 0x80, and it is one number. Every ack id in every
+                            # filled slot is 1 in sw29 and sw52 alike - a window that has received
+                            # nothing. Our sequence 1 landing moves it to 2.
+                            ids = {e["ack_id"] for e in reliable4.parse_ack_payload(got["payload"])
+                                   if e["ack_id"]}
+                            fresh = ids - st["broadcast_ack_ids"]
+                            st["broadcast_ack_ids"] |= ids
+                            moved = {i for i in ids if i > reliable4.FIRST_SEQUENCE}
+                            if moved and st["data_acked"] is None:
+                                st["data_acked"] = now
+                                print(f"\n[rx] t={now:6.2f} *** THE BROADCAST WINDOW MOVED: ack "
+                                      f"ids {sorted(moved)}, off 1 for the first time. The console "
+                                      f"took our sequence {reliable4.FIRST_SEQUENCE} ***")
+                            elif fresh and st["broadcast_in"] > 1:
+                                print(f"[rx] t={now:6.2f} 0x80 ack ids now {sorted(ids)}")
                         record(rec="rx_broadcast", t=now, parsed={
                             k: (v if not isinstance(v, bytes) else v.hex())
                             for k, v in got.items() if k != "payload"})
@@ -576,13 +600,79 @@ async def main_async(args):
                       f"{st['mesh_in']} mesh messages in all.")
             st["phase"] = "hold"
 
+
+        async def data_sender():
+            """The FIRST APPLICATION DATA of the project, on 0x7C or on 0x80.
+
+            Every layer under this one is closed in both directions and the game has not moved: 455
+            messages in sw52 carrying one payload, `61 00 00 00 0a 00`, repeated while it waits for
+            something we have never sent. Both reliable windows are waiting for our sequence 1 - the
+            console's broadcast ack asks for it once a second and its 0x7C window has never had an
+            ack to send because we have never given it data to acknowledge.
+
+            THE FIRST MESSAGE MUST CARRY FLAG_IS_INITIALIZED (reliable4.FIRST_DATA_FLAGS): while a
+            station's stream is unopened the handler at 0x01859ca0 does `tbz w9, #3` and drops
+            anything without it in silence, with nothing on the wire to say why.
+
+            It retransmits until the ack comes back, which is what a sliding window does and what
+            the console itself did through 1637 messages.
+            """
+            if args.send_data is None:
+                return
+            payload = bytes.fromhex(args.send_data)
+            with trio.move_on_after(args.send_wait):
+                await accepted.wait()
+            if not accepted.is_set():
+                print(f"\n[tx] no station acceptance in {args.send_wait:.0f}s - sending no data. "
+                      f"Data before the mesh is up is an unclassifiable run.")
+                return
+            await trio.sleep(args.send_after)
+            want = args.send_destinations
+            if want == "auto":
+                want = "console" if args.send_protocol == reliable4.BROADCAST_PROTOCOL else "none"
+            dests = [host_constant] if want == "console" else []
+            body = reliable4.build_data_message(payload, sequence_id=args.send_sequence,
+                                                destinations=dests,
+                                                stream_id=args.send_stream)
+            flags = pia4.MESSAGE_FLAGS
+            wire = body
+            if args.send_zlib:
+                # The console compresses every 0x80 message it sends and none of its 0x7C ones.
+                # The flag is the Pia MESSAGE's, not the window's, so it is a free variable here.
+                wire = zlib.compress(body)
+                flags |= pia4.MESSAGE_FLAG_ZLIB
+            st["phase"] = "data"
+            print(f"\n[tx] *** APPLICATION DATA on {args.send_protocol:#04x} *** seq "
+                  f"{args.send_sequence} flags {reliable5.flag_names(body[0])} to "
+                  f"{[hex(d) for d in dests] or 'everyone (count 0)'}, payload {payload.hex()}"
+                  f"{f' zlib {len(body)}->{len(wire)} B' if args.send_zlib else ''}")
+            print(f"[tx]     the message: {body.hex()}")
+            deadline = time.monotonic() + args.send_seconds
+            while time.monotonic() < deadline and st["data_acked"] is None:
+                for port in [int(p, 0) for p in _expand(args.send_port)]:
+                    sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), wire,
+                                     args.send_protocol, args.connect_station_first, port=port,
+                                     message_flags=flags, destination=args.data_destination),
+                                (host_ip, PIA_PORT))
+                    st["data_out"] += 1
+                record(rec="tx_data", t=time.monotonic() - t0, protocol=args.send_protocol,
+                       sequence=args.send_sequence, message=body.hex())
+                await trio.sleep(args.send_period)
+            if st["data_acked"] is None:
+                print(f"\n[tx] {st['data_out']} data messages out, NOTHING acknowledged them. "
+                      f"0x80 ack ids seen: {sorted(st['broadcast_ack_ids'])}")
+            st["phase"] = "hold"
+
         async with trio.open_nursery() as nursery:
             nursery.start_soon(receiver)
             nursery.start_soon(joiner)
+            nursery.start_soon(data_sender)
             await sender()
             await trio.sleep(args.hold)
             nursery.cancel_scope.cancel()
 
+        answered = ("NOT acknowledged" if st["data_acked"] is None
+                    else f"acknowledged at t={st['data_acked']:.2f}")
         print(f"\n[cx] === {st['rx']} packets in, {st['undecrypted']} that did not decrypt, "
               f"{st['updates']} update sessions, {st['acks']} acks out, "
               f"{st['requests']} connection requests, {st['station_replies']} messages on 0x14, "
@@ -592,7 +682,8 @@ async def main_async(args):
               f"{st['mesh_acks']} mesh acks out, {st['rtt_in']} RTT in / {st['rtt_out']} answered, "
               f"{st['reliable_in']} reliable in over "
               f"{len(st['reliable_seqs'])} sequence ids, {st['reliable_acks']} acked "
-              f"(through {st['acked_through']}), {st['broadcast_in']} on 0x80")
+              f"(through {st['acked_through']}), {st['broadcast_in']} on 0x80, "
+              f"{st['data_out']} application data out, {answered}")
         if st["answer"]:
             now, phase, proto = st["answer"]
             print(f"[cx] FIRST TRAFFIC ON A NEW PROTOCOL: {proto:#04x} at t={now:.2f} in {phase}")
@@ -606,7 +697,9 @@ async def main_async(args):
                rtt_in=st["rtt_in"], rtt_out=st["rtt_out"], reliable_in=st["reliable_in"],
                reliable_acks=st["reliable_acks"], acked_through=st["acked_through"],
                reliable_seqs=sorted(st["reliable_seqs"]),
-               broadcast_in=st["broadcast_in"])
+               broadcast_in=st["broadcast_in"], data_out=st["data_out"],
+               data_acked=st["data_acked"],
+               broadcast_ack_ids=sorted(st["broadcast_ack_ids"]))
     if cap:
         cap.close()
     return 0
@@ -706,6 +799,42 @@ def build_parser():
     ap.add_argument("--data-destination", type=lambda s: int(s, 0), default=1,
                     help="the station BITMAP on 0x58 and 0x7C. The console sends 2 to us, station "
                          "index 1; 1 is the bit for station 0, which is the console")
+    ap.add_argument("--send-data", default=None, metavar="HEX",
+                    help="send APPLICATION DATA once the mesh is up - the first of the project. "
+                         "The payload as hex; \"610000000a00\" is the six bytes the console "
+                         "repeats at us on 0x7C. Nothing is sent without this flag")
+    ap.add_argument("--send-protocol", type=lambda s: int(s, 0),
+                    default=reliable4.BROADCAST_PROTOCOL,
+                    help="0x80 (the broadcast reliable window, the default: it asks us for "
+                         "sequence 1 once a second) or 0x7c (the unicast one, which has never had "
+                         "an ack to send us because it has never had our data)")
+    ap.add_argument("--send-sequence", type=lambda s: int(s, 0), default=reliable4.FIRST_SEQUENCE,
+                    help="the sequence id. 1 is what both windows ask for; the first message also "
+                         "carries FLAG_IS_INITIALIZED and DEFINES where the stream starts")
+    ap.add_argument("--send-stream", type=lambda s: int(s, 0), default=0,
+                    help="the stream id. 0 is what the console sends on both protocols")
+    ap.add_argument("--send-destinations", choices=("auto", "none", "console"), default="auto",
+                    help="the header's destination list. \"console\" names its station constant "
+                         "id, which is what its own broadcast acks do to us; \"none\" sends "
+                         "count 0, which 0x01859578 never filters and every 0x7C message carries. "
+                         "\"auto\" mirrors the console per protocol: none on 0x7C, the console "
+                         "on 0x80")
+    ap.add_argument("--send-zlib", action="store_true",
+                    help="compress the message, the way the console compresses every 0x80 message "
+                         "it sends. The flag is the Pia message's (0x10 at version 4), so this is "
+                         "free either way - and it is one variable, so sweep it alone")
+    ap.add_argument("--send-port", default="0",
+                    help="the Pia message port. The console sends its 0x80 acks on 0 AND 1, each "
+                         "packet carrying both; \"0,1\" mirrors that")
+    ap.add_argument("--send-wait", type=float, default=60.0,
+                    help="how long to wait for the station handshake before giving up on sending")
+    ap.add_argument("--send-after", type=float, default=5.0,
+                    help="seconds after acceptance before the first data message, so the mesh join "
+                         "and the RTT exchange are already running when it lands")
+    ap.add_argument("--send-period", type=float, default=1.0,
+                    help="the retransmit interval. A window retransmits until it is acked")
+    ap.add_argument("--send-seconds", type=float, default=60.0,
+                    help="how long to keep retransmitting if nothing acknowledges it")
     ap.add_argument("--hold", type=float, default=30.0)
     ap.add_argument("--capture", default=None)
     return ap

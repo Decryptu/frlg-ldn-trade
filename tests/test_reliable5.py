@@ -194,3 +194,79 @@ def test_the_console_fills_one_slot_per_STATION_and_zeroes_the_rest():
     assert all(e["mask"] == b"\0" * 16 for e in entries)
     # ours fills all 32 with the real entry, which is a superset - and is what slid the window
     assert r4.build_ack_payload(1)[:8 * r4.ACK_ENTRY_SIZE] == theirs[:8 * r4.ACK_ENTRY_SIZE]
+
+
+# --- version 4's own header, and the first application data ---------------------------------
+# Session 58 read all three MessageHeader methods off the retail binary: GetSize 0x0184e480,
+# Deserialize 0x0184e390, Serialize 0x0184e230. The byte at 0x8 is a COUNT of eight-byte station
+# ids, not 5.29's bitmap width, and the two rules agree only at count 0 - which is every 0x7C
+# message either side has ever sent.
+
+def test_the_version_four_header_grows_eight_bytes_per_destination_not_a_bitmap():
+    from pokeldn.ldn import reliable4 as r4
+    ids = [0x1249A221D8580000, 0xEB9B2220F1480000]
+    assert r4.header_size([]) == 9 == rl.header_size(0)
+    assert r4.header_size(ids[:1]) == 17 and rl.header_size(1) == 13     # where they part
+    assert r4.header_size(ids) == 25 == 9 + 8 * 2
+    head = r4.build_header(0, 1, 0, destinations=ids)
+    assert len(head) == 25 and head[8] == 2
+    assert r4.parse_message(head)["destinations"] == ids
+
+
+def test_our_first_data_message_is_the_consoles_own_first_message_byte_for_byte():
+    """The only offline proof available for a message we have never sent: the console sent this
+    exact one at sw29, sequence 1 of its 0x7C stream, and `build_data_message` reproduces it."""
+    from pokeldn.ldn import reliable4 as r4
+    theirs = bytes.fromhex("0f0000060001000100" "610000000a00")
+    assert r4.build_data_message(bytes.fromhex("610000000a00")) == theirs
+    got = r4.parse_message(theirs)
+    assert got["flags"] == r4.FIRST_DATA_FLAGS == 0x0F
+    assert got["sequence_id"] == got["lowest_pending"] == r4.FIRST_SEQUENCE == 1
+    assert got["destination_count"] == 0 and got["payload_size"] == 6
+
+
+def test_only_the_first_message_carries_the_flag_that_opens_the_stream():
+    """0x01859ca0 does `tbz w9, #3` while a station's stream is unopened and drops the message in
+    silence. The console's own traffic is the example: 0x0F once, then 0x07 for 1636 messages."""
+    from pokeldn.ldn import reliable4 as r4
+    first = r4.parse_message(r4.build_data_message(b"ab"))
+    later = r4.parse_message(r4.build_data_message(b"ab", sequence_id=2))
+    assert first["flags"] & r4.FLAG_IS_INITIALIZED
+    assert not later["flags"] & r4.FLAG_IS_INITIALIZED
+    assert later["flags"] == r4.DATA_FLAGS == 0x07
+    assert r4.parse_message(r4.build_data_message(b"ab", sequence_id=9, first=True))["flags"] == 0x0F
+
+
+def test_the_payload_bound_is_the_receivers_and_it_shrinks_with_the_destination_list():
+    """Two different bounds: the deserialiser refuses 0x589 and above (0x0184e3cc) and the receive
+    path refuses anything over 0x57F - 8 * count (0x0185952c). The tighter one is what matters."""
+    from pokeldn.ldn import reliable4 as r4
+    assert r4.MAX_PAYLOAD == 0x588 and r4.max_payload_for([]) == 0x57F
+    assert r4.max_payload_for([1]) == 0x57F - 8 and r4.max_payload_for([1, 2]) == 0x57F - 16
+    r4.build_data_message(b"\0" * r4.max_payload_for([1]), destinations=[1])
+    with pytest.raises(ValueError, match="0185952c"):
+        r4.build_data_message(b"\0" * (r4.max_payload_for([1]) + 1), destinations=[1])
+    with pytest.raises(ValueError, match="0x20 and above"):
+        r4.build_header(0, 1, 0, destinations=range(32))
+
+
+def test_the_ack_message_is_unchanged_from_what_slid_the_window_at_sw52():
+    """The header builder moved from reliable5's to version 4's own; at count 0 they are the same
+    nine bytes, and sw52's ack is what must not move."""
+    from pokeldn.ldn import reliable4 as r4
+    assert r4.build_ack_message(21, lowest_pending=1) == (
+        rl.build_header(0, rl.ACK_SEQUENCE, 0x260, lowest_pending=1) + r4.build_ack_payload(21))
+
+
+def test_we_can_rebuild_the_consoles_own_broadcast_ack_byte_for_byte():
+    """The whole 625-byte message out of `build_ack_message`, header and payload, against the one
+    the console sent at sw29 - which is the builder tested against a worked example rather than
+    against a reading of the disassembly."""
+    import zlib
+    from pokeldn.ldn import reliable4 as r4
+    theirs = zlib.decompress(bytes.fromhex(
+        "484b6260604af8ff9f819151c87391e28d0806206064c000834268140c07"
+        "00000000ffff03005fb204b9"))
+    ours = r4.build_ack_message(1, slots=range(8), filler=0, lowest_pending=1,
+                                destinations=[0x1249A221D8580000])
+    assert ours == theirs and len(ours) == 625

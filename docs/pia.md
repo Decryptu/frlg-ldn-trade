@@ -479,16 +479,66 @@ LOOKING header claiming a payload of `0x6260`. Decompressed they are **625 bytes
     00 00 0260 ffff 0001 01 1249a221d8580000    flags 0, stream 0, size 0x260, sequence 0xFFFF,
                                                 lowest pending 1, ONE destination, and it is us
 
-so the broadcast header is the ordinary nine bytes with the destination **bitmap** replaced by a
-count and that many **eight-byte station constant ids**. The length settles it without reading the
+so the header is the ordinary nine bytes with the destination **bitmap** replaced by a count and
+that many **eight-byte station constant ids**. The length settles it without reading the
 disassembly: 5.29's bitmap rule gives a 13-byte header and a 621-byte message, and the message is
-625.
+625. It is not the broadcast protocol's own header - see "Version 4's reliable header" below: 0x7C
+uses the same one, and only a count of 0 hid the difference.
 
 **THE CONSOLE'S OWN ACK HAD BEEN ON THE WIRE SINCE sw29** and was unreadable because nothing
 decompressed it - which is how a protocol we called "not identified" for two sessions turned out to
 be carrying the very structure we were trying to build. It is also what names the 32 slots: the
 console fills **0..7** with the real ack id and leaves 8..31 at zero, and 8 is `max_total` from the
 join response. **One entry per station the mesh can hold.**
+
+## Version 4's reliable header, and what it refuses
+
+FACT, read off all three of `nn::pia::transport::ReliableSlidingWindow::MessageHeader`'s methods in
+session 58. **It is ONE class and BOTH reliable protocols use it** - 0x7C and 0x80 alike - so this
+is the header of every reliable message version 4 sends, in either direction.
+
+    GetSize      0x0184e480   `ldrb w8, [x0,#0x10]; lsl w8, w8, #3; add w0, w8, #9`
+    Deserialize  0x0184e390
+    Serialize    0x0184e230
+
+    0x0  1  flags
+    0x1  1  stream id
+    0x2  2  payload size, big-endian    REFUSED at 0x589 and above (0x0184e3cc)
+    0x4  2  sequence id, big-endian
+    0x6  2  lowest sequence id pending ack, big-endian
+    0x8  1  destination COUNT           REFUSED at 0x20 and above (0x0184e404)
+    0x9  8 * count  station constant ids, big-endian
+
+**THE BYTE AT 0x8 IS A COUNT OF EIGHT-BYTE IDS, NOT 5.29's BITMAP WIDTH.** `GetSize` is
+`9 + 8 * count` against 5.29's `9 + (((n + 0x1f) >> 3) & 0x3c)`, and the deserialiser reads `count`
+big-endian u64s one after another (`ldr x11, [x9], #8; rev x11, x11`). The two rules agree at count
+0 and nowhere else - and count 0 is every 0x7C message either side has ever sent, which is why
+`reliable5.parse` read 221887 of them without a field out of place and why this went unnoticed for
+two sessions.
+
+**THE RECEIVE PATH IS `0x01859338`, AND IT REFUSES FIVE THINGS IN SILENCE.** No error, no reply,
+nothing on the wire to say why - so each of these is a run that cannot be classified:
+
+    0x0185952c   payload size <= 0x57F - 8 * count     tighter than the deserialiser's own bound
+    0x0185954c   the Pia message length must EQUAL 9 + 8 * count + size, exactly
+    0x0185956c   the stream id must be the window's own for this station, [w + 0x18*st + 0x46]
+    0x01859578   a count above 0 is a list the RECEIVER MUST FIND ITSELF IN. Count 0 is addressed
+                 to everyone and is never filtered
+    0x01859ca0   the first message on a stream must carry FLAG_IS_INITIALIZED (`tbz w9, #3`)
+
+It then dispatches on the flags at `0x01859734`: bit 5 RESET, bit 6 RESET_ACK, bit 0
+APPLICATION_DATA to `0x01859ca0`, and everything else falls through to the ack handler
+`0x01859a70` - which is why a message with no flags at all is an ack.
+
+**THE FIRST DATA MESSAGE OPENS THE STREAM AND CHOOSES WHERE IT STARTS.** While the per-station byte
+at `[window + 0x18*station + 0x47]` is zero the stream does not exist; the handler requires
+FLAG_IS_INITIALIZED and only then adopts the message's stream id into `+0x46` and **its sequence id
+into `+0x40`** as the window's start. The console's own 0x7C traffic is the worked example: flags
+0x0F on its first message and 0x07 on all 1636 after it.
+
+`reliable4.build_data_message` is that message, and the offline proof that it is right is that
+`build_data_message(bytes.fromhex("610000000a00"))` reproduces the console's own sequence 1 byte
+for byte: `0f0000060001000100610000000a00`.
 
 ## Version 4's reliable ack is the table 5.29 replaced
 
