@@ -325,7 +325,32 @@ async def main_async(args):
                         # THE POKEMON GOES OUT ON THE PORT-0 WINDOW and the status answer on the
                         # port-1 one; `box_queue` drains into `offer_pending` on port 0 and
                         # `rpc_queue` is the port-1 sender's own.
-                        if args.selection_offer_data:
+                        if args.selection_offer_sweep:
+                            # swsh_trade.SELECTION_SWEEP_NOTE says what is left and why these go
+                            # out together. Spaced through box_queue, behind the mirror shape.
+                            st["box_queue"] = (st["box_queue"]
+                                               + list(swsh_trade.selection_sweep(
+                                                   member["offset"], st["our_pk8"])))
+                            st["box_next"] = 0.0
+                        elif args.selection_offer_high:
+                            # THE 20000-BASE HOLDER. The box phase's own Pokemon rides 20030, one
+                            # content over, and that is the exchange the player sees. 10050 (sx34),
+                            # a five-field Data on 40050 (sx36) and the console's own three-field
+                            # one (sx37) are all acknowledged and all inert.
+                            st["box_queue"] = st["box_queue"] + [
+                                swsh_trade.pokemon_offer_high(member["offset"], st["our_pk8"])]
+                            st["box_next"] = 0.0
+                        elif args.selection_offer_mirror:
+                            # sx36, MEASURED: the console's own Pokemon-carrying 40050 decodes to
+                            # fields 1, 4 and 5 and nothing else. Ours carried all five, was
+                            # acknowledged at the transport on every sequence, and moved nothing.
+                            # And the identity is ruled out - our ownerId was the id the console
+                            # addressed a reliable ack TO in the same run. The field set is what
+                            # is left to vary, so this is the console's own.
+                            clock = (member["clock"] or 0) + args.rpc_clock_delta
+                            st["rpc_queue"] = [swsh_trade.mirror_pokemon_offer(
+                                member["offset"], clock, st["our_pk8"])] + st["rpc_queue"]
+                        elif args.selection_offer_data:
                             # SESSION 62, READ OUT OF THE BINARY. Content 50's receive handler,
                             # `0x010d5e40`, resolves the SENDER to a station index before it looks
                             # at a body and returns silently when it cannot - and the envelope is
@@ -342,13 +367,30 @@ async def main_async(args):
                             st["box_queue"] = st["box_queue"] + [
                                 swsh_trade.pokemon_offer(member["offset"], st["our_pk8"])]
                             st["box_next"] = 0.0
+                        if args.sync_after_offer is not None:
+                            # THE OPENER, WHERE IT CAN ACTUALLY FIRE. --sync-after-hash lives in
+                            # the "a new body arrived" chain, and this branch has already latched
+                            # that body and added it to rpc_bodies_answered, so that elif is dead
+                            # whenever --selection-offer is on: sx42 printed no STARTING SYNC line
+                            # at all. This queues it behind our own Pokemon instead.
+                            st["box_queue"] = st["box_queue"] + [
+                                swsh_trade.sync(args.sync_after_offer, args.sync_field)]
+                            st["box_next"] = 0.0
+                            print(f"[tx]     *** SYNC {args.sync_after_offer} FIELD "
+                                  f"{args.sync_field} BEHIND OUR OFFER ***")
                         status = swsh_trade.answer_rpc(got["payload"], our_constant,
                                                        args.rpc_clock_delta)
                         if status is not None:
                             st["rpc_queue"] = [status] + st["rpc_queue"]
                         st["rpc_bodies_answered"].add(
                             (member["envelope"], member["base"], bytes(member["body"])))
-                        where = (f"as a Data on {swsh_trade.RPC_ENVELOPE_BASE + member['offset']}"
+                        where = (f"as a PokemonTradeDataHolder on "
+                                 f"{swsh_trade.RPC_BASES[1] + member['offset']} port 0"
+                                 if args.selection_offer_high else
+                                 f"as the console's own field set on "
+                                 f"{swsh_trade.RPC_ENVELOPE_BASE + member['offset']} port "
+                                 f"{args.rpc_port}" if args.selection_offer_mirror else
+                                 f"as a Data on {swsh_trade.RPC_ENVELOPE_BASE + member['offset']}"
                                  f" port {args.rpc_port} with our ownerId"
                                  if args.selection_offer_data else
                                  f"on {swsh_trade.CONTENT_BASE_LOW + member['offset']} port 0")
@@ -410,8 +452,13 @@ async def main_async(args):
                                     # Opening content 40 directly (sx28, `382700000a00`) changed
                                     # nothing, which fits: the phase follows its sync, not the ping.
                                     st["confirmation_opened"] = True
+                                    # sx31 SENT THE WRONG FIELD. This project's own note of
+                                    # nxldn-lab's trace says the confirmation opens on
+                                    # `780000001a00` - field 3, pingSynced - and sx31 sent
+                                    # `780000000a00`, field 1, a plain ping. --sync-field
+                                    # picks which one goes out.
                                     opener = swsh_trade.sync(args.sync_after_hash,
-                                                             swsh_trade.PING)
+                                                             args.sync_field)
                                     st["box_queue"] = st["box_queue"] + [opener]
                                     st["box_next"] = 0.0
                                     print(f"[tx]     *** STARTING SYNC {args.sync_after_hash} "
@@ -1848,6 +1895,14 @@ def build_parser():
                          "40030 opened the offer and 40050 the selection, both as a pair. sx28 "
                          "ruled out a bare content ping (`382700000a00`) and sx31 a bare sync-120 "
                          "ping (`780000000a00`) - the console answered neither")
+    ap.add_argument("--sync-after-offer", type=int, default=None, metavar="N",
+                    help="queue a sync on holder N right behind our selection offer, in "
+                         "the branch that actually runs when --selection-offer is on. "
+                         "--sync-after-hash cannot fire there: this one can")
+    ap.add_argument("--sync-field", type=int, default=1, choices=(1, 2, 3),
+                    help="which SyncPingDataHolder field --sync-after-hash sends: 1 ping "
+                         "(sx31, and the wrong one), 2 pingReply, 3 pingSynced - which is "
+                         "what the trace this project follows records, `780000001a00`")
     ap.add_argument("--sync-after-hash", type=int, default=None, metavar="N",
                     help="once a hash body has been answered, send `ping` on sync holder N (120 "
                          "is the confirmation's) on port 0. sx28 measured the whole chain: the "
@@ -1914,6 +1969,21 @@ def build_parser():
                          "port, instead of a PokemonTradeDataHolder on 10050 port 0. Session 62: "
                          "content 50's receive handler resolves the sender to a station index and "
                          "drops silently when it cannot, and the holder shape carries no owner")
+    ap.add_argument("--selection-offer-sweep", action="store_true",
+                    help="send the shapes sx34-sx44 have not tried: our PK8 as a Data on "
+                         "elementId 10000, and as a holder on the 30000-base id (30050), "
+                         "which the binary says every content registers and nobody here "
+                         "has ever put on the air. Deliberately not one variable")
+    ap.add_argument("--selection-offer-high", action="store_true",
+                    help="with --selection-offer, answer the selection status with our PK8 as a "
+                         "PokemonTradeDataHolder on the 20000-base holder (id 20050), which is "
+                         "where the BOX phase's own Pokemon rides one content over. Overrides "
+                         "--selection-offer-mirror and --selection-offer-data")
+    ap.add_argument("--selection-offer-mirror", action="store_true",
+                    help="with --selection-offer, answer the selection status with our PK8 in a "
+                         "40050 carrying the console's OWN field set - syncId, clock, body, and "
+                         "neither elementId nor ownerId, which is how its own selection offer "
+                         "decodes (sx36). Overrides --selection-offer-data")
     ap.add_argument("--offer-echo", action="store_true",
                     help="offer back the exact PK8 the console just offered us, unchanged, instead "
                          "of one out of --send-snapshot. The control for \"is it our record it is "

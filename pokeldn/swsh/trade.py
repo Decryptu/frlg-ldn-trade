@@ -179,9 +179,12 @@ def build_rpc(offset, base, station_id, clock, body=b"\x00\x00\x00\x00", envelop
     `envelope` defaults to `40000 + offset`, which is what makes the offer envelope 40030 and the
     selection one 40050; pass it only to reproduce bytes that disagree with that rule.
     """
-    inner = (field_varint(RPC_OFFSET, offset) + field_varint(RPC_BASE, base)
-             + field_varint(RPC_STATION, station_id) + field_varint(RPC_CLOCK, clock)
-             + field(RPC_BODY, body))
+    inner = field_varint(RPC_OFFSET, offset)
+    if base is not None:                      # sx36: the console's OWN Pokemon-carrying 40050
+        inner += field_varint(RPC_BASE, base)  # has neither of these two, only 1, 4 and 5
+    if station_id is not None:
+        inner += field_varint(RPC_STATION, station_id)
+    inner += field_varint(RPC_CLOCK, clock) + field(RPC_BODY, body)
     if envelope is None:
         envelope = RPC_ENVELOPE_BASE + offset
     return message(envelope, field(1, inner))
@@ -198,6 +201,24 @@ def build_rpc_pokemon(offset, base, station_id, clock, pk8):
     if len(pk8) not in (0x148, 0x158):
         raise ValueError(f"{len(pk8)} bytes is not a PK8 (0x148 stored or 0x158 party)")
     return build_rpc(offset, base, station_id, clock, pk8)
+
+
+def mirror_pokemon_offer(offset, clock, pk8):
+    """-> a Pokemon-carrying envelope with the console's OWN field set: syncId, clock, body.
+
+    MEASURED, sx36. The console's selection offer decodes to fields 1, 4 and 5 and nothing else -
+    no `elementId`, no `ownerId` - where `build_rpc_pokemon` writes all five. sx36 sent all five
+    with our own ownerId, the transport acknowledged every sequence of it, and the console said
+    nothing further: it took the bytes and the game layer did not act on them.
+
+    AND THE IDENTITY IS NOT THE REASON. Our ownerId in sx36 was 0x1249a221d8580000, which is the
+    id the console itself addressed a reliable ack TO in the same run. It knows us by that value.
+    So what is left to vary is the field set, and this is the console's.
+    """
+    pk8 = bytes(pk8)
+    if len(pk8) not in (0x148, 0x158):
+        raise ValueError(f"{len(pk8)} bytes is not a PK8 (0x148 stored or 0x158 party)")
+    return build_rpc(offset, None, None, clock, pk8)
 
 
 def build_rpc_pair(offset, station_id, clock, bodies=RPC_PAIR_BODIES):
@@ -373,6 +394,52 @@ def pokemon_offer(offset, pk8):
     if len(pk8) not in (0x148, 0x158):
         raise ValueError(f"{len(pk8)} bytes is not a PK8 (0x148 stored or 0x158 party)")
     return message(CONTENT_BASE_LOW + offset, field(1, field(1, pk8)))
+
+
+def pokemon_offer_high(offset, pk8):
+    """-> PokemonTradeDataHolder on content `offset`'s 20000-base holder: id 20050 for offset 50.
+
+    THE ONE SHAPE LEFT, and the symmetry says it. In the BOX phase the console sends its RPC pair
+    on 40030 and its Pokemon on **20030** - the 20000-base holder of the same content - and that is
+    the exchange that reaches the player. In the selection phase it sends its pair on 40050 and its
+    own Pokemon on 40050, the sync layer's own envelope.
+
+    sx36 offered ours as a five-field Data on 40050 and sx37 as the console's own three-field one,
+    byte-identical in shape and length; both were acknowledged on every sequence and neither moved
+    the console's trade state. sx34 offered it as this holder on 10050. **20050 is untried**, and
+    it is the id the box phase's own Pokemon rides one content over.
+    """
+    pk8 = bytes(pk8)
+    if len(pk8) not in (0x148, 0x158):
+        raise ValueError(f"{len(pk8)} bytes is not a PK8 (0x148 stored or 0x158 party)")
+    return message(RPC_BASES[1] + offset, field(1, field(1, pk8)))
+
+
+SELECTION_SWEEP_NOTE = """The shapes left after sx34-sx44, and why they are swept together.
+
+Every one of these was acknowledged at the transport and moved nothing: the holder on 10050 (sx34),
+a five-field Data on 40050 with our ownerId (sx36), the console's own three-field Data on 40050,
+byte-identical in shape and length (sx37), the holder on 20050 (sx39), and the 120 pingSynced the
+borrowed trace calls the confirmation's opener (sx44 - and the console uses 97, 110 and 130 all run
+and never 120, so that expectation is dead).
+
+What is left comes from the binary rather than from another project's capture. Each content's
+registrar builds THREE holders - 10000+off, 20000+off and 30000+off - and the 30000 family has
+never been on the air here in either direction. And the pair's two members carry elementId 10000
+and 20000, so if those are the two sides' slots, our Pokemon may belong on the one we have not
+used.
+
+This is deliberately NOT one variable. The player is the scarce resource and the remaining space is
+two shapes; a run that moves anything at all is worth a bisect afterwards."""
+
+
+def selection_sweep(offset, pk8):
+    """-> the shapes left, in order: Data on elementId 10000, then the 30000-base holder."""
+    pk8 = bytes(pk8)
+    if len(pk8) not in (0x148, 0x158):
+        raise ValueError(f"{len(pk8)} bytes is not a PK8 (0x148 stored or 0x158 party)")
+    return (build_rpc(offset, RPC_BASES[0], None, 0, pk8),
+            message(30000 + offset, field(1, field(1, pk8))))
 
 
 def box_sync_state(command):

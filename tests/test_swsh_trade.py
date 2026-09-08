@@ -339,6 +339,31 @@ def test_the_content_fifty_offer_carries_our_owner_id():
     assert trade.RPC_STATION not in trade._read_fields(trade.parse(holder)[1])
 
 
+def test_the_mirror_offer_has_the_consoles_own_field_set():
+    """sx36, off its own bytes: `729c00000ae002083220e2202ad802<344 bytes>` decodes to fields 1, 4
+    and 5 - no elementId, no ownerId. Ours carried all five, every sequence of it was acknowledged,
+    and the console did nothing with it. The identity is not the reason: our ownerId that run was
+    0x1249a221d8580000, the id the console addressed a reliable ack TO in the same capture.
+    """
+    theirs = bytes.fromhex("729c00000ae002083220e2202ad802") + bytes(0x158)
+    assert sorted(trade._read_fields(trade._read_fields(trade.parse(theirs)[1])[1])) == [1, 4, 5]
+    ours = trade.mirror_pokemon_offer(trade.SELECTION_OFFSET, 4194, bytes(0x158))
+    assert sorted(trade._read_fields(trade._read_fields(trade.parse(ours)[1])[1])) == [1, 4, 5]
+    assert len(ours) == len(theirs)
+
+
+def test_the_high_base_offer_is_the_box_phases_own_shape_one_content_over():
+    """The box Pokemon rides 20030 - `3e4e00000adb020ad802<344>` - and this is the same message
+    with the content offset moved to 50. sx34/sx36/sx37 tried 10050 and both 40050 shapes.
+    """
+    pk8 = bytes(0x158)
+    m = trade.pokemon_offer_high(trade.SELECTION_OFFSET, pk8)
+    assert trade.parse(m)[0] == 20050
+    box = trade.pokemon_trade(pk8)
+    assert m[4:] == box[4:]            # the same body, only the id differs
+    assert trade.offered_pokemon(box) == pk8
+
+
 def test_a_content_fifty_envelope_refuses_anything_that_is_not_a_pk8():
     with pytest.raises(ValueError):
         trade.build_rpc_pokemon(trade.SELECTION_OFFSET, 20000, 1, 1, bytes(100))
