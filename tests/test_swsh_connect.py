@@ -150,6 +150,16 @@ def test_a_gap_stops_the_run_rather_than_being_skipped():
     assert reliable5.contiguous_through({2, 3}, start=1) == 3
 
 
+def test_the_data_shaped_selection_offer_is_off_unless_it_is_asked_for():
+    """sx14 died of `args.box_open.split(",")` with the flag absent, inside the receiver. Every
+    flag combination this branch reads is proven here before a run carries it.
+    """
+    args = swsh_connect.build_parser().parse_args([])
+    assert args.selection_offer is False and args.selection_offer_data is False
+    on = swsh_connect.build_parser().parse_args(["--selection-offer", "--selection-offer-data"])
+    assert on.selection_offer is True and on.selection_offer_data is True
+
+
 def test_neither_answer_happens_unless_it_is_asked_for():
     args = swsh_connect.build_parser().parse_args([])
     assert args.answer_rtt is False and args.ack_reliable is False

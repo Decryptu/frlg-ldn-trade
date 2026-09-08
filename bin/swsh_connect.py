@@ -325,18 +325,35 @@ async def main_async(args):
                         # THE POKEMON GOES OUT ON THE PORT-0 WINDOW and the status answer on the
                         # port-1 one; `box_queue` drains into `offer_pending` on port 0 and
                         # `rpc_queue` is the port-1 sender's own.
-                        st["box_queue"] = st["box_queue"] + [
-                            swsh_trade.pokemon_offer(member["offset"], st["our_pk8"])]
-                        st["box_next"] = 0.0
+                        if args.selection_offer_data:
+                            # SESSION 62, READ OUT OF THE BINARY. Content 50's receive handler,
+                            # `0x010d5e40`, resolves the SENDER to a station index before it looks
+                            # at a body and returns silently when it cannot - and the envelope is
+                            # `gflnet.p2p.sync.pb.Data`, whose field 3 the game itself calls
+                            # `ownerId`. `pokemon_offer` is a PokemonTradeDataHolder on 10050 with
+                            # no owner in it at all. This is the console's own shape instead: the
+                            # PK8 in `body` of a 40050 whose ownerId is ours, on the RPC port the
+                            # console sends its own on. `docs/swsh.md`, "A content is three holders".
+                            clock = (member["clock"] or 0) + args.rpc_clock_delta
+                            st["rpc_queue"] = [swsh_trade.build_rpc_pokemon(
+                                member["offset"], swsh_trade.RPC_BASES[1], our_constant,
+                                clock, st["our_pk8"])] + st["rpc_queue"]
+                        else:
+                            st["box_queue"] = st["box_queue"] + [
+                                swsh_trade.pokemon_offer(member["offset"], st["our_pk8"])]
+                            st["box_next"] = 0.0
                         status = swsh_trade.answer_rpc(got["payload"], our_constant,
                                                        args.rpc_clock_delta)
                         if status is not None:
                             st["rpc_queue"] = [status] + st["rpc_queue"]
                         st["rpc_bodies_answered"].add(
                             (member["envelope"], member["base"], bytes(member["body"])))
+                        where = (f"as a Data on {swsh_trade.RPC_ENVELOPE_BASE + member['offset']}"
+                                 f" port {args.rpc_port} with our ownerId"
+                                 if args.selection_offer_data else
+                                 f"on {swsh_trade.CONTENT_BASE_LOW + member['offset']} port 0")
                         print(f"[tx]     *** THE SELECTION OFFER STATUS *** offering our "
-                              f"Pokemon on {swsh_trade.CONTENT_BASE_LOW + member['offset']} "
-                              f"port 0 and answering the status on port 1, triggered by "
+                              f"Pokemon {where} and answering the status on port 1, triggered by "
                               f"{got['payload'].hex()}")
                     # AND EVERY OTHER DISTINCT BODY, ONCE. sx21: with the pair answered and our
                     # Pokemon offered, the console echoes ours back and then sends a member whose
@@ -1891,6 +1908,12 @@ def build_parser():
                          "of the trainer name. It is the CONSOLE'S OWN and we have been handing it "
                          "back all along; a console that refuses to trade with itself would refuse "
                          "exactly where this one does, after the screen has already drawn PkCamp")
+    ap.add_argument("--selection-offer-data", action="store_true",
+                    help="with --selection-offer, answer the console's selection status with our "
+                         "PK8 in field 5 (`body`) of a 40050 Data carrying OUR ownerId, on the RPC "
+                         "port, instead of a PokemonTradeDataHolder on 10050 port 0. Session 62: "
+                         "content 50's receive handler resolves the sender to a station index and "
+                         "drops silently when it cannot, and the holder shape carries no owner")
     ap.add_argument("--offer-echo", action="store_true",
                     help="offer back the exact PK8 the console just offered us, unchanged, instead "
                          "of one out of --send-snapshot. The control for \"is it our record it is "

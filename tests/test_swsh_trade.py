@@ -321,6 +321,24 @@ def test_a_content_fifty_envelope_carries_the_pk8_in_field_five():
     assert inner[trade.RPC_OFFSET] == trade.SELECTION_OFFSET
 
 
+def test_the_content_fifty_offer_carries_our_owner_id():
+    """Session 62, out of the binary: the envelope is `gflnet.p2p.sync.pb.Data` and field 3 is
+    `ownerId`. Content 50's receive handler `0x010d5e40` resolves that sender to a station index
+    before it looks at the body and returns silently when it cannot, where content 30's
+    `0x010ce080` only checks the sender is not itself. An offer with no owner in it is the shape
+    that reaches the player in the box phase and is swallowed in the selection phase.
+    """
+    pk8 = (bytes(range(256)) * 2)[:0x158]
+    owner = 0x1249A221D8580000
+    m = trade.build_rpc_pokemon(trade.SELECTION_OFFSET, 20000, owner, 1234, pk8)
+    inner = trade._read_fields(trade._read_fields(trade.parse(m)[1])[1])
+    assert inner[trade.RPC_STATION] == owner
+    assert trade.parse_rpc(m)["station_id"] == owner
+    # and the shape it replaces carries no owner field at all
+    holder = trade.pokemon_offer(trade.SELECTION_OFFSET, pk8)
+    assert trade.RPC_STATION not in trade._read_fields(trade.parse(holder)[1])
+
+
 def test_a_content_fifty_envelope_refuses_anything_that_is_not_a_pk8():
     with pytest.raises(ValueError):
         trade.build_rpc_pokemon(trade.SELECTION_OFFSET, 20000, 1, 1, bytes(100))
