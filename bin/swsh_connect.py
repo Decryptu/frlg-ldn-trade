@@ -168,7 +168,8 @@ async def main_async(args):
               "reliable_last": None, "broadcast_in": 0, "data_out": 0, "data_acked": None,
               "broadcast_ack_ids": set(), "broadcast_stray_ids": set(), "windows": {},
               "their_ack_id": 0, "data_seqs": 0,
-              "their_payload": None}
+              "their_payload": None, "ack_by_proto": {}, "said_by_proto": {},
+              "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
                                           # only moment a mesh join has ever been answered
@@ -215,6 +216,8 @@ async def main_async(args):
                        raw=got["payload"].hex())
                 for e in (shape if isinstance(shape, list) else []):
                     st["their_ack_id"] = max(st["their_ack_id"], e["ack_id"])
+                    st["ack_by_proto"][protocol] = max(st["ack_by_proto"].get(protocol, 0),
+                                                       e["ack_id"])
                 if (st["data_acked"] is None and st["data_out"]
                         and protocol == args.send_protocol):
                     # THE PASS SIGNAL. The console answers application data and nothing else, so
@@ -223,6 +226,7 @@ async def main_async(args):
                     print(f"[rx]     *** IT ANSWERED OUR DATA, t={now:.2f} ***")
                 return
             st["their_payload"] = got["payload"]
+            st["said_by_proto"][protocol] = got["payload"]
             if w["through"] is None:
                 w["through"] = got["sequence_id"] - 1
                 print(f"\n[rx] t={now:6.2f} {protocol:#04x}/{port} stream opens at seq "
@@ -501,6 +505,11 @@ async def main_async(args):
                                       f"{args.send_sequence} for the first time ***")
                             elif fresh and st["broadcast_in"] > 1:
                                 print(f"[rx] t={now:6.2f} 0x80 ack ids now {sorted(real)}")
+                        if got["flags"] & reliable4.FLAG_APPLICATION_DATA and args.ack_reliable:
+                            # 0x80 CARRIES APPLICATION DATA TOO, and sw65 is where it first did:
+                            # the console opened its broadcast window at t=13.42 with sequence 1
+                            # and retransmitted it 3013 times because nothing here acked it.
+                            reliable_window(reliable4.BROADCAST_PROTOCOL, f["port"], body, now)
                         record(rec="rx_broadcast", t=now, parsed={
                             k: (v if not isinstance(v, bytes) else v.hex())
                             for k, v in got.items() if k != "payload"})
@@ -719,7 +728,7 @@ async def main_async(args):
                 record(rec="tx_data", t=time.monotonic() - t0, protocol=args.send_protocol,
                        sequence=seq, message=body.hex(), payload=payload.hex())
                 await trio.sleep(args.send_period)
-                if st["their_ack_id"] > seq:
+                if st["ack_by_proto"].get(args.send_protocol, 0) > seq:
                     seq += 1
                     st["data_seqs"] += 1
                     if st["data_seqs"] <= 3 or st["data_seqs"] % 25 == 0:
@@ -730,10 +739,63 @@ async def main_async(args):
                       f"0x80 ack ids seen: {sorted(st['broadcast_ack_ids'])}")
             st["phase"] = "hold"
 
+
+        async def block_sender():
+            """The SECOND stream, on the protocol the console chose for it.
+
+            sw67 read the whole conversation off the game's own schema: message 97 is
+            `gflnet.p2p.sync.ping.pb.SyncPingDataHolder` and message 60000 is
+            `gflnet.p2p.block.pb.BlockDataHolder`. The console pings, we answer, it walks
+            ping -> pingReply -> pingSynced, and then it says `imReady { isReady: true }` on its
+            BROADCAST window and waits. `60ea000012020801` is those bytes; nothing here has ever
+            said them back.
+            """
+            if args.send2_data is None:
+                return
+            payload = bytes.fromhex(args.send2_data)
+            trigger = bytes.fromhex(args.send2_trigger) if args.send2_trigger else None
+            deadline = time.monotonic() + args.send_seconds + args.send_after + args.send_wait
+            while trigger is not None:
+                if st["said_by_proto"].get(args.send2_protocol) == trigger:
+                    print(f"\n[tx] the console said {trigger.hex()} on "
+                          f"{args.send2_protocol:#04x} - answering it")
+                    break
+                if time.monotonic() > deadline:
+                    print(f"\n[tx] it never said {trigger.hex()} on {args.send2_protocol:#04x}; "
+                          f"nothing sent on that window")
+                    return
+                await trio.sleep(0.2)
+            dests = [host_constant] if args.send_destinations != "none" else []
+            seq = reliable4.FIRST_SEQUENCE
+            while time.monotonic() < deadline:
+                if seq - reliable4.FIRST_SEQUENCE >= args.send2_count:
+                    break
+                body = reliable4.build_data_message(payload, sequence_id=seq, destinations=dests)
+                sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), body,
+                                 args.send2_protocol, args.connect_station_first,
+                                 port=args.send2_port, message_flags=pia4.MESSAGE_FLAGS,
+                                 destination=args.data_destination),
+                            (host_ip, PIA_PORT))
+                st["block_out"] += 1
+                record(rec="tx_block", t=time.monotonic() - t0, protocol=args.send2_protocol,
+                       sequence=seq, message=body.hex(), payload=payload.hex())
+                if st["block_out"] == 1:
+                    print(f"[tx] *** {payload.hex()} on {args.send2_protocol:#04x} *** "
+                          f"seq {seq}: {body.hex()}")
+                await trio.sleep(args.send_period)
+                if st["ack_by_proto"].get(args.send2_protocol, 0) > seq:
+                    if st["block_acked"] is None:
+                        st["block_acked"] = time.monotonic() - t0
+                        print(f"\n[rx] *** IT ACKNOWLEDGED THAT TOO, t={st['block_acked']:.2f} ***")
+                    seq += 1
+            if st["block_acked"] is None and st["block_out"]:
+                print(f"\n[tx] {st['block_out']} out on {args.send2_protocol:#04x}, not acked")
+
         async with trio.open_nursery() as nursery:
             nursery.start_soon(receiver)
             nursery.start_soon(joiner)
             nursery.start_soon(data_sender)
+            nursery.start_soon(block_sender)
             await sender()
             await trio.sleep(args.hold)
             nursery.cancel_scope.cancel()
@@ -770,6 +832,7 @@ async def main_async(args):
                         for (p, port), w in st["windows"].items()},
                broadcast_in=st["broadcast_in"], data_out=st["data_out"],
                data_acked=st["data_acked"], data_seqs=st["data_seqs"],
+               block_out=st["block_out"], block_acked=st["block_acked"],
                their_ack_id=st["their_ack_id"],
                broadcast_ack_ids=sorted(st["broadcast_ack_ids"]),
                broadcast_stray_ids=sorted(st["broadcast_stray_ids"]))
@@ -904,6 +967,17 @@ def build_parser():
     ap.add_argument("--send-after", type=float, default=5.0,
                     help="seconds after acceptance before the first data message, so the mesh join "
                          "and the RTT exchange are already running when it lands")
+    ap.add_argument("--send2-data", default=None, metavar="HEX",
+                    help="a SECOND stream, on --send2-protocol, sent once the console says "
+                         "--send2-trigger. `60ea000012020801` is BlockDataHolder{imReady:true}, "
+                         "which the console says on 0x80 and waits on")
+    ap.add_argument("--send2-protocol", type=lambda s: int(s, 0),
+                    default=reliable4.BROADCAST_PROTOCOL)
+    ap.add_argument("--send2-port", type=lambda s: int(s, 0), default=0)
+    ap.add_argument("--send2-trigger", default=None, metavar="HEX",
+                    help="wait for this payload on --send2-protocol before sending; omit to send "
+                         "as soon as the mesh is up")
+    ap.add_argument("--send2-count", type=lambda s: int(s, 0), default=200)
     ap.add_argument("--send-mirror", action="store_true",
                     help="send back whatever the console last said on this protocol, rather than "
                          "the fixed --send-data. --send-data is still the FIRST payload, before it "
