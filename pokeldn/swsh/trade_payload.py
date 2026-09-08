@@ -139,7 +139,7 @@ def read(payload):
     }
 
 
-def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None):
+def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None, old_name=None):
     """-> the snapshot with a new trainer identity, and every other byte still the console's own.
 
     THE POINT OF THE PROJECT NEEDS ONE OF THESE AND IT MUST NOT BE THE CONSOLE'S OWN. 3456 bytes
@@ -148,10 +148,22 @@ def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None):
     ours is the console's snapshot with the identity moved - the same method `swsh.pokemon.build_from`
     and `bdsp.pokemon.build_from` use on a single Pokemon, for the same reason.
 
-    THE IDENTITY HAS TO MOVE IN THREE PLACES AT ONCE. MyStatus, the trainer card and **every party
-    record** carry the trainer's name and ids, and `party_matches_trainer` is the check that they
-    still agree afterwards - a snapshot whose Pokemon name a different trainer than its status block
-    is one no console would ever produce.
+    THE IDENTITY HAS TO MOVE IN FOUR PLACES AT ONCE, AND SESSION 60 FOUND THE FOURTH. MyStatus, the
+    trainer card and **every party record** were the three; the fourth is a plain UTF-16 copy of the
+    name inside the tail at 0xAEC, the 660 bytes this project had never read. In sw70's payload it
+    sits at 0xB14 between two copies of an eight-byte account token, which is the shape of a player
+    record - and `nxldn-lab` builds one of those for its own connection response, with its own name
+    in it.
+
+    SO EVERY SNAPSHOT THIS PROJECT HAS EVER SENT SAID TWO THINGS AT ONCE: PkCamp in MyStatus, the
+    trainer card and all six Pokemon, and Gurvan - the console's own player - in the tail. The
+    trade screen draws the partner from MyStatus, which is why it read `partenaire: PKCAMP` while
+    the payload still carried its own player's name. `party_matches_trainer` could not see it,
+    because it only compares the party against MyStatus.
+
+    The tail copy is found by SEARCHING for the name being replaced rather than by offset: 0xB14 is
+    where it lands in one payload and the record around it is not read well enough to promise that
+    it is fixed. `old_name` is what to look for; without it the tail is left alone.
     """
     if len(payload) != PAYLOAD_LENGTH:
         raise ValueError(f"{len(payload)} bytes, expected {PAYLOAD_LENGTH}")
@@ -166,6 +178,19 @@ def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None):
         out[ms:ms + NAME_LENGTH] = encoded
         tc = TRAINER_CARD_OFFSET + TRAINER_CARD_NAME
         out[tc:tc + NAME_LENGTH] = encoded
+        if old_name:
+            # THE TAIL COPY. Null-terminated and NOT padded to NAME_LENGTH, so the replacement is
+            # written over exactly as many bytes as the old name occupied and the record around it
+            # keeps its length. Every occurrence, because one payload is not proof there is one.
+            was = old_name.encode("utf-16-le") + b"\x00\x00"
+            now = trainer_name.encode("utf-16-le") + b"\x00\x00"
+            if len(now) > len(was):
+                raise ValueError(f"{trainer_name!r} does not fit where {old_name!r} was")
+            now = now.ljust(len(was), b"\x00")
+            at = out.find(was, TAIL_OFFSET)
+            while at >= 0:
+                out[at:at + len(was)] = now
+                at = out.find(was, at + len(was))
 
     if trainer_id is not None:
         struct.pack_into("<H", out, MY_STATUS_OFFSET + MY_STATUS_TID, trainer_id)

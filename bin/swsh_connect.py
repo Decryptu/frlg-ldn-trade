@@ -1039,7 +1039,9 @@ async def main_async(args):
             payload = open(args.send_snapshot, "rb").read()
             if len(payload) != trade_payload.PAYLOAD_LENGTH:
                 payload = trade_payload.inflate_short(payload)
-            payload = trade_payload.rewrite(payload, trainer_name=args.snapshot_name,
+            was = trade_payload.read(payload)["trainer_name"]
+            payload = trade_payload.rewrite(payload, old_name=was,
+                                            trainer_name=args.snapshot_name,
                                             trainer_id=args.snapshot_tid,
                                             secret_id=args.snapshot_sid)
             fields = trade_payload.read(payload)
@@ -1052,6 +1054,8 @@ async def main_async(args):
                 ours = swsh_pokemon.read(st["our_pk8"])
                 print(f"[tx] we will offer slot {args.offer_slot}: species {ours['species']} "
                       f"{ours['nickname']!r} level {ours['level']}")
+            left = payload.count(was.encode("utf-16-le")) if was else 0
+            print(f"[tx] the snapshot was {was!r}; {left} copies of that name left in it")
             print(f"\n[tx] our snapshot: trainer {fields['trainer_name']!r} "
                   f"{fields['trainer_id']}/{fields['secret_id']}, party "
                   f"{[p['nickname'] for p in fields['party'] if p]}, "

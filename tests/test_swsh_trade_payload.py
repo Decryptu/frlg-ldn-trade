@@ -157,3 +157,55 @@ def test_a_short_session_58_payload_is_repaired_and_anything_else_is_refused():
         trade_payload.inflate_short(short)          # our synthetic one is not 2965 bytes
     with pytest.raises(ValueError, match="neither whole"):
         trade_payload.inflate_short(b"\x00" * 100)
+
+
+# --- The fourth copy of the name, session 60 ---------------------------------------------------
+#
+# sw70's payload carries the trainer name a FOURTH time, at 0xB14, between two copies of an
+# eight-byte account token - the shape of a player record - inside the 660-byte tail this project
+# had never read. Every snapshot sent before session 60 therefore said PkCamp in MyStatus, the
+# trainer card and all six Pokemon, and Gurvan in the tail. `party_matches_trainer` cannot see it:
+# it only compares the party against MyStatus.
+
+TAIL_NAME_AT = 0xB14                  # where it lands in sw70's payload; searched for, not assumed
+
+
+def a_payload_with_a_tail_name(name="Gurvan", **kw):
+    out = bytearray(a_payload(name=name, **kw))
+    planted = name.encode("utf-16-le") + b"\x00\x00"
+    out[TAIL_NAME_AT:TAIL_NAME_AT + len(planted)] = planted
+    return bytes(out)
+
+
+def test_the_tail_carries_a_fourth_copy_of_the_trainer_name():
+    payload = a_payload_with_a_tail_name()
+    was = trade_payload.read(payload)["trainer_name"]
+    assert payload.find(was.encode("utf-16-le"), trade_payload.TAIL_OFFSET) == TAIL_NAME_AT
+
+    out = trade_payload.rewrite(payload, old_name=was, trainer_name="PkCamp",
+                                trainer_id=12345, secret_id=54321)
+    assert out.find(was.encode("utf-16-le")) < 0          # nowhere in the payload at all
+    assert out.count("PkCamp".encode("utf-16-le")) == 3   # status, card, and the tail
+    assert len(out) == len(payload)
+    assert trade_payload.party_matches_trainer(trade_payload.read(out))
+
+
+def test_the_tail_copy_is_written_in_place_and_takes_no_extra_bytes():
+    payload = a_payload_with_a_tail_name()
+    out = trade_payload.rewrite(payload, old_name="Gurvan", trainer_name="PkCam")
+    # "Gurvan\0" is 14 bytes and "PkCam\0" is 12, so the two spare bytes are zeroed rather than
+    # left holding the tail of the old name.
+    assert out[TAIL_NAME_AT:TAIL_NAME_AT + 14] == "PkCam".encode("utf-16-le") + b"\x00" * 4
+    assert out[TAIL_NAME_AT + 14:TAIL_NAME_AT + 22] == payload[TAIL_NAME_AT + 14:TAIL_NAME_AT + 22]
+
+
+def test_the_tail_is_left_alone_without_an_old_name():
+    payload = a_payload_with_a_tail_name()
+    out = trade_payload.rewrite(payload, trainer_name="PkCamp")
+    assert out.find("Gurvan".encode("utf-16-le"), trade_payload.TAIL_OFFSET) == TAIL_NAME_AT
+
+
+def test_a_longer_name_cannot_overwrite_the_tail_record():
+    payload = a_payload_with_a_tail_name()
+    with pytest.raises(ValueError):
+        trade_payload.rewrite(payload, old_name="Gurvan", trainer_name="Gurvanne")
