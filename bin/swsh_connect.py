@@ -165,9 +165,8 @@ async def main_async(args):
               "our_variable_id": 0, "responses_in": 0, "acks_out": 0,
               "joins_out": 0, "mesh_in": 0, "join_response": None, "mesh_acks": 0,
               "updates_mesh": 0, "rtt_in": 0, "rtt_out": 0, "reliable_in": 0,
-              "reliable_seqs": set(), "reliable_acks": 0, "acked_through": 0,
               "reliable_last": None, "broadcast_in": 0, "data_out": 0, "data_acked": None,
-              "broadcast_ack_ids": set()}
+              "broadcast_ack_ids": set(), "broadcast_stray_ids": set(), "windows": {}}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
                                           # only moment a mesh join has ever been answered
@@ -177,6 +176,72 @@ async def main_async(args):
             nonlocal nonce
             nonce = (nonce + 1) & ((1 << 64) - 1)
             return nonce.to_bytes(8, "big")
+
+        def reliable_window(protocol, port, body, now):
+            """One version-4 reliable window, on whatever protocol and port it arrives.
+
+            THERE IS MORE THAN ONE. 0x7C port 0 is the game's, and sw59 found a SECOND on the mesh
+            protocol's own reliable port (0x18 port 1, `mesh.PORT_RELIABLE`) - the console opened it
+            0.2 s after it acknowledged our first application data, retransmitted its sequence 1
+            seventy-six times because nothing here answered it, and tore the mesh down four seconds
+            later. An unacknowledged window is a dead session, whichever protocol carries it.
+
+            AND THE WINDOW DOES NOT START AT 1. sw59 rejoined a session the console had never
+            dropped and its stream resumed at 292, so a receiver seeded at 0 acks nothing at all:
+            `contiguous_through` waits for a sequence 1 that will never come again. The console's
+            own rule is the one to copy (`0x01859d20`): the first message carrying
+            FLAG_IS_INITIALIZED DEFINES where the stream starts.
+            """
+            key = (protocol, port)
+            w = st["windows"].setdefault(key, {"seqs": set(), "through": None, "acks": 0, "in": 0})
+            w["in"] += 1
+            try:
+                got = reliable4.parse_message(body)
+            except ValueError as e:
+                print(f"[rx] t={now:6.2f} {protocol:#04x}/{port} {len(body)} B unreadable: {e}")
+                return
+            st["reliable_last"] = now
+            if not (got["flags"] & reliable4.FLAG_APPLICATION_DATA):
+                try:
+                    shape = [e for e in reliable4.parse_ack_payload(got["payload"])
+                             if e["slot"] < 8 and e["ack_id"]]
+                except ValueError as e:
+                    shape = f"not the version-4 shape: {e}"
+                print(f"\n[rx] t={now:6.2f} *** ACK FROM THE CONSOLE on {protocol:#04x}/{port} "
+                      f"*** {len(got['payload'])} B, slots 0..7: {shape}")
+                record(rec="rx_reliable_ack", t=now, protocol=protocol, port=port,
+                       raw=got["payload"].hex())
+                if (st["data_acked"] is None and st["data_out"]
+                        and protocol == args.send_protocol):
+                    # THE PASS SIGNAL. The console answers application data and nothing else, so
+                    # before sw59 it had never sent one of these at all.
+                    st["data_acked"] = now
+                    print(f"[rx]     *** IT ANSWERED OUR DATA, t={now:.2f} ***")
+                return
+            if w["through"] is None:
+                w["through"] = got["sequence_id"] - 1
+                print(f"\n[rx] t={now:6.2f} {protocol:#04x}/{port} stream opens at seq "
+                      f"{got['sequence_id']} stream {got['stream_id']} flags {got['flag_names']} "
+                      f"payload {got['payload'].hex()}")
+            w["seqs"].add(got["sequence_id"])
+            through = reliable5.contiguous_through(w["seqs"], w["through"])
+            if through == w["through"]:
+                return                        # nothing new is contiguous; do not re-ack
+            w["through"] = through
+            ack = reliable4.build_ack_message(through + 1, stream_id=got["stream_id"],
+                                              slots=args.ack_slots,
+                                              lowest_pending=args.ack_lowest_pending)
+            sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), ack, protocol,
+                             args.connect_station_first, port=port,
+                             message_flags=reliable5.MESSAGE_FLAGS,
+                             destination=args.data_destination),
+                        (host_ip, PIA_PORT))
+            w["acks"] += 1
+            record(rec="tx_reliable_ack", t=now, protocol=protocol, port=port, through=through,
+                   ack=ack.hex())
+            if w["acks"] <= 3 or w["acks"] % 50 == 0:
+                print(f"[tx]     acked {protocol:#04x}/{port} through seq {through} "
+                      f"(ack id {through + 1}), {w['acks']} acks on this window")
 
         async def receiver():
             while True:
@@ -289,6 +354,15 @@ async def main_async(args):
                             if st["acks_out"] <= 4:
                                 print(f"[tx]     acked with {ack_id:#010x} "
                                       f"({'the message tail' if use_trailing else 'their variable id'})")
+                    elif f["protocol"] == mesh.PROTOCOL and f["port"] == mesh.PORT_RELIABLE:
+                        # 0x18 PORT 1, and it is not a mesh message: it is a reliable window, with
+                        # version 4's own header over it. sw59 is where it first spoke.
+                        st["mesh_in"] += 1
+                        if args.ack_reliable:
+                            reliable_window(mesh.PROTOCOL, mesh.PORT_RELIABLE, body, now)
+                        else:
+                            print(f"\n[rx] t={now:6.2f} *** 0x18 PORT 1 *** {len(body)} B "
+                                  f"{body[:32].hex()} - not acked, --ack-reliable is off")
                     elif f["protocol"] == mesh.PROTOCOL:
                         # 0x18. The join response carries the whole mesh; version 4's entries are
                         # 64 bytes with the index at 0x3E, which is the one thing that differs from
@@ -368,55 +442,10 @@ async def main_async(args):
                                   f"{got['timestamp']:#014x}")
                             print(f"[tx]     answered: {reply.hex()}")
                     elif f["protocol"] == reliable5.PROTOCOL and args.ack_reliable:
-                        # 0x7C. reliable5 was written for BDSP and reads version 4 unchanged.
-                        # THE PASS SIGNAL IS THE RETRANSMITS STOPPING, the same shape as every
-                        # other layer here: the console repeats a sequence until it is acked.
+                        # 0x7C, the game's own window. THE PASS SIGNAL IS THE RETRANSMITS STOPPING,
+                        # the same shape as every other layer here.
                         st["reliable_in"] += 1
-                        try:
-                            got = reliable5.parse(body)
-                        except ValueError as e:
-                            print(f"[rx] t={now:6.2f} 0x7c {len(body)} B unreadable: {e}")
-                            continue
-                        st["reliable_last"] = now
-                        if not (got["flags"] & reliable5.FLAG_APPLICATION_DATA):
-                            try:
-                                shape = reliable4.parse_ack_payload(got["payload"])
-                                shape = [e for e in shape if e["stream_id"] != 0xFF]
-                            except ValueError as e:
-                                shape = f"not the version-4 shape: {e}"
-                            print(f"\n[rx] t={now:6.2f} *** 0x7c ACK FROM THE CONSOLE *** "
-                                  f"{len(got['payload'])} B: {shape}")
-                            record(rec="rx_reliable_ack", t=now, raw=got["payload"].hex())
-                            if st["data_acked"] is None and args.send_protocol == reliable5.PROTOCOL:
-                                # THE PASS SIGNAL ON 0x7C. The console has never sent an ack on this
-                                # protocol - not one in sw29 or sw52, 2092 messages - because it
-                                # only answers application data and we had never sent any.
-                                st["data_acked"] = now
-                                print(f"[rx]     *** IT ANSWERED OUR DATA. First 0x7c ack of the "
-                                      f"project, t={now:.2f} ***")
-                            continue
-                        st["reliable_seqs"].add(got["sequence_id"])
-                        through = reliable5.contiguous_through(st["reliable_seqs"],
-                                                              st["acked_through"])
-                        if through == st["acked_through"]:
-                            continue                  # nothing new is contiguous; do not re-ack
-                        st["acked_through"] = through
-                        if st["reliable_acks"] == 0:
-                            print(f"\n[rx] t={now:6.2f} 0x7c seq {got['sequence_id']} stream "
-                                  f"{got['stream_id']} flags {got['flag_names']} payload "
-                                  f"{got['payload'].hex()}")
-                        ack = reliable4.build_ack_message(
-                            through + 1, stream_id=got["stream_id"],
-                            slots=args.ack_slots, lowest_pending=args.ack_lowest_pending)
-                        sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), ack,
-                                         reliable5.PROTOCOL, args.connect_station_first,
-                                         message_flags=reliable5.MESSAGE_FLAGS,
-                                         destination=args.data_destination),
-                                    (addr[0], PIA_PORT))
-                        st["reliable_acks"] += 1
-                        record(rec="tx_reliable_ack", t=now, through=through, ack=ack.hex())
-                        print(f"[tx]     acked 0x7c through seq {through} "
-                              f"(ack id {through + 1}): {ack.hex()}")
+                        reliable_window(reliable5.PROTOCOL, f["port"], body, now)
                     elif f["protocol"] == reliable4.BROADCAST_PROTOCOL:
                         # 0x80, BroadcastReliableProtocol. Every one of these is zlib compressed
                         # (pia4.MESSAGE_FLAG_ZLIB) and pia4 has already decompressed it; read raw
@@ -439,21 +468,34 @@ async def main_async(args):
                                       f"{[e['slot'] for e in live]} at id "
                                       f"{sorted({e['ack_id'] for e in live})}")
                         if got["is_ack"] and len(got["payload"]) == reliable4.ACK_PAYLOAD_SIZE:
-                            # THE PASS SIGNAL ON 0x80, and it is one number. Every ack id in every
-                            # filled slot is 1 in sw29 and sw52 alike - a window that has received
-                            # nothing. Our sequence 1 landing moves it to 2.
-                            ids = {e["ack_id"] for e in reliable4.parse_ack_payload(got["payload"])
-                                   if e["ack_id"]}
-                            fresh = ids - st["broadcast_ack_ids"]
-                            st["broadcast_ack_ids"] |= ids
-                            moved = {i for i in ids if i > reliable4.FIRST_SEQUENCE}
-                            if moved and st["data_acked"] is None:
+                            # THE PASS SIGNAL ON 0x80, and it is one number in ONE PLACE. Slots
+                            # 0..7 are the mesh's real stations (8 is max_total from the join
+                            # response) and every one of them says 1 in sw29, sw52 and sw58 alike -
+                            # a window that has received nothing.
+                            #
+                            # SLOTS ABOVE 7 ARE NOT AN ACK AND MUST NOT BE READ AS ONE. sw52 and
+                            # sw58 both carry a stray byte at slots 18/21/23/31 whose VALUE is our
+                            # own 0x7C ack id - it tracks what we last sent, exactly, on every
+                            # occurrence. sw58 spent a whole association on that: the sender saw
+                            # "the window moved" at t=11.7, two seconds before it had sent
+                            # anything, and never transmitted a byte.
+                            entries = reliable4.parse_ack_payload(got["payload"])
+                            real = {e["ack_id"] for e in entries
+                                    if e["slot"] < 8 and e["ack_id"]}
+                            stray = {e["ack_id"] for e in entries
+                                     if e["slot"] >= 8 and e["ack_id"]}
+                            fresh = real - st["broadcast_ack_ids"]
+                            st["broadcast_ack_ids"] |= real
+                            st["broadcast_stray_ids"] |= stray
+                            moved = {i for i in real if i > args.send_sequence}
+                            if (moved and st["data_acked"] is None and st["data_out"]
+                                    and args.send_protocol == reliable4.BROADCAST_PROTOCOL):
                                 st["data_acked"] = now
                                 print(f"\n[rx] t={now:6.2f} *** THE BROADCAST WINDOW MOVED: ack "
-                                      f"ids {sorted(moved)}, off 1 for the first time. The console "
-                                      f"took our sequence {reliable4.FIRST_SEQUENCE} ***")
+                                      f"ids {sorted(moved)} in slots 0..7, past our sequence "
+                                      f"{args.send_sequence} for the first time ***")
                             elif fresh and st["broadcast_in"] > 1:
-                                print(f"[rx] t={now:6.2f} 0x80 ack ids now {sorted(ids)}")
+                                print(f"[rx] t={now:6.2f} 0x80 ack ids now {sorted(real)}")
                         record(rec="rx_broadcast", t=now, parsed={
                             k: (v if not isinstance(v, bytes) else v.hex())
                             for k, v in got.items() if k != "payload"})
@@ -671,6 +713,9 @@ async def main_async(args):
             await trio.sleep(args.hold)
             nursery.cancel_scope.cancel()
 
+        windows = " / ".join(
+            f"{p:#04x}:{port} {w['in']} in {w['acks']} acked through {w['through']}"
+            for (p, port), w in sorted(st["windows"].items())) or "no reliable window opened"
         answered = ("NOT acknowledged" if st["data_acked"] is None
                     else f"acknowledged at t={st['data_acked']:.2f}")
         print(f"\n[cx] === {st['rx']} packets in, {st['undecrypted']} that did not decrypt, "
@@ -680,9 +725,7 @@ async def main_async(args):
               f"in, {st['responses']} responses out, {st['acks_out']} station acks out, "
               f"{st['joins_out']} join requests out, {st['mesh_in']} messages on 0x18, "
               f"{st['mesh_acks']} mesh acks out, {st['rtt_in']} RTT in / {st['rtt_out']} answered, "
-              f"{st['reliable_in']} reliable in over "
-              f"{len(st['reliable_seqs'])} sequence ids, {st['reliable_acks']} acked "
-              f"(through {st['acked_through']}), {st['broadcast_in']} on 0x80, "
+              f"{st['reliable_in']} reliable in, {windows}, {st['broadcast_in']} on 0x80, "
               f"{st['data_out']} application data out, {answered}")
         if st["answer"]:
             now, phase, proto = st["answer"]
@@ -695,11 +738,14 @@ async def main_async(args):
                joins_out=st["joins_out"], mesh_in=st["mesh_in"],
                mesh_acks=st["mesh_acks"], join_response=st["join_response"],
                rtt_in=st["rtt_in"], rtt_out=st["rtt_out"], reliable_in=st["reliable_in"],
-               reliable_acks=st["reliable_acks"], acked_through=st["acked_through"],
-               reliable_seqs=sorted(st["reliable_seqs"]),
+               windows={f"{p:#04x}:{port}": {"in": w["in"], "acks": w["acks"],
+                                              "through": w["through"],
+                                              "seqs": sorted(w["seqs"])}
+                        for (p, port), w in st["windows"].items()},
                broadcast_in=st["broadcast_in"], data_out=st["data_out"],
                data_acked=st["data_acked"],
-               broadcast_ack_ids=sorted(st["broadcast_ack_ids"]))
+               broadcast_ack_ids=sorted(st["broadcast_ack_ids"]),
+               broadcast_stray_ids=sorted(st["broadcast_stray_ids"]))
     if cap:
         cap.close()
     return 0
