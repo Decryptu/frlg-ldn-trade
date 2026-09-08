@@ -1001,7 +1001,20 @@ async def main_async(args):
                             # goes quiet until the accept; that quiet window is the only room a
                             # phase opener has, and sw89 spent its pair after the window shut.
                             open_phase(swsh_trade.SELECTION_OFFSET, "SELECTION")
-                        if args.box_commands and not st["trade_ready_sent"]:
+                        if args.open_content and not st["trade_ready_sent"]:
+                            # OPEN THE PHASES NOBODY HAS OPENED. A content registered at offset N
+                            # has an id at 10000+N as well as the 20000 and 40000 ones this project
+                            # speaks, and `nxldn-lab`'s client opens the confirmation phase by
+                            # sending `ping` on 10040 - unprompted, as an opener. Our console has
+                            # never sent 10040, 10050, 40040 or 40050, so every phase after the
+                            # offer is one neither side has opened.
+                            st["trade_ready_sent"] = True
+                            st["box_queue"] = [swsh_trade.open_content(int(c, 0))
+                                               for c in args.open_content.split(",")]
+                            print(f"[tx]     *** OPENING CONTENTS {args.open_content} *** "
+                                  f"{[p.hex() for p in st['box_queue']]}")
+                            st["offer_pending"] = st["box_queue"].pop(0)
+                        elif args.box_commands and not st["trade_ready_sent"]:
                             # SWEEP THE COMMAND, BECAUSE A REFUSAL IS AN INSTRUMENT. The console
                             # gives up a few seconds after the player accepts, not on a fixed timer
                             # from its own offer, so there is room to say several things and watch
@@ -1552,6 +1565,11 @@ def build_parser():
                          "MIGRATION_FINISH when the start names US as the next host and a "
                          "MIGRATION_RESPONSE when it names anyone else, which is what the binary "
                          "says; \"response\" is sw84's behaviour, kept so the two can be compared")
+    ap.add_argument("--open-content", default=None, metavar="N,N,...",
+                    help="after our offer is acknowledged, send `ping` on content N's 10000-base "
+                         "holder for each N - `382700000a00` for 40, which is exactly the opener "
+                         "nxldn-lab's client sends to start the confirmation phase, rebuilt here "
+                         "from our own content registry rather than copied")
     ap.add_argument("--box-commands", default=None, metavar="N,N,...",
                     help="after our offer is acknowledged, send boxSyncStateCommand{data:N} on the "
                          "trade holder for each N in turn, one per acknowledged sequence. 20030 is "

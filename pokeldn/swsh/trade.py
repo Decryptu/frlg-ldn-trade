@@ -290,6 +290,24 @@ def answers_for(payload):
 # it names, it is waiting for the state machine to move, and `data` is what moves it.
 BOX_SEND_POKEMON, BOX_SYNC_STATE_COMMAND = 1, 2
 
+# --- OPENING A CONTENT, WHICH IS WHAT `nxldn-lab`'s CLIENT DOES AND OURS NEVER HAS -------------
+#
+# A content registered at offset N gets FOUR ids - 10000+N, 20000+N, 40000+N and 60000+N - and this
+# project has only ever spoken the 20000 and 40000 ones. Their client opens the confirmation phase
+# by sending `382700000a00` on port 0, and that is id 10040: **10000 + 40**, the `ping` field of
+# content 40's holder. It sends it unprompted, as an opener, exactly as it sends the 40050 pair.
+#
+# Our console never sends 10040, 10050, 40040 or 40050, and it never sends a box command either -
+# so every phase after the offer is one nobody has opened. sw93 opened 40050 properly (acked, ten
+# seconds before the teardown) and the console ignored it; 10040 is the other opener in their
+# capture and the one this has never tried.
+CONTENT_BASE_LOW = 10000              # the fourth id a content gets, and the one their client opens
+
+
+def open_content(offset, which=PING):
+    """-> `ping` on content `offset`'s 10000-base holder: `382700000a00` for offset 40."""
+    return message(CONTENT_BASE_LOW + offset, field(which, b""))
+
 
 def box_sync_state(command):
     """-> `BoxSyncStateDataHolder{boxSyncStateCommand{data: command}}` on the trade holder.

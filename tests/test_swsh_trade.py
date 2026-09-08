@@ -284,3 +284,16 @@ def test_the_pair_bodies_are_the_consoles_own():
     # what says the bodies belong to the envelope rather than to the procedure.
     assert [trade.parse_rpc(bytes.fromhex(h))["body"] for h in SW83_RPC_PAIR] == \
         list(trade.RPC_PAIR_BODIES)
+
+
+def test_the_confirmation_opener_rebuilds_nxldn_labs_bytes_from_our_own_registry():
+    """`382700000a00` is nxldn-lab's confirmation opener, and it is 10000 + 40 with `ping`.
+
+    The content registry in `main` puts offset 40 at 0x10dc150 and offset 50 at 0x10d67f0, so this
+    is derived rather than copied - and it landing on their captured bytes exactly is what says the
+    four-ids-per-content model is right.
+    """
+    assert trade.open_content(trade.CONFIRMATION_OFFSET) == bytes.fromhex("382700000a00")
+    assert trade.CONTENT_BASE_LOW + trade.CONFIRMATION_OFFSET == 10040
+    mid, body = trade.parse(trade.open_content(trade.SELECTION_OFFSET))
+    assert mid == 10050 and body == trade.field(trade.PING, b"")
