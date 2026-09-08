@@ -166,7 +166,9 @@ async def main_async(args):
               "joins_out": 0, "mesh_in": 0, "join_response": None, "mesh_acks": 0,
               "updates_mesh": 0, "rtt_in": 0, "rtt_out": 0, "reliable_in": 0,
               "reliable_last": None, "broadcast_in": 0, "data_out": 0, "data_acked": None,
-              "broadcast_ack_ids": set(), "broadcast_stray_ids": set(), "windows": {}}
+              "broadcast_ack_ids": set(), "broadcast_stray_ids": set(), "windows": {},
+              "their_ack_id": 0, "data_seqs": 0,
+              "their_payload": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
                                           # only moment a mesh join has ever been answered
@@ -211,6 +213,8 @@ async def main_async(args):
                       f"*** {len(got['payload'])} B, slots 0..7: {shape}")
                 record(rec="rx_reliable_ack", t=now, protocol=protocol, port=port,
                        raw=got["payload"].hex())
+                for e in (shape if isinstance(shape, list) else []):
+                    st["their_ack_id"] = max(st["their_ack_id"], e["ack_id"])
                 if (st["data_acked"] is None and st["data_out"]
                         and protocol == args.send_protocol):
                     # THE PASS SIGNAL. The console answers application data and nothing else, so
@@ -218,6 +222,7 @@ async def main_async(args):
                     st["data_acked"] = now
                     print(f"[rx]     *** IT ANSWERED OUR DATA, t={now:.2f} ***")
                 return
+            st["their_payload"] = got["payload"]
             if w["through"] is None:
                 w["through"] = got["sequence_id"] - 1
                 print(f"\n[rx] t={now:6.2f} {protocol:#04x}/{port} stream opens at seq "
@@ -689,8 +694,22 @@ async def main_async(args):
                   f"{[hex(d) for d in dests] or 'everyone (count 0)'}, payload {payload.hex()}"
                   f"{f' zlib {len(body)}->{len(wire)} B' if args.send_zlib else ''}")
             print(f"[tx]     the message: {body.hex()}")
+            # A STREAM, NOT ONE MESSAGE. The console sends its own heartbeat 583 times in 180 s
+            # and sw61 answered it once; `--send-count` is how many of ours it gets, each new
+            # sequence sent only once the last is acknowledged, which is what a window is for.
             deadline = time.monotonic() + args.send_seconds
-            while time.monotonic() < deadline and st["data_acked"] is None:
+            seq = args.send_sequence
+            while time.monotonic() < deadline:
+                if seq - args.send_sequence >= args.send_count:
+                    break
+                if args.send_mirror and st["their_payload"]:
+                    # MIRROR WHAT IT IS SAYING NOW, not what it said first. sw64 moved the game
+                    # from state 0x0a to 0x12 and left it there; a peer that follows the state it
+                    # is being told is the next thing it can be given.
+                    payload = st["their_payload"]
+                body = reliable4.build_data_message(payload, sequence_id=seq, destinations=dests,
+                                                    stream_id=args.send_stream)
+                wire = zlib.compress(body) if args.send_zlib else body
                 for port in [int(p, 0) for p in _expand(args.send_port)]:
                     sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), wire,
                                      args.send_protocol, args.connect_station_first, port=port,
@@ -698,8 +717,14 @@ async def main_async(args):
                                 (host_ip, PIA_PORT))
                     st["data_out"] += 1
                 record(rec="tx_data", t=time.monotonic() - t0, protocol=args.send_protocol,
-                       sequence=args.send_sequence, message=body.hex())
+                       sequence=seq, message=body.hex(), payload=payload.hex())
                 await trio.sleep(args.send_period)
+                if st["their_ack_id"] > seq:
+                    seq += 1
+                    st["data_seqs"] += 1
+                    if st["data_seqs"] <= 3 or st["data_seqs"] % 25 == 0:
+                        print(f"[tx]     sequence {seq - 1} acknowledged, sending {seq} "
+                              f"({st['data_seqs']} of ours acked)")
             if st["data_acked"] is None:
                 print(f"\n[tx] {st['data_out']} data messages out, NOTHING acknowledged them. "
                       f"0x80 ack ids seen: {sorted(st['broadcast_ack_ids'])}")
@@ -726,7 +751,8 @@ async def main_async(args):
               f"{st['joins_out']} join requests out, {st['mesh_in']} messages on 0x18, "
               f"{st['mesh_acks']} mesh acks out, {st['rtt_in']} RTT in / {st['rtt_out']} answered, "
               f"{st['reliable_in']} reliable in, {windows}, {st['broadcast_in']} on 0x80, "
-              f"{st['data_out']} application data out, {answered}")
+              f"{st['data_out']} application data out over {st['data_seqs'] + 1} "
+              f"sequence ids, {answered}")
         if st["answer"]:
             now, phase, proto = st["answer"]
             print(f"[cx] FIRST TRAFFIC ON A NEW PROTOCOL: {proto:#04x} at t={now:.2f} in {phase}")
@@ -743,7 +769,8 @@ async def main_async(args):
                                               "seqs": sorted(w["seqs"])}
                         for (p, port), w in st["windows"].items()},
                broadcast_in=st["broadcast_in"], data_out=st["data_out"],
-               data_acked=st["data_acked"],
+               data_acked=st["data_acked"], data_seqs=st["data_seqs"],
+               their_ack_id=st["their_ack_id"],
                broadcast_ack_ids=sorted(st["broadcast_ack_ids"]),
                broadcast_stray_ids=sorted(st["broadcast_stray_ids"]))
     if cap:
@@ -877,6 +904,14 @@ def build_parser():
     ap.add_argument("--send-after", type=float, default=5.0,
                     help="seconds after acceptance before the first data message, so the mesh join "
                          "and the RTT exchange are already running when it lands")
+    ap.add_argument("--send-mirror", action="store_true",
+                    help="send back whatever the console last said on this protocol, rather than "
+                         "the fixed --send-data. --send-data is still the FIRST payload, before it "
+                         "has said anything")
+    ap.add_argument("--send-count", type=lambda s: int(s, 0), default=1,
+                    help="how many sequence ids of ours to send in all. 1 is sw61's single "
+                         "message; a larger number mirrors the console, which sends its own "
+                         "heartbeat 583 times in 180 s and had exactly one back")
     ap.add_argument("--send-period", type=float, default=1.0,
                     help="the retransmit interval. A window retransmits until it is acked")
     ap.add_argument("--send-seconds", type=float, default=60.0,
