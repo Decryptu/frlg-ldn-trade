@@ -413,6 +413,36 @@ names the join order only from 5.31. It counts JOINS and not seats: a capture ta
 successive connections from the same machine reads 0 for the host and **3** for us, in station
 index 1. That is the field naming itself.
 
+## What a Sword sends once you are in its mesh
+
+FACT, sw29, and every number below is from a walk that accounts for every byte of all 238 packets.
+The moment the mesh join is acked the console opens six protocols at us:
+
+    0x24     45   Local Protocol, the update session it was already sending
+    0x14      5   the station handshake, and our ack of the join response
+    0x18      5   one join response, four update mesh
+    0x58     26   RTT, all of them requests, all unanswered
+    0x7c   1637   the reliable sliding window: 20 distinct sequence ids, retransmitting
+    0x80     22   ONE 42-byte body, sent on port 0 and again on port 1
+
+**The reliable window needs NOTHING.** `reliable5.py`, written against BDSP's 5.29-5.43, parses
+version 4 field for field: flags 0x0F on sequence 1 and 0x07 after it, stream 0, payload size 6,
+lowest-pending stuck at 1, no destination bits, a nine-byte header, and a six-byte game payload
+`61 00 00 00 0a 00`. The 1637 messages are 20 sequence ids retransmitting - the earlier the id, the
+more copies - because nothing of ours has ever acked this protocol.
+
+**RTT needed a size.** `nn::pia::transport::RttProtocol` keeps BDSP's protocol number (vfunc4 at
+`0x0185d590` returns 0x58) but its message is **sixteen bytes, not thirteen**: the parser
+`0x0185d2a0` reads a flat 0x10 into the object at +0x48 (`mov w3, #0x10`). Every one of sw29's 26 is
+eight zero bytes then a big-endian counter that only rises, ~12.51 million per message, addressed to
+destination **2** - the bitmap bit for our station - where BDSP broadcasts to 0xffffffff. What bytes
+1..7 are is UNKNOWN and they are zero in every message seen, so `rtt_protocol.response_for_v4()`
+echoes them rather than inventing a layout: kind 1, everything else as sent.
+
+**Protocol 0x80 is not identified.** It is not any `GetProtocolId` stub the RTTI walk finds, and its
+42 bytes are the same every time. The one thing it says out loud is that the same body goes to port
+0 and then port 1, the second copy stating nothing but its own protocol and port.
+
 ## The RTT protocol (0x58)
 
 The host starts timing a station the moment it is in the mesh, and there is no wiki page for this

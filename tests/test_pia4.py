@@ -235,3 +235,20 @@ def test_parse_messages_still_hands_back_the_header_as_sent():
     assert [len(h) for h, _ in pia4.parse_messages(SW29_RELIABLE)] == [24, 7, 1, 1]
     assert pia4.parse_message_header(pia4.parse_messages(SW29_TWO_PORTS)[1][0]) == {
         "present": 0x04, "proto_port": 0x80000001, "protocol": 0x80, "port": 1}
+
+
+def test_swords_rtt_and_reliable_messages_read_through_the_modules_we_have():
+    """sw29's own bodies. RTT needed a version-4 size; the reliable window needed nothing."""
+    from pokeldn.ldn import reliable5 as r5, rtt_protocol as rtt
+
+    req = bytes.fromhex("000000000000000000000e7840e6df87")
+    assert len(req) == rtt.SIZE_V4 == 16 != rtt.SIZE          # BDSP's is 13
+    assert rtt.parse_v4(req) == {"kind": rtt.REQUEST, "name": "REQUEST",
+                                 "timestamp": 0x00000E7840E6DF87, "unread": b"\0" * 7}
+    assert rtt.response_for_v4(req) == b"\x01" + req[1:]      # echo everything we did not read
+
+    got = r5.parse(bytes.fromhex("0f0000060001000100610000000a00"))
+    assert got["flag_names"] == ["APPLICATION_DATA", "START", "END", "INITIALIZED"]
+    assert (got["sequence_id"], got["lowest_pending"], got["stream_id"]) == (1, 1, 0)
+    assert got["header_size"] == 9 and got["payload"] == bytes.fromhex("610000000a00")
+    assert not got["truncated"] and not got["is_ack"]

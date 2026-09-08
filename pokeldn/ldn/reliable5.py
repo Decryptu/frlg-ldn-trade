@@ -1,5 +1,12 @@
 """Pia 5.29-5.43's reliable sliding window - protocol 0x7c, and where BDSP's game data is.
 
+**AND IT PARSES VERSION 4 WITH NO CHANGE.** Session 57, sw29: a retail Sword's own reliable
+messages read field for field through `parse()` - flags 0x0F on the first and 0x07 after it, stream
+0, payload size 6, sequence 1..20, lowest-pending stuck at 1, zero destination bits, a 9-byte
+header and a six-byte game payload `61 00 00 00 0a 00`. It sent 1637 messages of 20 distinct
+sequence ids in 90 seconds, the earlier ids more often than the later ones, which is one
+retransmit train per unacknowledged sequence: nothing of ours has ever acked this protocol.
+
 `reliable.py` is the SAME idea for Pia 6.32 (the GBA app) and its header is a different shape; do
 not reach for one while reading the other. This module is the 5.29-5.43 wrapper, which the wiki
 "Reliable Sliding Window" describes and BDSP's own code corrects in two places.
