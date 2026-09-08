@@ -298,6 +298,43 @@ WHAT sw29 DID NOT SEPARATE: the console set [6] and [7] on its single-fragment r
 version-4 entry-count path and the 5.31-5.45 one agree on this capture. That they differ is read
 off `0x017b48f4`, not measured. Nothing fragmented either - `fragments` was 1.
 
+## Host migration, and the two bytes that answer it
+
+Session 60, read off the same binary and then found in two of our own captures. This is Pia, not
+Sword: the mesh protocol migrates the host role, and a station that is named as the next host has
+to say so.
+
+**PORT 1 IS THE RELIABLE PORT, AND THE MESH RIDES INSIDE IT.** The wiki's own port table for the
+mesh protocol says port 0 is unreliable and port 1 is reliable, so a payload on 0x18 port 1 arrives
+under version 4's reliable header and the mesh message is what is inside. Session 59 read the
+transport and stopped there, and the three bytes inside went to an application-message reader that
+raised on them. They are a mesh message.
+
+**MIGRATION_START (0x44) IS THREE BYTES AND ITS HANDLER NAMES ALL THREE.** `0x017c1f00`, reached
+from the type table at `0x02081564` entry 0x43, refuses the message unless
+
+    size == 3                                     0x017c1f54
+    [1] == the mesh's HOST index, byte 0xAB       0x017c1f64, against the getter 0x017bbfe0
+    [2] <= 0x1F                                   0x017c1f78, the same 32-station bound
+    [2] != that host index                        0x017c1f8c - a host cannot migrate to itself
+
+and the sender builds exactly those three at `0x017c31b8`: `[0x44, host index, new host index]`.
+
+**THE ANSWER IS TWO BYTES: `[0x48, our own station index]`.** The MIGRATION_RESPONSE handler
+`0x017c10ac` refuses anything but `size == 2` and hands [1] to `0x017b8900`; the builder
+`0x017c3310` writes `[0x48, w22]` where w22 came from `0x017bc430`. **The two index getters are one
+byte apart and they are not the same field** - `0x017bbfe0` is `ldrb w0, [x0, #0xAB]`, the HOST's
+index, and `0x017bc430` is `ldrb w0, [x0, #0xAC]`, OURS. In a two-station mesh the migration start
+names the same number our join response gave us, so a wrong reading of which field to echo would
+have passed on this capture and failed on any larger mesh.
+
+MIGRATION_FINISH (0x41) closes it: three bytes, `[0x41, host index, flag & 1]` (`0x017c2ef0`), and
+its handler `0x017c0fb0` checks `size == 3` and [1] against the host index. Nothing here builds one.
+
+`pokeldn/ldn/mesh_protocol.py` has `parse_migration_start`, `build_migration_response` and
+`parse_migration_finish`, and every reader returns None rather than raising - see
+`docs/swsh.md` for what that cost.
+
 ## Two families of session key
 
 The session key is not one algorithm. Pia carries a separate implementation per network type, and

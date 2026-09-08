@@ -180,6 +180,9 @@ async def main_async(args):
               "offered_pk8": None, "our_pk8": None, "offer_pending": None, "offer_seq": None,
               "said_by_port": {}, "ack_by_port": {}, "rpc_out": 0, "rpc_acked": None,
               "trade_ready_sent": False,
+              "our_index": None, "host_index": None,
+              "migration_pending": None, "migration_out": 0, "migration_acked": None,
+              "said_serial": 0, "serial_by_proto": {}, "serial_by_port": {},
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -245,6 +248,37 @@ async def main_async(args):
             st["their_payload"] = got["payload"]
             st["said_by_proto"][protocol] = got["payload"]
             st["said_by_port"][(protocol, port)] = got["payload"]
+            # AND WHEN IT SAID IT. `--answer-once` needs to tell "the console has said something
+            # new" from "the console said that once, a minute ago" - see its argument help. The
+            # senders read the payload AND this counter, and a sender that has already answered
+            # this counter has nothing to say.
+            st["said_serial"] += 1
+            st["serial_by_proto"][protocol] = st["said_serial"]
+            st["serial_by_port"][(protocol, port)] = st["said_serial"]
+            # THE MESH RIDES INSIDE THIS WINDOW. 0x18 port 1 is the mesh protocol's RELIABLE port,
+            # so a payload here is a mesh message, not an application one - and the one the console
+            # sends when the player accepts the trade is MIGRATION_START. See mesh_protocol.
+            if protocol == mesh.PROTOCOL:
+                start = mesh.parse_migration_start(got["payload"])
+                if start is not None:
+                    print(f"\n[rx] t={now:6.2f} *** THE CONSOLE IS MIGRATING THE MESH TO US *** "
+                          f"host {start['host_index']} names station "
+                          f"{start['new_host_index']} as the next host")
+                    record(rec="rx_migration_start", t=now, **start)
+                    if args.answer_migration and st["migration_pending"] is None:
+                        index = st["our_index"]
+                        if index is None:
+                            index = start["new_host_index"]
+                            print("[tx]     no join response gave us an index; using the one the "
+                                  "migration start names")
+                        st["migration_pending"] = mesh.build_migration_response(index)
+                        print(f"[tx]     *** ANSWERING WITH MIGRATION_RESPONSE *** "
+                              f"{st['migration_pending'].hex()} (our station index {index})")
+                finish = mesh.parse_migration_finish(got["payload"])
+                if finish is not None:
+                    print(f"\n[rx] t={now:6.2f} *** MIGRATION FINISHED *** host "
+                          f"{finish['host_index']} flag {finish['flag']}")
+                    record(rec="rx_migration_finish", t=now, **finish)
             # EVERY DISTINCT PAYLOAD, not just the last. `--sync-answers` has a rule for some of
             # them and the ones it has no rule for are the finding: they are what the console says
             # next, in its own ids, and they are what turns another project's table into ours.
@@ -410,8 +444,12 @@ async def main_async(args):
                                 print(f"[tx]     acked with {ack_id:#010x} "
                                       f"({'the message tail' if use_trailing else 'their variable id'})")
                     elif f["protocol"] == mesh.PROTOCOL and f["port"] == mesh.PORT_RELIABLE:
-                        # 0x18 PORT 1, and it is not a mesh message: it is a reliable window, with
-                        # version 4's own header over it. sw59 is where it first spoke.
+                        # 0x18 PORT 1 IS THE MESH PROTOCOL'S OWN RELIABLE PORT, and both halves
+                        # of that matter. The version-4 reliable header is the TRANSPORT, which is
+                        # what sw59 found when the console opened this window; the payload inside
+                        # it is a MESH message, which is what session 60 found when the console
+                        # sent `440001` - MIGRATION_START - the moment the player accepted the
+                        # trade. `reliable_window` reads both layers.
                         st["mesh_in"] += 1
                         if args.ack_reliable:
                             reliable_window(mesh.PROTOCOL, mesh.PORT_RELIABLE, body, now)
@@ -447,6 +485,8 @@ async def main_async(args):
                                     print(f"[rx]       index {e['station_index']}: "
                                           f"{loc.get('private')} constant "
                                           f"{loc.get('constant_id', 0):#018x}")
+                                st["our_index"] = got["our_index"]
+                                st["host_index"] = got["host_index"]
                             st["join_response"] = st["join_response"] or (now, body.hex())
                             record(rec="rx_join_response", t=now, parsed=got, raw=body.hex())
                         elif kind == mesh.UPDATE_MESH:
@@ -817,10 +857,24 @@ async def main_async(args):
             # sequence sent only once the last is acknowledged, which is what a window is for.
             deadline = time.monotonic() + args.send_seconds
             seq = args.send_sequence
+            answered_serial = None
             while time.monotonic() < deadline:
                 if seq - args.send_sequence >= args.send_count:
                     break
                 said = st["said_by_proto"].get(args.send_protocol)
+                if args.answer_once and st["offer_pending"] is None:
+                    # AN ANSWER IS A REPLY TO SOMETHING, NOT A HEARTBEAT. `said` is the last thing
+                    # the console put on this protocol and it stays set for the rest of the run, so
+                    # every 0.3 s tick re-derives an answer to a payload already answered. sw83
+                    # sent our Pokemon offer 859 times over 260 seconds and the trade RPC answer
+                    # 1024 times, where the console sent each of its own messages once; the three
+                    # payloads this run repeated are exactly the three phases that stalled, and
+                    # every message that moved the game on went out exactly once.
+                    serial = st["serial_by_proto"].get(args.send_protocol)
+                    if serial is not None and serial == answered_serial:
+                        await trio.sleep(args.send_period)
+                        continue
+                    answered_serial = serial
                 if st["offer_pending"] is not None:
                     # STICKY UNTIL THE WINDOW MOVES PAST IT. A payload swapped out mid-sequence is
                     # a payload the console may never have seen whole.
@@ -975,6 +1029,7 @@ async def main_async(args):
             deadline = time.monotonic() + args.send_seconds + args.send_after + args.send_wait
             seq = reliable4.FIRST_SEQUENCE
             last_answered = None
+            answered_serial = None
             while time.monotonic() < deadline:
                 said = st["said_by_port"].get(key)
                 answer = (swsh_trade.answer_rpc(said, our_constant, args.rpc_clock_delta)
@@ -982,6 +1037,15 @@ async def main_async(args):
                 if answer is None:
                     await trio.sleep(0.1)
                     continue
+                if args.answer_once:
+                    # THE SAME RULE AS THE DATA SENDER, and this window is where it cost the most:
+                    # sw83 answered a trade RPC 1024 times, roughly fifty of them on their own
+                    # sequence ids, to a console that had asked six times.
+                    serial = st["serial_by_port"].get(key)
+                    if serial is not None and serial == answered_serial:
+                        await trio.sleep(args.rpc_period)
+                        continue
+                    answered_serial = serial
                 if answer != last_answered:
                     last_answered = answer
                 body = reliable4.build_data_message(answer, sequence_id=seq, destinations=dests,
@@ -1006,6 +1070,59 @@ async def main_async(args):
                     seq += 1
             print(f"\n[tx] {st['rpc_out']} RPC answers out on port {port}, "
                   f"{'acknowledged' if st['rpc_acked'] else 'NOTHING acknowledged them'}")
+
+
+        async def migration_sender():
+            """Answer MIGRATION_START on the mesh protocol's reliable port, and keep answering
+            until the console acknowledges it.
+
+            THIS IS THE LAST THING THE CONSOLE EVER SAYS. sw81 and sw83 are the only two runs where
+            the player pressed accept and they are the only two that carry `440001` on 0x18 port 1;
+            in both, the console then went silent on every window for the rest of the run. It is
+            not waiting on the application layer at all - it is waiting for a two-byte mesh
+            message, and nothing in this project or in any of the four published clients has ever
+            sent one. `mesh_protocol` carries the handler addresses.
+
+            The window is its own, like the RPC's: protocol 0x18, port 1, its own sequence and its
+            own acks, which `reliable_window` and `ack_by_port` already key correctly.
+            """
+            if not args.answer_migration:
+                return
+            key = (mesh.PROTOCOL, mesh.PORT_RELIABLE)
+            dests = [host_constant] if args.send_destinations != "none" else []
+            deadline = time.monotonic() + args.send_seconds + args.send_after + args.send_wait
+            seq = reliable4.FIRST_SEQUENCE
+            while time.monotonic() < deadline:
+                payload = st["migration_pending"]
+                if payload is None:
+                    await trio.sleep(0.1)
+                    continue
+                body = reliable4.build_data_message(payload, sequence_id=seq, destinations=dests,
+                                                   stream_id=args.send_stream)
+                sock.sendto(wrap(keys, our_mac, our_constant, next_nonce(), body,
+                                 mesh.PROTOCOL, args.connect_station_first,
+                                 port=mesh.PORT_RELIABLE, message_flags=pia4.MESSAGE_FLAGS,
+                                 destination=args.data_destination),
+                            (host_ip, PIA_PORT))
+                st["migration_out"] += 1
+                if st["migration_out"] == 1:
+                    print(f"\n[tx] *** MIGRATION_RESPONSE on 0x18 port {mesh.PORT_RELIABLE} *** "
+                          f"seq {seq}: {body.hex()}")
+                record(rec="tx_migration", t=time.monotonic() - t0, sequence=seq,
+                       payload=payload.hex())
+                await trio.sleep(args.migration_period)
+                if st["ack_by_port"].get(key, 0) > seq:
+                    if st["migration_acked"] is None:
+                        st["migration_acked"] = time.monotonic() - t0
+                        print(f"\n[rx] *** IT ACKED OUR MIGRATION RESPONSE, "
+                              f"t={st['migration_acked']:.2f} ***")
+                    # ONE MESSAGE, NOT A STREAM. A migration response is answered by the host's
+                    # MIGRATION_FINISH, not by another response; repeating it past the ack is the
+                    # mistake sw83 made with the Pokemon offer.
+                    st["migration_pending"] = None
+                    return
+            if st["migration_out"] and st["migration_acked"] is None:
+                print(f"\n[tx] {st['migration_out']} migration responses out, nothing acked them")
 
 
         async def block_sender():
@@ -1066,6 +1183,7 @@ async def main_async(args):
             nursery.start_soon(block_sender)
             nursery.start_soon(snapshot_sender)
             nursery.start_soon(rpc_sender)
+            nursery.start_soon(migration_sender)
             await sender()
             await trio.sleep(args.hold)
             nursery.cancel_scope.cancel()
@@ -1258,6 +1376,20 @@ def build_parser():
                          "this project had sent went out on port 0, where it does not read them")
     ap.add_argument("--rpc-port", type=lambda s: int(s, 0), default=1)
     ap.add_argument("--rpc-period", type=float, default=0.3)
+    ap.add_argument("--answer-migration", action="store_true",
+                    help="answer the console's MIGRATION_START on 0x18 port 1 with a "
+                         "MIGRATION_RESPONSE. sw81 and sw83 are the only runs where the player "
+                         "pressed accept and the only two that carry `440001` there, and in both "
+                         "the console then went silent everywhere: the last thing it asks for is "
+                         "not an application message at all, it is two bytes of mesh")
+    ap.add_argument("--migration-period", type=float, default=0.3,
+                    help="how often to retransmit the migration response until it is acked")
+    ap.add_argument("--answer-once", action="store_true",
+                    help="answer each payload the console sends ONCE instead of re-deriving an "
+                         "answer to its last payload every period. sw83 sent the Pokemon offer "
+                         "859 times and the trade RPC answer 1024 times because `said` never "
+                         "clears; the console sends each of its own messages once, and so does "
+                         "every published client")
     ap.add_argument("--offer-slot", type=lambda s: int(s, 0), default=0,
                     help="which party slot of --send-snapshot to offer back, 1-6; 0 offers "
                          "nothing and only records what the console offers us")

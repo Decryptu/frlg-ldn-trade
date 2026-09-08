@@ -243,3 +243,77 @@ def test_the_real_version_four_join_response_reads_back_as_the_mesh_the_console_
     assert out["station_info"][1]["location"]["private"] == ("169.254.95.2", 12345)
     assert out["station_info"][0]["location"]["constant_id"] == 0xEB9B2220F1480000
     assert mp.ack_for(raw) == (stp.PROTOCOL, bytes.fromhex("050000003e3b1c08"))
+
+
+# --- Host migration, session 60 ----------------------------------------------------------------
+#
+# `440001` on 0x18 port 1 is the last thing a retail Sword ever says: sw81 and sw83 both carry it
+# byte-identical, they are the only two runs where the player pressed accept, and no other run in
+# the project has one. It is a MESH message riding the mesh protocol's own reliable port, which is
+# what session 59 missed when it read the three bytes as an application payload and raised on them.
+
+SW83_MIGRATION_START = bytes.fromhex("440001")     # host 0 names station 1 - us - as the next host
+
+
+def test_the_console_names_us_the_next_host():
+    got = mp.parse_migration_start(SW83_MIGRATION_START)
+    # sw83's join response: stations=2 host_index=0 our_index=1.
+    assert got == {"host_index": 0, "new_host_index": 1}
+
+
+def test_the_answer_is_two_bytes_and_carries_our_own_index():
+    # The handler at main.bin 0x017c10ac refuses anything but size 2; the builder at 0x017c3310
+    # writes [0x48, own station index], the index read at mesh+0xAC rather than the host's at 0xAB.
+    assert mp.build_migration_response(1) == bytes.fromhex("4801")
+    assert len(mp.build_migration_response(0)) == mp.MIGRATION_RESPONSE_SIZE
+
+
+def test_the_bound_both_handlers_check_is_thirty_two_stations():
+    assert mp.build_migration_response(mp.MAX_STATION_INDEX)[1] == 0x1F
+    with pytest.raises(ValueError):
+        mp.build_migration_response(mp.MAX_STATION_INDEX + 1)
+
+
+@pytest.mark.parametrize("payload", [
+    b"", b"\x44", bytes.fromhex("4400"), bytes.fromhex("44000102"), bytes.fromhex("410001"),
+])
+def test_a_reader_on_a_live_run_returns_none_rather_than_raising(payload):
+    # sw81 reached the confirmation prompt, a reader raised on these three bytes, the receive task
+    # died and the console reported the communication as interrupted - because we were the one who
+    # left. Every length the wire can carry has to come back as None, not as an exception.
+    assert mp.parse_migration_start(payload) is None
+
+
+def test_migration_finish_is_the_hosts_own_three_bytes():
+    # 0x017c2ef0 builds [0x41, own index, flag & 1]; the handler at 0x017c0fb0 checks size == 3.
+    assert mp.parse_migration_finish(bytes.fromhex("410001")) == {"host_index": 0, "flag": 1}
+    assert mp.parse_migration_finish(bytes.fromhex("4801")) is None
+
+
+def test_the_three_bytes_are_named_by_the_type_table():
+    assert mp.parse_message(SW83_MIGRATION_START) == (mp.MIGRATION_START, "MIGRATION_START")
+    assert mp.MIGRATION_START in mp.MESH_TYPES_V4
+    assert mp.MIGRATION_RESPONSE in mp.MESH_TYPES_V4
+
+
+SW83_MIGRATION_WIRE = bytes.fromhex("0f0000030001000100" "440001")
+
+
+def test_the_twelve_bytes_off_the_wire_decode_to_the_answer():
+    """sw81 and sw83's own bytes, end to end: reliable header, mesh message, our response.
+
+    The header is version 4's - flags 0x0f (application data, start, end, initialized), stream 0,
+    payload size 3, sequence 1, lowest pending 1, no destinations - and the mesh message is what is
+    inside it. Both layers, because reading only the outer one is what session 59 did.
+    """
+    from pokeldn.ldn import reliable4
+
+    got = reliable4.parse_message(SW83_MIGRATION_WIRE)
+    assert got["flags"] & reliable4.FLAG_APPLICATION_DATA
+    assert got["payload_size"] == 3 and got["sequence_id"] == 1
+    assert got["destination_count"] == 0 and not got["truncated"]
+
+    start = mp.parse_migration_start(got["payload"])
+    assert start == {"host_index": 0, "new_host_index": 1}
+    # sw83's join response gave our_index 1, and that - not the host's 0 - is what goes back.
+    assert mp.build_migration_response(1) == bytes.fromhex("4801")

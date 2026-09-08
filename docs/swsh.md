@@ -531,20 +531,59 @@ and we stopped transmitting mid-trade. The player saw `la communication avec l'a
 interrompue`, which is exactly what had happened - we were the one who left. **A reader on a live
 run must not raise**, and every reader in `pokeldn/swsh/trade.py` now returns None instead.
 
-## Where it stops
+## Where it stops, and it is not the application layer at all
 
-With that fixed the run is clean and the outcome is the same: the console shows our Pokemon, takes
-the player's accept, and then sends **nothing on the application layer for the remaining five
-minutes**. Its last message is the offer.
+With that fixed the run is clean and the console shows our Pokemon, takes the player's accept, and
+then sends **nothing on the application layer for the remaining five minutes**. Session 59 read
+that as a trade phase we do not speak, and looked to `andyjusa/nxldn-lab`'s selection RPCs on 40050
+(`729c`) and confirmation stages on 40040 (`689c`) for what comes next.
 
-So the trade stops in a phase we do not speak. `andyjusa/nxldn-lab` has selection RPCs on 40050
-(`729c`), confirmation stages on 40040 (`689c`) and a terminal exchange after this point - and OUR
-console has never sent one of those ids, so they are not messages waiting to be answered. That
-client REPLAYS client-side selection messages captured from a real console-to-console trade;
-deriving ours is a read of the game's own code rather than another run.
+**IT IS NOT WAITING ON THE APPLICATION LAYER. ITS LAST WORD IS TWO LAYERS DOWN.** Session 60,
+FACT, from our own captures. Once the player accepts, the console sends twelve bytes on protocol
+**0x18 port 1** and never speaks again:
+
+    0f 00 00 03 00 01 00 01   44 00 01
+    ^ version 4's reliable header, sequence 1     ^ the mesh message
+
+**sw81 and sw83 both carry it, byte-identical, and no other run in this project has one** - and
+those two are the only runs where the player pressed accept. `44` is the mesh protocol's
+MIGRATION_START, `[0x44, host index 0, new host index 1]`, and sw83's own join response said
+`stations=2 host_index=0 our_index=1`. **The console is naming us as the next host of its mesh.**
+The answer is `[0x48, 1]`, two bytes; `docs/pia.md` "Host migration" carries both handlers and both
+index getters, because that is Pia and true of any title.
+
+This also names the three bytes that ended sw81. Session 59 recorded "the console sends a
+THREE-BYTE message at the confirmation prompt and `trade.parse` raised" and hardened every
+application reader against short buffers, which was right and is still right - but the three bytes
+were never an application payload. Mesh protocol port 1 IS the reliable port, so the reliable
+window is the transport and a mesh message rides inside it.
 
 Our own offer, a Pokemon out of the party our snapshot advertised, is acknowledged by the reliable
 window throughout.
+
+## And we were shouting: 859 offers where the console sent one
+
+FACT, sw83's own jsonl (`scratchpad/sw_tx_tally.py`). Every message the console sent it sent once
+or a handful of times. Of ours:
+
+    3e4e00000adb...   the Pokemon offer         859 times over 259 seconds
+    5e9c00000a1a...   the trade RPC answer     1024 times over 309 seconds
+    60ea000012020801  imReady on 0x80          1045 times over 315 seconds
+    everything that moved the game on          EXACTLY ONCE
+
+The window only advances a sequence once the last is acked, so those collapse to roughly forty and
+fifty *delivered* duplicates rather than nine hundred - still forty copies of "here is my Pokemon"
+to a console that asked once.
+
+The cause is not a policy anyone chose. `said_by_proto` in `bin/swsh_connect.py` holds the last
+payload the console put on a protocol and never clears, and the senders run on a 0.3 s timer, so
+each tick re-derives an answer to a message already answered. It was harmless while the answer was
+a ping echo, which is every phase that worked; it became an offer at t=23.8.
+
+**This is a defect, not a hypothesis about the stall.** The game processed our offer while being
+flooded - it showed the Pokemon to the player and took the accept - so the repetition did not stop
+this trade. `--answer-once` answers each payload the console sends once, which is what the console
+does, what every published client does, and what makes the next run legible.
 
 ## Where a message id comes from, and which ones are ours
 

@@ -242,3 +242,76 @@ def parse_message(data):
     if not data:
         raise ValueError("empty mesh protocol message")
     return data[0], TYPE_NAMES.get(data[0], f"unknown {data[0]:#04x}")
+
+
+# --- Host migration, and it is THE LAST THING A SWORD SAYS ------------------------------------
+#
+# When the player accepts a trade, a retail Sword sends THREE BYTES on the mesh protocol's own
+# reliable port and then never speaks again. sw81 and sw83 both carry it, byte-identical, and no
+# other run in the project does - those two are the only runs where the player pressed accept:
+#
+#     0f 00 00 03 00 01 00 01   44 00 01
+#     ^ the version-4 reliable header, sequence 1     ^ the mesh message
+#
+# Session 59 read the three bytes as an application payload, `swsh.trade.parse` raised on them and
+# the run died mid-trade. They are not an application payload. **Mesh protocol port 1 IS the
+# reliable one** (the wiki's own port table), so the reliable window is the TRANSPORT and a mesh
+# message rides inside it - and `44` is MIGRATION_START.
+#
+# THE HANDLER NAMES EVERY FIELD (main.bin 0x017c1f00, reached from the type table at 0x02081564
+# entry 0x43). It refuses the message unless:
+#
+#     size == 3                                       0x017c1f54
+#     [1] == the mesh's host index, byte 0xAB         0x017c1f64 against 0x017bbfe0
+#     [2] <= 0x1f                                     0x017c1f78, the 32-station bound
+#     [2] != that same host index                     0x017c1f8c - a host cannot migrate to itself
+#
+# and the sender builds exactly those three (0x017c31b8): `[0x44, host index, NEW host index]`.
+# sw83's join response gave `host_index=0 our_index=1` and the console sent `44 00 01`, so the
+# console is naming US as the next host of its mesh.
+#
+# THE ANSWER IS TWO BYTES. The MIGRATION_RESPONSE handler (0x017c10ac) refuses anything but
+# `size == 2` and passes [1] on to 0x017b8900; the builder (0x017c3310) writes
+# `[0x48, own station index]`, where the index is the mesh's byte 0xAC (0x017bc430) - the same
+# getter MIGRATION_FINISH uses for its own [1]. Two getters, one byte apart, and they are not
+# interchangeable: 0xAB is the HOST's index and 0xAC is OURS.
+#
+# MIGRATION_FINISH is three bytes, `[0x41, host index, flag & 1]` (0x017c2ef0), and its handler
+# (0x017c0fb0) checks size == 3 and [1] against the host index. Nothing here builds one: the host
+# sends it, we receive it.
+MIGRATION_START_SIZE = 3
+MIGRATION_RESPONSE_SIZE = 2
+MIGRATION_FINISH_SIZE = 3
+MAX_STATION_INDEX = 0x1F          # the bound both migration handlers check, 32 stations
+
+
+def parse_migration_start(data):
+    """-> {'host_index', 'new_host_index'}, or None when this is not a migration start.
+
+    A READER ON A LIVE RUN MUST NOT RAISE - see `swsh.trade._maybe_parse`. This one returns None
+    for everything it does not recognise, including the short buffers that ended sw81.
+    """
+    data = bytes(data)
+    if len(data) != MIGRATION_START_SIZE or data[0] != MIGRATION_START:
+        return None
+    return {"host_index": data[1], "new_host_index": data[2]}
+
+
+def build_migration_response(station_index):
+    """-> the two bytes a station sends back when the host names it the next host.
+
+    `station_index` is OUR OWN index, the one the join response called `our_index` - not the host's
+    and not the one the migration start named, even though for a two-station mesh those last two
+    are the same number. The distinction is the field the game reads at 0xAC rather than 0xAB.
+    """
+    if not 0 <= station_index <= MAX_STATION_INDEX:
+        raise ValueError(f"station index {station_index} is outside the 32-station bound")
+    return bytes([MIGRATION_RESPONSE, station_index])
+
+
+def parse_migration_finish(data):
+    """-> {'host_index', 'flag'}, or None. The host's statement that the migration is over."""
+    data = bytes(data)
+    if len(data) != MIGRATION_FINISH_SIZE or data[0] != MIGRATION_FINISH:
+        return None
+    return {"host_index": data[1], "flag": data[2]}
