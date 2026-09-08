@@ -211,44 +211,61 @@ def test_a_longer_name_cannot_overwrite_the_tail_record():
         trade_payload.rewrite(payload, old_name="Gurvan", trainer_name="Gurvanne")
 
 
-def a_payload_with_a_player_record(name="Gurvan", account=b"\x6a\x95\xe0\x43\x55\xa2\xd4\x7b\x04\x10"):
-    """The tail record sw70's payload carries: id, key, name, id - around 0xB14."""
+def a_payload_with_a_player_record(name="Gurvan", account=bytes.fromhex("e04355a2d47b0410")):
+    """The tail record the LDN beacon frames: UID, id, UID, name, id - at TAIL_OFFSET + 0x00.
+
+    The beacon carries the same record as the snapshot's tail (90 bytes agree), starting at a
+    different offset, and that second framing is what gives the field boundaries.
+    """
     out = bytearray(a_payload(name=name))
-    at = TAIL_NAME_AT
-    out[at - trade_payload.ACCOUNT_ID_LENGTH - 16:at - 16] = account
-    out[at - 16:at] = bytes(range(0x40, 0x50))
+    base = trade_payload.TAIL_OFFSET
+    out[base:base + 0x10] = bytes(range(0x10))                     # an account UID
+    at = base + trade_payload.ACCOUNT_ID_FIRST
+    out[at:at + 8] = account
+    out[base + 0x18:base + 0x28] = bytes(range(0x20, 0x30))        # a second UID
     planted = name.encode("utf-16-le") + b"\x00\x00"
+    at = base + trade_payload.TAIL_NAME_OFFSET
     out[at:at + len(planted)] = planted
-    out[at + len(planted):at + len(planted) + trade_payload.ACCOUNT_ID_LENGTH] = account
+    at = base + trade_payload.ACCOUNT_ID_SECOND
+    out[at:at + 8] = account
     return bytes(out)
 
 
-def test_the_tail_record_repeats_an_account_id_either_side_of_the_name():
+def test_the_record_holds_one_eight_byte_id_at_both_offsets():
     payload = a_payload_with_a_player_record()
-    got = trade_payload.tail_account_id(payload, "Gurvan")
-    assert got == bytes.fromhex("6a95e04355a2d47b0410")
-    assert payload.count(got) == 2
+    assert trade_payload.tail_account_id(payload) == bytes.fromhex("e04355a2d47b0410")
 
 
-def test_replacing_the_account_id_leaves_none_of_the_consoles_own():
+def test_replacing_it_touches_only_the_two_id_fields():
+    """sw94's ten-byte replacement took the end of the account UID and of the name field with it.
+
+    The two bytes before each copy match by coincidence - the UID's tail at +0x0E and the name
+    field's uninitialised slack at +0x36 are both `6a 95` in sw70's payload - so the longest
+    repeated run is ten bytes and the FIELD is eight.
+    """
     payload = a_payload_with_a_player_record()
-    theirs = trade_payload.tail_account_id(payload, "Gurvan")
+    theirs = trade_payload.tail_account_id(payload)
     ours = bytes(a ^ 0x5A for a in theirs)
-    out = trade_payload.rewrite(payload, old_name="Gurvan", trainer_name="PkCamp",
-                                account_id=ours)
+    out = trade_payload.rewrite(payload, account_id=ours)
+    base = trade_payload.TAIL_OFFSET
+    changed = {i for i in range(len(payload)) if payload[i] != out[i]}
+    expected = set(range(base + trade_payload.ACCOUNT_ID_FIRST,
+                         base + trade_payload.ACCOUNT_ID_FIRST + 8))
+    expected |= set(range(base + trade_payload.ACCOUNT_ID_SECOND,
+                          base + trade_payload.ACCOUNT_ID_SECOND + 8))
+    assert changed == expected
     assert out.count(theirs) == 0 and out.count(ours) == 2
-    assert len(out) == len(payload)
 
 
-def test_an_account_id_needs_the_name_it_sits_around_and_the_right_length():
+def test_a_record_whose_two_copies_disagree_reads_as_none():
+    out = bytearray(a_payload_with_a_player_record())
+    out[trade_payload.TAIL_OFFSET + trade_payload.ACCOUNT_ID_SECOND] ^= 0xFF
+    assert trade_payload.tail_account_id(bytes(out)) is None
+    with pytest.raises(ValueError):
+        trade_payload.rewrite(bytes(out), account_id=bytes(8))
+
+
+def test_an_account_id_must_be_eight_bytes():
     payload = a_payload_with_a_player_record()
     with pytest.raises(ValueError):
-        trade_payload.rewrite(payload, trainer_name="PkCamp", account_id=bytes(10))
-    with pytest.raises(ValueError):
-        trade_payload.rewrite(payload, old_name="Gurvan", trainer_name="PkCamp",
-                              account_id=bytes(9))
-
-
-def test_a_tail_without_the_repeated_id_reads_as_none():
-    # The name is there but nothing repeats around it, which is a payload this has not read.
-    assert trade_payload.tail_account_id(a_payload_with_a_tail_name(), "Gurvan") is None
+        trade_payload.rewrite(payload, account_id=bytes(10))
