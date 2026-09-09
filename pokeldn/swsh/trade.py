@@ -469,6 +469,30 @@ def sync_announced_phase(data):
     return data + 1
 
 
+def parse_sync_step(body):
+    """-> `(phase, announced)` out of a content's four-byte step body, or None if it is not four.
+
+    **THE FOUR-BYTE BODY IS TWO u16s AND BOTH HALVES ARE NAMED IN THE IMAGE**, session 65. The
+    sub-element keeps its body at `sub+0x88`, and `0x006d3980` - the publish - rebuilds it as
+    `<u16 newValue><u16 sub+0x8a>`: a new low half and the high half carried over unchanged, handed
+    to `0x006d3860`, which is `0x010dbe20` one layer down. The low half is what the element then
+    adopts as its phase (`element+0xac`, which IS `content+0x17c`, the element sitting at
+    `content+0xd0`), and `0x006d3260` reads it back out of that same four bytes.
+
+    So the low half is the PHASE and the high half is the phase the sender has ANNOUNCED, which is
+    `data + 1` for the last command it sent. sx52e and sx53's three bodies read straight:
+
+        00000100   phase 0, announced 1     the cue: it had sent command 0
+        01000100   phase 1, announced 1     our command let the phase catch up
+        01000200   phase 1, announced 2     it committed and sent command 1
+
+    `docs/swsh.md`, "The ladder is a barrier, and every rung needs a command".
+    """
+    if body is None or len(body) != 4:
+        return None
+    return struct.unpack("<HH", bytes(body))
+
+
 def sync_command(offset, data):
     """-> `SyncSaveDataHolder{syncCommand{data: <int32>}}` on content `offset`'s 10000-base holder.
 

@@ -1269,21 +1269,63 @@ back out as a four-byte body, and then calls `0x006a24a0([content+0x2a0], &sende
 the sender up in a map at `+0x1c0` and sets that station's byte to 1. A per-station flag, set when
 our command lands. `0x010de310` calls `0x006a2760` on the same object when it commits.
 
-**WHAT IS NOT MEASURED, AND IT IS THE LAST LINK.** What writes `content+0x17c`. It is not written
-anywhere in `0x010c0000`-`0x010e0000` by any store of any width, so the phase is advanced by the
-framework and not by the game's own content code, and this walk did not find the site. What the
-barrier's per-station flag implies - that our command is what lets the phase advance - **fits every
-run so far and is still a deduction.**
+**AND `content+0x17c` IS NOT A FIELD OF THE CONTENT AT ALL - IT IS THE ELEMENT'S.** Nothing in
+`0x010c0000`-`0x010e0000` stores to `+0x17c` at any width, which is what sent this walk one layer
+down. The registrar builds the 40040 element at **`content+0xd0`** (`0x010daa4c add x21, x19, #0xd0`,
+then `0x006d4ff0` to add the sub-element and `0x006d44e0(element, w20)` to mint it), and
+`0x006d44e0` opens with `str wzr,[x0,#0xa8]; strh w1,[x0,#0xac]`. **`0xd0 + 0xac` is `0x17c`**: the
+phase is `element+0xac`, and it starts at the registrar's own `w1`, which content 40's init passes as
+`wzr` - zero. `+0x84` is set to the same value in the same breath, which is why the pump's first
+comparison is equal and quiet.
 
-**IT DOES EXPLAIN sx53 WITHOUT ANYTHING NEW.** One command, two steps: our `data:0` let the console
-commit to phase 1 AND run state 3, which sends command 1 and announces phase 2 - and then it stopped,
-because phase 2 needs a second command. The console's own elementId-20000 bodies walked
-`00000100` -> `01000100` -> `01000200`, and read as `<u16 a><u16 b>` that is (0,1) -> (1,1) -> (1,2),
-which is the shape of a committed phase beside an announced one. **That last reading is a fit, not a
-measurement**: nothing in the band loads `+0x84` as a 32-bit word, so the pair is not demonstrably
-what goes on the wire, and `--confirm-commands 0,1,2,3` is what settles it.
+**THE ELEMENT ADVANCES IT IN ONE PLACE, AND ONLY WITH THE MESH'S PERMISSION.** In the element's
+update, at `0x006d4ca0`:
 
-`swsh_trade.SYNC_LADDER` and `sync_announced_phase` carry the mapping, with tests.
+    w0  = 0x006d3260([element+0xf0])        read the shared value; 0xfc18 when there is none
+    if (w0 == [element+0xac]) done
+    if (0x006d3980([element+0xf0], w0)) {   publish it as our own, and only if that succeeds
+        [element+0xac] = w0                 THE PHASE MOVES
+        [element+0xa0]->vtable[0]()         and the content is told
+    }
+
+`0x006d3980` walks a table of `{ownerId, entry}` pairs at `[obj+8]..[obj+0x10]` for **our own id**
+(`[[0x2616a30]]+0xf0`, the same id content 30's echo check compares against), takes the sub-element
+`[entry+0x60] - 0x50`, and sends. There is a matching pair above it for a u32 at `element+0xa8`.
+
+**AND THAT SEND IS WHERE THE FOUR-BYTE BODY IS BUILT, SO THE STEP BODIES ARE READ RATHER THAN
+GUESSED.** `0x006d3980` finishes with:
+
+    w8 = [sub+0x8a]                         the high half of the body it already has
+    stack = <u16 newValue><u16 w8>          a new LOW half, the high half carried over
+    0x006d3860(sub, &stack)                 which is 0x010dbe20 one layer down: [sub+0x88] = the
+                                            four bytes, then the transport with len 4
+
+and `0x006d3260` reads the value back out of the same four bytes - `[[obj+0x38]+0x60]+0x38` is
+`sub+0x88` under the same `+0x60`-holds-`sub+0x50` convention the publish uses, gated on the byte at
+`sub+0x61`. **So the low u16 of a step body is the phase and the high u16 is what the sender last
+announced**, and sx52e and sx53's three bodies read straight off:
+
+    00000100   phase 0, announced 1    the cue - the console had already sent command 0
+    01000100   phase 1, announced 1    our command let the phase catch up, so it committed
+    01000200   phase 1, announced 2    and ran state 3, which sends command 1 announcing phase 2
+
+**WHICH IS sx53 EXPLAINED WITH NOTHING ADDED.** One command, two steps, and then a stop - because
+phase 2 needs a second command. `swsh_trade.parse_sync_step` decodes a step body and
+`bin/swsh_connect.py` prints the decode beside the trigger.
+
+**AND THE CONSOLE'S OPENING MOVE IS THE PUMP'S, NOT THE MACHINE'S.** The registrar leaves
+`[content+0x80] = 1`, and pump state 1 (`0x010db418`, the 17-entry table at `0x2067f08`) sets the
+pump to 2 and then calls the state setter with the phase **unconditionally**, outside the
+`+0x84`/`+0x86` gate. Phase 0 -> state 1 -> send command 0, announcing 1. That is the cue.
+
+**WHAT IS STILL NOT MEASURED.** How a partner's command reaches `sub+0x88`. The receive handler
+`0x010dbc90` does not write it: it keeps the int32, relays it through `0x010dbe20`, and sets the
+sender's byte in the map at `[content+0x2a0]+0x1c0`. That our command is what lets the shared value
+move is a DEDUCTION from that flag and from every run so far, and `--confirm-commands 0,1,2,3` is
+what settles it.
+
+`swsh_trade.SYNC_LADDER`, `sync_announced_phase` and `parse_sync_step` carry the mapping and the
+wire shape, with tests driven by the three measured bodies.
 
 ## What this project has measured, and what it has borrowed
 

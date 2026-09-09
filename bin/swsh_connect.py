@@ -385,11 +385,14 @@ async def main_async(args):
                             st["rpc_queue"] = [status] + st["rpc_queue"]
                         st["rpc_bodies_answered"].add(
                             (member["envelope"], member["base"], bytes(member["body"])))
+                        step = swsh_trade.parse_sync_step(member["body"])
                         print(f"[tx]     *** THE CONFIRMATION STATUS *** sending "
                               f"syncCommand{{data:{command}}} on "
                               f"{swsh_trade.CONTENT_BASE_LOW + member['offset']} port 0 and "
                               f"answering the status on port 1, triggered by "
-                              f"{got['payload'].hex()}")
+                              f"{got['payload'].hex()}"
+                              + (f" (step: phase {step[0]}, announced {step[1]})"
+                                 if step else ""))
                     # AND THE STATUS THAT FOLLOWS THE CONSOLE'S OWN POKEMON. sx20: once the 40050
                     # pair is answered the console puts a 344-byte PK8 in field 5 of a 40050
                     # envelope and then sends a status whose four-byte body ends `0100` instead of

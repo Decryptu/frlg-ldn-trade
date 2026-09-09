@@ -426,6 +426,29 @@ def test_the_ladder_needs_every_command_and_the_fourth_one_ends_it():
     assert 4 not in trade.SYNC_COMMANDS
 
 
+def test_the_three_steps_sx52e_and_sx53_measured_read_as_a_phase_and_an_announcement():
+    """The console's own elementId-20000 bodies, verbatim off those two runs. The low u16 is the
+    phase the element adopts (`element+0xac` = `content+0x17c`) and the high u16 is the phase its
+    last command announced, so the three read as: it had sent 0; our command let the phase catch up
+    to 1; it committed and sent 1, announcing 2. Every announced value is a rung of the ladder."""
+    measured = [("00000100", (0, 1)), ("01000100", (1, 1)), ("01000200", (1, 2))]
+    for body, want in measured:
+        got = trade.parse_sync_step(bytes.fromhex(body))
+        assert got == want
+        assert got[1] in trade.SYNC_LADDER
+        assert got[1] >= got[0]
+    phases = [trade.parse_sync_step(bytes.fromhex(b))[0] for b, _ in measured]
+    assert phases == [0, 1, 1]
+
+
+def test_a_step_reader_takes_only_four_bytes_and_never_raises():
+    """A reader on a live run must not raise on anything the console sends - the trap sw81 set."""
+    assert trade.parse_sync_step(None) is None
+    assert trade.parse_sync_step(b"") is None
+    assert trade.parse_sync_step(b"\x00\x00\x01") is None
+    assert trade.parse_sync_step(bytearray.fromhex("01000200")) == (1, 2)
+
+
 def test_a_phase_above_the_ladder_is_not_a_rung():
     """The setter bounds-checks `w1 > 4` and returns, so nothing outside 0..4 moves the machine -
     which is why the run sends the four commands and not a fifth."""
