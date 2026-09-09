@@ -2,7 +2,7 @@
 
 Nothing here needs the build: `pokeldn/frlg/rom/english_names.py` is generated and committed, and
 these are the checks that say what it is allowed to claim. `tools/frlg/english_build.py` and
-`docs/frlg_english_build.md` carry the method.
+`docs/frlg_leafgreen.md` carry the method.
 """
 import os
 import sys

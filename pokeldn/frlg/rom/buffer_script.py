@@ -9,7 +9,7 @@ buffer into gDecompressionBuffer and then calls it every frame until it returns 
 
 so a payload gets r0 = &client->param, r1 = gSaveBlock2Ptr, r2 = gSaveBlock1Ptr, and whatever it
 leaves in *param comes back to us through the CLI_LOAD_TOSS_RESPONSE + CLI_SEND_LOADED return
-channel already proven by the Mystery Event VM [mg_script.py, docs/frlg_rom_mystery_event.md].
+channel already proven by the Mystery Event VM [mg_script.py, docs/frlg_rom.md].
 
 FACT: the payload is ARM, not THUMB. The console reaches it with a bx through a function pointer,
 which selects the state from bit 0 of the address, and gDecompressionBuffer is word aligned.
@@ -155,7 +155,7 @@ def describe_anchors(dump):
     lines.append(
         f"-> gDecompressionBuffer is 0x{a['code']:08X} "
         + ("(the 0x0201C000 deduction holds)" if a["code"] == 0x0201C000
-           else "(NOT the deduced 0x0201C000 - docs/frlg_rom_buffer_script.md is wrong)"))
+           else "(NOT the deduced 0x0201C000 - docs/frlg_rom.md is wrong)"))
     if a["link_send_buffer"] != a["client_send_buffer"]:
         lines.append("   WARNING: link->sendBuffer is not client->sendBuffer; "
                      "the struct offsets this project computes from r0 are wrong")
@@ -345,7 +345,7 @@ def describe_scan(dump, needle=None, start=None, end=None):
 # no such constant - its entries ARE the addresses being looked for - so this searches for a
 # RELATION instead: a run of N words each exactly D above the one before. gSpecialVars' first twelve
 # entries point at twelve consecutive u16s, so D is 2. The answer carries the run's first value
-# beside its address, so locating and reading are one run. docs/frlg_rom_buffer_script.md.
+# beside its address, so locating and reading are one run. docs/frlg_rom.md.
 TABLE_CURSOR_OFFSET = 0x04       # patched to the start address; the payload advances it
 TABLE_END_OFFSET = 0x08
 TABLE_DELTA_OFFSET = 0x0C        # what each word must exceed its predecessor by
@@ -490,7 +490,7 @@ def describe_table_scan(dump, delta=None, runlen=None, start=None, end=None):
 # It never truncates: a string that does not fit ends the run before it and `next` names where to
 # resume, because a half-copied word would be indistinguishable from a French word that short.
 # `maxlen` bounds the walk so a pointer that is not a string stops the run instead of copying until
-# it meets an 0xFF. docs/frlg_rom_buffer_script.md.
+# it meets an 0xFF. docs/frlg_rom.md.
 STRING_GATHER = "string-gather"
 GATHER_SRC_OFFSET = 0x04        # the address of the first pointer; the payload advances it
 GATHER_STRIDE_OFFSET = 0x08     # 12 for struct EasyChatWordInfo, whose `text` is at offset 0
@@ -724,7 +724,7 @@ def describe_rng_trace(dump):
 # pushes the sixteen bytes for every call; a function taking fewer never reads them.
 #
 # `watch` is what makes an answer evidence: SeedRng returns nothing at all [decomp:src/random.c:15],
-# so only reading gRngValue before and after says whether the seed took. docs/frlg_rom_buffer_script.md.
+# so only reading gRngValue before and after says whether the seed took. docs/frlg_rom.md.
 
 CALL = "call"
 CALL_FUNCTION_OFFSET = 0x04
@@ -1143,7 +1143,7 @@ def describe_call_chain(dump, steps=None):
 # The mon is always built inside our own 1024 bytes, where nothing but the payload can be hurt, and
 # read back from there. `destination` copies the finished 100 bytes on afterwards and is a live-save
 # write when it names the party, so it is guarded like build_save_write's offsets.
-# docs/frlg_rom_buffer_script.md.
+# docs/frlg_rom.md.
 CREATE_MON = "create-mon"
 CREATE_MON_FUNCTION_OFFSET = 0x04
 CREATE_MON_DESTINATION_OFFSET = 0x08

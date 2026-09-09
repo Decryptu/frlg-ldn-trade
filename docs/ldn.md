@@ -6,45 +6,67 @@ has_children: true
 
 # The wireless layer
 
-Everything below the game, and the part that does not care which game it is.
+A Nintendo Switch communicates with nearby consoles over **LDN**, Nintendo's local wireless, and
+above that over **Pia**, Nintendo's peer-to-peer session middleware. Both belong to the console
+rather than to the game, so an implementation carries from one title to the next. What changes
+above is the Pia version and what the game does with the payloads.
 
-A Nintendo Switch talks to other consoles over **LDN** - Nintendo's local wireless - and, above that,
-over **Pia**, Nintendo's peer-to-peer session middleware. Both are the console's, not the game's, so
-the work here carries from one title to the next. A Linux box that can associate with one game's LDN
-session can associate with any of them; what changes above is which Pia version is speaking and what
-the game does with it.
+## The two secrets
 
-Two secrets gate the two layers, and they are not the same secret:
-
-| layer | secret | what it does |
+| layer | secret | purpose |
 |---|---|---|
-| LDN | the title's **LDN passphrase**, 16-64 bytes | authenticates the 802.11 association |
+| LDN | the title's **LDN passphrase**, 16–64 bytes | authenticates the 802.11 association |
 | Pia | the title's **game key**, 16 bytes | derives the session key that encrypts every datagram |
 
-Confusing the two costs days. In Brilliant Diamond the passphrase is an ASCII string the game hands
-straight to `nn::ldn::CreateNetwork` and it never touches Pia's crypto
-([BDSP: the Pia layer](bdsp_pia.md)).
+They are distinct values with distinct uses. In Brilliant Diamond the passphrase is an ASCII string
+handed straight to `nn::ldn::CreateNetwork` and it never reaches Pia's crypto.
 
-## Discovery is free
+Known values:
 
-Reading an advertisement needs only `prod.keys`. No passphrase, no game key: the LDN beacon's
-payload is decrypted with console key material, so any title's session can be *seen* - its
-`local_communication_id`, `scene_id`, version, channel, accept policy, participant count and
-application data - before anything is known about the game. `tools/ldn/ldn_scan.py` does exactly that.
+| title | LDN passphrase | Pia game key |
+|---|---|---|
+| Brilliant Diamond / Shining Pearl | `WirelessStrongCryptoKey2021` (27 bytes, raw) | derived from `cryptoKeyDataSeed`; see [BDSP](bdsp_session.md) |
+| Sword / Shield | `W3GoSMEn7RIIUQ89rzqBHGhGferRNb7K18ZBq2aNuj8Us9RO9Q9JYyGOZlLy8MYL` (64 bytes, raw) | `p1frXqxmeCZWFv0X` |
 
-Association is the first thing that needs a secret, and the passphrase is used **verbatim**: the
-byte string as published, not padded and not hashed.
+The Sword/Shield passphrase is byte-for-byte the string the NintendoClients wiki lists for
+Scarlet/Violet, and differs from its Legends: Arceus row in one character (`HGhG` against `HGHG`).
 
-## The pages
+## Discovery
 
-- [The Pia layer](pia.md) - packet header formats by version, and the two families of session-key
-  derivation.
-- [JoySpot discovery](joyspot.md) - what a real Switch advertises, read off the
-  air.
+Reading an advertisement needs only `prod.keys`. The LDN beacon payload is decrypted with console
+key material, so any title's session can be seen — its `local_communication_id`, `scene_id`,
+version, channel, accept policy, participant count and application data — with nothing known about
+the game. `tools/ldn/ldn_scan.py` does this.
 
-## Per-game work lives elsewhere
+Association is the first step that needs a title secret. The passphrase is used **verbatim**: the
+byte string as published, neither padded nor hashed. `nn::pia::local::LdnBackgroundProcessJob`
+validates the length as 16–64 before use.
 
-- [FireRed and LeafGreen](frlg_link.md) - a GBA ROM inside an emulator, so there is a second link
-  layer above Pia: the GBA's own.
-- [Brilliant Diamond and Shining Pearl](bdsp.md) - a native Switch title, so Pia is the game's own
-  transport and there is nothing between it and the game logic.
+## The advertisement's application data
+
+Pia's LDN advertisement layout, as parsed from a Shining Pearl session:
+
+    +0x00  4  network id                     random per session
+    +0x04  4  CRC32 of the user password     0 when the room has no password
+    +0x08  1  system communication version
+    +0x09  1  header size                    16
+    +0x0a  2  padding
+    +0x0c  4  session parameter              random per session; seeds the Pia session key
+    +0x10     application data
+
+The network id and the session parameter both change per session. A key derivation tested against a
+capture from a different session fails on every packet with no distinguishing symptom, so the
+advertisement and the capture must be matched before the derivation is doubted.
+
+## Channels
+
+LDN allows 5 GHz channels 36/40/44/48 and a host may use them, but the FireRed/LeafGreen application
+scans 2.4 GHz only. A console re-hosting picks a new channel; read the frequency out of the kernel
+before a run rather than carrying one from a previous session:
+
+    sudo iw dev <managed iface> scan | grep -A3 <console MAC>
+
+## Pages
+
+- [The Pia layer](pia.md) — packet header formats by version, message framing, the transport
+  protocols, and the session-key derivations.

@@ -1,7 +1,7 @@
 """Locating gMysteryEventScriptCmdTable, the one table this project has only ever read from the
 decomp.
 
-The Mystery Event VM has its own 17-command interpreter [docs/frlg_rom_mystery_event.md]. Every opcode in it
+The Mystery Event VM has its own 17-command interpreter [docs/frlg_rom.md]. Every opcode in it
 has been RUN on the console, but the table itself has never been located: it carries no constant to
 search for, and its 17 entries are unrelated function addresses, so `table-scan`'s arithmetic-run
 fingerprint does not match it either.

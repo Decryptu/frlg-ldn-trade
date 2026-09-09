@@ -7,7 +7,7 @@ scripts/gen_special_names.py; the names are the decomp's own.
 The table's address needed no search: bs92 dumped ScrCmd_special and read 0x081639FC and 0x081640EC
 out of its literal pool, and 0x081640EC - 0x081639FC is 0x6F0 = 444 * 4, which is the length of
 this list. It also lands immediately after gSpecialVars (0x081639A8 + 21 * 4), which is the order
-ld_script puts them in. docs/frlg_rom_buffer_script.md.
+ld_script puts them in. docs/frlg_rom.md.
 
 MANY ENTRIES SHARE A FUNCTION. `NullFieldSpecial` appears dozens of times, so a dump of the table
 proves its own alignment: those indices must all come back with ONE address.

@@ -92,7 +92,7 @@ console, `rom_map.CALLABLE` is a call that did something, and this is neither.
 
 OFFSETS is the measurement underneath: (low, high, offset, points), French + offset = English, one
 run per region where nothing changed size. An address outside every run is not named and is not
-guessed at. docs/frlg_english_build.md.
+guessed at. docs/frlg_leafgreen.md.
 """
 
 # (low, high, offset, points) - French + offset = English, measured, never interpolated.

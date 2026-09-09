@@ -3,22 +3,21 @@
 A computer speaking Nintendo Switch local wireless (LDN) to Pokémon games running on a real
 Switch / Switch 2.
 
-Two kinds of target, sharing one wireless layer:
+Two kinds of target share one wireless layer:
 
 - **FireRed and LeafGreen** — a GBA ROM inside the Switch's emulator. Trading, Mystery Gift, Union
-  Room battles and native code on the console all work end to end on retail hardware. This is where
-  the project has gone deepest.
-- **Native Switch titles** — **Brilliant Diamond / Shining Pearl**, where a character this project
-  invented walks in a retail Union Room and the game runs its own trade flow against it, and
-  **Sword / Shield**, read but not yet spoken to: its LDN passphrase, its Pia game key and the fact
-  that its Mystery Gift menu has a local-wireless branch all come out of the cartridge. See the
-  [BDSP notes](https://decryptu.github.io/pokeldn/bdsp.html) and the
-  [Sword/Shield notes](https://decryptu.github.io/pokeldn/swsh.html).
+  Room battles and native code on the console all work end to end on retail hardware.
+- **Native Switch titles** — **Brilliant Diamond / Shining Pearl** and **Sword / Shield**. Both have
+  completed a trade with a retail console: a character this project invented walks in a BDSP Union
+  Room and the game runs its own trade flow against it, and a Sword accepted a Pokémon, gave one of
+  its own and wrote its save.
 
-The package is layered by what a module is true of, so the game-independent part is visible from
-the import line: `pokeldn.ldn` is the wireless layer every Switch title shares, `pokeldn.gba` is the
-GBA wireless adapter's protocol that a GBA title speaks on top of it, and `pokeldn.frlg` is
-FireRed/LeafGreen itself. Entry points are named for the game they drive.
+The full protocol documentation is at [decryptu.github.io/pokeldn](https://decryptu.github.io/pokeldn/).
+
+The package is layered by what a module is true of, so the game-independent part is visible from the
+import line: `pokeldn.ldn` is the wireless layer every Switch title shares, `pokeldn.gba` is the GBA
+wireless adapter's protocol that a GBA title speaks on top of it, and `pokeldn.frlg`, `pokeldn.bdsp`
+and `pokeldn.swsh` are the games. Entry points are named for the game they drive.
 
 ---
 
@@ -33,71 +32,85 @@ This demo was recorded using the **ALFA AWUS036ACHM**. The RZ616 is half as fast
 
 ## Features
 
-- End-to-end trading with a real game running on a real Switch, in both directions
-- .pk3/.ek3 input and output
+- End-to-end trading with a real game on a real Switch, in both directions
+- `.pk3` / `.ek3` input and output
 - Mystery Gift distribution: Wonder Cards with scripted deliveryman gifts, Wonder News, and a
   visiting Battle Tower trainer
 - Union Room: greetings, trading-board trades, live chat, and full link battles
 - Native code on the console through the gift link: reading and writing its save, mapping its ROM,
-  and calling its own functions. See [the documentation site](https://decryptu.github.io/pokeldn/)
-- Native Switch titles: LDN discovery and association against Brilliant Diamond / Shining Pearl, the
-  Pia 5.x packet format, and an offline toolkit for reading a retail title's own code - including
-  Sword/Shield's passphrase, game key and Pia version, read straight off a cartridge image
+  and calling its own functions
+- Native Switch titles: LDN discovery, association and a completed trade against Brilliant Diamond /
+  Shining Pearl and Sword / Shield, plus an offline toolkit for reading a retail title's own code
 
 ## Requirements
+
 - Linux
-- Python 3.11+, and a venv with requirements installed (see requirements.txt)
-- a compatible WiFi card (see below)
-- A Switch or Switch 2 with FRLG, played to the point where the Direct Corner has been unlocked (~20-40 minutes)
-- At least 2 .pk3 files to serve as simulated party members/trade fodder
-- Switch prod.keys (the default location is ``~/.switch/prod.keys``)
+- Python 3.11+, and a venv with `requirements.txt` installed
+- A compatible Wi-Fi card (see below)
+- A Switch or Switch 2 with FRLG, played to the point where the Direct Corner has been unlocked
+  (~20–40 minutes)
+- At least 2 `.pk3` files to serve as party members / trade fodder
+- Switch `prod.keys` (default location `~/.switch/prod.keys`)
 
-The required LDN implementation is included in [`vendor/LDN`](vendor/LDN).
-It is installed automatically by `pip install -r requirements.txt`; do not
-replace it with the similarly versioned PyPI `ldn` package, which does not
-contain this project's adapter compatibility fixes.
+The required LDN implementation is included in [`vendor/LDN`](vendor/LDN) and is installed
+automatically by `pip install -r requirements.txt`. Do not replace it with the similarly versioned
+PyPI `ldn` package, which does not contain this project's adapter compatibility fixes.
 
-### Tested WiFi Cards
+### Wi-Fi cards
 
-| Model            | Type           | Driver  | Reliability  |
-|------------------|----------------|---------|---------------
-| AMD RZ616        | Internal (M.2) | mt7921e | Low          |
-| ALFA AWUS036ACHM | External       | mt76x0u | High         |
-| TP-Link Archer T3U (`2357:012d`) | External | rtw88_8822bu | High |
-| Realtek RTL8821CE | Internal (PCIe 1x) | rtw88_8821ce | High |
+| model | type | driver | reliability |
+|---|---|---|---|
+| TP-Link Archer T3U (`2357:012d`) | external | `rtw88_8822bu` | high |
+| ALFA AWUS036ACHM | external | `mt76x0u` | high |
+| Realtek RTL8821CE | internal PCIe | `rtw88_8821ce` | high |
+| AMD RZ616 | internal M.2 | `mt7921e` | low |
 
-### Known Problematic WiFi Cards
+Known problematic: Intel AX200 (`iwlwifi`) and Atheros AR9271 (`ath9k_htc`) cannot be assigned an IP.
 
-| Model            | Type           | Driver  | Issue        |
-|------------------|----------------|---------|---------------
-| Intel AX200        | Internal (M.2) | iwlwifi | Unable to be assigned ip |
-| Atheros AR9271 | External       | ath9k_htc | Unable to be assigned ip (most of the time) |
+See [Adapters](docs/hardware_adapters.md) for the configuration each one needs.
+
+## Setup
+
+1. Create a Python venv and install `requirements.txt`.
+2. Keep NetworkManager away from the LDN interfaces. Marking the Wi-Fi card unmanaged is **not
+   enough**: a join creates a fresh `ldnclient` interface mid-run, NetworkManager grabs it and points
+   wpa_supplicant at it, and the join fails with `[Errno 114] Match already configured`. Install a
+   config that excludes the LDN interfaces by name:
+
+   ```
+   # /etc/NetworkManager/conf.d/zz-ldn-unmanaged.conf
+   [keyfile]
+   unmanaged-devices=interface-name:ldnclient;interface-name:ldn;interface-name:ldn-mon;interface-name:ldn-tap
+   ```
+
+   then `sudo systemctl restart NetworkManager`. Name the file `zz-*` so it sorts last: some distros
+   ship a later-sorting file that sets `unmanaged-devices=none` and silently overrides yours. Verify
+   with `NetworkManager --print-config | grep unmanaged`.
+3. Ensure you can become root. The entry points require it.
 
 ## Layout
 
 | | |
 |---|---|
-| [`bin/`](bin) | the things you run against a console. FireRed/LeafGreen: `frlg_mg_host.py` (Mystery Gift, Wonder News and native code), `frlg_mg_client.py` (receive a card from a console), `frlg_trade_host.py` (trade and Union Room host), `frlg_trade_join.py` (trade joiner). Native titles: `bdsp_join.py` (associate and take a seat), `bdsp_pia_probe.py` (hold the seat and speak Pia), `swsh_join.py` (scan for and join a Sword/Shield session) |
+| [`bin/`](bin) | what you run against a console. FireRed/LeafGreen: `frlg_mg_host.py` (Mystery Gift, Wonder News and native code), `frlg_mg_client.py` (receive a card from a console), `frlg_trade_host.py` (trade and Union Room host), `frlg_trade_join.py` (trade joiner). Native titles: `bdsp_join.py`, `bdsp_pia_probe.py`, `swsh_join.py`, `swsh_connect.py` |
 | [`tools/ldn/`](tools/ldn) | the radio, for any target: `ldn_scan.py`, `sniff.py`, `joyspot_probe.py`, `ldn_debug_report.sh` |
-| [`tools/frlg/`](tools/frlg) | reading what a FireRed console sent back, all offline: `dump_read.py` (a save dump), `script_read.py`, `rom_functions.py`, `cartridge_pair.py`, `game_data_read.py` |
-| [`tools/switch/`](tools/switch) | reading a retail Switch title's own code, all offline: `nso_read.py`, `nso_relocs.py`, `rtti_names.py`, `arm64_xref.py`, `arm64_dis.py` |
-| [`pokeldn/`](pokeldn) | the package everything above is made of, layered by what a module is true of: `ldn/` the wireless layer, `gba/` the GBA link above it, `frlg/` the game (`.link`, `.gift`, `.rom`, `.save`, `.text`) |
-| [`asm/`](asm) | ARM sources for the payloads the console runs (`scripts/gen_buffer_scripts.py` assembles them into `pokeldn/frlg/rom/buffer_payloads.py`) |
-| [`scripts/`](scripts) | setup, deployment and code generation - not things you point at a console |
+| [`tools/frlg/`](tools/frlg) | reading what a FireRed console sent back, offline: `dump_read.py`, `script_read.py`, `rom_functions.py`, `cartridge_pair.py`, `game_data_read.py`, `english_build.py` |
+| [`tools/switch/`](tools/switch) | reading a retail Switch title's own code, offline: `xci_read.py`, `romfs_read.py`, `nso_read.py`, `nso_relocs.py`, `nso_imports.py`, `rtti_names.py`, `arm64_xref.py`, `arm64_dis.py` |
+| [`pokeldn/`](pokeldn) | the package everything above is made of: `ldn/` the wireless layer, `gba/` the GBA link above it, `frlg/` `bdsp/` `swsh/` the games, `gen8.py` the entity format the two native titles share |
+| [`asm/`](asm) | ARM sources for the payloads the console runs; `scripts/gen_buffer_scripts.py` assembles them into `pokeldn/frlg/rom/buffer_payloads.py` |
+| [`scripts/`](scripts) | setup, deployment and code generation — not things you point at a console |
 | [`config/`](config) | host profiles (`host.toml`, and `host.local.toml` for this machine) |
-| [`docs/`](docs) | the protocol findings, each with its decomp citations; published at [decryptu.github.io/pokeldn](https://decryptu.github.io/pokeldn/) |
+| [`docs/`](docs) | the protocol findings, each with its citations; published at [decryptu.github.io/pokeldn](https://decryptu.github.io/pokeldn/) |
 | [`tests/`](tests) | `python -m pytest tests/ -q` |
 | [`vendor/`](vendor) | the bundled LDN implementation and the mt7601u AP-mode driver |
 
-Run the entry points from the repo root: `sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py ...`.
-They put the root on `sys.path` themselves, so they work from anywhere, but the config files and
-the default output paths are resolved relative to the working directory.
+Run the entry points from the repo root: `sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py ...`. They
+put the root on `sys.path` themselves, so they work from anywhere, but config files and default output
+paths resolve against the working directory.
 
 ## Usage
 
 ### Join a Switch-hosted trade
-
-Use the original joiner when the Switch is the Direct Corner leader:
 
 ```bash
 sudo -E ./.venv/bin/python bin/frlg_trade_join.py --live -o output.pk3 PARTY1.pk3 PARTY2.pk3
@@ -105,46 +118,53 @@ sudo -E ./.venv/bin/python bin/frlg_trade_join.py --live -o output.pk3 PARTY1.pk
 
 ### Host a Direct Corner trade
 
-Start a Direct Corner host with:
-
 ```bash
-sudo -E ./.venv/bin/python bin/frlg_trade_host.py \
-  -o output.pk3 PARTY1.pk3 PARTY2.pk3
+sudo -E ./.venv/bin/python bin/frlg_trade_host.py -o output.pk3 PARTY1.pk3 PARTY2.pk3
 ```
 
 Linux advertises the group and acts as the trade leader. With the default settings it offers the
 second supplied party member (`PARTY2.pk3`) and writes the Pokémon received from the Switch to
-`output.pk3`. Host defaults are loaded from `config/host.toml`, then optional ignored
-`config/host.local.toml`; command-line flags override both. Run
-`bin/frlg_trade_host.py --print-effective-config` to inspect the safe effective profile without root
-or Wi-Fi hardware.
+`output.pk3`. Host defaults come from `config/host.toml`, then the optional ignored
+`config/host.local.toml`; command-line flags override both.
+`bin/frlg_trade_host.py --print-effective-config` inspects the resolved profile without root or Wi-Fi
+hardware.
 
-**Optional Flags (not comprehensive):**
+Then:
 
-| Flag         | Options          | Purpose        |
-|--------------|------------------|----------------|
-| `--verbose` | N/A | Verbose protocol output |
-| `--phy` | phy name (for example `phy1`) | Wi-Fi PHY selection |
-| `--keys` | `/path/to/prod.keys` | Non-default prod.keys location |
-| `--slot` | zero-based party index | Host party member offered in the trade |
-| `--capture` | output path | Optional JSONL diagnostic capture |
-| `--config` | TOML path | Replace the tracked shared host profile |
-| `--local-config` / `--no-local-config` | TOML path / N/A | Select or disable the machine-local layer |
-| `--print-effective-config` | N/A | Print the redacted resolved profile and exit |
-| `--skip-encryption` | N/A | Delegate transmit CCMP to mac80211/hardware; traffic remains encrypted over the air |
-| `--accept-decrypted-ccmp` | N/A | Accept driver-decrypted RX plaintext with retained CCMP metadata |
-| `--ot` | Gen III trainer name | Override `DEFAULT_TRAINER.name` for this run |
-| `--version` | `firered` or `leafgreen` | Override the configured game version |
-| `--id` | decimal `TID[:SID]` | Override the trainer ID, and optionally secret ID |
+1. Run the host command and wait for `Hosting Direct Corner`.
+2. On the Switch, enter the Direct Corner and choose **Join Group**.
+3. Select the Linux trainer and join. The leader performs its room-entry route automatically; wait
+   until the host reports that trade selection is active.
+4. On the Switch, select the Pokémon to trade away and accept the confirmation.
+5. After the trade and save sequence returns to the trade menu, wait for the host prompt, then select
+   **CANCEL** and confirm **YES**.
+6. Allow the automated room exit and disconnect to finish. The received Pokémon is saved to
+   `output.pk3` (or the path passed to `--out`).
 
-The command above selects the ALFA profile. The help output is the authoritative list of supported
-options for each entry point.
+Some optional flags:
+
+| flag | options | purpose |
+|---|---|---|
+| `--verbose` | | verbose protocol output |
+| `--phy` | phy name, e.g. `phy1` | Wi-Fi PHY selection |
+| `--keys` | `/path/to/prod.keys` | non-default `prod.keys` location |
+| `--slot` | zero-based party index | host party member offered in the trade |
+| `--capture` | output path | JSONL diagnostic capture |
+| `--config` | TOML path | replace the tracked shared host profile |
+| `--local-config` / `--no-local-config` | TOML path / | select or disable the machine-local layer |
+| `--print-effective-config` | | print the redacted resolved profile and exit |
+| `--skip-encryption` | | delegate transmit CCMP to mac80211/hardware; traffic stays encrypted over the air |
+| `--accept-decrypted-ccmp` | | accept driver-decrypted RX plaintext with retained CCMP metadata |
+| `--ot` | Gen III trainer name | override the default trainer name for this run |
+| `--version` | `firered` or `leafgreen` | override the configured game version |
+| `--id` | decimal `TID[:SID]` | override the trainer ID, and optionally the secret ID |
+
+`--help` is the authoritative list for each entry point.
 
 ### Host a Union Room
 
 `--union-room` advertises on the middle NPC's path instead of the Direct Corner's, which is a
-different accept list on the console rather than a different transport. From the room the console
-can greet us, trade off the trading board, chat, or start a full link battle.
+different accept list on the console rather than a different transport.
 
 ```bash
 sudo -E ./.venv/bin/python bin/frlg_trade_host.py --union-room --union-room-keepalive 120 \
@@ -153,65 +173,19 @@ sudo -E ./.venv/bin/python bin/frlg_trade_host.py --union-room --union-room-keep
 
 The console takes about ten seconds to appear to itself as connected; that wait is the RFU library's
 and not a fault. Add `--board-type normal` to register the offered Pokémon on the trading board,
-`--union-room-chat` with `--chat-message` or `--chat-file` for chat, and `--union-room-battle
---battle-fight` for a link battle. In a battle the console elects itself master and computes
-everything, so we answer its controller commands rather than running any battle logic; it needs two
-non-egg Pokémon at level 30 or lower in its own party or it refuses on its own screen.
+`--union-room-chat` with `--chat-message` or `--chat-file` for chat, and
+`--union-room-battle --battle-fight` for a link battle. In a battle the console elects itself master
+and computes everything, so the host answers its controller commands rather than running any battle
+logic; it needs two non-egg Pokémon at level 30 or lower in its own party or it refuses on its own
+screen.
 
-See [Console protocol notes](docs/frlg_link_notes.md) for the connect sequence, the activity
-bytes, and the link buffer protocol.
-
-### Hosting Wi-Fi adapter profiles
-
-These profiles apply when Linux is hosting with `bin/frlg_trade_host.py` or `bin/frlg_mg_host.py`; they do not
-change the Switch-hosted `bin/frlg_trade_join.py` joiner.
-
-| Adapter | Linux identity | Normal host configuration |
-|---|---|---|
-| ALFA AWUS036ACHM | `mt76x0u` | Pass its explicit `--phy phyN`, plus `--skip-encryption --no-accept-decrypted-ccmp` |
-| TP-Link Archer T3U | USB `2357:012d`, `rtw88_8822bu` | The checked-in `config/host.toml` profile; no Wi-Fi flags required |
-
-For the TP-Link, use the Direct Corner command shown above. With `phy = "auto"`, its named
-adapter profile resolves only the matching `rtw88_8822bu` USB `2357:012d` device; it fails clearly
-if the adapter is missing or more than one matches. An explicit `--phy phyN` always wins.
-
-For the ALFA, select its actual PHY explicitly and override the receive compatibility mode:
-
-```bash
-sudo -E ./.venv/bin/python bin/frlg_trade_host.py --phy phyN \
-  --skip-encryption --no-accept-decrypted-ccmp \
-  -o output.pk3 PARTY1.pk3 PARTY2.pk3
-```
-
-Despite its historical name, `--skip-encryption` does not make the wireless connection plaintext.
-It skips LDN's Python CCMP step and asks mac80211/hardware to apply CCMP once. Both proven adapters
-need that transmit mode. The TP-Link's `rtw88_8822bu` monitor interface additionally reports a
-Protected frame with its CCMP header and MIC retained around already-decrypted receive data, so it
-also needs `--accept-decrypted-ccmp`. That opt-in path trusts the driver's completed decryption and
-removes the retained MIC before forwarding the plaintext to `ldn-tap`; keep it disabled for the ALFA.
-
-For an unusual adapter, pass its explicit PHY (for example, `--phy phy0`) after checking `iw dev`.
-Startup prints the detected known adapter profile, the active TX/RX modes, and a warning if its flags
-do not match the proven profile.
-
-**Setup**
-1. Create a Python venv and install all requirements in ``requirements.txt``
-2. Keep NetworkManager away from the LDN interfaces. Marking your WiFi card unmanaged is **not enough**: the join creates a fresh `ldnclient` interface mid-run, NetworkManager grabs it and points wpa_supplicant at it, and the join then fails with `[Errno 114] Match already configured`. Install a config that excludes the LDN interfaces by name:
-
-   ```
-   # /etc/NetworkManager/conf.d/zz-ldn-unmanaged.conf
-   [keyfile]
-   unmanaged-devices=interface-name:ldnclient;interface-name:ldn;interface-name:ldn-mon;interface-name:ldn-tap
-   ```
-
-   then `sudo systemctl restart NetworkManager`. Name the file `zz-*` so it sorts last: some distros (e.g. Linux Mint's `ubuntu-system-adjustments.conf`) ship a later-sorting file that sets `unmanaged-devices=none` and silently overrides yours. Verify with `NetworkManager --print-config | grep unmanaged` - it must show the `interface-name:ldn...` list. (Stopping NetworkManager entirely also works, but the config file is a one-time setup that survives reboots.)
-3. Ensure you can become root. The script requires root to run.
+See [The link protocol](docs/frlg_link.md) for the connect sequence, the activity bytes and the link
+buffer protocol.
 
 ### Trainer identity
 
-All three entry points start from `DEFAULT_TRAINER` in
-[`pokeldn/config.py`](pokeldn/config.py). Use `--ot`, `--version`, and `--id` for per-run overrides.
-The ID format is decimal `TID[:SID]`:
+All three entry points start from `DEFAULT_TRAINER` in [`pokeldn/config.py`](pokeldn/config.py). Use
+`--ot`, `--version` and `--id` for per-run overrides; the ID format is decimal `TID[:SID]`:
 
 ```bash
 # Set TID to 12345 and retain DEFAULT_TRAINER.sid
@@ -221,83 +195,53 @@ The ID format is decimal `TID[:SID]`:
 sudo -E ./.venv/bin/python bin/frlg_trade_host.py --live --id=12345:34567 PARTY1.pk3 PARTY2.pk3
 ```
 
-Each component must be between 0 and 65535. The resulting 32-bit LinkPlayer ID is encoded as
+Each component must be between 0 and 65535, and the resulting 32-bit LinkPlayer ID is
 `(SID << 16) | TID`. The resolved profile is used consistently by discovery, Pia Session, RFU game
-data, LinkPlayer, and trainer-card identity. Edit `DEFAULT_TRAINER` for gender, language, National
-Dex, or game-completion defaults that do not have CLI flags.
+data, LinkPlayer and trainer-card identity. Edit `DEFAULT_TRAINER` for gender, language, National Dex
+or game-completion defaults that have no CLI flag.
 
 ### Distribute a Mystery Gift
 
-`bin/frlg_mg_host.py` advertises on the hardware-compatible Friend path and sends a Wonder Card plus a
-delivery RAM script. The default payload is the repeatable legendary-beast cutscene; use
-`--gift celebi` for the composed level-50 Celebi card.
+`bin/frlg_mg_host.py` advertises on the Friend path and sends a Wonder Card plus a delivery RAM
+script. The default payload is the repeatable legendary-beast cutscene.
 
 ```bash
 sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py \
   --gift beast-cutscene --flag-id 1005 \
-  --capture mystery-stamps-hardware.jsonl
+  --capture mystery-gift.jsonl
 ```
-
-That command uses the checked-in TP-Link Archer T3U profile: live hosting, delegated transmit CCMP,
-and retained-CCMP receive normalization are already enabled. For the ALFA, provide its explicit
-`--phy phyN --skip-encryption --no-accept-decrypted-ccmp` overrides instead.
 
 On the Switch choose **Mystery Gift → Wonder Cards → Friend**, then select the Linux host. The save
-must already have Mystery Gift unlocked. The host accepts the same `--ot`, `--version`, and decimal
-`--id TID[:SID]` identity overrides as the trade programs; run `bin/frlg_mg_host.py --help` for all gift
-and transport options.
-
-To retain a readable audit listing of the exact Wonder Card and delivery-script
-bytes sent by a run, add `--make-artifact`. It is disabled by default and writes
-to `artifacts/`; choose another destination with `--artifact-dir DIR`:
-
-```bash
-sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py \
-  --gift worlds-xp --make-artifact --artifact-dir artifacts
-```
-
-The generated `.ram.lst` file includes raw opcode bytes, decoded field
-instructions, branch/message targets, checksums, and the source delivery-stage
-plan. Use `--no-make-artifact` to explicitly disable it in an automated command.
+must already have Mystery Gift unlocked. `--make-artifact` writes a `.ram.lst` audit listing of the
+exact card and delivery-script bytes a run sent.
 
 The beast depends on the receiving save's starter: Bulbasaur gives Suicune, Squirtle gives Entei,
-and Charmander gives Raikou. See [the legendary-beast gift guide](docs/frlg_gift_beast.md) for
-the reward sequence, binary export, and save-injection tools.
+Charmander gives Raikou. The live host also distributes the two halves of a shared Stamp Rally card
+(`--gift solrock-stamp` and `--gift lunatone-stamp`, in either order).
 
-The live host also distributes the two halves of a shared Stamp Rally card. Run it once with
-`--gift solrock-stamp` and later with `--gift lunatone-stamp` (in either order). Stamp events
-default to card flag ID `1006`; after each stamp, the deliveryman gives its level-30 Pokémon, then
-gives level-50 Celebi when both rewards have been collected. See the
-[Stamp Rally guide](docs/frlg_gift_stamp_rally.md) for state, protocol pseudocode, and hardware checks. These
-dynamic events are intentionally unavailable in the static `.bin` exporter and save injector.
-
-The composed `--gift celebi` and `--gift porygon-tm-gift` events use the shared delivery-stage
-compiler. Porygon displays a Porygon card, makes Clefairy appear three tiles to the player's right,
-and delivers TM29 Psychic followed by TM46 Thief. See the [Porygon TM Gift
-guide](docs/frlg_gift_porygon.md) for live, export, injection, and test commands.
+See [Mystery Gift](docs/frlg_gift.md) for the protocol flow, the gift catalogue, the authoring system,
+and why the Switch requires the Friend path rather than Wireless Communication.
 
 ### Distribute Wonder News
 
-The console's Mystery Gift menu has a second column, and `--news` serves it. Wonder News is 444
-bytes of title and body with no flag ID, no delivery script and no gift attached: the reward is a
-BERRY from the man in the house in Cerulean City. On the Switch choose **Mystery Gift → Wonder News
-→ Friend** - a Wonder Card host is not listed on that screen, and vice versa.
+The console's Mystery Gift menu has a second column, and `--news` serves it. Wonder News is 444 bytes
+of title and body with no flag ID, no delivery script and no gift attached: the reward is a berry from
+the man in the house in Cerulean City. On the Switch choose **Mystery Gift → Wonder News → Friend** — a
+Wonder Card host is not listed on that screen, and vice versa.
 
 ```bash
 sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py --news
 sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py --news berry --news-id 7
 ```
 
-A console keeps news only when it differs from what it already holds, so re-sending the identical
-text is a deliberate no-op; `--news-id N` changes one field and makes the same text land again. See
-[the Wonder News guide](docs/frlg_gift_wonder_news.md) for the struct, the advertisement change it needs, and
-the one place where the console answers the host back.
+A console keeps news only when it differs from what it already holds, so re-sending identical text is
+a deliberate no-op; `--news-id N` makes the same text land again.
 
 ### Read the console's save
 
 A Mystery Gift session can run native ARM code on the console, which is enough to read its live save
-back. That covers the two things the game never shows you: the **secret ID**, and every party
-Pokémon's PID, IVs and nature.
+back — including the two things the game never shows you, the **secret ID** and every party Pokémon's
+PID, IVs and nature.
 
 ```bash
 sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py \
@@ -307,46 +251,15 @@ sudo -E ./.venv/bin/python -u bin/frlg_mg_host.py \
 ```
 
 The console stays on its Mystery Gift menu, nothing is written and no Wonder Card changes hands. See
-[Reading the save](docs/frlg_rom_save.md) for the party dump, the gotchas, and what else the same
-payload reaches; [Native code on the console](docs/frlg_rom_buffer_script.md) has the mechanism and the other
-payloads built on it.
+[Code on the console](docs/frlg_rom.md) for the mechanism and the other payloads.
 
-See [the Mystery Gift distributor guide](docs/frlg_gift_distributor.md) for the protocol flow, payload,
-test commands, and why the Switch requires the Friend path rather than Wireless Communication.
-New events can be assembled from validated delivery stages, rewards, messages, sprites, battles,
-and up to six stamp slots; see the [composable gift authoring guide](docs/frlg_gift_composer.md).
-
-### Hosting diagnostics
-
-- `tools/ldn/ldn_scan.py` prints discoverable LDN networks and decoded FRLG application data.
-- `tools/ldn/sniff.py` captures advertisement and management traffic from a monitor-capable radio.
-- `tools/ldn/ldn_debug_report.sh` records local radio, interface, route, and NetworkManager state for debugging.
-- `bin/frlg_trade_host.py --capture FILE` writes the host protocol trace as JSONL.
-- `bin/frlg_mg_host.py --capture FILE` writes the Mystery Gift host trace as JSONL.
-
-See [the host design document](docs/frlg_link_trade_host.md) for the component boundaries, protocol
-flow, timing ownership, trainer propagation, and shutdown sequence.
-
-**Step-by-step Usage**
-
-1. Run the host command and wait for `Hosting Direct Corner`.
-2. On the Switch, enter the Direct Corner and choose **Join Group**.
-3. Select the Linux trainer (`EMU` by default) and join. The Linux leader performs its room-entry
-   route automatically; wait until the host reports that trade selection is active.
-4. On the Switch, select the Pokémon to trade away and accept the confirmation. With the example
-   command, the Switch receives `PARTY2.pk3`.
-5. After the trade and save sequence returns to the trade menu, wait for the host prompt, then select
-   **CANCEL** and confirm **YES**.
-6. Allow the automated room exit and disconnect to finish. The received Pokémon is saved as
-   `output.pk3` (or the path passed to `--out`).
-
-### Native Switch titles: join a Brilliant Diamond / Shining Pearl session
+### Native Switch titles
 
 Discovery needs only `prod.keys`; association additionally needs the title's LDN passphrase, which
-`bin/bdsp_join.py` already carries for BDSP.
+`bin/bdsp_join.py` and `bin/swsh_join.py` already carry.
 
-On the console: any Pokémon Center → 2F → the left attendant → the plain "yes" (not the password or
-group option), and wait in the Union Room. Then:
+**Brilliant Diamond / Shining Pearl.** On the console: any Pokémon Center → 2F → the left attendant →
+the plain "yes" (not the password or group option), then wait in the Union Room.
 
 ```bash
 # see the session without joining it
@@ -357,37 +270,37 @@ sudo -E ./.venv/bin/python bin/bdsp_join.py --channels 6 --hold 90
 ```
 
 A successful join prints the participant table with the console as participant 0 and this machine as
-participant 1, each with an IP the console assigned. **Nothing happens on the console's screen, and
-that is expected** — LDN association is below the game, so the game has not seen the joiner.
+participant 1. **Nothing happens on the console's screen, and that is expected** — LDN association is
+below the game.
 
-`bin/bdsp_pia_probe.py` holds the seat and sends Pia datagrams on UDP 12345. The console currently
-ignores unauthenticated Pia; see the docs for what is known about its session key and what is still
-missing.
-
-### Native Switch titles: scan a Sword / Shield session
-
-Sword/Shield's passphrase is read out of the game rather than taken from a table, and
-`bin/swsh_join.py` carries it. Its local communication id is **not** known yet - the game fills it
-at runtime - so the first run is a scan that reports every network on the air:
+**Sword / Shield.** Its local communication id is filled at runtime, so the first run is a scan:
 
 ```bash
 # on the console: Y-Comm -> Link Trade over LOCAL communication, which puts it on the air
 sudo -E ./.venv/bin/python bin/swsh_join.py --scan-only
 ```
 
-Point the first scan at a screen where the console **hosts**. On the Mystery Gift local-wireless
-screen it looks like a receiver — the game's own text there is "Recherche de cadeau en cours…" and
-"Aucun cadeau n'a été trouvé" — so it is scanning and has nothing to advertise. The comm id is per
-application, so the id read off any local-wireless feature is the one the gift path uses.
+Point the scan at a screen where the console **hosts**. On the Mystery Gift local-wireless screen it
+is a receiver searching and has nothing to advertise. Everything each advertisement carries is written
+to `scratchpad/swsh_net_facts.json`; once the id is known, `--comm-id <hex>` joins it.
 
-Everything each advertisement carries is written to `scratchpad/swsh_net_facts.json`. Once the id is
-known, `--comm-id <hex>` joins it. Above LDN there is nothing yet: Sword/Shield's Pia header carries
-version **4**, and this repository implements 6.32+ and 5.27-5.45 - see
-[the Sword/Shield notes](https://decryptu.github.io/pokeldn/swsh.html).
+### Diagnostics
+
+- `tools/ldn/ldn_scan.py` prints discoverable LDN networks and decoded FRLG application data.
+- `tools/ldn/sniff.py` captures advertisement and management traffic from a monitor-capable radio.
+- `tools/ldn/ldn_debug_report.sh` records local radio, interface, route and NetworkManager state.
+- `--capture FILE` on either host writes the protocol trace as JSONL.
+
+See [Host implementation](docs/frlg_host.md) for the component boundaries, protocol flow, timing
+ownership and shutdown sequence.
 
 ## Credits
-- [kinnay](https://github.com/kinnay) - For the [LDN library](https://github.com/kinnay/LDN) this is built upon, and the excellent [NintendoClients Wiki](https://github.com/kinnay/NintendoClients/wiki)
-- [pokefirered](https://github.com/pret/pokefirered) - A full decompilation of FireRed/LeafGreen, including the Switch port. It served as an important reference.
+
+- [kinnay](https://github.com/kinnay) — for the [LDN library](https://github.com/kinnay/LDN) this is
+  built upon, and the [NintendoClients wiki](https://github.com/kinnay/NintendoClients/wiki)
+- [pokefirered](https://github.com/pret/pokefirered) — a full decompilation of FireRed/LeafGreen,
+  including the Switch port
 
 ## License
+
 AGPLv3

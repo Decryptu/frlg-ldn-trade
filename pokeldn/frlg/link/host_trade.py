@@ -125,7 +125,7 @@ ENTRY_LEFT_CHAIR_ROUTE = (
 # waits on where our avatar stands: GetCableClubPartnersReady is AreAllPlayersInLinkState(READY)
 # alone [decomp:src/overworld.c:2989], and the spot trigger each console steps on is its own
 # [BattleColosseum_2P_EventScript_PlayerSpot0]. So the walk is dropped and only the key that gates
-# the seat is kept, after the same settling idle. See docs/frlg_link_notes.md.
+# the seat is kept, after the same settling idle. See docs/frlg_link.md.
 COLOSSEUM_SPOT_ROUTE = (
     (LINK_KEY_EMPTY, 43),
     (LINK_KEY_READY, 1),

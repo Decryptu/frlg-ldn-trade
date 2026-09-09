@@ -10,7 +10,7 @@ BYTE ORDER IS MIXED, and it is the trap here. The Pia message header around thes
 inside them is BIG-endian again. Each of the three is what the captured session reads back with.
 
 Read against a real Shining Pearl session (session 45) and the NintendoClients wiki's
-"Local Protocol" page. docs/bdsp_pia.md "What the console is saying".
+"Local Protocol" page. docs/bdsp_session.md "What the console is saying".
 """
 
 import struct

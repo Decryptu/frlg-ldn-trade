@@ -1406,7 +1406,7 @@ def build_seed_read_script(*, address=None, var_address=None, lines=SEED_READ_DE
 # `ScrCmd_delay` yields and resumes after an exact number of frames [decomp:src/scrcmd.c:651], so a
 # script that reads gRngValue, delays N frames and reads it again measures turns-per-frame with no
 # clock in it: lcg.distance gives the numerator exactly and N is the denominator exactly. Every
-# earlier attempt divided by a hand-timed elapsed, and one of them was circular. docs/frlg_rom_rng.md.
+# earlier attempt divided by a hand-timed elapsed, and one of them was circular. docs/frlg_rng.md.
 RATE_PROBE_DEFAULT_FRAMES = 600         # ~10 s at 59.7275 Hz; the seconds are commentary, not data
 
 RATE_PROBE_DEFAULT_LINES = ("FIRST HI {STR_VAR_2}\n"

@@ -1,110 +1,67 @@
 ---
 title: Sword and Shield
-nav_order: 5
+nav_order: 6
 has_children: true
 ---
 
 # Sword and Shield
 
-The second **native** Switch title this project has read, and the first one whose Mystery Gift
-menu has a local-wireless branch - the same shape of target as FireRed's Wonder Card, one
-generation of hardware later.
+Pokemon Sword and Shield are native Switch titles. Pia is the game's own transport and the game's
+code sits directly on it, written in C++ with protocol-buffer messages above a generic
+publish/subscribe framework.
 
-Measured on a **Shield 1.3.2 EUR cartridge image** (`01008db008c2c000`, update NCA, SDK 7.7.0.0),
-against a **French Sword 1.3.2** on the console. The two builds share their network code; where a
-finding could differ between the pair it says so.
+The static reading is taken from a **Shield 1.3.2 EUR** cartridge image (`01008db008c2c000`, update
+NCA, SDK 7.7.0.0). Hardware measurements are against a **French Sword 1.3.2**. The two builds share
+their network code; where a finding differs between the pair it is marked.
 
-The reading is split by layer, and each page below is self-contained:
+**A retail Sword has completed a trade with pokeldn**: it accepted a Pokemon, gave one of its own,
+wrote its save and returned the player to the overworld.
 
-| page | what |
+## Pages
+
+| page | contents |
 |---|---|
-| [The cartridge and its keys](swsh_cartridge.md) | what the title is made of, the passphrase, the Pia game key, opening the image |
-| [Taking a seat in a Sword mesh](swsh_session.md) | Pia 4, the association, and the first application data |
-| [The party and the PK8](swsh_pokemon.md) | the party on 0x84 and the record inside it |
-| [The trade](swsh_trade.md) | three pages: the screen, the content framework, the confirmation ladder |
-| [Mystery Gift on Sword](swsh_gift.md) | the local branch of the Mystery Gift menu |
+| [The cartridge and the session](swsh_session.md) | what the title is built from, the LDN passphrase and Pia game key, reading the image, Pia 4, and the association through to the first application data |
+| [The sync framework](swsh_protocol.md) | message ids, contents and holders, the routing path from the radio to a handler, and the party payload |
+| [Trading](swsh_trade.md) | the trade screen, the box state machine, and the confirmation ladder |
+| [Mystery Gift](swsh_gift.md) | the local-wireless branch of the Mystery Gift menu |
 
-## What this project has measured, and what it has borrowed
+## What is measured and what is borrowed
 
-FACT, sw70's own capture (`scratchpad/sw_app_payloads.py` walks it): the console sent **five
-distinct application payloads and no others** across the whole run -
+Every message id, structure offset and address on these pages is read out of Shield's `main` or
+measured on the air, except where a section names an external client.
 
-    0x7C  id 97     0a00        ping            x20
-    0x7C  id 97     1200        pingReply        x2
-    0x7C  id 97     1a00        pingSynced       x3
-    0x7C  id 60000  0a00        result{}         x2
-    0x80  id 60000  12020801    imReady{true}    x2
+`pokeldn/swsh/trade.py` carries `SYNC_ANSWERS`, a table of what to answer for sync holders this
+project has not exercised. It is `andyjusa/nxldn-lab`'s reading of a console-to-console capture,
+reproduced with its source named. Its ids for messages 97 and 60000 agree with pokeldn's own capture
+byte for byte.
 
-Those five are ours. **Everything past the trade snapshot is not.** `pokeldn/swsh/trade.py` carries
-`SYNC_ANSWERS`, a table of what to answer for the other sync holders, and it is `nxldn-lab`'s
-reading of a console-to-console capture, reproduced with its source named. Its ids are real and its
-bytes for 97 and 60000 agree with ours exactly, which is the only part of it we can check.
+Four published clients read this game's LAN mode and were found by searching its Pia game key:
+`kwsch/PokePiaSWSH`, `lincoln-lm/swsh-lan-client`, `andyjusa/nxldn-lab` and `Slashcash/PSD`. They
+share the payload layouts from the Pia station handshake upward; the LDN link layer below is not
+covered by any of them, and none of them handles Pia host migration.
 
-**THE MEASUREMENT THAT MAKES IT OURS COSTS NO EXTRA ASSOCIATION.** `bin/swsh_connect.py
---sync-answers` answers the table where it has a rule and keeps sw68/sw70's proven per-protocol
-echo everywhere else, and it PRINTS every distinct payload it has no rule for. The console names
-its own ids; the run is what asks it to.
+## Unresolved
 
-Against sw70 that changes exactly two things: the first thing we say to `ping` becomes `pingReply`
-rather than an echo, and `pingSynced` gains a `result{}` behind it. Nothing else about the run
-moves, which is what one variable means here.
-
-## Open questions
-
-- ANSWERED, sw68/sw70, and it is the point of the project's next step. **What the game says once
-  it is answered**: it walks ping -> pingReply -> pingSynced, asks for `result{}` on 0x7C and
-  `imReady` on 0x80, and then sends its own party on 0x84. See the two sections above.
-- ANSWERED, session 64, offline. **What the confirmation content accepts.** Content 40's
-  10000-base holder takes `SyncSaveDataHolder{syncCommand{data:int32}}` and nothing else, its
-  handler `0x010dbc90` has content 50's station-index gate and its own two-slot limit, and its state
-  machine sends 0, 1, 2 and 3 as a handshake. See "The confirmation content takes a command, not a
-  Pokemon". **PARTLY ANSWERED ON HARDWARE, sx52e/sx53**: command 0 reaches the receive event, and
-  with the pair re-armed the console climbs a ladder rather than stalling - see "The confirmation
-  content answers, and it climbs". **ANSWERED IN THE BINARY, session 65: each rung does want the
-  next command.** The state field `delegate+0x5c` has three writers and only one is outside the
-  machine - a phase-to-state map whose only caller is the pump - and a command announces the phase
-  that unlocks the command after it. See "The ladder is a barrier, and every rung needs a command".
-  What is still NOT known is what advances the content's phase `+0x17c`; `--confirm-commands
-  0,1,2,3` is built, tested and has never been on the air.
-- **Sending a party back.** Nothing of ours has ever been on 0x84. `pokemon_trade.proto` (package
-  `net_contents.trade.common.pokemon_trade.protocol_buffers`) is `Pokemon { bytes
-  serializePokemonParam }` and `PokemonTradeDataHolder { Pokemon pokemon }`, so a trade message is a
-  serialised PK8 inside one protobuf field. `pokeldn/swsh/pokemon.py` builds and encrypts one;
-  `build_from` edits a record the console itself sent, so every byte we have never read stays a real
-  byte from a real save. What is NOT known is which message id carries it, and on which protocol.
-- **The trailer of the 0x84 payload.** Six 24-byte records at 0xA00 and a raw-deflate stream at
-  0xAF9 that carries the trainer name a third time. Nothing in the schemas has been matched to
-  either yet, and the nine bytes that move between runs are all inside the deflate.
-- **The two unnamed header fields**, the byte at 0x05 and the halfword at 0x06. What writes them is
-  `0x017beb74`/`0x017beb78`; what they mean is a deduction until a capture agrees.
-- ANSWERED, sw01. **What seeds the session key** is the advertisement's session parameter, twelve
-  bytes in, little-endian - BDSP's offset exactly. The code at `0x0179bff0` -> `0x01774f40` computes
-  a seed a different way (AES-GCM over the session's own two 64-bit values, keyed by them), so
-  reading that path is what to do if a session ever turns up whose key this does not derive; for a
-  console hosting a local trade, the advertisement is enough.
-- ANSWERED, sw01. **The local communication id** is `0x0100ABF008968000` and the version is 4, scene
-  60001, app version 7, read off the advertisement. That id is **Sword's**, and the binary this
-  project reads is Shield - the first place the pair are known to differ.
-- **What `StateReceiveLocal` actually sends**, and whether the console hosts or scans on that
-  screen. A scan answers the second half in one run.
+- **The two unnamed Pia header fields**, the byte at 0x05 and the halfword at 0x06. Written by
+  `0x017beb74`/`0x017beb78`; both were zero in every packet captured.
+- **The 660-byte tail of the 0x84 party payload** at offset 0xAEC. No published client names it
+  either. Three bytes of it change between runs, one per 17-byte record in a run of three otherwise
+  identical ones; within a run the byte decrements by one down the three. Two captures 19 minutes
+  apart differ by 19 in that byte, which is consistent with a minute counter and rests on one data
+  point.
+- **What `StateReceiveLocal` speaks**, and whether the console hosts or scans on the Mystery Gift
+  local-wireless screen.
+- **How a partner's command reaches a sub-element's body word.** The receive handler `0x010dbc90`
+  does not write it; that a command arriving is what lets the shared value move is inferred from a
+  per-station flag and from every run so far.
+- **The elementId-10000 hash inputs.** The formula is read (a CRC-32 quorum over the sub-elements'
+  clocks); an inversion search over every clock in the observed window finds no two-station solution,
+  so either the channel's list holds more than two stations or the hashed clock is not the envelope
+  clock. Recorded so the search is not repeated.
 - **Sword against Shield.** Everything read off the binary is Shield's; the console is Sword. The
-  passphrase, the game key and the Pia version are now measured to hold across the pair - they
-  associated and decrypted - and the local communication id is measured NOT to. Mystery Gift's
-  states are still Shield-only readings.
-- ANSWERED, session 56, offline. **The message header's presence bits.** Bit 0x10 owns the extra
-  eight-byte field and bits 0x20/0x40 own nothing, read off the size arithmetic the library inlines
-  at eighteen sites (`docs/pia.md` "Which presence bit owns which field"). No second message shape
-  was needed - the capture could not have separated them, and the code states it outright.
-- ANSWERED, sw02/sw03. **What protocol 0x24 is**: Pia's Local Protocol, BDSP's numbering exactly,
-  and the console acts on what we send it there.
-- ANSWERED, sw20/sw21/sw24. **The Mesh Station Protocol (0x14) request.** Version 4 puts a flag
-  byte at [3] and every field after it moves; clearing it is what got a request answered, and the
-  console then completed the handshake and accepted us as a station. `docs/pia.md` "The version-4
-  Mesh Station Protocol" and `pokeldn/ldn/station4.py`. The loop at `0x0185c5c0` reads a 32-entry
-  table of `{u8, u16be, u64be, u64be}` = 19 bytes each and is a station table, not the request.
-- ANSWERED, session 57, offline. **The Mesh Protocol (0x18) join.** Its dispatcher is `0x017c0c80`
-  off `MeshProtocol::vfunc9`, its message table is BDSP's without 0x22 and 0x23, its join-request
-  handler (`0x017c1700`) checks the same six bytes we already send, and its join-response parser
-  (`0x017b4830`) has the same sixteen-byte header over **64-byte** entries with the index at 0x3E.
-  `docs/pia.md` "The version-4 Mesh Protocol". SENT AND ANSWERED at sw29: one request, one
-  acceptance, `our_index` 1, and the console then opened seven protocols at us.
+  passphrase, the game key and the Pia version hold across the pair. The local communication id does
+  not: `0x0100ABF008968000` is Sword's. Mystery Gift's state names are Shield-only readings.
+- **A third sub-element kind takes two-byte bodies** (`0x006d69f0`, `cmp x2,#2`). Which element field
+  carries it is unknown; the confirmation element's update touches only `+0xd0`, `+0xf0` and `+0x110`
+  and all three are accounted for.

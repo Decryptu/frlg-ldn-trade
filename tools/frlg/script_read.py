@@ -24,7 +24,7 @@ passes its arguments through VarGet [decomp:src/event_data.c:235].
 The last section is the useful one. Following the jumps finds every address these scripts reach for,
 and the ones this dump does not hold are printed as ready-made `--dump-address` lines, biggest catch
 first. A dump aimed there is asked for by the console's own scripts rather than guessed at, and
-several unknowns usually share one 1 KB window. docs/frlg_rom_buffer_script.md.
+several unknowns usually share one 1 KB window. docs/frlg_rom.md.
 """
 import argparse
 import gzip

@@ -5,8 +5,8 @@ of the cartridge header in bs07. The pret decomp's `firered_switch` target is GA
 matches the ENGLISH rev-10 ROM, so its addresses are never assumed here. A symbol that has not been
 read off the console does not belong in this file, and every entry carries the run that measured it.
 
-How each address was obtained is in docs/frlg_rom_buffer_script.md (the payloads and the runs),
-docs/frlg_rom_species_table.md (gSpeciesInfo and CreateMon) and docs/frlg_leafgreen.md (the second cartridge).
+How each address was obtained is in docs/frlg_rom.md (the payloads and the runs),
+docs/frlg_rom_map.md (gSpeciesInfo and CreateMon) and docs/frlg_leafgreen.md (the second cartridge).
 """
 
 GAME_CODE = b"BPRF"          # B-PR-F: Pokemon FireRed, French
@@ -68,7 +68,7 @@ G_SPECIAL_VARS = 0x081639A8         # u16 *const gSpecialVars[21], by var id
 # DERIVED, no run of its own: `script_data` opens with gScriptCmdTable and puts gSpecialVars
 # immediately after it [decomp:ld_script_rev10.ld:318], and the table is 214 entries of 4 bytes.
 # One dump of it names every field-script command's handler on this build; pokeldn/frlg/rom/scrcmd_names.py
-# carries the order. docs/frlg_rom_buffer_script.md.
+# carries the order. docs/frlg_rom.md.
 G_SCRIPT_CMD_TABLE = G_SPECIAL_VARS - 214 * 4       # 0x08163650
 
 # --- gSpecials, bs92 ----------------------------------------------------------------------------
@@ -386,7 +386,7 @@ DECOMP_NAMES = {
 }
 
 # NOT CALLABLE FROM A BUFFER SCRIPT. These run inside the Mystery Gift menu, where there is no
-# overworld to warp: they belong to a FIELD stub, which runs from the field engine. docs/frlg_rom_rng.md
+# overworld to warp: they belong to a FIELD stub, which runs from the field engine. docs/frlg_rng.md
 # has how a stub is staged.
 
 # --- what the two cartridges share, lg184-lg189, carried up in session 42 -----------------------
@@ -447,7 +447,7 @@ GPLAYER_PARTY_COUNT = 0x02024025    # u8
 GENEMY_PARTY = 0x02024028           # struct Pokemon[6], 600 bytes below gPlayerParty
 
 # The seed every random outcome in the game comes out of. Read out of Random's and SeedRng's literal
-# pools (bs14) and confirmed by its own recurrence (bs15). docs/frlg_rom_rng.md.
+# pools (bs14) and confirmed by its own recurrence (bs15). docs/frlg_rng.md.
 GRNG_VALUE = 0x03004220
 GAME_RANDOM_CALLS_PER_FRAME_AT_MG_MENU = 2
 
@@ -538,7 +538,7 @@ LEAFGREEN_DELTA_SEGMENTS = (
     # other directly: if the delta is d the LeafGreen block holds the FireRed block shifted by d,
     # and any |d| under a kilobyte leaves hundreds of bytes of overlap. No needle, no symbol, and no
     # guess about where the twin is - which is what a bisection cannot do when the delta IS the
-    # unknown. docs/frlg_english_build.md.
+    # unknown. docs/frlg_leafgreen.md.
     (0x08000000, 0x0807CF68, 0x00, "bs127/lg193 block 0 read delta 0 to its last window; "
      "lg176b/bs68b, lg184-lg187 and session 42's 1225 paired call sites below it"),
     (0x0807D1EC, 0x080DE2E4, -0x2C, "bs128/lg194 at 0x0807D000 and bs127/lg193 at 0x080DE000, both "
@@ -623,7 +623,7 @@ LEAFGREEN_DELTA_BOUNDARIES = (
     # DIVERGENT REGION itself - the version-specific code inside one object, where the two builds
     # hold different bytes and no delta describes anything. The span below is that region, measured
     # as the last window that still matches at the old delta and the first that matches at the new.
-    # The English build brackets the same five independently (docs/frlg_english_build.md) and lands
+    # The English build brackets the same five independently (docs/frlg_leafgreen.md) and lands
     # inside every one of them, which is five agreements between two methods that share nothing.
     (0x00, -0x2C, 0x0807CF68, 0x0807D1EC, "bs127/lg193 block 0 and bs128/lg194 at 0x0807D000; "
      "644 bytes, inside title_screen.o's version-specific code. Was 8.8 KB"),

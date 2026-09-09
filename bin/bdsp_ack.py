@@ -32,7 +32,7 @@ broadcasts its ack the way the host broadcasts the question, or unicasts it to t
 host's variable id in the packet header. Each phase is timestamped and the rebroadcast either
 stops during one of them or it does not, so a single run separates them.
 
-docs/bdsp_pia.md, NOTES.local.md sp24. Never pass --verbose to a live run; use --capture.
+docs/bdsp_session.md, NOTES.local.md sp24. Never pass --verbose to a live run; use --capture.
 """
 import argparse, json, os, socket, struct, sys, time
 

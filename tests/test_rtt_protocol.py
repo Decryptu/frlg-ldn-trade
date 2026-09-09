@@ -1,7 +1,7 @@
 """Pia's RTT Protocol (0x58) - the thirteen bytes the mesh times a station with.
 
 There is no wiki page for this one, so every field is read off BDSP's own ARM64 and then checked
-against the thirteen messages sp35 captured. `docs/bdsp_pia.md` "The RTT protocol".
+against the thirteen messages sp35 captured. `docs/bdsp_session.md` "The RTT protocol".
 """
 
 import struct

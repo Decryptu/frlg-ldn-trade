@@ -950,7 +950,7 @@ MEVENT_SWEEP_FLAG_ID = 1005
 #
 # The two description pointers are the console's own, read off it at bs59: struct Berry2 keeps them
 # in the SAVE for ever and the Berry Pouch dereferences them, so an invented pointer would render
-# garbage on every future look at the berry. docs/frlg_gift_untried.md.
+# garbage on every future look at the berry. docs/frlg_gift.md.
 MEVENT_SWEEP_BERRY_DESC1 = 0x083D5CE8       # bs59, off the cartridge
 MEVENT_SWEEP_BERRY_DESC2 = 0x083D5CF8
 MEVENT_SWEEP_RARE_WORD = 0
@@ -1021,7 +1021,7 @@ RNG_SHINY_HUNT_FLAG_ID = 1012
 # link, because the title screen reseeds) or read one back for a human to count frames against.
 # This one stages 80 bytes of THUMB into gDecompressionBuffer with `setptr` and runs them with
 # `callnative`, so the search happens on the console, in the overworld, at the encounter itself.
-# docs/frlg_rom_rng.md; REFERENCES.local.md has where the technique came from.
+# docs/frlg_rng.md; REFERENCES.local.md has where the technique came from.
 #
 # Ditto at 50, the drill mev07 already used. Nothing needs catching: shininess shows the instant
 # the battle starts.
@@ -1078,7 +1078,7 @@ RNG_MON_HUNT_FLAG_ID = 1019
 # is IV index 3, the seam where the two draw words are packed together. A shiny with the wrong
 # nature still looks like a success on screen, so the check is a party dump rather than the battle -
 # which is why the species is a level 5 Magikarp: catch rate 255 and low HP, one Ultra Ball. Neither
-# the species nor the level is drawn from the RNG. docs/frlg_rom_rng.md.
+# the species nor the level is drawn from the RNG. docs/frlg_rng.md.
 RNG_MON_HUNT_SPECIES = 129              # SPECIES_MAGIKARP
 RNG_MON_HUNT_LEVEL = 5
 RNG_MON_HUNT_NATURE = 13                # NATURE_JOLLY [rng_countdown.NATURE_NAMES]
@@ -1154,7 +1154,7 @@ RNG_MON_HUNT_FAR_FLAG_ID = 1000
 # 755 payload bytes instead of 162, and the card uses every one: a 196-byte stub plus 559 bytes of
 # non-zero filler whose sum the stub checks before it will search. That is what makes it a
 # measurement - a short delivery sums low and the stub leaves gRngValue alone, so an ordinary
-# Magikarp means the tail did not arrive. docs/frlg_rom_rng.md.
+# Magikarp means the tail did not arrive. docs/frlg_rng.md.
 RNG_MON_HUNT_FAR_FILLER = "the far end of the body, summed before the search will run"
 
 
@@ -1228,7 +1228,7 @@ RNG_MON_HUNT_BOTH_FLAG_ID = 1001
 # squared, so 1 state in 1,456,000 rather than 546,000, about 4 s of frozen overworld typically. The
 # cap is 95% rather than 99% deliberately [native_script.BOTH_CONFIDENCE]: the script ends in `end`,
 # so a miss costs one more A press while a longer cap costs the stare. 232 bytes of stub, against
-# the 162 `setptr` could stage. docs/frlg_rom_rng.md.
+# the 162 `setptr` could stage. docs/frlg_rng.md.
 
 def build_rng_mon_hunt_both_script(criteria=None, *, species=None, level=None, cap=None,
                                    max_freeze_frames=native_script.MAX_FREEZE_FRAMES,
@@ -1355,7 +1355,7 @@ RNG_DRAW_COUNT_FLAG_ID = 1018
 
 # Ditto at 50, the same mon mev07 put in front of the player, so the drill is familiar. The species
 # is not the point and nothing needs catching: the answer is the two numbers printed BEFORE the
-# battle starts. Method 1 predicts a distance of 4; docs/frlg_rom_rng.md's unexplained stray draw, if it is
+# battle starts. Method 1 predicts a distance of 4; docs/frlg_rng.md's unexplained stray draw, if it is
 # in this path, shows up as 5 or 6.
 RNG_DRAW_COUNT_SPECIES = 132
 RNG_DRAW_COUNT_LEVEL = 50

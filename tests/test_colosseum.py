@@ -1,7 +1,7 @@
 """The cable-club colosseum host: the advertisement, the extra LinkPlayer record, the battle.
 
 Every assertion here is a decomp fact; see pokeldn/frlg/link/cable_club.py and
-docs/frlg_gift_untried.md. NOTHING here is hardware-proven yet: no run has advertised
+docs/frlg_gift.md. NOTHING here is hardware-proven yet: no run has advertised
 ACTIVITY_BATTLE_SINGLE.
 """
 

@@ -61,7 +61,7 @@ sequence of its own - and the lowest id it is still waiting on; then the payload
 is **0** and whose entry acknowledges `ack_id = highest received + 1` with the halfword before the
 mask holding `ack_id - 1`. That is the reply to two application messages of ours, sequence 0 and 1.
 
-`docs/bdsp_pia.md` "The reliable protocol".
+`docs/bdsp_session.md` "The reliable protocol".
 """
 
 import struct

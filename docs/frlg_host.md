@@ -1,19 +1,19 @@
 ---
-title: Trade-host design
-parent: The link protocol
-grand_parent: FireRed and LeafGreen
-nav_order: 2
+title: Host implementation
+parent: FireRed and LeafGreen
+nav_order: 7
 ---
 
-# FRLG trade-host design
+# Host implementation
 
-`bin/frlg_trade_host.py` makes Linux the FireRed/LeafGreen Direct Corner leader. A single Switch joins
-the Linux LDN network, Pia establishes the peer session, and Reliable carries an emulated parent
-RFU link whose game-level endpoint is the leader-side trade state machine.
+`bin/frlg_trade_host.py` makes Linux the FireRed/LeafGreen Direct Corner leader. A Switch joins the
+Linux LDN network, Pia establishes the peer session, and Reliable carries an emulated parent RFU link
+whose game-level endpoint is the leader-side trade state machine. `bin/frlg_mg_host.py` reuses
+everything below the activity.
 
-The implementation deliberately keeps the live-tested protocol bytes, message order, retry cadence,
-VBlank timing, and disconnect grace period in the layer that owns them. The seams described here
-are architectural boundaries, not extra buffering or protocol translation.
+The live-tested protocol bytes, message order, retry cadence, VBlank timing and disconnect grace
+period live in the layer that owns them. The seams below are architectural boundaries, not extra
+buffering or protocol translation.
 
 ## Components and ownership
 
@@ -34,19 +34,20 @@ flowchart TD
 - `TradeRunConfig` is immutable shared run configuration. It composes `TrainerProfile`, `TradePlan`,
   `LdnConfig`, and role-specific `HostOptions` or `JoinerOptions` rather than mixing unrelated
   settings in an argument namespace.
-- `HostApplication` owns resource ordering: input validation, transport startup, beacon injection,
-  the event loop, interruption handling, and cleanup. Narrow activity hooks supply startup/progress/
+- `HostApplication` owns resource ordering: input validation, transport startup, beacon injection, the
+  event loop, interruption handling and cleanup. Narrow activity hooks supply startup, progress and
   close messages and role-specific persistence; the trade and Mystery Gift hosts share the loop.
-- `HostTransport` owns the LDN AP/network, virtual interfaces, participant events, and UDP sockets.
-  It neither parses Pia nor advances the game state machine.
+- `HostTransport` owns the LDN AP/network, virtual interfaces, participant events and UDP sockets. It
+  neither parses Pia nor advances the game state machine.
 - `HostPeerProtocol` owns one Switch peer's Pia state: Net negotiation and property updates, Session
-  acceptance, RTT, packet IDs, native/random nonce selection, encryption/framing, and Reliable
+  acceptance, RTT, packet ids, native/random nonce selection, encryption and framing, and Reliable
   message batching. It emits transport-independent `OutboundDatagram` values.
-- `HostSession` composes Reliable, `RFULeader`, and `HostTradeEngine`. This is the boundary used by
-  offline end-to-end tests; it has no socket or LDN dependency.
-- `HostTradeEngine` owns the leader-side room entry, party/card exchange, selection and confirmation,
-  animation/save barriers, menu cancellation, room exit, and close grace period. `HostTradeTiming`
-  names the live-proven frame counts without changing them.
+- `HostSession` composes Reliable, `RFULeader` and the activity engine. This is the boundary the
+  offline end-to-end tests use; it has no socket or LDN dependency. It takes an `engine=` keyword, so
+  the LDN/Pia/Reliable/RFU stack is shared verbatim between the trade and Mystery Gift hosts.
+- `HostTradeEngine` owns the leader-side room entry, party and card exchange, selection and
+  confirmation, animation and save barriers, menu cancellation, room exit, and the close grace period.
+  `HostTradeTiming` names the live-proven frame counts.
 - `BeaconInjector` owns its raw monitor-interface socket and worker thread. `HostApplication` starts
   and stops it with the rest of the runtime resources.
 
@@ -67,10 +68,9 @@ flowchart LR
     HT -->|encrypted UDP 12345| SW
 ```
 
-The application loop drains every datagram produced by `HostPeerProtocol` and sends it through
+The application loop drains every datagram `HostPeerProtocol` produces and sends it through
 `HostTransport`. Timer deadlines come from the peer protocol, so Net/Session retries, RTT probes,
-Reliable retransmission, and the approximately 59.727 Hz protocol tick do not depend on a fixed
-polling delay.
+Reliable retransmission and the ~59.727 Hz protocol tick do not depend on a fixed polling delay.
 
 ## Startup and session establishment
 
@@ -98,9 +98,9 @@ sequenceDiagram
     P->>T: active application-data property update
 ```
 
-Malformed Pia, invalid padding, failed authentication, incomplete Reliable tiling, and mismatched
-Session identities are logged and ignored. A Session request is accepted only when its constant ID,
-Pia variables, source IP, and encrypted header agree with the current LDN peer.
+Malformed Pia, invalid padding, failed authentication, incomplete Reliable tiling and mismatched
+Session identities are logged and ignored. A Session request is accepted only when its constant id,
+Pia variables, source IP and encrypted header agree with the current LDN peer.
 
 ## Trade and room-exit lifecycle
 
@@ -121,11 +121,11 @@ stateDiagram-v2
     Disconnect --> [*]
 ```
 
-Room and menu transitions remain two-sided. After the final trade, Linux waits for the Switch trade
+Room and menu transitions remain two-sided. After the final trade, the host waits for the Switch trade
 menu to become ready; the player selects **CANCEL** and confirms **YES**. The host then finishes the
-native standby barriers, waits five seconds before leaving the room, and continues normal peer
-traffic for fifteen seconds after the Switch confirms close. Only then is the RFU disconnect queued.
-An LDN leave event stops peer output immediately.
+native standby barriers, waits five seconds before leaving the room, and continues normal peer traffic
+for fifteen seconds after the Switch confirms close. Only then is the RFU disconnect queued. An LDN
+leave event stops peer output immediately.
 
 ## Shutdown and cleanup
 
@@ -149,13 +149,13 @@ sequenceDiagram
 
 The same cleanup runs on normal completion, `KeyboardInterrupt`, startup failure after partial
 allocation, and beacon-worker failure. Captures are diagnostic output only and are closed during
-cleanup; saving a received Pokémon is independent of capture logging.
+cleanup; saving a received Pokemon is independent of capture logging.
 
 ## Trainer profile propagation
 
-`pokeldn.config.DEFAULT_TRAINER` supplies the shared default identity. All three CLIs may derive an
-immutable per-run `TrainerProfile` with `--ot`, `--version`, and decimal `--id TID[:SID]` overrides.
-The profile validates Gen III names and numeric ranges, then derives every protocol view:
+`pokeldn.config.DEFAULT_TRAINER` supplies the shared default identity. All three CLIs derive an
+immutable per-run `TrainerProfile` with `--ot`, `--version` and decimal `--id TID[:SID]` overrides. The
+profile validates Gen III names and numeric ranges, then derives every protocol view:
 
 ```mermaid
 flowchart TD
@@ -165,66 +165,65 @@ flowchart TD
     LP --> TC[Trainer card<br/>Gen III name padded with FF]
 ```
 
-TID and SID are combined as `SID << 16 | TID` for game records. Discovery exposes the public TID;
-the Pia participant uses the readable name; LinkPlayer and trainer-card data use the Gen III
-encoding. Host LinkPlayer/card names use `0xFF` padding, an intentional live-tested serialization
-rule rather than profile configuration. Joiners retain native `0x00` padding; hosts use the
-live-proven redundant `0xFF` padding.
+TID and SID are combined as `SID << 16 | TID` for game records. Discovery exposes the public TID; the
+Pia participant uses the readable name; LinkPlayer and trainer-card data use the Gen III encoding.
+Host LinkPlayer and card names use `0xFF` padding — a live-tested serialization rule rather than
+profile configuration. Joiners retain native `0x00` padding.
 
 ## Failure handling
 
-- Host preflight rejects radios without AP support before LDN creation and identifies the selected
-  PHY/driver capability.
-- The two hardware-proven hosting profiles are ALFA AWUS036ACHM/`mt76x0u` with
-  `--skip-encryption --no-accept-decrypted-ccmp`, and TP-Link Archer T3U USB `2357:012d`/
+- Host preflight rejects radios without AP support before LDN creation and identifies the selected PHY
+  and driver capability.
+- The two hardware-proven hosting profiles are ALFA AWUS036ACHM / `mt76x0u` with
+  `--skip-encryption --no-accept-decrypted-ccmp`, and TP-Link Archer T3U USB `2357:012d` /
   `rtw88_8822bu` with `--skip-encryption --accept-decrypted-ccmp`. Startup identifies either known
   driver and warns if its compatibility flags do not match the proven profile.
 - Transport startup and beacon-thread failures abort the run and unwind already-created resources.
-- Authentication/decryption and malformed-message failures do not enter the RFU/trade stack.
-- After Nintendo's custom LDN authentication succeeds, the AP marks the station
-  `NL80211_STA_FLAG_AUTHORIZED`. The AP starts with userspace control-port handling, so omitting this
-  kernel-side transition caused the Realtek station to disappear about three seconds after joining
-  even while monitor-injected traffic was still flowing.
+- Authentication, decryption and malformed-message failures do not enter the RFU/trade stack.
+- **After LDN authentication succeeds, the AP must mark the station `NL80211_STA_FLAG_AUTHORIZED`.**
+  The AP starts with userspace control-port handling, so omitting this kernel-side transition made the
+  Realtek station disappear about three seconds after joining, even while monitor-injected traffic was
+  still flowing.
 - `--accept-decrypted-ccmp` is an opt-in receive compatibility path for monitor drivers that retain
-  CCMP metadata around hardware-decrypted plaintext; it trusts the driver's completed decryption
-  and removes the retained MIC before TAP delivery. Radiotap-advertised trailing FCS bytes are
-  removed independently for every driver.
+  CCMP metadata around hardware-decrypted plaintext; it trusts the driver's completed decryption and
+  removes the retained MIC before TAP delivery. Radiotap-advertised trailing FCS bytes are removed
+  independently for every driver.
 - Net and Session establishment retry at their proven cadence until acknowledged; RTT samples feed
   Reliable timing once the Session is finalized.
-- An unexpected participant leave halts protocol output. After the normal room-close confirmation,
-  the host retains the fifteen-second grace period even if the participant disappears, because the
-  Switch may still be completing its fade, warp, and bridge teardown.
-- Output is written only when a complete received Pokémon exists. Input `.pk3` and `.ek3` files are
+- An unexpected participant leave halts protocol output. After the normal room-close confirmation the
+  host retains the fifteen-second grace period even if the participant disappears, because the Switch
+  may still be completing its fade, warp and bridge teardown.
+- Output is written only when a complete received Pokemon exists. Input `.pk3` and `.ek3` files are
   never treated as disposable runtime artifacts.
 
 ## Extending the host
 
-Add protocol behavior at the lowest layer that understands it. Shared settings belong in
-the immutable run configuration and its nested values; OS/network behavior belongs in the application or transport; Pia messages belong
-in `HostPeerProtocol`; RFU behavior belongs in `RFULeader`; and Direct Corner decisions belong in
+Add protocol behaviour at the lowest layer that understands it. Shared settings belong in the immutable
+run configuration; OS and network behaviour belongs in the application or transport; Pia messages
+belong in `HostPeerProtocol`; RFU behaviour belongs in `RFULeader`; Direct Corner decisions belong in
 `HostTradeEngine`. Keep encoders pure where possible and test each boundary using emitted datagrams,
-Reliable payloads, RFU frames, or command rows. Do not duplicate trainer fields - derive new identity
+Reliable payloads, RFU frames or command rows. Do not duplicate trainer fields — derive new identity
 representations from `TrainerProfile`.
 
-The current implementation supports one joining Switch. Supporting more peers would require an
-explicit `HostPeerProtocol` per participant, independent Pia variables/nonces/packet IDs, and a
-game-level RFU policy; increasing the LDN participant limit alone is insufficient.
+The current implementation supports one joining Switch. Supporting more peers would require an explicit
+`HostPeerProtocol` per participant, independent Pia variables, nonces and packet ids, and a game-level
+RFU policy; raising the LDN participant limit alone is insufficient.
 
 ## Source map
 
-| Source | Responsibility |
+| source | responsibility |
 |---|---|
 | `bin/frlg_trade_host.py` | CLI parsing, configuration construction, application entry point |
-| `pokeldn/host_cli.py` | shared host identity, LDN, Pia, and lifecycle CLI options |
+| `pokeldn/host_cli.py` | shared host identity, LDN, Pia and lifecycle CLI options |
 | `pokeldn/frlg/link/host_app.py` | runtime lifecycle, event loop, output and cleanup |
-| `pokeldn/config.py` | shared trainer, trade-plan, Mystery Gift payload, LDN, role, and run configuration |
-| `pokeldn/frlg/link/trade_runtime.py` | shared CLI logging, party loading, slot parsing, and output saving |
+| `pokeldn/config.py` | shared trainer, trade-plan, Mystery Gift payload, LDN, role and run configuration |
+| `pokeldn/frlg/link/trade_runtime.py` | shared CLI logging, party loading, slot parsing, output saving |
 | `pokeldn/ldn/host_beacon.py` | captured trade beacon, discovery mutation, raw beacon injection |
 | `pokeldn/host_support.py` | OS-facing support such as sudo-aware key-path resolution |
 | `pokeldn/ldn/transport.py` | LDN host lifecycle, interfaces, participant events, UDP data plane |
 | `pokeldn/ldn/host_pia.py` | Pia framing and `HostPeerProtocol` |
-| `pokeldn/frlg/link/host_session.py` | Reliable → RFU leader → trade composition |
-| `pokeldn/ldn/reliable.py` | ordered/retransmitted application channel |
+| `pokeldn/frlg/link/host_session.py` | Reliable → RFU leader → activity composition |
+| `pokeldn/ldn/reliable.py` | ordered, retransmitted application channel |
 | `pokeldn/gba/rfu_leader.py` | parent RFU framing, NI/UNI handshake, echo table |
 | `pokeldn/frlg/link/host_trade.py` | leader trade-room state machine and timing |
 | `pokeldn/frlg/link/linkplayer.py` | LinkPlayer and trainer-card encoders |

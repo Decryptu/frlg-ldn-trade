@@ -23,7 +23,7 @@ station's RTT once the ring is full. **NOTHING IN THIS PROTOCOL DROPS A STATION 
 SILENT** - a station that never answers simply never gets a sample. Read the code before believing
 the opposite; sp35 sat through 78 s of it.
 
-`docs/bdsp_pia.md` "The RTT protocol".
+`docs/bdsp_session.md` "The RTT protocol".
 """
 
 import struct

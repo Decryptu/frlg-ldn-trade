@@ -17,7 +17,7 @@ them one run would catch, so a run is spent where the table is densest rather th
 WHAT NAMES A BODY IS ITS CALLS, NOT ITS POSITION. `gSpecials` is 444 entries and its names come from
 the decomp's table order; a body whose `bl` targets land on functions this project measured
 elsewhere is that mapping confirmed against the cartridge, and a body that lands on nothing known is
-the run's new surface. docs/frlg_rom_buffer_script.md.
+the run's new surface. docs/frlg_rom.md.
 """
 import argparse
 import os
@@ -62,7 +62,7 @@ def known_names(with_workers=True, with_english=True):
     its own output cannot be checked. `with_english` is False for the same reason and for one more:
     a name out of the English build is a DEDUCTION, and it goes in LAST so that it can only fill a
     hole, never overrule a body this console's own calls named. It is marked in the listing.
-    docs/frlg_english_build.md."""
+    docs/frlg_leafgreen.md."""
     out = {}
     for name, value in vars(rom_map).items():
         if name.isupper() and isinstance(value, int) and ROM_START <= value < ROM_END:

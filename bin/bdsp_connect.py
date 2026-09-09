@@ -20,7 +20,7 @@ knowing a single one of its protocols, and the first reply this project has ever
 Switch title is the pass signal.
 
 The ack goes first, so the console falls silent and ANY packet afterwards is unambiguously an
-answer to us. docs/bdsp_pia.md. Never pass --verbose to a live run; use --capture.
+answer to us. docs/bdsp_session.md. Never pass --verbose to a live run; use --capture.
 """
 import argparse, json, os, pathlib, socket, struct, sys, time
 

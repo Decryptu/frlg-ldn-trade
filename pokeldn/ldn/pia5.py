@@ -108,7 +108,7 @@ def gcm_iv(station_crc, src_variable_id, nonce8):
         IV[4..11] = the packet's eight-byte header nonce
 
     so only three bytes of the CRC reach the IV. Both of the other two inputs are on the wire, which
-    is why a capture pins the IV down to those three bytes. docs/bdsp_pia.md "The GCM nonce".
+    is why a capture pins the IV down to those three bytes. docs/bdsp_session.md "The GCM nonce".
     """
     if len(nonce8) != 8:
         raise ValueError(f"a Pia 5.x header nonce is eight bytes, not {len(nonce8)}")
@@ -124,7 +124,7 @@ def ldn_session_key(game_key, seed):
     stored at +0x5b0, the game key sixteen bytes at +0x5bc, and the plaintext four consecutive SEAD
     draws packed little-endian. This is the LDN family's derivation and ONLY the LDN family's - the
     HMAC-SHA256 one belongs to `nn::pia::lan::LanProtocol`, and applying it to an LDN capture cannot
-    work. docs/bdsp_pia.md "The session key".
+    work. docs/bdsp_session.md "The session key".
     """
     from Crypto.Cipher import AES
 
@@ -200,7 +200,7 @@ def parse_messages(plaintext):
     packet's tail is 0xFF padding, which is where the walk stops.
 
     Sizes and ids here are BIG-endian, like the packet header and unlike the wiki's note about the
-    advertisement. docs/bdsp_pia.md "What the console is saying".
+    advertisement. docs/bdsp_session.md "What the console is saying".
     """
     out, off = [], 0
     flags = size = protocol = port = 0

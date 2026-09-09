@@ -11,7 +11,7 @@ Two things want it kept instead:
 
 - **The counters only mean something as a difference.** "3 battles won" is a number; "3 where the
   last session said 2, and the card is the same one" is the observation that the console really
-  does maintain the stats a Battle Count Card would be built on [docs/frlg_gift_untried.md].
+  does maintain the stats a Battle Count Card would be built on [docs/frlg_gift.md].
   One session cannot show that. `changes` is the whole point of the file.
 - **The word ids are the only French vocabulary the console volunteers.** Anything the player has
   typed comes back as a slot id; when `easychat_french` cannot render one, that id is worth one

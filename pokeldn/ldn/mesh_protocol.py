@@ -19,7 +19,7 @@ index, possibly split across fragments.
 **A MESH MESSAGE IS ACKNOWLEDGED ON THE STATION PROTOCOL, NOT ON THIS ONE.** The wiki's type table
 has no ack, and BDSP's own code has no builder for one: the mesh's handlers read the ack id and then
 hand it to a MeshStationProtocol method, so what goes on the air is the station protocol's eight-byte
-type-5 ack on protocol 0x14. `ack_for()` is that rule; `docs/bdsp_pia.md` "Acking a mesh message"
+type-5 ack on protocol 0x14. `ack_for()` is that rule; `docs/bdsp_session.md` "Acking a mesh message"
 carries the addresses.
 """
 

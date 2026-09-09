@@ -1,130 +1,104 @@
 ---
 title: LeafGreen
 parent: FireRed and LeafGreen
-nav_order: 4
+nav_order: 6
 ---
 
-# LeafGreen: BPGF, and what does and does not transfer from FireRed
+# LeafGreen, and the two cartridges' offset map
 
 Everything else in this section was read off **French FireRed, cartridge BPRF, software version
-0x0A**. The second console is **French LeafGreen, BPGF, 0x0A** - lg163 read that off the cartridge
-header, `POKEMON LEAF`. The payloads work there unchanged; the addresses do not.
+0x0A**. The second console is **French LeafGreen, BPGF, 0x0A**, read off its own cartridge header
+(`POKEMON LEAF`). Every payload works there unchanged; the ROM addresses do not.
 
-Sixteen runs, lg160-lg175, every one of them inside the Mystery Gift menu. That matters practically:
-the console never leaves its save point, so this can be done while the player is in the middle of
-something else.
+All of this work happens inside the Mystery Gift menu, so the console never leaves its save point.
 
-## The addresses, each with the run that measured it
+## The measured addresses
 
-| symbol | LeafGreen | FireRed | run |
-|---|---|---|---|
-| `gDecompressionBuffer` | 0x0201C000 | same | lg160 |
-| Mystery Gift call site | 0x08148C50 | 0x08148C74 | lg160 |
-| `Random` | 0x080486B0 | same | lg162 |
-| `SeedRng` | 0x080486D0 | same | lg162 |
-| `gRngValue` | 0x03004220 | same | lg162 |
-| `gPlayerParty` | 0x02024280 | same | lg164 |
-| `gPlayerPartyCount` | 0x02024025 | same | lg164 |
-| `gEnemyParty` | 0x02024028 | same | lg164 |
-| `gSpeciesInfo` | 0x0824CDD8 | 0x0824CDFC | lg165 |
-| `CreateMon` | 0x08041150 | same | lg166 |
-| `sEasyChatGroups` | 0x083E353C | 0x083E3700 | lg168/lg169 |
-| `gSpecialVar_0x8000` | 0x020370B4 | same | lg171 |
-| `gSpecialVars` | 0x08163984 | 0x081639A8 | lg171 |
-| `gSaveBlock1Ptr` | 0x03004228 | same | lg175 |
-| `gSaveBlock2Ptr` | 0x0300422C | same | lg175 |
+| symbol | LeafGreen | FireRed |
+|---|---|---|
+| `gDecompressionBuffer` | 0x0201C000 | same |
+| Mystery Gift call site | 0x08148C50 | 0x08148C74 |
+| `Random` | 0x080486B0 | same |
+| `SeedRng` | 0x080486D0 | same |
+| `gRngValue` | 0x03004220 | same |
+| `gPlayerParty` | 0x02024280 | same |
+| `gPlayerPartyCount` | 0x02024025 | same |
+| `gEnemyParty` | 0x02024028 | same |
+| `gSpeciesInfo` | 0x0824CDD8 | 0x0824CDFC |
+| `CreateMon` | 0x08041150 | same |
+| `sEasyChatGroups` | 0x083E353C | 0x083E3700 |
+| `gSpecialVar_0x8000` | 0x020370B4 | same |
+| `gSpecialVars` | 0x08163984 | 0x081639A8 |
+| `gSaveBlock1Ptr` | 0x03004228 | same |
+| `gSaveBlock2Ptr` | 0x0300422C | same |
 
 `rom_map.LEAFGREEN` holds these with their evidence. `rom_map.leafgreen(symbol)` **raises** for
 anything not in the table rather than falling back to the FireRed value.
 
-**RAM agrees; ROM does not.** Every IWRAM and EWRAM address measured so far is identical between the
-two builds - they are link-time globals of the same code. Every ROM address above 0x080486C8
-differs. That is a pattern with an explanation, not a law: it holds for fifteen symbols and the next
-one is still measured, not assumed.
+**RAM agrees; ROM does not.** Every IWRAM and EWRAM address measured is identical between the two
+builds — they are link-time globals of the same code. Every ROM address above 0x080486C8 differs. That
+is a pattern with an explanation, not a law: it holds for fifteen symbols and the next one is still
+measured rather than assumed.
 
-## The ROM delta is a property of a region, not of the ROM
+## The delta is a property of a region
 
-lg161 scanned LeafGreen for `RAND_MULT` and bs13 had scanned FireRed for the same constant. Eleven
-hits each, in the same order, so they pair one to one and give the delta at eleven points across
-1.3 MB - **for no hardware run at all**, out of two logs that already existed:
+The offset from a FireRed address to its LeafGreen twin is piecewise constant, and there are at least
+eight segments:
 
-| FireRed | delta |
-|---|---|
-| 0x080486C8 | 0 |
-| 0x0807D238 … 0x080AFC00 | −0x2C |
-| 0x080F1EA0 … 0x08122518 | −0x28 |
-| 0x0814CBFC | −0x24 |
+    +0x0   -0x2C   -0x28   -0x24   -0x20   -0x1C4   -0x124C   -0x1240   -0x12D8
 
-So there are at least three differences, and LeafGreen *gains* four bytes at each of the upper two
-boundaries. Higher still, the Easy Chat region is a fifth segment at **−0x1C4**, seven times the
-delta immediately below it.
+**It is not monotonic.** The four low segments step −0x2C, −0x28, −0x24, −0x20, each four bytes *less*
+divergent than the one below it, and only then does it jump. A less divergent segment further up is not
+a mistake.
 
-`rom_map.leafgreen_guess(firered_address)` answers inside the measured segments and **refuses the
-gaps**, where a boundary is known to exist and its position is not. It is a place to point a dump,
-never an answer - the delta says nothing about *content*.
+`rom_map.leafgreen_guess(firered_address)` answers inside a measured segment and **refuses the gaps**,
+where a boundary is known to exist and its position is not. It is a place to point a dump, never an
+answer — the delta says nothing about *content*.
 
-### The mistake that exposed all of this
+`pokeldn/frlg/rom/leafgreen_twins.py` holds 738 distinct pairs, each read off its own cartridge, and
+`leafgreen_twins.leafgreen(address)` answers exactly where it has a pair and falls back to
+`leafgreen_guess` everywhere else. About 200 of them are functions this project can name.
 
-The first version of this model read a constant −0x24 off two points (lg160 and lg165), called one
-36-byte insertion a hypothesis, and predicted a delta of zero at `CreateMon`. lg166 confirmed that
-prediction byte for byte. The prediction was right and the model was wrong: **both −0x24 points sit
-above every difference**, so they agreed with each other and said nothing about the range between.
+### The boundaries
 
-lg167 then carried −0x24 upward to `sEasyChatGroups` and the dump came back as nothing at all. That
-failure is worth more than the confirmations. Two agreeing measurements are one measurement repeated
-when they share a blind spot.
+    step             span                          what is in it
+    0     -> -0x2c   644 B, 0x0807CF68..0x0807D1EC  title_screen.o
+    -0x2c -> -0x28    62 B, 0x080DE2E4..0x080DE322  mystery_event_script.o
+    -0x28 -> -0x24    90 B, 0x081480CE..0x08148128  mystery_gift.o
+    -0x24 -> -0x20    31 B, 0x08251D8E..0x08251DAD  pokemon.o rodata
+    -0x20 -> -0x1c4 1209 B, 0x083B7B47..0x083B8000  title_screen.o rodata
+    -0x1c4 -> -0x124c  30 KB, 0x0843AFFF..0x08442800  graphics
+    -0x124c -> -0x1240 17 KB, 0x08442BFF..0x08447000  graphics
+    -0x1240 -> -0x12d8 63 KB, 0x0844F3FF..0x0845F000  graphics
 
-`sEasyChatGroups` was then found the way bs16 found FireRed's: groups 8, 9 and 10 each hold 69 words
-with 69 enabled, so `0x00450045` appears three times exactly 8 bytes apart. Three hits, at
-0x083E3580/3588/3590 - the count fields of entries 8, 9 and 10.
+**A boundary is not a line: it is the divergent region itself.** Where the two builds hold
+version-specific code, no delta describes anything. The span recorded is the last window that still
+matches at the old delta and the first that matches at the new one. `rom_map.LEAFGREEN_DELTA_BOUNDARIES`
+holds them, and a test asserts that the boundary table and the segment table are two readings of the
+same measurement.
 
-## The French vocabulary transfers, and a console said so
+**Where it stops is not a matter of more runs.** Above 0x0843C800 the two cartridges hold *different
+bytes*, not the same bytes somewhere else — version-specific graphics. No shift matches at any offset a
+block can see, so the delta there is undefined by content rather than unmeasured.
 
-lg169 read the group table: 22 entries, every pointer in ROM, every count equal to FireRed's, and
-all 18 word-list pointers exactly −0x1C4 from theirs. That was evidence. lg170 is the confirmation -
-`string-gather` on LeafGreen's group 1 returned 26/26 words identical to bs20's FireRed reading, in
-the same slots: CE SERA TOI, JE T'AI EU, ECHANGER, SAPHIR … ARGENT.
+## The methods, in order of cost
 
-So the 1006 words of [the French Easy Chat table](frlg_rom_easy_chat_french.md) do not need reading again,
-and `easychat_french` answers for both consoles.
+Five methods were used, and the last one is the one to reach for.
 
-## A dumped region must not move, and lg172/lg173 paid for it
+### Paired constants
 
-lg172 pointed a `memory-dump` at 0x03004220 and the console died mid transmission with *erreur de
-connexion*. `acklag.py` read 0 stalls and `echo_gaps.py` read `never=[]` on every block, so it was
-neither the hold nor our own mirror. lg173 repeated the run **unchanged** and failed
-identically with a different CRC pair - the signature of a region that moves, not one that is
-corrupted. lg174 then dumped the same 32 bytes from ROM and got lg166's bytes back exactly, which
-rules out the size.
+The same constant scanned for on both cartridges gives paired hits wherever it happens to sit. Scanning
+both for `RAND_MULT` gave eleven hits each, in the same order, pairing one to one across 1.3 MB — for no
+hardware run at all, out of two logs that already existed.
 
-```c
-case 0:  header.crc = CalcCRC16WithTable(link->sendBuffer, link->sendSize);   // one frame
-case 1:  SendBlock(0, link->sendBuffer + blocksize, ...);                     // the next
-case 2:  if (CalcCRC16WithTable(...) != link->sendCRC) LinkRfu_FatalError();  // the one after
-```
-[decomp:src/mystery_gift_link.c:155]
+Its reach is wherever the constant happens to be, and nothing says those places are near a boundary.
 
-0x03004220 is `gRngValue`, which advances two turns every frame, so the header can never match the
-payload it describes. `buffer_script.build_memory_dump` refuses any range overlapping it now and
-says what to do instead: dump around it, or use `rng-trace`, which returns it through the 4-byte
-channel rather than the block. It is the only address named, because it is the only one *guaranteed*
-to move; anything else volatile has to be found the way this was.
-
-lg175 read the save-block pointers by starting 4 bytes higher, and they verify themselves: both
-values had moved by exactly 12 since lg160's `anchors`, one shared 4-aligned offset inside the 0..124
-range `SetSaveBlocksPointers` rolls [decomp:src/load_save.c:75]. Two pointers cannot agree on the
-size of a re-roll neither could have faked alone.
-
-## All three boundaries, for two runs, with the table's own address as the needle
-
-The eleven RAND_MULT points above pair the two consoles wherever the LCG multiplier happens to sit.
-Nothing says those places are near a boundary, and none of the three was bracketed by them.
+### A pointer as the needle
 
 **A pointer is a better needle than a constant, because every reference to it is a paired point.**
-lg176b scanned LeafGreen's whole ROM for LeafGreen's own `gSpeciesInfo` (0x0824CDD8) and bs68b
-scanned FireRed's for FireRed's own (0x0824CDFC). Each console answered with **56 hits** - every
-literal-pool reference to the species table, which is code that reads a Pokemon's base stats and so
-is spread across the whole game. Equal counts, ascending, so they pair one to one:
+Scanning LeafGreen for LeafGreen's own `gSpeciesInfo` and FireRed for FireRed's own gave **56 hits each**
+— every literal-pool reference to the species table, which is code that reads a Pokemon's base stats and
+so is spread across the whole game. Equal counts, ascending, pairing one to one:
 
 | delta | FireRed span | paired hits |
 |---|---|---|
@@ -133,176 +107,56 @@ is spread across the whole game. Equal counts, ascending, so they pair one to on
 | −0x28 | 0x080EBA14 .. 0x0813E8CC | 9 |
 | −0x24 | 0x0815A3F4 .. 0x0815A630 | 3 |
 
-Four segments, three steps, and each step is bracketed by the last hit below it and the first above
-it. Combined with the RAND_MULT points, which reach into two of the same segments:
+Any address measured on both consoles is a needle whose every reference is a paired point. Its reach is
+the reach of those references: no hit here is above 0x0815A630, so this says nothing about the Easy Chat
+region or anything past it.
 
-| boundary | somewhere in | span |
-|---|---|---|
-| 0 -> −0x2C | 0x0805359C .. 0x0807D238 | 171,164 B |
-| −0x2C -> −0x28 | 0x080CE36C .. 0x080EBA14 | 120,488 B |
-| −0x28 -> −0x24 | 0x0813E8CC .. 0x08148C74 | 41,896 B |
+### Making a needle where there is no symbol
 
-`rom_map.LEAFGREEN_DELTA_BOUNDARIES` holds these, and a test asserts that the boundary table and the
-segment table are two readings of the same measurement. **None is located to the byte**, and
-`leafgreen_guess` still answers only from the segments; what changed is that the gaps it refuses are
-three named spans rather than "somewhere in the ROM".
-
-The method costs two runs and generalises: any address measured on both consoles is a needle whose
-every reference is a paired point. Its reach is the reach of those references - no hit here is above
-0x0815A630, so this says nothing about the Easy Chat region or anything past it.
-
-## The overworld, and a shiny Mewtwo (mev23)
-
-`gRngValue`, `gSaveBlock1Ptr` and `gSaveBlock2Ptr` are all link-time IWRAM words at the same
-addresses as FireRed's, and every literal in [the seek stubs](frlg_rom_rng.md) is one of them - so the stubs
-needed no porting at all. What was missing was somewhere to put a RAM script: the player has to talk
-to a map object, and this save sits in Cerulean Cave B1F, in front of Mewtwo.
-
-**So the binding went on Mewtwo himself.** `initramscript` takes a map group, a map number and an
-object id, and `GetRamScript` runs our script INSTEAD of that object's own
-[decomp:src/field_control_avatar.c:458]. Cerulean Cave B1F is group 1 map 74
-[data/maps/map_groups.json] and Mewtwo is object 3 [data/maps/CeruleanCave_B1F/map.json].
-
-mev23 installed `rng-mon-hunt-both` there with `setwildbattle` set to species 150 at level 70. The
-console answered status 55, our marker past `initramscript`. What the player saw next is the whole
-result: **Mewtwo's own "Miou!" script did not run** - the battle started immediately, which is ours -
-and the Mewtwo that appeared was **shiny**.
-
-Three things that were not certain before, and are now:
-
-- The stray-draw search works on the second cartridge. The first attempt missed and the ones after
-  it hit. Both were the first talk after a load, so the miss is a placement miss and not a wrong
-  constant: the stub reads `TID ^ SID` off `gSaveBlock2Ptr` at run time
-  [asm/field/mon-seek-both.s:73], so it uses whichever console it is running on.
-- **The binding survives a power cycle.** The player reset and talked to Mewtwo cold, and the script
-  still ran. `gSaveBlock1Ptr` is re-rolled on every load [SetSaveBlocksPointers], so that is the
-  trampoline's run-time pointer read being right rather than lucky.
-- A buffer script does NOT take the slot back. bs68 ran on this console between the two and changed
-  nothing, because a buffer script sends no card. Only a Wonder Card session does, and lg177 - an
-  ordinary card - restored Mewtwo's own script through `InitRamScript_NoObjectEvent`.
-
-The mev03 trap held here too: while the RAM script was installed the console reported **holding no
-Wonder Card**, in bs68's identity line, and the card was intact throughout.
-
-## Above `sEasyChatGroups`, with no symbol up there at all
-
-Every measurement so far started from a symbol. Above 0x083E3700 there is no symbol - nothing in
-that region has a name on either console - so the needle has to be made rather than found.
+Above 0x083E3700 nothing on either console has a name, so the needle has to be made rather than found.
 
 **Dump 1 KB off one console and take a word out of it.** Any word that occurs exactly once in that
-kilobyte and has four distinct bytes is a fingerprint of a place, and scanning the other console for
-it over a window answers with the address that place has there. The difference is the delta. Two
-runs a point, anywhere in the ROM, needing no symbol, no decomp and no guess about content:
+kilobyte and has four distinct bytes is a fingerprint of a place, and scanning the other console for it
+over a window answers with the address that place has there. The difference is the delta. Two runs a
+point, anywhere in the ROM, needing no symbol, no decomp and no guess about content:
 
-| point | FireRed | LeafGreen | needle | delta |
-|---|---|---|---|---|
-| bs69 / lg178 | 0x086003E0 | 0x085FF108 | 0xE1926F4D | −0x12D8 |
-| bs72 / lg179 | 0x086803FC | 0x0867F124 | 0xC35D61AE | −0x12D8 |
-
-Each scan returned **exactly one match** in a 2 MB window, so neither address is ambiguous.
-
-**Two points, half a megabyte apart, agreeing - which is the whole reason there are two.** lg167 is
-in this page already: a single carried-forward delta predicted a place and the dump came back empty.
-One point here would have been that mistake again, and it would have looked just as convincing.
-
-So there is a fifth segment at −0x12D8, and the divergence keeps growing at the big jumps: −0x24 at
-the species table, −0x1C4 at Easy Chat, −0x12D8 at 6 MB. It does NOT grow monotonically, though,
-and that is worth knowing before reading a new measurement as a mistake: the four LOW segments run
-−0x2C, −0x28, −0x24, −0x20, each four bytes LESS divergent than the one below it. bs121/lg192 found
-the −0x20 one, and it continues that run exactly.
-
-Incidentally, **FireRed's ROM data ends between 0x08680400 and 0x08800000**: bs71 read all 0xFF at
-0x08800000 and bs70 all 0x00 at 0x08E00000, while 0x08680000 is high-entropy data. Two different
-padding values, so those two reads are not the same thing and neither has been chased.
-
-## What is left
-
-- **The three low boundaries are bracketed but not located**, and session 42's paired call sites
-  narrowed all three without a run - the first to 8.8 KB. Halving one further needs a needle known
-  to sit inside that span, or another window dumped on both cartridges; nothing needs it yet.
-- **0x0841463E .. 0x0847DCF8 is the gap now**, 422 KB. It was 2163 KB this morning. The delta goes
-  from −0x1C4 to −0x12D8 across it, a difference of 0x1114.
-- **0x0824CDFC .. 0x083BEE74 is the other one**, 1480 KB, from gSpeciesInfo upwards, where the delta
-  goes −0x24 to −0x1C4. Both its ends were measured long ago and the boundary itself was simply
-  never written down; it is in `LEAFGREEN_DELTA_BOUNDARIES` now.
-- **Nothing between 0x086803FC and the end of the data has been measured**, though bs118 read
-  gSongTable and its song headers reach 0x086ABE68, so the data runs at least that far.
-
-## Session 42: every call in a shared window is a delta point, and 1592 were already on disk
-
-lg169 made this measurement without ever naming it: **a pointer dumped off both consoles is a delta
-point at wherever it points.** Sessions 40 and 41 read the LITERAL POOLS that way - 27 paired words
-carried both ends of the -0x1C4 segment, 13 more found the -0x20 segment nobody had seen. What
-nothing had read is the other pointer in every one of those windows. **A `bl` is a relative call**,
-so the same instruction on the two cartridges resolves to two different addresses, and their
-difference is the delta AT THE TARGET. A 16 KB window of handlers holds 834 of them.
-
-`tools/frlg/cartridge_pair.py` reads both kinds out of every window this project holds on both
-cartridges. **No run was spent: the dumps were already on disk**, taken for other reasons.
-
-| pair | what it was dumped for | paired call sites | paired pool words |
+| FireRed | LeafGreen | needle | delta |
 |---|---|---|---|
-| bs120 / lg191 | the warp and battle-start specials | 734 | 168 |
-| bs121 / lg192 | the field script-command table | 834 | 92 |
-| bs117 / lg190 | m4a's pool, to find gSongTable | 24 | 11 |
+| 0x086003E0 | 0x085FF108 | 0xE1926F4D | −0x12D8 |
+| 0x086803FC | 0x0867F124 | 0xC35D61AE | −0x12D8 |
 
-**WHAT SAYS THE PAIRING IS REAL.** Every site pairs - 734 of 734, 834 of 834 - and the deltas come
-out QUANTISED: four values per window, no outliers, nothing "nearly". A window placed wrongly does
-not do that, and the first version of this tool proved it by computing the LeafGreen offsets off the
-FireRed base and answering with 64 different deltas, none of them repeated.
+Each scan returned exactly one match in a 2 MB window.
 
-**Two confirmations from runs that knew nothing about the method.** The pairing puts LeafGreen's
-`AddBagItem` at 0x0809DA44, which is exactly where lg189 measured it with a needle, and `Random` at
-0x080486B0, where lg162 read it out of a literal pool.
+**Use two points and a control, never one.** An earlier reading carried a single delta upward from two
+agreeing measurements and predicted a place; the dump came back empty. The two agreeing points sat above
+every difference, so they agreed with each other and said nothing about the range between them. Two
+agreeing measurements are one measurement repeated when they share a blind spot.
 
-Three of the six boundaries move, and one of them a long way:
+The five needle scans that mapped the script layer show what a control looks like:
 
-| boundary | was | now |
-|---|---|---|
-| 0 -> -0x2C | 0x08071FC4..0x0807D238, 44.6 KB | **0x0807AF04..0x0807D238, 8.8 KB** |
-| -0x2C -> -0x28 | 0x080CE36C..0x080EBA14, 117.7 KB | 0x080D4404..0x080EBA14, 93.5 KB |
-| -0x28 -> -0x24 | 0x0813E8CC..0x08148C74, 40.9 KB | **0x08143604..0x081484CC, 19.7 KB** |
+| needle | taken from | found on LeafGreen at | delta |
+|---|---|---|---|
+| 0x49050B80 | inside `ScrCmd_special` | 0x0806D7F4 | 0 |
+| 0x4831D940 | the top of the handler block | 0x080701C0 | 0 |
+| 0x49040A00 | inside the flag/var workers | 0x08071E1C | 0 |
+| 0x47708008 | above `FlagGet` | 0x08071FC4 | 0 |
+| 0x18210094 | inside `AddBagItem` | **0x0809DA80**, FireRed 0x0809DAAC | **−0x2C** |
 
-0x0807AF04 is the highest call site that did NOT move and 0x0807E068 the lowest that moved by -0x2C;
-the recorded 0x0807D238 from lg189 is tighter than the second, so the bracket keeps it. The
--0x28 -> -0x24 boundary moved at BOTH ends, which one needle never does.
+The last row is the control: delta 0 is also what this scan answers against the *wrong console*, so the
+zeros need a needle from above the boundary, where the delta is known to be −0x2C, to come back shifted.
 
-**A LeafGreen dump can be read as a table now.** Every table this project holds was read off
-FireRed, so reading LeafGreen's dumps against those addresses is coherent below the split and
-quietly wrong above it. `tools/frlg/rom_functions.py --console leafgreen` moves the whole view - the
-entries, the bodies and the names - through the measured twins, and DROPS an entry whose address
-falls inside a boundary rather than reading it at a guess. 184 of the 213 field bodies and 33 of the
-252 placeable specials come back, with three unnamed call targets in the field table: the same three
-FireRed has, at LeafGreen's addresses. LeafGreen's bodies call the twins of what FireRed's call.
+### Literal pools, which are free pointer tables
 
-**And the pairing is a table of LeafGreen addresses, not only a delta map.**
-`pokeldn/frlg/rom/leafgreen_twins.py` holds all 738 distinct pairs, each one read off its own cartridge:
-`leafgreen_twins.leafgreen(address)` answers exactly where it has a pair and falls back to
-`rom_map.leafgreen_guess` - which applies the segment delta and refuses inside a boundary -
-everywhere else. About 200 of them are functions this project can name, so the item and money block
-that lg184-lg189 left "predicted by segment" is measured now.
+A **literal pool** is a pointer table that costs nothing to obtain, and it reaches places no table
+indexes: every compiled function keeps the addresses it touches in a pool immediately after its body, so
+a 1 KB window of code is a few dozen pointers to wherever that code works. The only cost is placing the
+same window on both cartridges — which is free where the *code* sits in a segment whose delta is already
+known.
 
-## bs117/lg190: a literal pool is a pointer table, and a free one
-
-Bisecting a 2.2 MB gap with the make-a-needle method costs two runs a point and about 42 runs to
-close. A POINTER TABLE dumped off both consoles is far better value - it pairs entry for entry, and
-every entry is a delta measurement at wherever it points. lg169 already did this without naming it,
-getting 18 points from the Easy Chat word-list pointers.
-
-A **literal pool** is the same thing for free, and it reaches places no table indexes. Every
-compiled function keeps the addresses it touches in a pool immediately after its body, so a 1 KB
-window of code is a few dozen pointers to wherever that code works. The trick is placing the same
-window on both cartridges, and that is the part which usually costs a run - except where the CODE
-sits in a segment whose delta is already known.
-
-m4a is exactly that case. Its code is in `lib_text`, whose start bs110 measured at 0x081DE188, and
-lib_text is inside the −0x24 segment - so the same window on LeafGreen is at −0x24 exactly, with
-no scan and no search. m4a is also the right code to pick: it works on the sound data, which lives
-at the top of the ROM, in the gap.
-
-bs117 dumped 0x081DF200 on FireRed and lg190 dumped 0x081DF1DC on LeafGreen. The two pools line up
-word for word - 24 each, 13 identical, which are the RAM addresses and the constants - and every
-one of the five that is a cartridge pointer moved by the same amount:
+m4a is that case: its code is in `lib_text`, whose start is measured, and `lib_text` is inside the −0x24
+segment. Its pools point at the sound data, which lives at the top of the ROM, in the largest gap. Two
+1 KB dumps gave 24 pool words each, 13 identical (the RAM addresses and the constants), and every one of
+the five cartridge pointers moved by the same amount:
 
 | FireRed | LeafGreen | delta |
 |---|---|---|
@@ -312,150 +166,219 @@ one of the five that is a cartridge pointer moved by the same amount:
 | 0x0849758C (`gMPlayTable`) | 0x084962B4 | −0x12D8 |
 | 0x084975BC (`gSongTable`) | 0x084962E4 | −0x12D8 |
 
-Five points, not one - lg167 is what one costs. The −0x12D8 segment used to start at 0x086003E0;
-it starts at 0x0847DCF8 now, and the gap below it is 3.5 times smaller for two runs.
-
-**The pair proves its own alignment.** gMPlayTable and gSongTable came back 0x30 apart on BOTH
+**The pair proves its own alignment.** `gMPlayTable` and `gSongTable` came back 0x30 apart on both
 cartridges, and 0x30 is four `struct MusicPlayer` of twelve bytes, which is exactly what
-`sound/music_player_table.inc` holds. A window read at the wrong offset does not produce that.
+`sound/music_player_table.inc` holds.
 
-### bs120/lg191: the same trick with sixteen times the pool
+A 16-block dump is 16 KB of literal pools instead of one. Two such pairs gave 550 and 288 paired sites
+and moved three boundaries at once, including finding the **−0x20 segment**, which nothing had seen: the
+delta does not go −0x24 straight to −0x1C4, it stops at −0x20 for more than a megabyte on the way.
 
-A 16-block dump is 16 KB of literal pools instead of one, and that changes what a pair of joins is
-worth. bs120 had already dumped 0x08081CC8 on FireRed for the warp and battle-start specials, so the
-FireRed half cost nothing; lg191 dumped the SAME code on LeafGreen at −0x2C, the delta that segment
-is measured to have.
+**Pair by code offset, not by index.** Two pools of 552 and 550 words — the builds do not emit quite the
+same literals — pair in order until the first mismatch and then invent deltas (−0x53BADA0 and similar).
+Keyed on the site, minus the segment's own delta, 550 sites appear in both.
 
-**Pair by CODE OFFSET, not by index.** The two pools hold 552 and 550 words - the builds do not emit
-quite the same literals - so pairing them in order drifts after the first mismatch and starts
-inventing deltas (−0x53BADA0 and friends, all of them nonsense). Keyed on the site instead, minus
-the segment's own 0x2C, 550 sites appear in both:
+**A `bl` is a relative call**, so the same instruction on the two cartridges resolves to two different
+addresses whose difference is the delta *at the target*. A 16 KB window of handlers holds 834 of them.
+`tools/frlg/cartridge_pair.py` reads both kinds out of every window this project holds on both
+cartridges — 1592 points from dumps that were already on disk, taken for other reasons.
 
-| | |
-|---|---|
-| identical words | 369 - the RAM addresses and the constants, which is the alignment proof |
-| cartridge pointers 0x083BEE74..0x0841463E | **27, every one −0x1C4** |
-| cartridge pointers at 0x082370FC | 2, both −0x24 |
+**What says the pairing is real** is that every site pairs (734 of 734, 834 of 834) and the deltas come
+out quantised: four values per window, no outliers, nothing "nearly". A window placed wrongly does not do
+that — the first version of the tool computed the LeafGreen offsets off the FireRed base and answered
+with 64 different deltas, none of them repeated. Two further confirmations came from runs that knew
+nothing about the method: the pairing puts LeafGreen's `AddBagItem` exactly where a needle scan measured
+it, and `Random` where a literal-pool read did.
 
-The second row is the control, and it was free: 0x082370FC lies inside the measured −0x24 segment,
-so a run answering anything else there would have been answering about the wrong console. The rule
-from lg167 was to use two points and a control; a 16 KB pool hands you twenty-seven and the control.
+### Dumping both cartridges at the same address
 
-**One needle moves one end of a segment. Twenty-seven moved both.** The −0x1C4 segment was
-0x083DE528..0x083E3700, 21 KB, known from lg169's Easy Chat pointers. It is 0x083BEE74..0x0841463E
-now, and the two gaps either side shrank to 1480 KB and 422 KB.
+**This is the method that closed the map, and it needs no needle at all.** Dump both cartridges at the
+*same* address. If the delta there is *d*, the LeafGreen block holds what the FireRed block holds shifted
+by *d*, and any |*d*| under a kilobyte leaves hundreds of bytes of overlap. Cross-correlating the two
+blocks reads *d* straight off.
 
-### bs121/lg192: a segment nobody had seen, and why the gap looked so big
-
-The remaining 1480 KB gap ran from gSpeciesInfo up to where bs120/lg191 had just put the −0x1C4
-segment's floor. bs121 had dumped 0x0806DBD4 on FireRed an hour earlier to close the field
-script-command table, and that window sits in the delta-0 segment - so LeafGreen's copy is at the
-SAME address, and lg192 cost one join with nothing to compute.
-
-288 sites paired by code offset, 216 identical, and three groups:
-
-| FireRed | delta | what it is |
-|---|---|---|
-| 0x08265950 and 0x0839F83C | **−0x20** | 13 sites, two points 1256 KB apart |
-| 0x0823E514, 0x0823F6C8 | −0x24 | inside the measured −0x24 segment: a control |
-| 0x083D6BDC | −0x1C4 | inside the segment lg191 had just measured: a second control |
-
-**There is a −0x20 segment, and it is why that gap looked like one big unknown.** The delta does not
-go −0x24 straight to −0x1C4; it stops at −0x20 for more than a megabyte on the way. Two points that
-far apart at one delta is a segment by this project's own rule, and both controls landed in the same
-pairing, on either side of it.
-
-Corroboration arrived from a direction the run knew nothing about: the four low segments now read
-−0x2C, −0x28, −0x24, −0x20, stepping by exactly four bytes each time. −0x20 continues that run, which
-is not what a pairing read at the wrong offset produces.
-
-What was one 1480 KB gap is now two, of 99 KB and 126 KB.
-
-What did NOT work, and is worth recording so it is not tried again: gSongTable looked like the ideal
-spreader - 347 entries of `{header, ms, me}` pointing into the largest blob in the ROM. bs118 dumped
-it and the song HEADERS turn out to be packed together, 122 of them inside 9 KB. The pointers do not
-spread, so the table measures one place, not many. A graphics pointer table would be the next thing
-to try; the literal-pool trick above got there first and cost less.
-
-## lg184-lg189: the script layer is the same on both cartridges
-
-Method: take a word from a FireRed dump - four distinct bytes, occurring once - and scan LeafGreen
-for it. Instructions are position independent, so where it comes back is the delta.
-
-| needle | taken from | found on LeafGreen at | delta |
-|---|---|---|---|
-| 0x49050B80 | bs92, inside `ScrCmd_special` | 0x0806D7F4 | 0 |
-| 0x4831D940 | bs103, the top of the handler block | 0x080701C0 | 0 |
-| 0x49040A00 | bs105, inside the flag/var workers | 0x08071E1C | 0 |
-| 0x47708008 | bs105, above `FlagGet` | 0x08071FC4 | 0 |
-| 0x18210094 | bs106, inside `AddBagItem` | **0x0809DA80**, FireRed 0x0809DAAC | **-0x2C** |
-
-**The last row is the control.** Delta 0 is also what this scan answers against the wrong console,
-so the zeros need a needle from above the 0x0807D238 boundary, where the delta is known to be
--0x2C, to come back shifted. It did, one match in the window. Every run also had
-`--expect-console leafgreen`.
-
-So the delta-0 segment reaches **0x08071FC4** and the first gap is 0x08071FC4..0x0807D238, a 25x
-narrowing. Everything below it is the same address on both cartridges:
-
-- the `gScriptCmdTable` handler block, 0x0806D7C0..0x080700B8
-- the script engine: `ScriptContext_Stop`, `ScriptJump`, `ScriptCall`, `ScriptReturn`, and the
-  native-pointer setter `callnative` uses
-- `GetVarPointer`, `VarGet`, `FlagSet`, `FlagClear`, `FlagGet`
-- the `_call_via_r0` veneer `ScrCmd_special` and `ScrCmd_callnative` call through
-
-`rom_map.SHARED_WITH_LEAFGREEN_THROUGH` is the boundary; `LEAFGREEN_ADD_BAG_ITEM` is 0x0809DA44.
-The rest of the item and money block was -0x2C by segment, predicted - session 42's paired call
-sites measured it, and `pokeldn/frlg/rom/leafgreen_twins.py` is where those addresses are. The delta-0
-segment reaches 0x0807AF04 now, not 0x08071FC4.
-
-## Session 48: the map, measured, and a second segment nobody had seen
-
-Two joins on each cartridge closed it. The method is the whole of it, and it needs no needle, no
-symbol and no guess about where a twin is:
-
-**Dump both cartridges at the SAME address.** If the delta there is *d*, the LeafGreen block holds
-what the FireRed block holds shifted by *d*, and any *|d|* under a kilobyte leaves hundreds of bytes
-of overlap. Cross-correlating the two blocks reads *d* off directly. That is what a bisection could
-never do before, because aiming the LeafGreen dump at the twin needs the delta - the very thing being
-measured. `memory-dump-scatter` sends the same 27 addresses to both consoles and every block answers.
+That is exactly what a bisection cannot do when the delta is the unknown, because aiming the LeafGreen
+dump at the twin requires the delta. `memory-dump-scatter` sends the same 27 addresses to both consoles
+and every block answers.
 
     ./.venv/bin/python scratchpad/direct_delta.py       # the delta at each paired block
     ./.venv/bin/python scratchpad/boundary_bytes.py     # and, inside a block, where it steps
 
-**A boundary is not a line: it is the divergent region itself.** Where the two builds hold
-version-specific code, no delta describes anything, and the span below is exactly that - the last
-window that still matches at the old delta, and the first that matches at the new one.
+Two boundaries fell *inside* a block, and inside a block the step is readable to the byte by asking,
+window by window, which delta still matches. 346 KB of unmeasured boundary became 2036 bytes across the
+five code steps, and every one of the 272 specials now has a LeafGreen address.
 
-| step | before | after | what it is |
-|---|---|---|---|
-| `0 -> -0x2c` | 8.8 KB | **644 B**, 0x0807CF68..0x0807D1EC | `title_screen.o` |
-| `-0x2c -> -0x28` | 93.5 KB | **62 B**, 0x080DE2E4..0x080DE322 | `mystery_event_script.o` |
-| `-0x28 -> -0x24` | 19.7 KB | **90 B**, 0x081480CE..0x08148128 | `mystery_gift.o` |
-| `-0x24 -> -0x20` | 98.8 KB | **31 B**, 0x08251D8E..0x08251DAD | `pokemon.o` rodata |
-| `-0x20 -> -0x1c4` | 125.6 KB | **1209 B**, 0x083B7B47..0x083B8000 | `title_screen.o` rodata |
-| `-0x1c4 -> -0x124c` | (unknown) | 30 KB, 0x0843AFFF..0x08442800 | graphics |
-| `-0x124c -> -0x1240` | (unknown) | 17 KB, 0x08442BFF..0x08447000 | graphics |
-| `-0x1240 -> -0x12d8` | (unknown) | 63 KB, 0x0844F3FF..0x0845F000 | graphics |
+**A wide gap between two deltas is not evidence that the delta steps once.** What had been read as one
+step from −0x1C4 to −0x12D8 across 421 KB is **three**: a block at 0x08442800 matches the LeafGreen block
+a page below it at −0x124C, 436 of 436 bytes, and two further points 32 KB apart read −0x1240 before
+−0x12D8 resumes.
 
-346 KB of unmeasured boundary became **2036 bytes** across the five code steps, and every one of the
-272 specials now has a LeafGreen address - none falls inside a boundary any more.
+Graphics can resemble itself, so each reading was checked against its neighbours rather than taken on its
+own. At 0x08442800: −0x124C is 436/436, −0x1240 is 6.9%, −0x12D8 is 2.7%. At 0x08457000 the best is 74.7%
+against 57.3% for the next candidate, and that one is recorded as **not a verdict**.
 
-**TWO SEGMENTS NOBODY HAD SEEN: -0x124C and -0x1240.** What was read as one step from -0x1C4 to
--0x12D8 across 421 KB is **three**. bs128/lg194's FireRed block at 0x08442800 matches the LeafGreen
-block a page below it at -0x124C, 436 of 436 bytes; bs129/lg195 then read -0x1240 at two points 32 KB
-apart and -0x12D8 at four more. That is the lesson `-0x20` taught in session 42, now three times
-over: **a wide gap between two deltas is not evidence that the delta steps once.**
+## Reading a LeafGreen dump against FireRed's tables
 
-Graphics can resemble itself, so each reading was checked against its neighbours rather than taken
-on its own. At 0x08442800: -0x124C is 436/436, -0x1240 is 6.9%, -0x12D8 is 2.7%. At 0x08457000 the
-best is 74.7% against 57.3% for the next candidate, and that one is recorded as **not a verdict**.
+Every table this project holds was read off FireRed, so reading LeafGreen's dumps against those addresses
+is coherent below the split and quietly wrong above it. `tools/frlg/rom_functions.py --console leafgreen`
+moves the whole view — the entries, the bodies and the names — through the measured twins, and **drops** an
+entry whose address falls inside a boundary rather than reading it at a guess. 184 of the 213 field
+bodies and 33 of the 252 placeable specials come back, with the same three unnamed call targets FireRed
+has, at LeafGreen's addresses.
 
-**Where it stops, and why it is not a matter of more runs.** Above 0x0843C800 the two cartridges hold
-*different bytes*, not the same bytes somewhere else - version-specific graphics. No shift matches at
-any offset a block can see, so the delta there is not unmeasured, it is undefined by content. The two
-single points at -0x124C and -0x12D8 are the ends of that region, not the ends of a segment.
+The script layer is identical on both cartridges below 0x0807AF04
+(`rom_map.SHARED_WITH_LEAFGREEN_THROUGH`): the `gScriptCmdTable` handler block (0x0806D7C0..0x080700B8),
+the script engine (`ScriptContext_Stop`, `ScriptJump`, `ScriptCall`, `ScriptReturn`, the native-pointer
+setter `callnative` uses), `GetVarPointer`, `VarGet`, `FlagSet`, `FlagClear`, `FlagGet`, and the
+`_call_via_r0` veneer.
 
-**The English build brackets the same five steps independently** and lands inside every one of them -
-five agreements between two methods that share nothing.
-[The English build as an instrument](frlg_english_build.md).
+## The overworld, and a shiny Mewtwo
+
+`gRngValue`, `gSaveBlock1Ptr` and `gSaveBlock2Ptr` are link-time IWRAM words at the same addresses as
+FireRed's, and every literal in [the seek stubs](frlg_rng.md) is one of them, so the stubs needed no
+porting. What was missing was somewhere to put a RAM script, since the player has to talk to a map object
+and this save sits in Cerulean Cave B1F.
+
+**The binding went on Mewtwo.** `initramscript` takes a map group, a map number and an object id, and
+`GetRamScript` runs the given script *instead of* that object's own [field_control_avatar.c:458].
+Cerulean Cave B1F is group 1 map 74 [data/maps/map_groups.json] and Mewtwo is object 3
+[data/maps/CeruleanCave_B1F/map.json].
+
+`rng-mon-hunt-both` was installed there with `setwildbattle` set to species 150 at level 70. Mewtwo's own
+script did not run — the battle started immediately — and the Mewtwo that appeared was **shiny**.
+
+Three things that were not certain before:
+
+- The stray-draw search works on the second cartridge. The first attempt missed and the ones after it
+  hit, both being the first talk after a load, so the miss is a placement miss rather than a wrong
+  constant: the stub reads `TID ^ SID` off `gSaveBlock2Ptr` at run time [asm/field/mon-seek-both.s:73].
+- **The binding survives a power cycle.** The player reset and talked to Mewtwo cold, and the script still
+  ran. `gSaveBlock1Ptr` is re-rolled on every load, so that is the trampoline's run-time pointer read
+  being right rather than lucky.
+- A buffer script does **not** take the RAM script slot back, because it sends no card. Only a Wonder Card
+  session does, and an ordinary card restored Mewtwo's own script through
+  `InitRamScript_NoObjectEvent`.
+
+While the RAM script was installed the console reported holding no Wonder Card, and the card was intact
+throughout — see [the one RAM script slot](frlg_gift.md#the-one-ram-script-slot).
+
+## A dumped region must not move
+
+Pointing a `memory-dump` at 0x03004220 kills the link mid-transmission with *erreur de connexion*, because
+that address is `gRngValue` and it advances two turns every frame while the CRC and the send happen on
+different frames. Repeating the run unchanged fails identically with a *different* CRC pair, which is the
+signature of a region that moves rather than one that is corrupted; dumping the same 32 bytes from ROM
+returns the expected bytes and rules out the size. The mechanism and the guard are on
+[Code on the console](frlg_rom.md#repointing-the-consoles-outgoing-message).
+
+Reading the save-block pointers works by starting 4 bytes higher, and they verify themselves: both values
+had moved by exactly 12 since an earlier reading, one shared 4-aligned offset inside the 0..124 range
+`SetSaveBlocksPointers` rolls. Two pointers cannot agree on the size of a re-roll neither could have faked
+alone.
+
+## The English build as an instrument
+
+`pret/pokefirered` builds a ROM, it builds **both** cartridges, and it builds them at REVISION 10, which
+is the revision the Switch release runs:
+
+    make firered_switch     -> pokefirered_switch.gba    baa452d0b24629dd7782cfc07a8984085dde1311
+    make leafgreen_switch   -> pokeleafgreen_switch.gba  62b9fc77549dbc67032eb6cbd0ea6ad3b825690f
+
+Both come out byte-identical to the sha1 the decomp pins, on a machine with binutils and `pret/agbcc`.
+`scratchpad/build_decomp.sh` does it in about two minutes. **The sha1 is the only reason any of this is
+usable**: a build that does not match is a build of something else. The ROM is never committed.
+
+**It is the English release**, and at the same address a French console and the English build agree on
+**3.7%** of their bytes: French text is a different length and everything after a string moves. Nothing
+here reads as "the address in the build is the address on the console". What it is instead is a second
+cartridge pair from the same source in the same link order, with every symbol, section and object known.
+
+### The offset: French address to English address
+
+Piecewise constant, stepping only where an object changes size between the languages, which in a code
+region is rare — measured runs are tens of kilobytes long and one is 1.3 MB. Two independent readings
+give it and they agree everywhere both speak:
+
+- **The tables, free.** `gSpecials[i]`, `gScriptCmdTable[i]` and `gMysteryEventScriptCmdTable[i]` are the
+  same function on both builds, so entry *i* on the console and entry *i* in the English ROM are an
+  offset point. 675 of them, out of dumps already on disk.
+- **The dumps.** A 16-byte window that occurs *exactly once* in the English ROM places any French bytes
+  equal to it. A kilobyte of code carries a few hundred such windows, so one block votes hundreds of
+  times for one offset, and a step inside a block shows up as two runs rather than a wrong answer.
+
+      ./.venv/bin/python tools/frlg/english_build.py --offsets
+
+### The control
+
+The English build proposes a name for a French address: take the offset, add it, read the name off the
+English ELF — which carries **static** functions, unlike the link map. Run against `worker_names`, every
+name measured off the console's own function bodies, it comes back **232 agree, 0 disagree**.
+
+    ./.venv/bin/python tools/frlg/english_build.py --check
+
+The one apparent disagreement was not one: `GetBoxMonData2` is
+`__attribute__((alias("GetBoxMonData3")))` [pokemon.c:3332], one function with two symbols. The reader
+keeps every name an address carries.
+
+**A name from here is a deduction.** `rom_map.CALLABLE` means "called on hardware and something
+happened"; `worker_names` means "the console's own body called it in the order the source says".
+`pokeldn/frlg/rom/english_names.py` holds 7573 French function addresses named this way, generated by
+`scripts/gen_english_names.py`, with the offset runs beside them.
+
+`rom_functions` reads them **last**, marked `[english]`, so a deduction can fill a hole and never
+overrule a body the console's own calls named. `gen_worker_names` passes `with_english=False`: a
+deduction must not anchor the reading that produces it.
+
+Of 177 call targets that had no name, two are left. 158 fall inside a measured offset run and are named
+outright. The rest fall *between* two runs and get a weaker reading in `english_names.BRACKETED`: named
+with one of the two offsets either side, accepted only when it lands exactly on a function start and only
+one of the two does. An offset wrong by two bytes lands mid-instruction, which is what stands in for the
+missing measurement; `rom_functions` marks them `[english?]`.
+
+Three of those targets are reached from a dozen bodies each and had survived every other reading. The
+English build reads them as `__divsi3`, `__modsi3` and `__umodsi3` — and the worker-naming pass, from a
+direction that knew nothing about the English build, had already predicted the residue would be exactly
+that: agbcc emitting a helper for a division nobody wrote.
+
+### The English pair's own delta map
+
+Comparing the two English ROMs to each other computes their delta map exactly, and it comes out as the
+same six values the French cartridges measured, in the same order:
+
+    +0x0   -0x2c   -0x28   -0x24   -0x20   -0x1c4
+
+Each step happens **inside a version-divergent object, not at its edge**, which is why the link map's
+symbols do not bracket it: the code inside `title_screen.o`, `mystery_event_script.o`, `mystery_gift.o`
+and `pokemon.o` that differs between FireRed and LeafGreen carries no symbol common to both builds. Byte
+comparison brackets each step to between 79 and 1606 bytes.
+
+    ./.venv/bin/python tools/frlg/english_build.py --boundaries
+
+Carried across by the offset map, that is a *prediction* of where the French boundary is, and every one
+of the five landed inside the bracket measured on hardware — five independent agreements between two
+methods that share nothing.
+
+### Traps
+
+- **A `.gcc2_compiled.` symbol sits at the first symbol of its file** and shadows the function name if the
+  reader keeps only the first symbol at an address. Skip names beginning `.` or `$`.
+- **Padding matches at every delta.** A window has to say something before its match means anything; 16
+  distinct byte values is the threshold used here. Without it the 0xFF filler between objects reads as
+  agreement with whatever was asked.
+- **The offset is not the delta.** The offset is French → English on *one* cartridge; the delta is FireRed
+  → LeafGreen on the console. They are related by
+  `french delta = offsetFR - offsetLG + english delta`.
+- Regenerate `english_names.py` with `scripts/gen_english_names.py` after any new dump.
+
+## What did not work
+
+`gSongTable` looked like the ideal spreader for the top of the ROM — 347 entries of `{header, ms, me}`
+pointing into the largest blob in the cartridge. Dumping it showed the song *headers* packed together,
+122 of them inside 9 KB, so the pointers do not spread and the table measures one place rather than many.
+A graphics pointer table would be the next thing to try; the literal-pool method got there first and cost
+less.
+
+Incidentally, FireRed's ROM data ends between 0x08680400 and 0x08800000: 0x08800000 reads all `0xFF` and
+0x08E00000 all `0x00`, while 0x08680000 is high-entropy data. Two different padding values, so those two
+reads are not the same thing and neither has been chased. `gSongTable`'s song headers reach 0x086ABE68,
+so the data runs at least that far.
