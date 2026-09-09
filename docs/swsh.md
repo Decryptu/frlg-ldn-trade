@@ -1472,13 +1472,24 @@ any four-byte body the confirmation content has not sent before, and the FIRST s
 spent on the sentinel and only three commands ever landed on a step. The queue was empty when
 `02000200` arrived, the console climbed once more on the credit it already had, and then nothing.
 
-**THE VALUE IS INERT, AND THAT IS READ, NOT GUESSED.** DEDUCTION from the image: the only thing that
-moves the content's state is `0x010dbf40`, whose sole caller is content 40's pump `0x010db3e0`, and
-the pump passes it `[content+0x17c]` - the content's OWN phase. The int32 in our
-`SyncSaveDataHolder{syncCommand{data:N}}` never reaches it; `0x010dbc90` keeps the value and sets
-the sender's byte in the map at `[content+0x2a0]+0x1c0`. **So what advances a rung is that a command
-ARRIVES, not which of 0..3 it carries** - and the next run needs a queue that does not run dry, not
-a better guess at the values.
+**THE VALUE IS INERT, AND THE HANDLER'S LAST INSTRUCTION SAYS SO.** `0x010dbc90` end to end:
+resolve the sender with `0x006b5850` and drop on `0xfd` (setting `[this+0x64] = 1`); keep our int32
+from `[arg1+0x14]` on the stack; index the subscriber slots at `+0x38` by the station index, which
+is the two-slot limit content 50 has; hand the int32 to the relay `0x010dbe20` and to the
+subscriber's vtable `+0x18`; and then, unconditionally,
+
+    0x010dbdf8  ldr  x8, [x20, #0x18]
+    0x010dbdfc  ldr  x0, [x8, #0x2a0]
+    0x010dbe00  mov  w2, #1          <- the value recorded for this station is a CONSTANT
+    0x010dbe04  mov  x1, x19         <- keyed by the sender
+    0x010dbe08  bl   #0x6a24a0
+
+**What the console files against our station is `1`, not the number we sent.** Our int32 goes only to
+the relay - which is why the capture carries an elementId-1 body of `00000000` right after a
+`syncCommand{data:0}`, the echo of the value itself. And the only thing that moves the content's
+state is `0x010dbf40`, whose sole caller is the pump `0x010db3e0`, which passes `[content+0x17c]`,
+the content's OWN phase. **So what advances a rung is that a command ARRIVES, not which of 0..3 it
+carries** - and the next run needs a queue that does not run dry, not a better guess at the values.
 
 ## A stalled ladder costs the player an hour, so the run ends itself now
 
