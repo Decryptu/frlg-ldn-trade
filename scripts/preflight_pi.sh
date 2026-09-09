@@ -60,6 +60,7 @@ if [[ -x "$PYTHON" ]]; then
 import pathlib
 import sys
 root = pathlib.Path(sys.argv[1]).resolve()
+sys.path.insert(0, str(root / "bin"))
 sys.path.insert(0, str(root))
 import frlg_mg_host
 from pokeldn import host_cli

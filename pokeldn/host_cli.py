@@ -124,6 +124,11 @@ def add_host_arguments(parser, *, option_defaults=None, ldn_defaults=None,
         "--session-response-first", action=argparse.BooleanOptionalAction,
         default=option_defaults.session_response_first,
         help="send Session type 2 unicast before type 5 broadcast")
+    parser.add_argument(
+        "--tick-hz", type=float, default=option_defaults.protocol_tick_hz, metavar="HZ",
+        help=("how many RFU slots a second the host emits (default %.3f, one per GBA VBlank). A real "
+              "console pair runs far below this; lowering it slows every link step by the same factor."
+              % option_defaults.protocol_tick_hz))
 
 
 def parse_hex_bytes(parser, option, value):
@@ -166,6 +171,7 @@ def build_host_config(parser, args):
             accept_decrypted_ccmp=args.accept_decrypted_ccmp,
             native_nonce_sequence=args.native_nonce_sequence,
             session_response_first=args.session_response_first,
+            protocol_tick_hz=args.tick_hz,
             # Only the trade host defines --union-room; the Mystery Gift host shares this parser.
             union_room=getattr(args, "union_room", False),
             union_room_activity=config.resolve_union_room_activity(

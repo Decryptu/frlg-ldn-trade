@@ -190,6 +190,7 @@ def reliable_output_batches(outputs, limit=RELIABLE_BATCH_MAX):
 class HostPeerProtocol:
     def __init__(self, network, profile, host_session, active_app_data, *,
                  native_nonce_sequence=False, session_response_first=False,
+                 protocol_tick_seconds=HOST_VBLANK_SECONDS,
                  tracer=None, log=lambda *a: None):
         self.network = network
         self.profile = profile
@@ -200,6 +201,11 @@ class HostPeerProtocol:
         self.info = getattr(log, "info", log)
         self.tracer = tracer
         self.nonces = PiaNonceSequence(native=native_nonce_sequence)
+        # One RFU slot per GBA VBlank is what the emulated link expects, and it is what every
+        # run before cc6 sent. Measured on the air, a console answers that with ~162 frames/s
+        # while a real console peer draws ~25 [docs/frlg_link.md]. This is the knob that tests
+        # whether the console's answer rate follows ours.
+        self.protocol_tick_seconds = float(protocol_tick_seconds)
 
         self.joined = False
         self.net_acked = False
@@ -480,7 +486,7 @@ class HostPeerProtocol:
         if (self.session_finalized and self.next_protocol_tick is not None
                 and now >= self.next_protocol_tick):
             self._send_reliable(self.session.tick(now * 1000.0))
-            self.next_protocol_tick = now + HOST_VBLANK_SECONDS
+            self.next_protocol_tick = now + self.protocol_tick_seconds
         if self.session.trade.established and not self.property_started:
             self.property_started = True
             self.next_property_send = 0.0

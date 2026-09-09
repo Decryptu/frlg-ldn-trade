@@ -220,6 +220,10 @@ class HostOptions:
     accept_decrypted_ccmp: bool = False
     native_nonce_sequence: bool = False
     session_response_first: bool = False
+    # How often the host emits one RFU slot. The GBA link is one slot per VBlank, which is what this
+    # defaults to; cc6 measured a real console pair running an order of magnitude below it
+    # [docs/frlg_link.md], so this exists to test the console's answer rate against ours.
+    protocol_tick_hz: float = 59.727
     # Host for the Union Room (the middle NPC on Pokemon Center 2F) instead of the trade centre:
     # bare IN_UNION_ROOM advertisement, no parent NI, SEND_PACKET prompt, room trade flow.
     union_room: bool = False

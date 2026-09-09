@@ -772,6 +772,57 @@ frames at one per VBlank is ~340 ms; a full step is that plus the return leg, gi
 **Do not "optimise" the tick.** Going faster means emitting more than one RFU slot per VBlank, which is
 not what the hardware link does.
 
+## What two real consoles put on the air
+
+`cc6_air.pcap` is a passive capture of a trade between two real consoles — FireRed hosting through the
+third NPC, LeafGreen joining — recorded with `scratchpad/run_air.sh` while this project took no part in
+the session. It is the first recording of this game's link that our own code did not drive.
+
+**Frame counts off a monitor interface are a floor, not a rate.** The capture holds 9.5 data frames a
+second; the beacon rate is no control for that, because beacons go out at 1 Mbit/s and data does not.
+The 802.11 sequence counter is the control: every station numbers each frame it sends, so the gaps say
+what the monitor missed. Only 19% of the hosting console's frames were captured in `cc6`, and 43% of
+the same console's frames in `j84`.
+
+Sequence-corrected, with the same console (`48:f1:eb:20:9b:22`) in both:
+
+| station | talking to this project's host (`j84`) | talking to a real console (`cc6`) |
+|---|---|---|
+| the FireRed console | 161.8/s | 25.5/s |
+| its peer | 58.9/s, our host at one slot per VBlank | 6.1/s, the LeafGreen |
+
+A whole trade — party blocks, mail, animation, save barriers — runs between two consoles at 25 and 6
+frames a second. The same console answers this project's 59/s tick with 162, six times what it sends a
+real peer and nearly three times what it is being sent.
+
+The GBA link inside the emulator is one slot per VBlank and that is not in question. What `cc6` measures
+is the layer below: a real session does not put 60 datagrams a second on the air in either direction,
+and ours does. The 25.5/s figure rests on the softest capture of the four.
+
+`scratchpad/air_seqloss.py` prints the capture completeness per station and `scratchpad/air_rate.py`
+the corrected send rates. Run both on any air capture before quoting a rate from it.
+
+## The console's output rate is its own, not an echo of ours
+
+`--tick-hz` sets how many RFU slots a second the host emits; the default is one per VBlank. It was added
+to test whether the console's answer rate follows the host's, and the answer, measured on the same
+console over two consecutive trades, is **no**:
+
+| | 59.727 Hz (the default) | 20 Hz |
+|---|---|---|
+| host datagrams out | 79.3/s | 39.3/s |
+| console datagrams in | 61.8/s | 51.8/s |
+| trade duration | 92 s | 197 s |
+| console datagrams, whole session | 5663 | 10218 |
+
+Halving the host's output moved the console's by a sixth. Its pace is its own clock, and the only thing
+that changed materially is that every step of the trade took proportionally longer — so the session
+lasted 2.1x as long and the console sent 80% more datagrams in total. The player sees continuous lag.
+
+**Do not lower the tick.** A slower host is not a quieter session; it is the same session stretched, with
+more traffic and a longer exposure window. `--tick-hz` is an instrument, not a setting to tune, and the
+approach of reducing our own send rate to make the console quieter is a measured dead end.
+
 # The cable-club colosseum
 
 `frlg_trade_host.py --colosseum` hosts Pokemon Center 2F → third NPC (club sans fil) → Colosseum →
