@@ -51,6 +51,16 @@ from pokeldn.bdsp.netdata import FIELDS, NAMES, OPAQUE
 
 HEADER_SIZE = 3
 
+# The three payloads whose C# struct is not blittable AND whose layout the wire has decided anyway.
+# `netdata.OPAQUE` is a fact about the source; this is a fact about the marshalling, measured from
+# captures and from `ANetData<T>$$ConvertStructToBytes`, and the other nine ids in OPAQUE have
+# never been on the air at all (`scratchpad/bdsp_msgids.py`).
+MEASURED = {
+    0x02: "12 x PosData, 72 bytes: ushort posX, ushort posZ, short rotY",
+    0x13: "one encrypted PB8 at stored size, 328 bytes, no length prefix",
+    0x24: "26-byte name, u32 tranerId, byte cassetVersion, byte langId",
+}
+
 JOIN = 0x01                       # NetJoinData
 POS = 0x02                        # NetPosData
 EMOTION = 0x03                    # NetEmotionData
@@ -112,7 +122,8 @@ def parse(data):
     length = struct.unpack_from(">H", data, 1)[0]
     body = data[HEADER_SIZE:HEADER_SIZE + length]
     out = {"data_id": data_id, "name": name(data_id), "length": length, "body": body,
-           "truncated": len(body) < length, "opaque": data_id in OPAQUE}
+           "truncated": len(body) < length,
+           "opaque": data_id in OPAQUE and data_id not in MEASURED}
     fields = parse_fields(data_id, body)
     if fields is not None:
         out["fields"] = fields
@@ -120,6 +131,8 @@ def parse(data):
         out["join"] = parse_join_body(body)
     elif data_id == POS:
         out["points"] = parse_pos_body(body)
+    elif data_id == TRADE_TRANER and len(body) == TRADE_TRANER_SIZE:
+        out["traner"] = parse_trade_traner(body)
     return out
 
 
@@ -250,31 +263,46 @@ RETURN_SELECT = 0x45              # NetDataReturnSelectData - THE MESSAGE ON THE
 
 
 def parse_trade_traner(body):
-    """-> the player's own trade record. 32 bytes, READ OFF THE WIRE - opendpr gives it no layout.
+    """-> the player's own trade record. 32 bytes, and every one of them is accounted for.
 
-    `netdata.OPAQUE` lists this id because its C# struct holds a string, so the generated table
-    cannot decide a layout for it. The console sent one in sp82 and it reads cleanly, and the
-    reading CHECKS ITSELF: the trainer id and secret id sit in the clear at 0x1a and 0x1c and are
-    the same pair carried inside the encrypted PB8 of the same trade (44466 / 4080), which is two
-    independent messages agreeing.
+    `TradeTranerData` is `string tranerName; uint tranerId; byte cassetVersion; byte langId`, and
+    `ANetData<T>$$ConvertStructToBytes` [main.bin 0x27bb0e0] puts it on the wire through
+    `Marshal.SizeOf`, `Marshal.AllocHGlobal` and `Marshal.StructureToPtr`, so the payload IS the
+    marshalled struct, in declaration order, packed:
 
-        0x00  name, 8 UTF-16LE code units, null padded
-        0x10  u32   107544        unidentified, and adjacent - they differ by 4
-        0x14  u32   107540
-        0x18  u16   0
-        0x1a  u16   trainer id
-        0x1c  u16   secret id
-        0x1e  u16   817
+        0x00  26  tranerName, UTF-16LE, NUL-terminated
+        0x1a   4  tranerId, the full 32-bit id - secret id in its high half
+        0x1e   1  cassetVersion
+        0x1f   1  langId
+
+    Four fields, 26 + 4 + 1 + 1 = 32, and nothing left over. THE READING CHECKS ITSELF against the
+    encrypted PB8 of the same trade: 0x1a..0x1d is 0x0FF0ADB2, which is that Pokemon's trainer id
+    44466 and secret id 4080; 0x1e is 49, its `version`; 0x1f is 3, its `language`. Two independent
+    messages agreeing on four fields.
+
+    THE TEN BYTES PAST THE STRING'S TERMINATOR CARRY NOTHING. `AllocHGlobal` does not clear its
+    block and marshalling a string into a fixed field writes the characters and one terminator, so
+    what follows is whatever was in the heap - which is why 0x14 was 107540 in nine runs, 44 in
+    sp88 and 60 in sp94 while every declared field held still. `slack` is those bytes as hex, and
+    a record we build sends the console's own so that ours differs from a real one only where we
+    meant it to.
     """
     if len(body) != TRADE_TRANER_SIZE:
         raise ValueError(f"{len(body)} bytes, expected {TRADE_TRANER_SIZE}")
-    a, b, c, tid, sid, tail = struct.unpack_from("<IIHHHH", body, 16)
-    return {"name": body[0:16].decode("utf-16-le").split("\x00")[0],
-            "unknown_10": a, "unknown_14": b, "unknown_18": c,
-            "trainer_id": tid, "secret_id": sid, "unknown_1e": tail}
+    trainer_id32, casset, lang = struct.unpack_from("<IBB", body, 26)
+    return {"name": body[0:TRADE_TRANER_NAME_SIZE].decode("utf-16-le").split("\x00")[0],
+            "trainer_id32": trainer_id32,
+            "trainer_id": trainer_id32 & 0xFFFF, "secret_id": trainer_id32 >> 16,
+            "casset_version": casset, "lang_id": lang,
+            "slack": bytes(body[16:26]).hex()}
 
 
 TRADE_TRANER_SIZE = 32
+TRADE_TRANER_NAME_SIZE = 26       # by subtraction: the other three fields are 6 bytes
+
+# the console's own heap residue at 0x10, which a record we send carries so that it differs from
+# a real one only in the fields that mean something
+CONSOLE_SLACK = bytes.fromhex("18a4010014a4010000 00".replace(" ", ""))
 
 
 def build_trade_poke(pb8):
@@ -289,20 +317,23 @@ def build_trade_poke(pb8):
     return build(TRADE_POKE, pb8)
 
 
-def build_trade_traner(name, trainer_id, secret_id, unknown_10=107544, unknown_14=107540,
-                       unknown_18=0, unknown_1e=817):
-    """"and here is who I am" - the 32-byte record, in the layout read off sp82.
+def build_trade_traner(name, trainer_id, secret_id, casset_version=0x31, lang_id=3,
+                       slack=CONSOLE_SLACK):
+    """"and here is who I am" - the marshalled 32-byte record.
 
-    The defaults are the console's own values for the three fields nothing has identified yet, so a
-    record we send differs from a real one only where we meant it to.
+    The defaults are a French BDSP console's own: `cassetVersion` 0x31 and `langId` 3 are the
+    `version` and `language` the console's Pokemon carry, and `slack` is the heap residue a real
+    record happened to have behind its name.
     """
     encoded = name.encode("utf-16-le")
-    if len(encoded) + 2 > 16:
-        raise ValueError(f"{name!r} is too long for the 16-byte name field")
+    if len(encoded) + 2 > TRADE_TRANER_NAME_SIZE:
+        raise ValueError(f"{name!r} is too long for the {TRADE_TRANER_NAME_SIZE}-byte name field")
+    if len(slack) != 10:
+        raise ValueError(f"{len(slack)} bytes of slack, expected 10")
+    trainer_id32 = (trainer_id & 0xFFFF) | ((secret_id & 0xFFFF) << 16)
     return build(TRADE_TRANER,
-                 encoded.ljust(16, b"\x00")
-                 + struct.pack("<IIHHHH", unknown_10, unknown_14, unknown_18,
-                               trainer_id, secret_id, unknown_1e))
+                 encoded.ljust(16, b"\x00") + bytes(slack)
+                 + struct.pack("<IBB", trainer_id32, casset_version & 0xFF, lang_id & 0xFF))
 
 
 # `TradeStateModel.TradeState` [dump.cs:258737]. The union-room flow only ever uses WAIT, which is

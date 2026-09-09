@@ -8,7 +8,7 @@ import struct
 
 import pytest
 
-from pokeldn.bdsp import pokemon, room
+from pokeldn.bdsp import netdata, pokemon, room
 
 
 def a_body(ec=0xCDBEB642, species=41, nickname="Nosferapti", ot="Gurvan", tid=44466, sid=4080):
@@ -153,7 +153,7 @@ def test_a_name_too_long_for_its_field_is_refused_rather_than_truncated():
     with pytest.raises(ValueError, match="too long"):
         pokemon.build_from(template, nickname="A" * 13)
     with pytest.raises(ValueError, match="too long"):
-        room.build_trade_traner("A" * 8, 1, 2)
+        room.build_trade_traner("A" * 13, 1, 2)
 
 
 def test_the_trade_messages_wrap_the_payloads_the_console_wraps_them_in():
@@ -192,13 +192,35 @@ def test_the_trainer_record_is_parsed_from_the_game_message_not_the_reliable_fra
         room.parse_trade_traner(b"\x00" * 9 + body)
 
 
-def test_the_field_at_0x18_varies_between_sessions_and_is_not_asserted_to_be_zero():
+def test_the_bytes_behind_the_name_vary_between_sessions_and_no_field_is_read_out_of_them():
+    """sp82 and sp83 differ only in the slack, and every declared field holds still.
+
+    The record is a marshalled struct out of an uncleared `AllocHGlobal` block, so what follows the
+    name's terminator is heap residue. It is carried, not interpreted.
+    """
     sp82 = room.parse_trade_traner(TRADE_TRANER_SP82)
     sp83 = room.parse_trade_traner(TRADE_TRANER_SP83)
-    assert sp82["unknown_18"] == 0 and sp83["unknown_18"] == 0x3D6E
-    # what does NOT vary is the identity, and that is the part the Pokemon corroborates
+    assert sp82["slack"] != sp83["slack"]
+    assert sp82["name"] == sp83["name"] == "Gurvan"
     assert sp82["trainer_id"] == sp83["trainer_id"] == 44466
     assert sp82["secret_id"] == sp83["secret_id"] == 4080
+    assert sp82["casset_version"] == sp83["casset_version"] == 0x31
+    assert sp82["lang_id"] == sp83["lang_id"] == 3
+
+
+def test_the_trainer_record_we_build_is_the_console_s_own_bytes():
+    """Byte-identical to sp82: the layout is not just readable, it is reproducible."""
+    assert room.build_trade_traner("Gurvan", 44466, 4080)[3:] == TRADE_TRANER_SP82
+    parsed = room.parse(room.build(room.TRADE_TRANER, TRADE_TRANER_SP83))
+    assert parsed["traner"]["name"] == "Gurvan"
+
+
+def test_the_three_measured_layouts_are_no_longer_reported_opaque():
+    """0x02, 0x13 and 0x24 are the only OPAQUE ids any capture holds, and all three are decided."""
+    for data_id in room.MEASURED:
+        assert data_id in netdata.OPAQUE
+        assert room.parse(room.build(data_id, b"\x00" * 32))["opaque"] is False
+    assert room.parse(room.build(0x42, b"\x00" * 8))["opaque"] is True
 
 
 def test_the_handler_block_is_readable_and_settable():

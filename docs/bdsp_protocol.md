@@ -27,6 +27,20 @@ from an `opendpr` checkout by `scripts/gen_bdsp_netdata.py`. 53 have a layout th
 other twelve carry a C# string, an array or a list, are listed in `netdata.OPAQUE`, and have no
 layout, because the source does not decide one.
 
+Three of the twelve have a layout anyway, measured from the wire and named in `room.MEASURED`, and
+they are the only three of the twelve that any capture holds. What decides them is that a payload is
+the **marshalled** struct: `ANetData<T>.ConvertStructToBytes` [main.bin 0x27bb0e0] goes through
+`Marshal.SizeOf`, `Marshal.AllocHGlobal` and `Marshal.StructureToPtr`, so a string and an array
+become fixed-size fields rather than references.
+
+    0x02  NetPosData             72 B   twelve PosData, no count
+    0x13  NetTradePokeData      328 B   one encrypted PB8 at stored size, no length prefix
+    0x24  NetDataTradeTranerData 32 B   a 26-byte name, then uint, byte, byte
+
+The marshaller does not clear what it allocates, so a fixed field carries heap residue past the
+value it holds — ten bytes of it in `NetDataTradeTranerData`, on
+[the trading page](bdsp_trade.md).
+
 The ids are nibble-grouped — 0x01 to 0x09, 0x10 to 0x19, 0x20 to 0x29 and so on, no low nibble ever
 reaching 0xA — so a gap in the numbering is the grouping rather than a missing message.
 

@@ -36,8 +36,11 @@ Proven on retail hardware, end to end:
 
 ## Unresolved
 
-- **`NetPlayerNameData`'s framing.** Twelve of the 65 message structs hold a C# string, an array or a
-  list, and the source decides no layout for them. `netdata.OPAQUE` names all twelve.
+- **`NetPlayerNameData`'s framing**, and eight others. Twelve of the 65 message structs hold a C#
+  string, an array or a list, and the source decides no layout for them; `netdata.OPAQUE` names all
+  twelve. Three are decided from the wire and listed in `room.MEASURED`, and they are the only three
+  any capture holds — the remaining nine have never been on the air, so there is nothing to measure
+  them against.
 - **The Session Protocol (0x94)**, which sits above the reliable transport and has never carried a
   byte in any capture.
 - **Whether the console reads a `NetCharacterStateData` answer at all.** The answers are accepted by

@@ -130,13 +130,26 @@ The checksum sits in the clear at 0x06 and sums the *decrypted* body, so a Pokem
 assembles verifies itself by decoding it back before it is sent. It cannot catch a wrong **block
 order**: permuting whole 80-byte blocks does not change a sum of 16-bit words.
 
-`NetDataTradeTranerData` has no generated layout — its C# struct holds a string — so it is read off
-the wire, and the reading checks itself: the trainer and secret ids in the clear at 0x1a and 0x1c are
-the same pair carried inside the encrypted Pokemon of the same trade.
+`NetDataTradeTranerData` is the marshalled C# struct, in declaration order and packed.
+`ANetData<T>.ConvertStructToBytes` [main.bin 0x27bb0e0] sizes it with `Marshal.SizeOf`, allocates
+with `Marshal.AllocHGlobal` and writes it with `Marshal.StructureToPtr`, so the payload is the
+struct as the marshaller lays it out — `string tranerName; uint tranerId; byte cassetVersion;
+byte langId`, 26 + 4 + 1 + 1 = 32 bytes, with nothing left over.
 
-    0x00  name, 8 UTF-16LE code units      0x18  u16, varies between sessions
-    0x10  u32, unidentified                0x1a  trainer id
-    0x14  u32, unidentified                0x1c  secret id
+    0x00  26  tranerName, UTF-16LE, NUL-terminated
+    0x1a   4  tranerId, the full 32-bit id, secret id in its high half
+    0x1e   1  cassetVersion
+    0x1f   1  langId
+
+The reading checks itself against the encrypted Pokemon of the same trade: 0x1a is 0x0FF0ADB2, which
+is that Pokemon's trainer id 44466 and secret id 4080; 0x1e is 49, its `version`; 0x1f is 3, its
+`language`.
+
+The ten bytes between the name's terminator and the id carry nothing. `AllocHGlobal` does not clear
+its block and marshalling a string into a fixed field writes the characters and one terminator, so
+what follows is heap residue: the word at 0x14 was 107540 in nine runs, 44 in one and 60 in another
+while every declared field held still. `room.build_trade_traner` carries the console's own residue,
+which makes the record it builds byte-identical to the console's.
 
 **What is offered is a real Pokemon with named fields changed**, not one built from nothing. Those 328
 bytes hold far more than the dozen identified fields — met data, ribbons, handler records, the
