@@ -469,6 +469,43 @@ def sync_announced_phase(data):
     return data + 1
 
 
+def sync_step(phase, announced):
+    """-> the four-byte step body `<u16 phase><u16 announced>` a content's element publishes.
+
+    The two halves have independent publishers and neither one touches the other: `0x006d3980`
+    writes the low half and carries the high half over from `sub+0x8a`, and `0x006d3690` - called
+    from the pump - writes the high half and carries the low half over from `sub+0x88`. Both hand
+    the result to `0x006d3860`, which stores it at `sub+0x88` and sends four bytes.
+
+    **THIS PROJECT HAS NEVER PUT A VALUE OF ITS OWN IN EITHER HALF.** `answer_rpc` copies the body
+    it was given, so every step we have ever sent carries the console's own two u16s under our
+    ownerId. `bin/swsh_connect.py --confirm-phase N` is the first send that does not.
+    """
+    return struct.pack("<HH", phase & 0xFFFF, announced & 0xFFFF)
+
+
+def answer_rpc_with_phase(payload, station_id, phase, clock_delta=5):
+    """-> `answer_rpc`'s reply with the step body's PHASE half replaced, or None.
+
+    The console's receive handler for this channel is four instructions - `if (len != 4) return;
+    [sub+0x88] = body; [sub+0x78] = clock; sub+0x61 = 1` - so a four-byte `Data` whose (elementId,
+    ownerId) matches a registered sub-element is the only thing besides the console's own publish
+    that can change the value the phase is read from. Every answer this project has sent echoed the
+    console's own halves back, which cannot move a value that is already what it says.
+
+    Returns None rather than raising when the payload is not a four-byte RPC - a reader on a live
+    run must not raise (session 59's rule).
+    """
+    got = parse_rpc(payload)
+    if got is None or any(got[k] is None for k in ("offset", "base", "clock")):
+        return None
+    step = parse_sync_step(got["body"])
+    if step is None:
+        return None
+    return build_rpc(got["offset"], got["base"], station_id, got["clock"] + clock_delta,
+                     sync_step(phase, step[1]))
+
+
 def parse_sync_step(body):
     """-> `(phase, announced)` out of a content's four-byte step body, or None if it is not four.
 

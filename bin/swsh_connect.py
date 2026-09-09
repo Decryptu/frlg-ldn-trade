@@ -534,8 +534,31 @@ async def main_async(args):
                                     args.selection_final_delta
                                 print(f"[tx]     *** THE HASH - RE-ARMING THE {member['envelope']}"
                                       f" PAIR AT CLOCK +{args.selection_final_delta} ***")
-                            reply = swsh_trade.answer_rpc(got["payload"], our_constant,
-                                                          args.rpc_clock_delta)
+                            # AND THE ONE HALF WE HAVE NEVER WRITTEN. `answer_rpc` copies the
+                            # body, so every step this project has sent carries the console's own
+                            # two u16s under our ownerId - which cannot move a value that already
+                            # says what it says. The console's receive handler for this channel
+                            # (`0x006d6490`) takes any four-byte Data whose (elementId, ownerId)
+                            # matches a registered sub-element and stores it at `sub+0x88`, and
+                            # `0x006d3260` reads the phase back out of exactly those bytes.
+                            # `--confirm-phase N` writes the low half and keeps the high one.
+                            reply = None
+                            if (args.confirm_phase is not None
+                                    and member["envelope"] == swsh_trade.RPC_ENVELOPE_BASE
+                                    + swsh_trade.CONFIRMATION_OFFSET
+                                    and member["base"] == swsh_trade.RPC_BASES[1]):
+                                reply = swsh_trade.answer_rpc_with_phase(
+                                    got["payload"], our_constant, args.confirm_phase,
+                                    args.rpc_clock_delta)
+                                if reply is not None:
+                                    step = swsh_trade.parse_sync_step(member["body"])
+                                    print(f"[tx]     *** THE CONFIRMATION PHASE *** answering "
+                                          f"{bytes(member['body']).hex()} (phase {step[0]}, "
+                                          f"announced {step[1]}) with phase "
+                                          f"{args.confirm_phase} instead of echoing it")
+                            if reply is None:
+                                reply = swsh_trade.answer_rpc(got["payload"], our_constant,
+                                                              args.rpc_clock_delta)
                             if reply is not None:
                                 st["rpc_bodies_answered"].add(seen_body)
                                 st["rpc_queue"] = st["rpc_queue"] + [reply]
@@ -2019,6 +2042,12 @@ def build_parser():
                          "status itself on port 1. Content 40 takes a command and not a Pokemon: "
                          "its parser 0x010df6d0 accepts one submessage carrying one int32. Its own "
                          "machine sends 0, 1, 2 and 3 in that order (swsh_trade.SYNC_COMMANDS)")
+    ap.add_argument("--confirm-phase", type=int, default=None, metavar="N",
+                    help="answer the confirmation content's four-byte steps with phase N in the "
+                         "LOW u16 instead of echoing the console's own. The console reads its "
+                         "phase out of exactly those bytes (`0x006d6490` stores them, "
+                         "`0x006d3260` reads them), and every step this project has sent so far "
+                         "echoed the value back unchanged")
     ap.add_argument("--confirm-commands", default=None, metavar="N,N,...",
                     help="the handshake form of --confirm-command: send the NEXT of these on each "
                          "new four-byte body the confirmation content puts on elementId 20000. "

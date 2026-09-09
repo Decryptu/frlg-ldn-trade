@@ -441,6 +441,35 @@ def test_the_three_steps_sx52e_and_sx53_measured_read_as_a_phase_and_an_announce
     assert phases == [0, 1, 1]
 
 
+def test_the_phase_answer_writes_the_low_half_and_keeps_the_high_one():
+    """`--confirm-phase` is the first send this project has made that puts a value of its own in a
+    step body. It must change the LOW u16 only: the high half is the sender's announcement, which
+    `0x006d3690` publishes and `0x006d3980` carries over untouched, and overwriting it would change
+    two variables in one run. Built off sx53's own last step."""
+    measured = bytes.fromhex("01000200")                       # phase 1, announced 2
+    payload = trade.build_rpc(trade.CONFIRMATION_OFFSET, trade.RPC_BASES[1],
+                              0x1249A221D8580000, 0x25A0, measured)
+    reply = trade.answer_rpc_with_phase(payload, 0x1249A221D8580000, 2, clock_delta=5)
+    got = trade.parse_rpc(reply)
+    assert trade.parse_sync_step(got["body"]) == (2, 2)
+    assert got["clock"] == 0x25A0 + 5
+    assert got["offset"] == trade.CONFIRMATION_OFFSET and got["base"] == trade.RPC_BASES[1]
+    # and the plain echo leaves both halves alone, which is what every run so far has sent
+    echoed = trade.parse_rpc(trade.answer_rpc(payload, 0x1249A221D8580000))
+    assert trade.parse_sync_step(echoed["body"]) == (1, 2)
+
+
+def test_the_phase_answer_refuses_anything_that_is_not_a_four_byte_step():
+    """A live run's reader must not raise, and a two-byte body is real: sx53's own capture carries
+    `0000` and `0100` on the confirmation content's elementId 20000, which the console's own
+    handler drops at `cmp x2, #4`."""
+    short = trade.build_rpc(trade.CONFIRMATION_OFFSET, trade.RPC_BASES[1], 1, 2,
+                            bytes.fromhex("0100"))
+    assert trade.answer_rpc_with_phase(short, 1, 3) is None
+    assert trade.answer_rpc_with_phase(b"", 1, 3) is None
+    assert trade.sync_step(1, 0xFC18) == bytes.fromhex("010018fc")
+
+
 def test_a_step_reader_takes_only_four_bytes_and_never_raises():
     """A reader on a live run must not raise on anything the console sends - the trap sw81 set."""
     assert trade.parse_sync_step(None) is None

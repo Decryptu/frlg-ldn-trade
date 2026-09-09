@@ -1327,6 +1327,76 @@ what settles it.
 `swsh_trade.SYNC_LADDER`, `sync_announced_phase` and `parse_sync_step` carry the mapping and the
 wire shape, with tests driven by the three measured bodies.
 
+## The step body is two u16s with two publishers, and we have only ever echoed it
+
+Still session 65, and it finishes the layer under the ladder. The four-byte body is not one value: it
+has two halves, each with its own publisher, and neither publisher touches the other's half.
+
+**THE RECEIVE HANDLER IS FOUR INSTRUCTIONS.** The 40000-family router `0x006d59f0` matches a `Data`
+on (elementId, ownerId) against the element's sub-elements - 0x90 bytes each, `[sub+0x62]` the
+elementId and `[sub+0x68]` the ownerId - and tail-calls slot 9 of the sub-element's own vtable. For
+this channel that is `0x006d6490`:
+
+    if (len != 4) return                    a two-byte body is dropped here, silently
+    [sub+0x88] = the four bytes
+    [sub+0x78] = the clock
+    strh 0x0100 -> [sub+0x60]               which sets the READY byte at sub+0x61
+
+and `sub+0x61` is exactly the byte `0x006d3260` gates on before it returns the value. **So a
+four-byte `Data` whose (elementId, ownerId) matches a registered sub-element is the only thing
+besides a station's own publish that can change what the phase is read from.**
+
+**AND THE TWO HALVES HAVE TWO PUBLISHERS.**
+
+    0x006d3980(channel, v)   w8 = [sub+0x8a]; body = <u16 v><u16 w8>     writes the LOW half
+                             called from the element's update with the value it just read
+    0x006d3690(channel, v)   w8 = [sub+0x88]; body = <u16 w8><u16 v>     writes the HIGH half
+                             called from content 40's pump, state 4, with `[content+0x86]`
+
+Both resolve the sub-element by finding **our own id** (`[[0x2616a30]]+0xf0`) in the channel's
+`{ownerId, entry}` table and taking `[entry+0x60] - 0x50`, and both hand the result to `0x006d3860`,
+which is `0x010dbe20` one layer down. **The pump reaches the channel as `[content+0x1c0]` and the
+element's update as `[element+0xf0]`, and `0xd0 + 0xf0` is `0x1c0`** - the same object by two routes,
+which is what checked this walk.
+
+**AND THE SUB-ELEMENT IS BORN WITH BOTH HALVES SET TO THE SENTINEL.** Its constructor `0x006d6160`
+does `mov w8, #0xfc18; movk w8, #0xfc18, lsl #16; str w8, [sub+0x88]` - `0xfc18fc18` - and the next
+instruction pair records the object's size as **0x90**, the router's stride. `0xfc18` is the same
+value `0x006d3260` returns when there is nothing to read and `0x010db970` writes to `content+0x84`
+on teardown.
+
+**WHICH MAKES sx53's OWN CAPTURE READ END TO END, AND IT CONFIRMS THE LAYOUT FROM THE WIRE.** Every
+four-byte body on the confirmation content's elementId 20000, in order, decoded off
+`scratchpad/sx53_2.out`:
+
+    000018fc   phase 0, announced 0xfc18   the phase minted to 0 by the registrar; the high half is
+                                           still the birth sentinel, nothing announced yet
+    00000100   phase 0, announced 1        the cue: it had sent command 0
+    01000100   phase 1, announced 1        the phase caught up, so the content committed
+    01000200   phase 1, announced 2        and ran state 3, which sends command 1
+
+**The high half starting at the constructor's own sentinel and then walking 1, 2 is the wire
+agreeing with the image on both publishers at once**, and it is why the halves are no longer a
+reading of a hexdump.
+
+**AND THE CORRECTION THIS TURNS UP.** `answer_rpc` copies the body it was handed, so **every step
+this project has ever sent carried the console's own two u16s back to it under our ownerId.** We
+have never written a value into either half. Answering a value with itself cannot move it, whichever
+sub-element the channel reads from - so the one send that has never been made is a step whose low
+half is ours. `bin/swsh_connect.py --confirm-phase N` is that send, and `swsh_trade.sync_step` builds
+the body.
+
+**AND FOUR SHAPES THE CAPTURE CARRIES THAT WERE NEVER CATALOGUED.** Alongside the pair, the console
+sends 40040 envelopes with **no ownerId at all** and bodies that are not four bytes:
+
+    elementId 20000, no owner, 2 bytes   0000   then   0100
+    elementId 1,     no owner, 4 bytes   00000000        after our syncCommand{data:0}
+    no elementId,    no owner, 4 bytes   00000000  then  01000000
+
+The two-byte ones cannot reach this channel - `0x006d6490` drops anything but four - so they belong
+to a handler that has not been walked. The elementId-1 four-byte body is the echo `0x010dbe20`
+produces from our syncCommand's int32, which is why it carried our own `0`.
+
 ## What this project has measured, and what it has borrowed
 
 FACT, sw70's own capture (`scratchpad/sw_app_payloads.py` walks it): the console sent **five
