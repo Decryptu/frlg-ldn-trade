@@ -8,10 +8,14 @@ this is a self-consistency check with the receiver's derivation on the other sid
 
 import struct
 
+import pytest
+
 import swsh_connect
 
 from pokeldn.ldn import (local_protocol as lp, mesh_protocol as mesh, pia4, reliable5,
                         rtt_protocol as rtt, station_protocol as stp)
+from pokeldn import gen8
+from pokeldn.swsh import pokemon as swsh_pokemon, trade as swsh_trade
 from pokeldn.swsh.session import packet_iv, session_keys
 
 APP_DATA = bytes.fromhex("0330112400000000051800008b718ac6")     # sw01's own advertisement
@@ -452,3 +456,60 @@ def test_a_finished_ladder_is_not_a_stalled_one():
     assert swsh_connect.stall_abort(40.0, 60.0, 15.0) is True
     assert swsh_connect.stall_abort(40.0, 60.0, 15.0, final_phase_seen=True) is False
     assert swsh_connect.LADDER_FINAL_PHASE == 4
+
+
+class _OfferArgs:
+    """The four flags `offer_edits` reads, with the launcher's own defaults."""
+
+    def __init__(self, **over):
+        self.offer_slot = 1
+        self.offer_species = self.offer_nickname = self.offer_ot = self.offer_ivs = None
+        self.__dict__.update(over)
+
+
+def test_no_offer_flags_means_the_record_goes_as_it_came():
+    assert swsh_connect.offer_edits(_OfferArgs()) == {}
+
+
+def test_the_offer_flags_become_gen8_write_fields():
+    args = _OfferArgs(offer_species=25, offer_nickname="PKCAMP", offer_ot="PkCamp",
+                      offer_ivs="31,31,31,31,31,31")
+    assert swsh_connect.offer_edits(args) == {"species": 25, "nickname": "PKCAMP",
+                                              "ot_name": "PkCamp", "ivs": [31] * 6}
+
+
+def test_a_built_record_without_a_slot_is_refused_before_the_radio():
+    with pytest.raises(ValueError):
+        swsh_connect.offer_edits(_OfferArgs(offer_slot=0, offer_species=25))
+
+
+def test_six_ivs_of_0_to_31_or_nothing():
+    for bad in ("31,31,31", "31,31,31,31,31,32", "-1,0,0,0,0,0"):
+        with pytest.raises(ValueError):
+            swsh_connect.offer_edits(_OfferArgs(offer_ivs=bad))
+
+
+def test_a_name_that_will_not_fit_is_refused_before_the_radio():
+    with pytest.raises(ValueError):
+        swsh_connect.offer_edits(_OfferArgs(offer_nickname="X" * 13))
+    assert swsh_connect.offer_edits(_OfferArgs(offer_nickname="X" * 12))["nickname"] == "X" * 12
+
+
+def test_a_built_record_is_a_real_one_with_the_named_fields_changed():
+    """The edit keeps the checksum, the party form and every byte no flag names."""
+    template = swsh_pokemon.encrypt(gen8.write(
+        bytes(gen8.SIZE_PARTY), species=94, nickname="Ectoplasma", ivs=[31, 31, 19, 6, 31, 31],
+        level=100, experience=1059860, trainer_id=56909, secret_id=48474))
+    built = swsh_pokemon.build_from(template, species=25, nickname="PKCAMP", ivs=[31] * 6)
+    was, now = swsh_pokemon.read(template), swsh_pokemon.read(built)
+    assert len(built) == gen8.SIZE_PARTY
+    assert (now["species"], now["nickname"], now["ivs"]) == (25, "PKCAMP", (31,) * 6)
+    assert (now["level"], now["experience"]) == (was["level"], was["experience"])
+    assert (now["trainer_id"], now["secret_id"]) == (was["trainer_id"], was["secret_id"])
+
+
+def test_the_offer_message_carries_the_built_record_back():
+    """`offered_pokemon` is the console's own reader; the record must survive the round trip."""
+    built = swsh_pokemon.build_from(swsh_pokemon.encrypt(gen8.write(
+        bytes(gen8.SIZE_PARTY), species=94, nickname="Ectoplasma")), nickname="PKCAMP")
+    assert swsh_trade.offered_pokemon(swsh_trade.pokemon_trade(built)) == built

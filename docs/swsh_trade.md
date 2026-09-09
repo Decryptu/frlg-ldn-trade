@@ -331,6 +331,34 @@ four bytes:
 The two-byte ones are dropped by `0x006d6490`'s `cmp x2,#4` and belong to the two-byte sub-element
 kind, whose owning element field is unknown.
 
+## The record we offer
+
+The Pokemon offered on 20030 is a party record out of the 0x84 snapshot the client sends, selected by
+`--offer-slot`. `--offer-species`, `--offer-nickname`, `--offer-ot` and `--offer-ivs` change named
+fields of that record before it goes, through `pokeldn.swsh.pokemon.build_from`: the checksum is
+rewritten, the four blocks are reshuffled under the new encryption constant, and every byte no flag
+names stays the byte the console's own save held. The 0x158 party form carries ribbons, memories, met
+data and handler records that nothing here reads, and a record built from nothing would have to invent
+all of them.
+
+The edit is applied to the slot inside the snapshot, so the party the console is shown and the
+Pokemon it is offered are the same record. `party_matches_trainer` still holds after it, because the
+identity rewrite runs first and the offer flags do not touch the trainer ids.
+
+    --offer-slot 1 --offer-nickname PKCAMP --offer-ivs 31,31,31,31,31,31
+
+The names are 26-byte UTF-16 fields, so a nickname or OT of at most 12 characters fits. A nickname
+sets the nicknamed flag as a side effect; without it the console draws the species name.
+`--save-offer FILE` writes the built record before the radio is touched.
+
+Whether the console accepts a record built this way is unmeasured. Every completed trade so far has
+offered a slot as it came, or the console's own record echoed back.
+
+    ./.venv/bin/python scratchpad/sw_offer_check.py SNAPSHOT --offer-slot 1 --offer-nickname PKCAMP
+
+builds the record offline, reads it back through `offered_pokemon`, and prints the party and the
+identity consistency.
+
 ## The penalty, and ending a run cleanly
 
 A trade that times out with the link still alive is reported by the game as a **failed trade** and

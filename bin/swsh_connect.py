@@ -38,6 +38,7 @@ from pokeldn.ldn import (broadcast4, local_protocol as lp, mesh_protocol as mesh
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.swsh import COMM_ID, PASSPHRASE, PIA_PORT, packet_iv, session_keys
 from pokeldn.swsh import trade as swsh_trade
+from pokeldn import gen8
 from pokeldn.swsh import pokemon as swsh_pokemon
 from pokeldn.swsh import trade_payload
 
@@ -1501,6 +1502,19 @@ async def main_async(args):
                                             trainer_name=args.snapshot_name,
                                             trainer_id=args.snapshot_tid,
                                             secret_id=args.snapshot_sid)
+            edits = offer_edits(args)
+            if edits:
+                at = (args.offer_slot - 1) * swsh_pokemon.SIZE_PARTY
+                raw = payload[at:at + swsh_pokemon.SIZE_PARTY]
+                if struct.unpack_from("<I", raw, 0)[0] == 0:
+                    raise ValueError(f"slot {args.offer_slot} of the snapshot is empty")
+                built = swsh_pokemon.build_from(raw, **edits)
+                payload = payload[:at] + built + payload[at + swsh_pokemon.SIZE_PARTY:]
+                before, after = swsh_pokemon.read(raw), swsh_pokemon.read(built)
+                print(f"[tx] slot {args.offer_slot} built: species {before['species']} -> "
+                      f"{after['species']}, {before['nickname']!r} -> {after['nickname']!r}, "
+                      f"OT {before['ot_name']!r} -> {after['ot_name']!r}, "
+                      f"IVs {before['ivs']} -> {after['ivs']}")
             fields = trade_payload.read(payload)
             if args.offer_slot:
                 # THE POKEMON WE OFFER COMES OUT OF THE PARTY WE ADVERTISED. Offering one the
@@ -1511,6 +1525,9 @@ async def main_async(args):
                 ours = swsh_pokemon.read(st["our_pk8"])
                 print(f"[tx] we will offer slot {args.offer_slot}: species {ours['species']} "
                       f"{ours['nickname']!r} level {ours['level']}")
+                if args.save_offer:
+                    open(args.save_offer, "wb").write(st["our_pk8"])
+                    print(f"[tx]     saved to {args.save_offer}")
             left = payload.count(was.encode("utf-16-le")) if was else 0
             print(f"[tx] the snapshot was {was!r}; {left} copies of that name left in it, "
                   f"and {payload.count(theirs) if theirs else '?'} of its account id "
@@ -1933,6 +1950,35 @@ def stall_abort(last_step, now, limit, final_phase_seen=False):
     return (now - last_step) >= limit
 
 
+def offer_edits(args):
+    """-> the fields to write into the party record we offer, or `{}` when it goes as it came.
+
+    A record we build is the console's own party record with named fields changed, for the reason
+    `swsh.pokemon.build_from` gives: 0x158 bytes hold ribbons, memories, met data and handler
+    records nothing here has read, and the template keeps every one of them a real byte from a real
+    save. The edit is applied to the snapshot slot, so the party the console is shown and the
+    Pokemon it is offered are the same record.
+
+    Parsed here rather than at the offer, so a nickname that will not fit or a slot that was never
+    named fails before the radio is touched instead of halfway up the confirmation ladder.
+    """
+    edits = {k: v for k, v in (("species", args.offer_species),
+                               ("nickname", args.offer_nickname),
+                               ("ot_name", args.offer_ot)) if v is not None}
+    for key in ("nickname", "ot_name"):
+        if key in edits and len(edits[key].encode("utf-16-le")) + 2 > gen8.NAME_LENGTH:
+            raise ValueError(f"{edits[key]!r} is too long for a {gen8.NAME_LENGTH}-byte name")
+    if args.offer_ivs is not None:
+        ivs = [int(x, 0) for x in args.offer_ivs.split(",")]
+        if len(ivs) != 6 or not all(0 <= iv <= 31 for iv in ivs):
+            raise ValueError(f"--offer-ivs wants six values 0..31, got {args.offer_ivs!r}")
+        edits["ivs"] = ivs
+    if edits and not args.offer_slot:
+        raise ValueError("--offer-species, --offer-nickname, --offer-ot and --offer-ivs edit the "
+                         "record in --offer-slot, and no slot was named")
+    return edits
+
+
 def build_parser():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
@@ -2291,6 +2337,18 @@ def build_parser():
     ap.add_argument("--offer-slot", type=lambda s: int(s, 0), default=0,
                     help="which party slot of --send-snapshot to offer back, 1-6; 0 offers "
                          "nothing and only records what the console offers us")
+    ap.add_argument("--offer-species", type=lambda s: int(s, 0), default=None,
+                    help="build the record in --offer-slot instead of sending it as it came: this "
+                         "national dex number, in the party record the snapshot advertises AND in "
+                         "the offer, so the two still tell one story")
+    ap.add_argument("--offer-nickname", default=None,
+                    help="the nickname of the built record; sets the nicknamed flag")
+    ap.add_argument("--offer-ot", default=None,
+                    help="the original trainer name of the built record")
+    ap.add_argument("--offer-ivs", default=None,
+                    help="six IVs, comma-separated, in PKHeX's HP,ATK,DEF,SPE,SPA,SPD order")
+    ap.add_argument("--save-offer", default=None, metavar="FILE",
+                    help="write the PK8 we will offer to this file, before the radio is touched")
     ap.add_argument("--save-offered", default=None, metavar="FILE",
                     help="write the PK8 the console offers to this file")
     ap.add_argument("--rpc-clock-delta", type=lambda s: int(s, 0), default=5,
@@ -2350,6 +2408,10 @@ def build_parser():
 def main(argv=None):
     args = build_parser().parse_args(argv)
     args.connect_station_first = int(_expand(args.connect_station)[0], 0)
+    try:
+        offer_edits(args)
+    except ValueError as e:
+        build_parser().error(str(e))
     if os.geteuid() != 0:
         build_parser().error("must run as root (LDN needs the raw radio)")
     try:
