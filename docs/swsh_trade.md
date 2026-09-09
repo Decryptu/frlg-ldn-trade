@@ -351,8 +351,15 @@ The names are 26-byte UTF-16 fields, so a nickname or OT of at most 12 character
 sets the nicknamed flag as a side effect; without it the console draws the species name.
 `--save-offer FILE` writes the built record before the radio is touched.
 
-Whether the console accepts a record built this way is unmeasured. Every completed trade so far has
-offered a slot as it came, or the console's own record echoed back.
+A record built this way is accepted. A Gengar with the nickname `PKCAMP` and six IVs of 31 written
+into the slot-1 template climbed the confirmation ladder to phase 4, the console saved, and the
+player's own screen read the nickname, level 100, and `Potentiel exceptionnel` from the judge. The
+fields no flag named came through as the template's bytes and the game drew them: female, ball 9,
+held item 281 (Boue Noire), met level 59, language 3, version 44.
+
+The record the console sent on 20030 in that run was slot 1 of the party the client had advertised,
+carrying the client's own trainer ids and the template's original nickname and IVs rather than the
+built ones. What produces it is unknown.
 
     ./.venv/bin/python scratchpad/sw_offer_check.py SNAPSHOT --offer-slot 1 --offer-nickname PKCAMP
 
