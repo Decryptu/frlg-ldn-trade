@@ -188,6 +188,7 @@ async def main_async(args):
               "rpc_seen": {}, "rpc_pair_sent": set(), "offer_status_answered": set(),
               "rpc_bodies_answered": set(), "confirmation_opened": False, "rpc_pair_delta": {},
               "confirm_status_answered": set(),
+              "confirm_queue": None,
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -346,17 +347,37 @@ async def main_async(args):
                     # nothing else - session 64, read out of the image and agreeing with the game's
                     # own descriptors. `swsh_trade.SYNC_COMMANDS` says which values its own state
                     # machine sends. Its own latch, so the two cues cannot swallow each other.
+                    #
+                    # AND IT IS A HANDSHAKE, SO ONE COMMAND IS NOT ENOUGH. sx53: with the pair
+                    # re-armed the console climbed two more steps on its own - its elementId-20000
+                    # body went `00000100` -> `01000100` -> `01000200`, two counters moving - and
+                    # then stopped. Its own machine sends 0, 1, 2, 3 and parks after each, so
+                    # `--confirm-commands 0,1,2,3` sends the NEXT one on each new step. The trigger
+                    # cannot stay "the body ends 0100": `01000200` does not, and that is the step
+                    # the run ended on. Any new four-byte body on the confirmation content's
+                    # elementId 20000 is a step.
                     answered_confirmation = False
-                    if (args.confirm_command is not None
+                    if st["confirm_queue"] is None:
+                        st["confirm_queue"] = (
+                            [int(c, 0) for c in args.confirm_commands.split(",") if c.strip()]
+                            if args.confirm_commands
+                            else ([args.confirm_command] if args.confirm_command is not None
+                                  else []))
+                    if (st["confirm_queue"]
                             and member["envelope"] == (swsh_trade.RPC_ENVELOPE_BASE
                                                        + swsh_trade.CONFIRMATION_OFFSET)
                             and member["base"] == swsh_trade.RPC_BASES[1]
-                            and member["body"][-2:] == b"\x01\x00" and len(member["body"]) == 4
-                            and not st["confirm_status_answered"]):
-                        st["confirm_status_answered"].add(True)
+                            and len(member["body"]) == 4
+                            and (args.confirm_commands
+                                 or member["body"][-2:] == b"\x01\x00")
+                            and (member["envelope"], member["base"], bytes(member["body"]))
+                            not in st["confirm_status_answered"]):
+                        st["confirm_status_answered"].add(
+                            (member["envelope"], member["base"], bytes(member["body"])))
+                        command = st["confirm_queue"].pop(0)
                         answered_confirmation = True
                         st["box_queue"] = st["box_queue"] + [
-                            swsh_trade.sync_command(member["offset"], args.confirm_command)]
+                            swsh_trade.sync_command(member["offset"], command)]
                         st["box_next"] = 0.0
                         status = swsh_trade.answer_rpc(got["payload"], our_constant,
                                                        args.rpc_clock_delta)
@@ -365,7 +386,7 @@ async def main_async(args):
                         st["rpc_bodies_answered"].add(
                             (member["envelope"], member["base"], bytes(member["body"])))
                         print(f"[tx]     *** THE CONFIRMATION STATUS *** sending "
-                              f"syncCommand{{data:{args.confirm_command}}} on "
+                              f"syncCommand{{data:{command}}} on "
                               f"{swsh_trade.CONTENT_BASE_LOW + member['offset']} port 0 and "
                               f"answering the status on port 1, triggered by "
                               f"{got['payload'].hex()}")
@@ -476,6 +497,24 @@ async def main_async(args):
                         if (seen_body not in st["rpc_bodies_answered"]
                                 and bytes(member["body"]) not in (b"\x00\x00\x00\x00",
                                                                   b"\x00\x00\x18\xfc")):
+                            # AND THE SAME LADDER ON THE CONFIRMATION CONTENT. sx52e: with
+                            # `--confirm-command 0` answered, content 40 ran the selection content's
+                            # ladder exactly - the pair, then a member on elementId 1, then a hash
+                            # (`b22d6f50`) - and then went quiet for 124 s. The elementId-1 echo and
+                            # the hash are the signature that only ever appeared once our record
+                            # genuinely reached a content's receive event, so the command LANDED and
+                            # the phase stalled where the selection phase stalled before its own
+                            # re-arm existed. Same move, same reason, its own flag.
+                            if (args.confirm_final_delta
+                                    and member["envelope"] ==
+                                    swsh_trade.RPC_ENVELOPE_BASE
+                                    + swsh_trade.CONFIRMATION_OFFSET):
+                                st["rpc_pair_sent"].discard(member["envelope"])
+                                st["rpc_pair_delta"][member["envelope"]] = \
+                                    args.confirm_final_delta
+                                print(f"[tx]     *** THE CONFIRMATION HASH - RE-ARMING THE "
+                                      f"{member['envelope']} PAIR AT CLOCK "
+                                      f"+{args.confirm_final_delta} ***")
                             if (args.selection_final_delta
                                     and member["envelope"] ==
                                     swsh_trade.RPC_ENVELOPE_BASE + swsh_trade.SELECTION_OFFSET):
@@ -1977,6 +2016,17 @@ def build_parser():
                          "status itself on port 1. Content 40 takes a command and not a Pokemon: "
                          "its parser 0x010df6d0 accepts one submessage carrying one int32. Its own "
                          "machine sends 0, 1, 2 and 3 in that order (swsh_trade.SYNC_COMMANDS)")
+    ap.add_argument("--confirm-commands", default=None, metavar="N,N,...",
+                    help="the handshake form of --confirm-command: send the NEXT of these on each "
+                         "new four-byte body the confirmation content puts on elementId 20000. "
+                         "Content 40's own machine sends 0,1,2,3 and parks after each, and sx53 "
+                         "showed the console climbing two steps and stopping with one command sent")
+    ap.add_argument("--confirm-final-delta", type=lambda s: int(s, 0), default=0,
+                    metavar="N",
+                    help="after the CONFIRMATION content answers our syncCommand with a hash, "
+                         "re-arm the 40040 pair and send BOTH members again at this clock delta - "
+                         "the move --selection-final-delta makes on 40050, which is what carried "
+                         "the selection phase past its own hash. sx52e stalled here")
     ap.add_argument("--selection-final-delta", type=lambda s: int(s, 0), default=0,
                     help="after the selection HASH is answered, send the 40050 pair AGAIN - both "
                          "members - at this clock delta. nxldn-lab's `selection_final_delta` is 9 "

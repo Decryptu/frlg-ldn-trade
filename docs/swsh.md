@@ -1148,6 +1148,49 @@ was answered on port 1 and nothing was ever sent on port 0.** The selection phas
 it sends `SyncSaveDataHolder{syncCommand{data:N}}` on 10040 reliable port 0 and answers the status
 on port 1, with its own latch so the two cues cannot swallow each other.
 
+## The confirmation content answers, and it climbs
+
+Session 64, sx52e and sx53, on a retail Sword. **This is the first time anything of ours has
+reached content 40's receive event**, and the two runs separate cleanly.
+
+**sx52e, `--confirm-command 0`.** The console ran the ladder and then stopped:
+
+    elementId 10000 + 20000   00000000 / 000018fc   the pair, answered
+    elementId None            00000000
+    elementId 20000           00000100             THE CUE -> we send syncCommand{data:0} on 10040
+    elementId 1               00000000             the echo
+    elementId 10000           8324462b             a hash
+                                                   ... and then 124 s of silence
+
+**THE ECHO AND THE HASH ARE THE SIGNATURE THAT THE RECORD LANDED.** On content 50 those two only
+ever appeared once our PK8 genuinely reached the receive event - never for a shape that was merely
+acknowledged at the transport. Their appearance here says the syncCommand passed `0x006b5850`'s
+station-index gate and `0x010dbc90` ran. Six shapes were tried on content 50 before one did this.
+
+**sx53, one variable added: `--confirm-final-delta 9`.** The move `--selection-final-delta` makes on
+40050 - re-arm the pair after the hash and send both members again at a larger clock - and content
+40 kept going instead of stalling:
+
+    8324462b   hash        01000100   step      7a0ea399   hash
+    944c70ea   hash        01000200   step
+
+Five re-arms, and the console's own elementId-20000 body walked `00000100` -> `01000100` ->
+`01000200`. Read as `<u16 a><u16 b>` little-endian that is (0,1) -> (1,1) -> (1,2): two counters,
+one of which advances per step. **The phase is not a single exchange, it is a ladder**, and it moves
+only while the pair is re-armed under it.
+
+**WHERE IT STOPS, AND WHAT IS NOT MEASURED.** sx53 ended at `01000200` with one command sent all
+run. Content 40's own machine sends 0, 1, 2 and 3 and parks after each (`0x010dae70`), so the
+reading that fits is that each step wants the NEXT command - but **nothing has measured that**, and
+"the console climbed two steps after one command" is equally consistent with it climbing on its own
+and stopping somewhere else. `--confirm-commands 0,1,2,3` sends the sequence and **has never been on
+the air**: the console entered a trade penalty before the run went out.
+
+**AND THE TRIGGER HAD TO CHANGE WITH THE MEASUREMENT.** `--confirm-command` fires on a body ending
+`0100`, which is the cue and the first step and NOT `01000200`, the step sx53 finished on. Any
+four-byte body on the confirmation content's elementId 20000 is a step, and that is what
+`--confirm-commands` keys on.
+
 ## What this project has measured, and what it has borrowed
 
 FACT, sw70's own capture (`scratchpad/sw_app_payloads.py` walks it): the console sent **five
@@ -1182,9 +1225,10 @@ moves, which is what one variable means here.
   10000-base holder takes `SyncSaveDataHolder{syncCommand{data:int32}}` and nothing else, its
   handler `0x010dbc90` has content 50's station-index gate and its own two-slot limit, and its state
   machine sends 0, 1, 2 and 3 as a handshake. See "The confirmation content takes a command, not a
-  Pokemon". **What is NOT known is which of the four to send first**, because nothing has yet
-  observed the console's own confirmation sequence from the other side - the four are what its
-  machine sends, not what it expects from us, and only a run separates them.
+  Pokemon". **PARTLY ANSWERED ON HARDWARE, sx52e/sx53**: command 0 reaches the receive event, and
+  with the pair re-armed the console climbs a ladder rather than stalling - see "The confirmation
+  content answers, and it climbs". **Still NOT known: whether each step wants the next command.**
+  `--confirm-commands 0,1,2,3` is built and has never been on the air.
 - **Sending a party back.** Nothing of ours has ever been on 0x84. `pokemon_trade.proto` (package
   `net_contents.trade.common.pokemon_trade.protocol_buffers`) is `Pokemon { bytes
   serializePokemonParam }` and `PokemonTradeDataHolder { Pokemon pokemon }`, so a trade message is a

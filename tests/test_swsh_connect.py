@@ -374,3 +374,48 @@ def test_the_confirmation_cue_is_not_a_selection_one_and_cannot_be_taken_for_it(
     for payload in SX51B_CONFIRMATION_CUES:
         member = swsh_trade.parse_rpc(bytes.fromhex(payload))
         assert member["envelope"] != swsh_trade.RPC_ENVELOPE_BASE + swsh_trade.SELECTION_OFFSET
+
+
+def test_the_confirmation_pair_re_arms_with_its_own_delta():
+    """sx52e: the syncCommand landed - content 40 answered with an elementId-1 echo and a hash,
+    the signature that only appears once a record reaches a content's receive event - and then went
+    quiet for 124 s. --selection-final-delta makes the re-arm that carried the selection phase past
+    its own hash, and it keys on the 40050 envelope, so the confirmation needs its own."""
+    args = swsh_connect.build_parser().parse_args([])
+    assert args.confirm_final_delta == 0
+    on = swsh_connect.build_parser().parse_args(["--confirm-final-delta", "9"])
+    assert on.confirm_final_delta == 9
+    assert on.selection_final_delta == 0
+
+
+def test_the_confirmation_hash_is_a_four_byte_body_on_the_40040_envelope():
+    """sx52e's own bytes: the hash arrives on elementId 10000 of 40040, four bytes, and it is
+    neither of the pair's two constants - which is what the re-arm has to trigger on."""
+    hashed = swsh_trade.parse_rpc(bytes.fromhex(
+        "689c00000a1a082810904e188080a08a8fc4c8cdeb01208e80022a04b22d6f50"))
+    assert hashed["envelope"] == swsh_trade.RPC_ENVELOPE_BASE + swsh_trade.CONFIRMATION_OFFSET
+    assert hashed["base"] == swsh_trade.RPC_BASES[0]
+    assert len(hashed["body"]) == 4
+    assert bytes(hashed["body"]) not in swsh_trade.RPC_PAIR_BODIES
+
+
+def test_the_confirmation_handshake_sends_a_sequence_not_one_command():
+    """sx53: one command sent, the console climbed two steps on its own and stopped. Its machine
+    sends 0,1,2,3 and parks after each, so the answer is a queue."""
+    args = swsh_connect.build_parser().parse_args([])
+    assert args.confirm_commands is None
+    on = swsh_connect.build_parser().parse_args(["--confirm-commands", "0,1,2,3"])
+    assert [int(c, 0) for c in on.confirm_commands.split(",")] == [0, 1, 2, 3]
+
+
+def test_sx53s_own_steps_are_all_four_byte_bodies_on_elementid_20000():
+    """The trigger cannot stay `the body ends 0100`: the step sx53 finished on is `01000200`.
+    These are the console's own bytes, in the order it sent them."""
+    steps = ["00000100", "01000100", "01000200"]
+    for body in steps:
+        m = swsh_trade.parse_rpc(swsh_trade.build_rpc(
+            swsh_trade.CONFIRMATION_OFFSET, swsh_trade.RPC_BASES[1],
+            0x1249a221d8580000, 4700, bytes.fromhex(body)))
+        assert m["base"] == swsh_trade.RPC_BASES[1] and len(m["body"]) == 4
+    assert bytes.fromhex(steps[-1])[-2:] != b"\x01\x00"
+    assert bytes.fromhex(steps[0])[-2:] == b"\x01\x00"
