@@ -439,6 +439,35 @@ SYNC_COMMANDS = {0: "0x010db308, out of state 1  -> state 2",
                  2: "0x010db0dc / 0x010db104, states 6 and 8 -> states 7 and 9",
                  3: "0x010db16c, out of state 12 -> state 0, and the machine is done"}
 
+# AND THE LADDER BETWEEN THEM, read out of `0x010dbf40` - the state setter, which is the only writer
+# of the machine's state field `delegate+0x5c` outside the machine itself and its constructor. It
+# takes a u16 0..4, puts the machine in the state that sends the NEXT command, and returns without
+# touching anything when the value is above 4. Its only caller is content 40's pump `0x010db3e0`,
+# which passes the content's own phase `+0x17c` once that phase has caught up with the `+0x86` the
+# last send recorded - so the machine leaves each idle state only when the phase advances:
+#
+#     phase 0 -> state 1            sends command 0, announcing phase 1
+#     phase 1 -> state 3            sends command 1, announcing phase 2
+#     phase 2 -> state 5 -> 6 or 8  sends command 2, announcing phase 3
+#     phase 3 -> state 10 or 11 -> 12   sends command 3, announcing phase 4
+#     phase 4 -> state 13           tears the holders down; nothing more is sent
+#
+# The ladder therefore needs all four commands, in order, and the fourth ends it.
+# `docs/swsh.md`, "The ladder is a barrier, and every rung needs a command".
+SYNC_LADDER = {0: 1, 1: 3, 2: 5, 3: 10, 4: 13}
+
+
+def sync_announced_phase(data):
+    """-> the phase the console records when it sends command `data`, which is `data + 1`.
+
+    `0x010dae70` calls the send `0x010db840(delegate, data, flag)` with `flag == data + 1` at all
+    five of its send sites, and `0x010dbab0` - the send that message is handed to - writes that flag
+    to `content+0x86`. The pump commits the content to a phase (`0x010de310` writes `+0x84`) and
+    climbs the ladder when `+0x17c` reaches `+0x86`, so the phase a command announces is the rung
+    that unlocks the command after it.
+    """
+    return data + 1
+
 
 def sync_command(offset, data):
     """-> `SyncSaveDataHolder{syncCommand{data: <int32>}}` on content `offset`'s 10000-base holder.

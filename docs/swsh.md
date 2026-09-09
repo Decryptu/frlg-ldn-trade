@@ -1191,6 +1191,100 @@ the air**: the console entered a trade penalty before the run went out.
 four-byte body on the confirmation content's elementId 20000 is a step, and that is what
 `--confirm-commands` keys on.
 
+## The ladder is a barrier, and every rung needs a command
+
+Session 65, read out of Shield 1.3.2's `main`, no association spent. sx53 left one question: whether
+each step of the confirmation ladder wants the NEXT command, or whether the console was climbing on
+its own. The state field answers it, because it has only three writers.
+
+**THE MACHINE'S STATE IS `delegate+0x5c`, AND EVERY WRITE TO IT IN THE MODULE IS ONE OF THREE
+THINGS.** `scratchpad/swsh_offset_writes.py 0x5c 4 0x010c0000 0x010e0000` - every `str Wt,[Xn,#0x5c]`
+in content 30, 40 and 50's band:
+
+    0x010da724   in the init 0x010da470       state = 0
+    0x010daed8   in the machine 0x010dae70    the machine's own transitions
+    0x010daf0c   in the machine
+    0x010db180   in the machine
+    0x010db388   in the machine, the shared tail every case branches to
+    0x010dbfb0   in 0x010dbf40               THE ONE THAT IS NOT THE MACHINE
+
+(`arm64_xref.function_start` attributes the last one to `0x010dbe20`, because it walks back through
+the `udf` padding at `0x010dbf38`; the prologue at `0x010dbf40` is where the function starts.)
+
+**AND THE PARKED STATES REALLY ARE PARKED.** The dispatch is `state - 1` into a 14-entry table at
+`0x2067ed0`, and states 2, 4, 7 and 9 - the four the sends leave the machine in - all take the
+table's shared default `0x010db38c`, which is the function's epilogue. They do nothing and they
+change nothing. **So the machine leaves an idle state only when `0x010dbf40` is called.**
+
+**`0x010dbf40` IS A PHASE-TO-STATE MAP, AND ITS FIVE ENTRIES ARE THE LADDER.** It takes a u16, drops
+out with the state untouched if it is above 4, and otherwise indexes a 5-entry table at `0x2067f4c`:
+
+    phase 0  -> state 1             -> send(0), announcing phase 1     0x010db308
+    phase 1  -> state 3             -> send(1), announcing phase 2     0x010db0b0
+    phase 2  -> state 5 -> 6 or 8   -> send(2), announcing phase 3     0x010db0dc / 0x010db104
+    phase 3  -> state 10 or 11 -> 12 -> send(3), announcing phase 4    0x010db16c
+    phase 4  -> state 13 -> 14      -> `0x010db970` tears the holders down and writes the
+                                       sentinel `0xfc18` to `content+0x84`. Nothing more is sent.
+
+The two ways of reaching a send of 2 are the two roles: `[delegate+0x58]`, set in the init from
+`0x110e620(...) & 1`, picks state 7 (send at once) or state 9 (send after a countdown
+`[delegate+0x60]`, seeded in the init from an xorshift to a random 2..302).
+
+**IT IS SLOT 0 OF THE DELEGATE'S SECOND INTERFACE, NOT SOMETHING THE MACHINE CAN CALL.** The vtable
+group at `0x257fe90` is a multiple-inheritance group: a primary vtable at `0x257fea0` whose slot 0 is
+the SyncCommand receive handler `0x010dbc90` and whose slot 3 is `0x010dbf40`, then an offset-to-top
+of **-8** at `0x257fec8` and a secondary vtable at `0x257fed8` whose slot 0 is `0x010dbfd0` - the
+same code again against `+0x50`/`+0x54` instead of `+0x58`/`+0x5c`, which is the thunk for a `this`
+adjusted by 8. The init installs both halves:
+
+    0x010da6bc   add x9, x19, #8       ->  [content+0x2c0] = delegate + 8     the second interface
+    0x010da6d0   str x19, [x8, #0x168] ->  the 10040 holder's listener        the first
+
+**AND THE ONLY CALLER OF THAT SLOT IS CONTENT 40's PUMP.** `0x010db3e0` - the function content 40's
+per-frame tick calls before it runs the machine, a 17-state machine of its own on `[content+0x80]` -
+reads `[content+0x2c0]` at eight sites, and the ones that matter are its shared tail:
+
+    w1 = [content+0x17c]                    the content's PHASE
+    if (w1 == [content+0x84]) skip          already committed to it
+    else if (w1 == [content+0x86]) { 0x010de310(content, w1); B->slot7(w1); }
+    w1 = [content+0x17c]
+    if (w1 == [content+0x84]) done
+    else if (w1 == [content+0x86]) { 0x010de310(content, w1); B->slot0(w1); }   <- the state setter
+
+`0x010de310(content, phase)` writes `[content+0x84] = phase` and drops the content's pending body,
+so `+0x84` is the phase the content has COMMITTED to. `+0x86` is written in exactly one place in the
+band - `0x010dbab0`, the send that `0x010db840` hands the built SyncCommand to - and the value it
+writes is the `flag` argument, which is `data + 1` at all five send sites (`0x010db308` is
+`w1 = wzr, w2 = #1`, and the other four follow). **So `+0x86` is the phase the console ANNOUNCED
+when it sent its last command, and the ladder climbs when the content's phase reaches it.**
+
+**WHICH MAKES THE CONFIRMATION PHASE A BARRIER, ONE RUNG PER COMMAND.** The console sends command
+N, records N+1 as the phase it is waiting for, and parks. When the phase reaches N+1 the pump
+commits the content to it and hands N+1 to the state setter, which puts the machine in the state
+that sends N+1. Command 3 announces phase 4, and phase 4's rung is the teardown.
+
+**AND THE RECEIVE SIDE FEEDS THE BARRIER RATHER THAN THE MACHINE.** `0x010dbc90` never touches
+`+0x5c`. It resolves the sender to a station index, keeps the int32, hands it to `0x010dbe20` to go
+back out as a four-byte body, and then calls `0x006a24a0([content+0x2a0], &sender, 1)` - which looks
+the sender up in a map at `+0x1c0` and sets that station's byte to 1. A per-station flag, set when
+our command lands. `0x010de310` calls `0x006a2760` on the same object when it commits.
+
+**WHAT IS NOT MEASURED, AND IT IS THE LAST LINK.** What writes `content+0x17c`. It is not written
+anywhere in `0x010c0000`-`0x010e0000` by any store of any width, so the phase is advanced by the
+framework and not by the game's own content code, and this walk did not find the site. What the
+barrier's per-station flag implies - that our command is what lets the phase advance - **fits every
+run so far and is still a deduction.**
+
+**IT DOES EXPLAIN sx53 WITHOUT ANYTHING NEW.** One command, two steps: our `data:0` let the console
+commit to phase 1 AND run state 3, which sends command 1 and announces phase 2 - and then it stopped,
+because phase 2 needs a second command. The console's own elementId-20000 bodies walked
+`00000100` -> `01000100` -> `01000200`, and read as `<u16 a><u16 b>` that is (0,1) -> (1,1) -> (1,2),
+which is the shape of a committed phase beside an announced one. **That last reading is a fit, not a
+measurement**: nothing in the band loads `+0x84` as a 32-bit word, so the pair is not demonstrably
+what goes on the wire, and `--confirm-commands 0,1,2,3` is what settles it.
+
+`swsh_trade.SYNC_LADDER` and `sync_announced_phase` carry the mapping, with tests.
+
 ## What this project has measured, and what it has borrowed
 
 FACT, sw70's own capture (`scratchpad/sw_app_payloads.py` walks it): the console sent **five
@@ -1227,8 +1321,12 @@ moves, which is what one variable means here.
   machine sends 0, 1, 2 and 3 as a handshake. See "The confirmation content takes a command, not a
   Pokemon". **PARTLY ANSWERED ON HARDWARE, sx52e/sx53**: command 0 reaches the receive event, and
   with the pair re-armed the console climbs a ladder rather than stalling - see "The confirmation
-  content answers, and it climbs". **Still NOT known: whether each step wants the next command.**
-  `--confirm-commands 0,1,2,3` is built and has never been on the air.
+  content answers, and it climbs". **ANSWERED IN THE BINARY, session 65: each rung does want the
+  next command.** The state field `delegate+0x5c` has three writers and only one is outside the
+  machine - a phase-to-state map whose only caller is the pump - and a command announces the phase
+  that unlocks the command after it. See "The ladder is a barrier, and every rung needs a command".
+  What is still NOT known is what advances the content's phase `+0x17c`; `--confirm-commands
+  0,1,2,3` is built, tested and has never been on the air.
 - **Sending a party back.** Nothing of ours has ever been on 0x84. `pokemon_trade.proto` (package
   `net_contents.trade.common.pokemon_trade.protocol_buffers`) is `Pokemon { bytes
   serializePokemonParam }` and `PokemonTradeDataHolder { Pokemon pokemon }`, so a trade message is a

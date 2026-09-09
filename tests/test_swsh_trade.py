@@ -411,6 +411,28 @@ def test_every_command_the_consoles_own_machine_sends_round_trips():
         assert trade.parse_sync_command(trade.sync_command(trade.CONFIRMATION_OFFSET, data)) == data
 
 
+def test_the_ladder_needs_every_command_and_the_fourth_one_ends_it():
+    """`0x010dbf40` maps a phase 0..4 onto the state that sends the NEXT command, and it is the only
+    writer of the machine's state field outside the machine and its constructor. So each command the
+    console sends announces the phase that unlocks the one after it, every rung below 4 is a send,
+    and phase 4's rung is the teardown rather than a fifth command."""
+    assert sorted(trade.SYNC_LADDER) == [0, 1, 2, 3, 4]
+    for data in sorted(trade.SYNC_COMMANDS):
+        assert trade.sync_announced_phase(data) == data + 1
+        assert trade.sync_announced_phase(data) in trade.SYNC_LADDER
+        assert trade.SYNC_LADDER[data] != trade.SYNC_LADDER[4]
+    assert trade.sync_announced_phase(3) == 4
+    assert trade.SYNC_LADDER[4] == 13
+    assert 4 not in trade.SYNC_COMMANDS
+
+
+def test_a_phase_above_the_ladder_is_not_a_rung():
+    """The setter bounds-checks `w1 > 4` and returns, so nothing outside 0..4 moves the machine -
+    which is why the run sends the four commands and not a fifth."""
+    assert max(trade.SYNC_LADDER) == 4
+    assert trade.sync_announced_phase(max(trade.SYNC_COMMANDS)) == max(trade.SYNC_LADDER)
+
+
 def test_a_negative_command_is_refused_rather_than_encoded():
     """`data` is an int32 and a negative one is ten varint bytes, which is not a shape the console
     has ever sent. Refuse it here rather than put it on the air."""
