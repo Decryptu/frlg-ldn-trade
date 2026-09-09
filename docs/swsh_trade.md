@@ -357,9 +357,11 @@ player's own screen read the nickname, level 100, and `Potentiel exceptionnel` f
 fields no flag named came through as the template's bytes and the game drew them: female, ball 9,
 held item 281 (Boue Noire), met level 59, language 3, version 44.
 
-The record the console sent on 20030 in that run was slot 1 of the party the client had advertised,
-carrying the client's own trainer ids and the template's original nickname and IVs rather than the
-built ones. What produces it is unknown.
+A record the console offers can be one an earlier run gave it. The 20030 offer in that run carried
+the client's own trainer ids, `PkCamp` as the original trainer and the slot-1 template's unedited
+nickname and IVs, because it was the Pokemon an earlier run had traded to that save. Its handler
+fields say so on their own: `CurrentHandler` is 1 and `HandlingTrainerName` is the console's player,
+which is what the game writes into a Pokemon it receives in a trade.
 
     ./.venv/bin/python scratchpad/sw_offer_check.py SNAPSHOT --offer-slot 1 --offer-nickname PKCAMP
 
@@ -391,6 +393,10 @@ console that was mid-save. `stall_abort()` takes `final_phase_seen`, and a ladde
 the player not to, and BDSP detects a clock change and locks time-based features for a day.
 
 ## Verifying a completed trade
+
+The handler fields settle it from the record alone. A Pokemon the console received in a trade comes
+back with `CurrentHandler` 1 at 0xC4 and the receiving player's name in `HandlingTrainerName` at
+0xA8, over an original trainer that is still the sender's.
 
 A completed trade and a returned Pokemon look identical if the offer is an echo of the console's own
 record. One run climbed the whole ladder with `--offer-echo`, which hands the console its own record
