@@ -134,15 +134,27 @@ game-specific, because the local communication id is filled at runtime:
 writes every advertisement seen to `scratchpad/swsh_net_facts.json`.
 
 **Point the scan at a screen where the console hosts**, such as a Link Trade over local
-communication. On the Mystery Gift local-wireless screen the console is searching and has no
-advertisement to read. The comm id is per application, so the id read off any local-wireless feature
-is the id the gift path uses too.
+communication or the Mystery Gift local-wireless screen. Both advertise. The comm id is per
+application, so the id read off any local-wireless feature is the id the gift path uses too.
 
 `--pw-mode` defaults to `raw` because the length here is an instruction (`mov w2, #0x40`) rather than
 the length of a wiki string.
 
 The advertisement reports local communication id `0x0100ABF008968000` (Sword's), version 4, scene
-60001, app version 7.
+60001, app version 7. The Mystery Gift local-wireless screen advertises the same comm id and version
+under scene id 65535.
+
+The 384 bytes of application data open with the Pia header the wiki records for system communication
+version 5, and the game's own data starts at 0x18:
+
+    0x00  4  network id, random per session
+    0x04  4  CRC32 of the user password; 0 on both scenes, so neither is password-gated
+    0x08  1  system communication version, 5
+    0x09  1  header size, 0x18
+    0x0A  2  padding
+    0x0C  4  session param, random per session
+    0x10  8  zero
+    0x18     the game's application data
 
 Association succeeds about one attempt in two; `ConnectionError: Connect failed with status code 1`
 is a retry rather than a finding. The console's advertisement disappears within about a minute of a

@@ -13,11 +13,10 @@ THE LOCAL COMMUNICATION ID IS NOT KNOWN. It is filled at runtime from .bss rathe
 so this scans and reports EVERY network it sees and joins by --comm-id once you have read it off
 one run.
 
-POINT THE FIRST SCAN AT A SCREEN WHERE THE CONSOLE HOSTS - a Link Trade over local communication.
-The Mystery Gift local-wireless screen reads like a RECEIVER: the game's own French text has
-"Recherche de cadeau en cours..." and "Aucun cadeau n'a ete trouve", so on that screen the console
-is scanning and has no advertisement for us to read. The comm id is per application, so the id read
-off any local-wireless feature is the one the gift path uses. docs/swsh.md.
+POINT THE SCAN AT A SCREEN WHERE THE CONSOLE HOSTS - a Link Trade over local communication, or the
+Mystery Gift local-wireless screen. Both advertise the same comm id; the trade under scene id 60001
+and Mystery Gift under scene id 65535. The comm id is per application, so the id read off any
+local-wireless feature is the one the gift path uses. docs/swsh.md.
 """
 import argparse
 import json
