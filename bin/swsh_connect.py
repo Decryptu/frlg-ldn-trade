@@ -189,6 +189,7 @@ async def main_async(args):
               "rpc_bodies_answered": set(), "confirmation_opened": False, "rpc_pair_delta": {},
               "confirm_status_answered": set(),
               "confirm_queue": None,
+              "confirm_steps_seen": set(), "confirm_last_step": None,
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -333,6 +334,17 @@ async def main_async(args):
                     # members. sx17 answered 40030's pair, the console opened the selection phase,
                     # and then sent 40050 pairs to a client that only knew about 40030.
                     st["rpc_seen"][(member["envelope"], member["base"])] = got["payload"]
+                    # WHEN THE LADDER LAST MOVED, WHICH IS WHAT --abort-on-stall WATCHES. Any
+                    # four-byte body on the confirmation content's 20000 base is a step
+                    # (`0x006d6490` drops every other length), and the console REPEATS the one it
+                    # is parked on, so only a body we have not seen counts as movement.
+                    if (member["envelope"] == (swsh_trade.RPC_ENVELOPE_BASE
+                                               + swsh_trade.CONFIRMATION_OFFSET)
+                            and member["base"] == swsh_trade.RPC_BASES[1]
+                            and len(member["body"]) == 4
+                            and bytes(member["body"]) not in st["confirm_steps_seen"]):
+                        st["confirm_steps_seen"].add(bytes(member["body"]))
+                        st["confirm_last_step"] = now
                     # AND THE SAME CUE ONE CONTENT ALONG, WHICH sx51b MEASURED AND ONLY HALF
                     # ANSWERED. With the selection ladder climbed the console sends a 40040/20000
                     # member whose body also ends `0100` - the confirmation content saying the same
@@ -1826,7 +1838,23 @@ async def main_async(args):
             nursery.start_soon(guarded, "migration_sender", migration_sender)
             nursery.start_soon(guarded, "update_mesh_sender", update_mesh_sender)
             await sender()
-            await trio.sleep(args.hold)
+            # THE HOLD, AND THE ONE THING THAT ENDS IT EARLY. sx53 and sx54 both ended with the
+            # console penalised: the ladder stalls, we keep the transport alive and ACKING for the
+            # rest of the hold, and the game sits on "veuillez patienter" until its own timeout
+            # declares the TRADE failed - which is the path that costs the player an hour. A link
+            # that simply stops is a different failure for the game to report, and whatever it
+            # charges for it is charged to a peer that does not exist. The tail we give up is
+            # nothing: after the last step body sx54 ran 200 more seconds of pure acks.
+            hold_until = time.monotonic() + args.hold
+            while time.monotonic() < hold_until:
+                await trio.sleep(0.25)
+                if stall_abort(st["confirm_last_step"], time.monotonic() - t0,
+                               args.abort_on_stall):
+                    print(f"\n[tx] *** THE LADDER STALLED FOR {args.abort_on_stall:.1f} s - "
+                          f"ABORTING SO THE CONSOLE SEES A DROPPED LINK, NOT A FAILED TRADE *** "
+                          f"last step at t={st['confirm_last_step']:.2f}, "
+                          f"{len(st['confirm_steps_seen'])} distinct steps")
+                    break
             nursery.cancel_scope.cancel()
 
         windows = " / ".join(
@@ -1868,6 +1896,22 @@ async def main_async(args):
     if cap:
         cap.close()
     return 0
+
+
+def stall_abort(last_step, now, limit):
+    """Has the confirmation ladder started and then gone quiet for `limit` seconds?
+
+    Only a ladder that STARTED can stall: `last_step` is None until the console puts its first
+    four-byte body on the confirmation content, and a run that never gets that far holds for its
+    full time as before. `limit` of 0 or None is the flag switched off.
+
+    WHY THE RUN ENDS ITSELF. See the hold in `main_async` - a stalled ladder that we keep acking
+    becomes a FAILED TRADE on the console and costs the player a real penalty, where a link that
+    stops is a dropped connection. sx53 and sx54 paid for this twice.
+    """
+    if not limit or last_step is None:
+        return False
+    return (now - last_step) >= limit
 
 
 def build_parser():
@@ -2048,6 +2092,15 @@ def build_parser():
                          "phase out of exactly those bytes (`0x006d6490` stores them, "
                          "`0x006d3260` reads them), and every step this project has sent so far "
                          "echoed the value back unchanged")
+    ap.add_argument("--abort-on-stall", type=float, default=0.0, metavar="SECONDS",
+                    help="once the confirmation ladder has produced its first step, end the run "
+                         "as soon as SECONDS pass with no NEW step body - stop transmitting, drop "
+                         "the link and let the console report a lost connection. sx53 and sx54 "
+                         "both ended with the console under a trade penalty: the ladder stalls, "
+                         "we keep the transport alive and acking for the rest of the hold, and "
+                         "the game waits out its own timeout and declares the TRADE failed, which "
+                         "is what costs an hour. The tail given up is nothing - sx54 ran 200 s of "
+                         "pure acks after its last step. 0 is off and the hold runs in full.")
     ap.add_argument("--confirm-commands", default=None, metavar="N,N,...",
                     help="the handshake form of --confirm-command: send the NEXT of these on each "
                          "new four-byte body the confirmation content puts on elementId 20000. "

@@ -1446,6 +1446,60 @@ clock. `scratchpad/swsh_hash_search.py` does that. Run against all four measured
 window, **it finds nothing**. So either the channel's list carries more than the two stations, or the
 value hashed is not the envelope clock this project can see. The formula is read; the inputs are not.
 
+## The ladder climbs one rung per command, and the queue ran out before it did
+
+**sx54 IS THE FURTHEST THIS PROJECT HAS BEEN.** `--confirm-commands 0,1,2,3` went out for the first
+time - the run had been built in session 64 and blocked by a trade penalty ever since - and the
+console's confirmation step body walked **two rungs past where sx53 died**.
+
+FACT, every four-byte body the console put on the confirmation content's elementId 20000, in order,
+decoded as `<u16 phase><u16 announced>` (`scratchpad/sx54_4.out`):
+
+    000018fc   phase 0, announced 0xfc18   the sub-element's birth sentinel
+    00000100   phase 0, announced 1        the cue - it had sent its command 0
+    01000100   phase 1, announced 1        the phase caught up
+    01000200   phase 1, announced 2        it committed and sent command 1   <- sx53 STOPPED HERE
+    02000200   phase 2, announced 2        the phase caught up again
+    02000300   phase 2, announced 3        it committed and sent command 2   <- sx54
+
+sx53 sent ONE command and the ladder stopped at `01000200`. sx54 sent four and it reached
+`02000300`. **That is the answer to session 64's open question: the rungs are not climbed on the
+console's own initiative, they are paid for.**
+
+**AND THE RUN RAN OUT OF COMMANDS ONE RUNG EARLY, FOR A REASON THE LOG NAMES.** The queue pops on
+any four-byte body the confirmation content has not sent before, and the FIRST such body is
+`000018fc` - the sub-element's constructor value (`0x006d6160`), not a rung at all. So command 0 was
+spent on the sentinel and only three commands ever landed on a step. The queue was empty when
+`02000200` arrived, the console climbed once more on the credit it already had, and then nothing.
+
+**THE VALUE IS INERT, AND THAT IS READ, NOT GUESSED.** DEDUCTION from the image: the only thing that
+moves the content's state is `0x010dbf40`, whose sole caller is content 40's pump `0x010db3e0`, and
+the pump passes it `[content+0x17c]` - the content's OWN phase. The int32 in our
+`SyncSaveDataHolder{syncCommand{data:N}}` never reaches it; `0x010dbc90` keeps the value and sets
+the sender's byte in the map at `[content+0x2a0]+0x1c0`. **So what advances a rung is that a command
+ARRIVES, not which of 0..3 it carries** - and the next run needs a queue that does not run dry, not
+a better guess at the values.
+
+## A stalled ladder costs the player an hour, so the run ends itself now
+
+**TWO RUNS IN A ROW ENDED WITH THE CONSOLE UNDER A TRADE PENALTY** - sx53 and sx54, the only two
+runs that have ever reached the confirmation content. FACT: after sx54's last step body the run held
+for **200 more seconds of pure acks**, the game sat on `communication en cours... veuillez
+patienter`, and it then raised `msg_ui_live_comm_app_alert_00` - an error that names the TRADE as
+failed and closes the game. The penalty followed. Roughly an hour, measured by the player across
+both.
+
+DEDUCTION: a trade that times out with the link still alive is a failed trade, and a trade whose
+link disappears is a lost connection. They are different failures for the game to report, and only
+the first has been observed to cost a penalty. **HYPOTHESIS, and the next run tests it**: whatever
+the game charges for a dropped link is charged to a peer that does not exist.
+
+`bin/swsh_connect.py --abort-on-stall SECONDS` is the move. Once the confirmation ladder has
+produced its first step, the run ends the moment SECONDS pass with no NEW body on it - all
+transmission stops and the link goes away well before the game's own timeout. Nothing is given up:
+the tail it discards is the 200 seconds of acks. The trigger keys on bodies not seen before, because
+the console REPEATS the step it is parked on and a stall is the absence of movement, not of traffic.
+
 ## What this project has measured, and what it has borrowed
 
 FACT, sw70's own capture (`scratchpad/sw_app_payloads.py` walks it): the console sent **five

@@ -419,3 +419,24 @@ def test_sx53s_own_steps_are_all_four_byte_bodies_on_elementid_20000():
         assert m["base"] == swsh_trade.RPC_BASES[1] and len(m["body"]) == 4
     assert bytes.fromhex(steps[-1])[-2:] != b"\x01\x00"
     assert bytes.fromhex(steps[0])[-2:] == b"\x01\x00"
+
+
+def test_the_stall_abort_is_off_until_the_ladder_has_started():
+    """A run that never reaches the confirmation content holds for its full time.
+
+    sx53 and sx54 both ended with the console penalised, and both times the cause was the same:
+    the ladder stalled and we kept the transport alive and acking until the GAME's own timeout
+    declared the trade failed. A link that stops instead is a dropped connection, which is a
+    different thing for the console to report.
+    """
+    assert swsh_connect.stall_abort(None, 100.0, 10.0) is False   # never started
+    assert swsh_connect.stall_abort(40.0, 45.0, 10.0) is False    # started, still moving
+    assert swsh_connect.stall_abort(40.0, 50.0, 10.0) is True     # started, then quiet
+    assert swsh_connect.stall_abort(40.0, 500.0, 0.0) is False    # the flag is off
+    assert swsh_connect.stall_abort(None, 500.0, 0.0) is False
+
+
+def test_the_stall_abort_is_off_unless_it_is_asked_for():
+    assert swsh_connect.build_parser().parse_args([]).abort_on_stall == 0.0
+    assert swsh_connect.build_parser().parse_args(
+        ["--abort-on-stall", "12"]).abort_on_stall == 12.0
