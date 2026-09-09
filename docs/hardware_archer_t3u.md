@@ -91,6 +91,14 @@ OSError: [Errno 16] Device or resource busy
 sudo ip link set wlxXXXXXXXXXXXX down
 ```
 
+**And check what your own teardown script leaves behind.** Session 64 lost three
+launches to this: the Sword/Shield kill script ended by bringing the base
+interface back *up*, and the documented order is to run that script immediately
+before launching - so following the documentation was what produced the error.
+A "clean" check has to mean "safe to launch", which for this adapter means the
+base interface is down. The launchers that raise it for a kernel `iw scan` lower
+it again before handing over; anything that raises it must do the same.
+
 ## Do not hardcode a phy number
 
 The phy number changes on every re-enumeration, and this adapter re-enumerates
