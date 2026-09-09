@@ -190,6 +190,7 @@ async def main_async(args):
               "confirm_status_answered": set(),
               "confirm_queue": None,
               "confirm_steps_seen": set(), "confirm_last_step": None,
+              "ladder_finished": False,
               "block_out": 0, "block_acked": None}
 
         accepted = trio.Event()           # set when the station handshake closes, which is the
@@ -345,6 +346,13 @@ async def main_async(args):
                             and bytes(member["body"]) not in st["confirm_steps_seen"]):
                         st["confirm_steps_seen"].add(bytes(member["body"]))
                         st["confirm_last_step"] = now
+                        step = swsh_trade.parse_sync_step(member["body"])
+                        if step is not None and step[0] >= LADDER_FINAL_PHASE:
+                            if not st["ladder_finished"]:
+                                print(f"\n[rx] *** THE LADDER IS FINISHED - phase {step[0]} is the "
+                                      f"teardown rung, THE ABORT STANDS DOWN *** "
+                                      f"{member['body'].hex()} at t={now:.2f}")
+                            st["ladder_finished"] = True
                     # AND THE SAME CUE ONE CONTENT ALONG, WHICH sx51b MEASURED AND ONLY HALF
                     # ANSWERED. With the selection ladder climbed the console sends a 40040/20000
                     # member whose body also ends `0100` - the confirmation content saying the same
@@ -1849,7 +1857,7 @@ async def main_async(args):
             while time.monotonic() < hold_until:
                 await trio.sleep(0.25)
                 if stall_abort(st["confirm_last_step"], time.monotonic() - t0,
-                               args.abort_on_stall):
+                               args.abort_on_stall, st["ladder_finished"]):
                     print(f"\n[tx] *** THE LADDER STALLED FOR {args.abort_on_stall:.1f} s - "
                           f"ABORTING SO THE CONSOLE SEES A DROPPED LINK, NOT A FAILED TRADE *** "
                           f"last step at t={st['confirm_last_step']:.2f}, "
@@ -1898,7 +1906,10 @@ async def main_async(args):
     return 0
 
 
-def stall_abort(last_step, now, limit):
+LADDER_FINAL_PHASE = 4        # `0x010dbf40`: phase 4 -> state 13 -> 14, the teardown, no send
+
+
+def stall_abort(last_step, now, limit, final_phase_seen=False):
     """Has the confirmation ladder started and then gone quiet for `limit` seconds?
 
     Only a ladder that STARTED can stall: `last_step` is None until the console puts its first
@@ -1908,8 +1919,16 @@ def stall_abort(last_step, now, limit):
     WHY THE RUN ENDS ITSELF. See the hold in `main_async` - a stalled ladder that we keep acking
     becomes a FAILED TRADE on the console and costs the player a real penalty, where a link that
     stops is a dropped connection. sx53 and sx54 paid for this twice.
+
+    AND WHY A FINISHED LADDER IS NOT A STALLED ONE, WHICH sx55 PAID FOR. The console climbed the
+    WHOLE ladder to `04000400`, ran the trade, sent the player our Pokemon - and then stopped
+    producing steps, because phase 4 IS the last rung and its state does not send. Fifteen seconds
+    later this function could not tell the finish from a stall and dropped the link under a game
+    that had just handed over a Pokemon: error 2-ALZAA-0016. **A ladder that has reached
+    `LADDER_FINAL_PHASE` is done, and the run must hold for whatever the game does next** - the
+    save, the summary screen, the migration. The abort exists for a ladder that died early.
     """
-    if not limit or last_step is None:
+    if not limit or last_step is None or final_phase_seen:
         return False
     return (now - last_step) >= limit
 

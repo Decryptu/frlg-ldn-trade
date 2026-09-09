@@ -1446,6 +1446,51 @@ clock. `scratchpad/swsh_hash_search.py` does that. Run against all four measured
 window, **it finds nothing**. So either the channel's list carries more than the two stations, or the
 value hashed is not the envelope clock this project can see. The formula is read; the inputs are not.
 
+## A retail Sword and Shield completed a trade with us
+
+**sx56. THE TRADE COMPLETED.** The console took our Pokemon, gave us its own, wrote its save and
+returned the player to the overworld - no crash, no error, no penalty. This is the first completed
+trade between this project and a retail Sword/Shield, and it took four sessions of confirmation
+content to reach.
+
+FACT, from `scratchpad/sx56_*.out` and the player at the screen:
+
+    we offered      species  94  Ectoplasma  level 100, from slot 1 of the party we advertised
+    it offered      species 840  Applin      level 100, OT 'Gurvan' (56909/48474)
+    the ladder      000018fc ... 04000400 at t=38.44, the teardown rung
+    the console     handed the player a Gengar, held a long save screen, then the overworld
+    afterwards      the player could open a new local search immediately
+
+**THE SPECIES IS THE PROOF, AND IT HAD TO BE.** sx55 completed the same climb with `--offer-echo`,
+which hands the console its own record back byte for byte - so the player received the Applin they
+had just offered and there was no way to tell a completed trade from a returned one. sx56 dropped
+the echo for `--offer-slot 1`. **A player who offers an Applin and receives an Ectoplasma has
+measured the transfer**, and no reading of the capture is needed to see it.
+
+**WHAT MADE THE DIFFERENCE, IN ORDER.** The queue that does not run dry
+(`--confirm-commands 0,1,2,3,0,1,2,3,0,1,2,3`), because every rung is paid for with a command and
+the sentinel eats the first one. And the abort standing down at phase 4, because the finished
+ladder goes quiet exactly like a stalled one - see below.
+
+## The penalty is the failed trade, and a dropped link is not one
+
+**MEASURED, AND IT CHANGES THE RUN BUDGET.** sx53 and sx54 both held the link alive and acking
+until the game's own timeout declared the TRADE failed, and both cost the player about an hour's
+lockout. sx55 dropped the link instead: the console raised **2-ALZAA-0016**, a plain communication
+error, and **the player was able to start a new local search at once**. Same phase of the same
+flow, two failure paths, one penalty between them.
+
+So `--abort-on-stall SECONDS` does what it was built for. **The hypothesis in the session before
+this one is now a measurement.**
+
+**AND ITS FIRST VERSION DROPPED THE LINK ON A TRADE THAT HAD SUCCEEDED.** sx55 climbed the WHOLE
+ladder to `04000400`, ran the trade, handed the player our Pokemon - and then stopped producing
+steps, because **phase 4 is the teardown rung and its state sends nothing** (`0x010dbf40`: phase 4
+-> state 13 -> 14). Fifteen seconds later the abort could not tell the finish from a stall and cut
+the link under a game that was mid-save: 2-ALZAA-0016 at the worst possible moment. `stall_abort()`
+takes `final_phase_seen` now, and a ladder that has reached `LADDER_FINAL_PHASE` is done - the run
+holds for whatever the game does next, which is the save, the summary and the migration.
+
 ## The ladder climbs one rung per command, and the queue ran out before it did
 
 **sx54 IS THE FURTHEST THIS PROJECT HAS BEEN.** `--confirm-commands 0,1,2,3` went out for the first

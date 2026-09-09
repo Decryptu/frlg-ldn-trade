@@ -440,3 +440,15 @@ def test_the_stall_abort_is_off_unless_it_is_asked_for():
     assert swsh_connect.build_parser().parse_args([]).abort_on_stall == 0.0
     assert swsh_connect.build_parser().parse_args(
         ["--abort-on-stall", "12"]).abort_on_stall == 12.0
+
+
+def test_a_finished_ladder_is_not_a_stalled_one():
+    """sx55 climbed the whole ladder, traded, and then the abort dropped the link on it.
+
+    Phase 4 is the teardown rung - `0x010dbf40` sends nothing from it - so the console goes quiet
+    the moment it succeeds, which is byte for byte what a stall looks like from outside. The run
+    has to hold through whatever follows: the save, the summary, the migration.
+    """
+    assert swsh_connect.stall_abort(40.0, 60.0, 15.0) is True
+    assert swsh_connect.stall_abort(40.0, 60.0, 15.0, final_phase_seen=True) is False
+    assert swsh_connect.LADDER_FINAL_PHASE == 4
