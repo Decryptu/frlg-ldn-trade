@@ -218,22 +218,40 @@ offset over the whole game band finds no other writer on either LDN session-crea
 Mystery Gift scene the maximum is left at whatever the session was constructed with, and the
 comparison is unsigned: a maximum of zero refuses every join, at any station count.
 
-Whether that field is zero at runtime is inferred rather than read. What is measured is that nothing
-on the gift path sets it, and that the two activities that do install this same filter both set it
-first.
+Whether that field is zero at runtime is not read, and the console's own behaviour argues it is not:
+the distributor joins, so some join has to be acceptable. What is measured is that nothing on the
+gift path sets it, and that the two activities installing this same filter both set it first.
+
+## The console announces on every channel and never scans
+
+Monitor captures taken while the console sits on the Mystery Gift local-wireless screen, one per
+2.4 GHz channel, with the console hosting on channel 6:
+
+| channel | beacons from it | LDN advertisement action frames | probe requests |
+|---|---|---|---|
+| 1 | 0 | 153 in 90 s | 0 |
+| 6, the one it hosts on | 339 in 70 s | 435 in 70 s | 0 |
+| 11 | 0 | 95 in 90 s | 0 |
+
+Each capture holds hundreds of beacons from unrelated access points on that channel, so the radio was
+tuned where it was asked and the absences are real. The console beacons only on the channel it hosts,
+and sends its LDN advertisement — the same network, the same SSID — on the two channels it does not.
+It sends no probe request anywhere.
+
+So the console is announcing itself across the band rather than searching. A distributor finds it
+without scanning and joins it, which fixes the direction of the link: on this screen the console
+hosts and the distributor is the joiner.
 
 ## Unresolved
 
-Which gate refuses is not settled on hardware, and no join can settle it: all three return the same
-zero to `CheckApprovalJoin` and the reason byte is 1 in every case.
+Which gate refuses is not settled. All three return the same zero to `CheckApprovalJoin` and the
+reason byte is 1 in every case, so no join distinguishes them.
 
-The open question the reading raises is the direction of the link. If the filter refuses every mesh
-join on this scene, the gift does not arrive over a mesh the console hosts, and the distributor is
-not a joiner. The console advertises on that screen and sent no probe request in 70 seconds, but that
-capture was parked on its own channel and would not have seen a scan of another one. A monitor
-capture across all three 2.4 GHz channels, taken while the console sits on the Mystery Gift
-local-wireless screen, is what separates "it only hosts" from "it also looks for a distributor to
-join".
+The participant maximum is the gate the static reading points at, and the direction measurement
+argues against it: a maximum of zero would refuse the real distributor too. Either the field is
+non-zero from construction, or the gift session is built by the path whose allow-list flag state has
+not been read — `0x006ca848` clears that flag ahead of one of the two `LdnCreateSessionSetting`
+sites, and which of the two the gift screen uses is unknown.
 
 ## A gift is a multiple of 0x2D0 bytes
 
