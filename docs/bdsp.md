@@ -36,10 +36,10 @@ Proven on retail hardware, end to end:
 
 ## Unresolved
 
-- **Five payloads never on the wire.** Twelve of the 65 message structs hold a C# string, an array
+- **One payload never on the wire.** Twelve of the 65 message structs hold a C# string, an array
   or a list, and the source decides no layout for them; `netdata.OPAQUE` names all twelve. The executable's `Il2CppTypeDefinitionSizes` decides the size and packing of all twelve,
-  and seven have been on the wire and match (`room.MEASURED`); every Union Room message is among
-  them. `NetPlayerNameData` and the four `Ug*` messages need the Grand Underground
+  and eleven have been on the wire and match (`room.MEASURED`), from the Union Room and the Grand
+  Underground. The twelfth, `NetDigGroupIdData` (0x29), has no sender in 1.3.0
   ([the protocol page](bdsp_protocol.md)).
 - **The Session Protocol (0x94)**, which sits above the reliable transport and has never carried a
   byte in any capture.

@@ -216,11 +216,12 @@ def test_the_trainer_record_we_build_is_the_console_s_own_bytes():
 
 
 def test_the_measured_layouts_are_no_longer_reported_opaque():
-    """0x02, 0x13, 0x22 and 0x24 are the OPAQUE ids a capture holds, and all four are decided."""
+    """Eleven of the twelve OPAQUE ids have been on the wire and are decided; 0x29 never has."""
     for data_id in room.MEASURED:
         assert data_id in netdata.OPAQUE
         assert room.parse(room.build(data_id, b"\x00" * 32))["opaque"] is False
-    assert room.parse(room.build(0x42, b"\x00" * 8))["opaque"] is True
+    assert set(netdata.OPAQUE) - set(room.MEASURED) == {0x29}
+    assert room.parse(room.build(0x29, b"\x00" * 8))["opaque"] is True
 
 
 def test_every_opaque_payload_has_its_marshalled_size():

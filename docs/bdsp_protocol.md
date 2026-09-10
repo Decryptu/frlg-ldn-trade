@@ -421,13 +421,26 @@ console sends three messages at once:
 | 0x42 | `NetPlayerNameData` | 28 | 13 UTF-16 chars, byte genderid, byte languageId (3, French) |
 | 0x50 | `NetKousekiCount` | 4 | `int Value` |
 
-`UgNetworkManager$$OnReceiveRequestData` answers a `NetRequestData` for two ids and no other:
-0x61 `NetDigTableData`, eight bytes of dig-fossil ids (`01 06 04 02 05 03 00 07`), and 0x54
-`NetSecretBaseUpdate`, the 616-byte `UgSecretBase` (all zero from a player with no secret base).
-0x18 `NetSecretBaseData` is sent by `UgNetworkManager$$SendMySecretBaseData` and 0x29
-`NetDigGroupIdData` has no caller of its constructor or its id anywhere in 1.3.0, so nothing sends
-it. A request for 0x18, 0x29 or 0x42 draws nothing; the dispatcher also answers 0x01, 0x04, 0x19
-`NetDigData` and 0x55 `NetNaminoriData`, which have layouts the source decides.
+A player standing inside their secret base (zone 633) sends, on a station's arrival,
+`NetSecretBaseInfo` (0x41, `Vector3 pos`, `int zoneID`: the base's entrance on the floor above,
+zone 519) paired with the `NetPlayerNameData`.
+
+`UgNetworkManager$$OnReceiveRequestData` [1.3.0 main 0x01f7c050] answers a `NetRequestData` for
+0x01, 0x04, 0x18, 0x19 `NetDigData`, 0x54, 0x55 `NetNaminoriData` and 0x61. The three opaque ones:
+
+| requested | bytes | content |
+|---|---|---|
+| 0x18 `NetSecretBaseData` | 616 | the player's own `UgSecretBase`; `SendMySecretBaseData` sends nothing when its `zoneID` is 0 |
+| 0x54 `NetSecretBaseUpdate` | 616 | the same 616 bytes, byte for byte |
+| 0x61 `NetDigTableData` | 8 | eight dig-fossil ids, `01 06 04 02 05 03 00 07` |
+
+One base read back as zone 519 at (79, 64), `direction` 0, `expansionStatus` 0, `goodCount` 0,
+five statues (ids 12, 20, 22, 32, 35, each `pedestalId` -1) in the thirty slots, and `isEnable` 0.
+Before the console's reliable window has carried anything, a request lands at sequence 1 and is
+not answered; the same request later is.
+
+0x29 `NetDigGroupIdData` has no caller of its constructor or its id anywhere in 1.3.0, so nothing
+sends it, and a request for it or for 0x42 draws nothing.
 
 `--inject-file PATH` on `bin/bdsp_connect.py` sends each new `ID:HEX` line of the file on the
 reliable window while the association stands, which is how a ladder like this is climbed in one
