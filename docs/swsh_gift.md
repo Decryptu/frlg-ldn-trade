@@ -197,9 +197,43 @@ The participant maximum is a second candidate — `0x006b8230` refuses when the 
 current count (`0x00bd9b30` and `0x01031c74`, both `SetMax(GetCount())`) belong to the raid den and
 the rental-multi matching paths, not to Mystery Gift. Nothing arms it on the gift scene.
 
-Which gate produces the refusal is still not measured. All three return the same zero to
-`CheckApprovalJoin` and the reason byte is 1 in every case, so the wire cannot tell them apart, and
-the objects they read are runtime state that no static search reaches.
+### Two of the three gates cannot be what refuses
+
+The halfword gate approves. `nn::pia::common::InetAddress` is laid out by its deserializer
+(`0x01767a10`) as a 16-byte address field at `+0x08`, zero-filled before use and carrying a 4-byte
+big-endian IPv4 at `+0x08` unless the size byte is 0x12, and the port at `+0x18`. The location keeps
+its public address at `+0x00` and its private one at `+0x28`, so the identity's 32 bytes lie inside
+the public address, and the halfword the callback reads at identity `+0x10` is address-field byte 8 —
+zero for every IPv4 station. `cbz` on it is taken and the callback approves.
+
+The allow list is not consulted either. The flag at `session+0x4f5` is cleared (`strb wzr`) at
+`0x006ca848`, immediately before the same function builds its `LdnCreateSessionSetting` at
+`0x006ca86c`, and `0x006b8230` approves outright when that flag is clear.
+
+That leaves the participant maximum. `0x006b8230` refuses when the Pia station count
+`[pia_session+0x1a8]` is not below `[session+0x1f0]`, and the only route that writes `+0x1f0` is the
+accessor `0x006b9900`, reached through one wrapper `0x0110e5e0` with exactly two call sites —
+`0x00bd9b30` and `0x01031c74`, the raid den and rental-multi matching paths. A store scan for that
+offset over the whole game band finds no other writer on either LDN session-creation path. So on the
+Mystery Gift scene the maximum is left at whatever the session was constructed with, and the
+comparison is unsigned: a maximum of zero refuses every join, at any station count.
+
+Whether that field is zero at runtime is inferred rather than read. What is measured is that nothing
+on the gift path sets it, and that the two activities that do install this same filter both set it
+first.
+
+## Unresolved
+
+Which gate refuses is not settled on hardware, and no join can settle it: all three return the same
+zero to `CheckApprovalJoin` and the reason byte is 1 in every case.
+
+The open question the reading raises is the direction of the link. If the filter refuses every mesh
+join on this scene, the gift does not arrive over a mesh the console hosts, and the distributor is
+not a joiner. The console advertises on that screen and sent no probe request in 70 seconds, but that
+capture was parked on its own channel and would not have seen a scan of another one. A monitor
+capture across all three 2.4 GHz channels, taken while the console sits on the Mystery Gift
+local-wireless screen, is what separates "it only hosts" from "it also looks for a distributor to
+join".
 
 ## A gift is a multiple of 0x2D0 bytes
 
