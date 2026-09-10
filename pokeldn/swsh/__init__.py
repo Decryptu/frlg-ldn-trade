@@ -5,7 +5,7 @@ game key, its Pia protocol version and the shape of its header. Pia and LDN them
 `pokeldn.ldn` and carry no game's constants. Like `bdsp`, this sits directly on `ldn` with no link
 layer of its own - there is no `gba` beneath it.
 
-Session 55 put it on the air: we took a seat in a retail Sword's LDN session and its Pia traffic
+Measured on the air: a seat in a retail Sword's LDN session, and its Pia traffic
 decrypts. `docs/swsh.md` says what is FACT, what is deduced and what is still open.
 """
 

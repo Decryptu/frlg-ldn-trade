@@ -3,7 +3,7 @@
 @ A memory-dump reads a window, so reading a table of pointers costs one run for the pointers and
 @ another run for every kilobyte they point at. The Easy Chat vocabulary is the case that makes
 @ that unaffordable: sEasyChatGroups' 22 word arrays and their text span 21560 bytes of the
-@ cartridge [bs17], which is 22 dumps, and only about a third of those bytes are the words - the
+@ cartridge, which is 22 dumps, and only about a third of those bytes are the words - the
 @ rest is struct EasyChatWordInfo's alphabeticalOrder and enabled, which say nothing about what
 @ the console PRINTS [decomp:include/easy_chat.h:11].
 @

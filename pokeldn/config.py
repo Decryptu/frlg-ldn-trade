@@ -221,7 +221,7 @@ class HostOptions:
     native_nonce_sequence: bool = False
     session_response_first: bool = False
     # How often the host emits one RFU slot. The GBA link is one slot per VBlank, which is what this
-    # defaults to; cc6 measured a real console pair running an order of magnitude below it
+    # defaults to; a real console pair runs an order of magnitude below it
     # [docs/frlg_link.md], so this exists to test the console's answer rate against ours.
     protocol_tick_hz: float = 59.727
     # Host for the Union Room (the middle NPC on Pokemon Center 2F) instead of the trade centre:
@@ -501,11 +501,11 @@ class MysteryGiftPayload:
     # Chat word ids or nothing is sent [SVR_CHECK_QUESTIONNAIRE].
     questionnaire: tuple | None = None
     denied_message: str | None = None
-    # A COMPOSED DEFINITION, not a knob. Some gifts are a family rather than a constant -
-    # rng-mon-hunt carries whatever search the caller asked for [wonder_card_events.
-    # build_rng_mon_hunt_gift] - and the rule above still holds for them: the card is composed in
-    # wonder_card_events and arrives here already built, and this field only says to send THAT one
-    # instead of the registry's. Nothing gift-specific belongs in this dataclass.
+    # A composed definition, not a knob. Some gifts are a family rather than a constant
+    # (rng-mon-hunt carries whatever search the caller asked for,
+    # [wonder_card_events.build_rng_mon_hunt_gift]); the card is composed in wonder_card_events and
+    # arrives here already built, and this field only says to send that one instead of the
+    # registry's. Nothing gift-specific belongs in this dataclass.
     definition: object = None
 
     def __post_init__(self):

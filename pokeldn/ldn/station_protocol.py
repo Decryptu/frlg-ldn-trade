@@ -138,7 +138,7 @@ def station_location(ip, port, constant_id, variable_id, service_variable_id,
     """
     public = inet_address(ip, port)
     private = inet_address(ip, port)
-    # The size byte INCLUDES the port. Writing len-2 here is what sp25-sp32 sent, and the console's
+    # The size byte includes the port. Writing len-2 here is refused, and the console's
     # parser rejects 4 outright (only 2, 6, 18 pass) - so the location never deserialised, its
     # variable id stayed 0, and every request came back with the same refusal no matter what we
     # varied. The connection-request parser THROWS AWAY the location's error, which is why a
@@ -198,7 +198,7 @@ def build_connection_request(target_constant_id, target_variable_id, protocols, 
 
 
 # The protocol ids Pia 5.29-5.45 defines, from the NintendoClients wiki's "Pia Protocols". A game
-# registers a SUBSET, and BDSP registers exactly nine of them (sp27, measured on hardware). These
+# registers a SUBSET, and BDSP registers exactly nine of them (measured on hardware). These
 # are the candidates a version probe walks; an id outside this list is a fine filler.
 KNOWN_PROTOCOL_IDS = (
     0x08,   # Keep Alive
@@ -228,7 +228,7 @@ KNOWN_PROTOCOL_IDS = (
 
 # An id the console does not register looks up as version 0 (0x0159b850 falls off its walk into
 # `mov w0, wzr`), so this pair always matches and is what pads a probe out to the required count.
-# sp27 proved it on hardware: nine entries of (0xFF, 1) drew "version too high", which is only
+# Proven on hardware: nine entries of (0xFF, 1) drew "version too high", which is only
 # possible if the expected version for 0xFF is 0.
 FILLER = (0xFF, 0)
 
@@ -249,10 +249,10 @@ def read_version(result):
 
     -> "higher", "lower" or "equal", and it raises on anything that says neither.
 
-    THE EQUALITY SIGNAL IS A REPLY, NOT SILENCE, and sp28 is what corrected that. A request whose
+    The equality signal is a reply, not silence. A request whose
     versions all match gets past the deserializer entirely, and the SECOND stage (0x0154fcfc) then
     refuses it with 0x11c0f - which comes back as connection result 7. Every probe therefore has a
-    definite answer, and silence means a lost packet rather than a match. Before sp28 this module
+    definite answer, and silence means a lost packet rather than a match. Read as a match, this
     read silence as equality, which is the same shape of mistake as reading a wrong protocol count
     as a wrong identity.
     """

@@ -1,10 +1,10 @@
 """Pia 5.27-5.45 header codec (BDSP). The fixture bytes are a real packet off a French Shining
-Pearl in the Union Room, session 43 - see NOTES.local.md sp4/sp8."""
+Pearl in the Union Room."""
 import pytest
 
 from pokeldn.ldn.pia5 import PiaHeader5, is_pia5, HEADER_SIZE, CT_OFF, MAGIC, VERSION
 
-# the first datagram of sp4: 169.254.54.1:12345 -> .255:12345, 176 bytes
+# the first datagram of a capture: 169.254.54.1:12345 -> .255:12345, 176 bytes
 REAL = bytes.fromhex(
     "32ab9864890000000011bac90d000000f5a83bd383ce712d"
     "59baa5cbc320cb56a319c5fc3ecfdaca65d89eb747e02e816dc4f21eac462965")
@@ -58,7 +58,7 @@ def test_rejects_non_pia_and_short():
 
 
 def test_the_message_header_is_byte_exact_against_the_console():
-    """The 16 bytes in front of the console's own update session, off the sp4 capture.
+    """The 16 bytes in front of the console's own update session, off the capture.
 
     The presence byte is 0x7F and not 0x0F - the four defined bits are all this header carries, but
     the console sets three more that name nothing. Emitting 0x0F was the one byte our send path had
@@ -80,7 +80,7 @@ def test_an_inherited_message_still_opens_with_its_own_presence_byte():
     assert [m.message_flags for m in got] == [0x11, 0x11]
 
 
-# One real sp36 packet, 68 bytes, `footer size` 4 - the shape that decrypted only once the footer
+# One real captured packet, 68 bytes, `footer size` 4: the shape that decrypts only once the footer
 # came off. Its four footer bytes are the low halves of the two stations' variable ids.
 SP36_FOOTER_PACKET = bytes.fromhex(
     "32ab98648900000001ab358028000504100d649b1ec312c65bc4bc05c88237c05acc7a796988"
@@ -119,7 +119,7 @@ def test_the_real_footer_packet_authenticates_once_the_footer_is_off():
     assert msgs[0].payload == bytes.fromhex("0400020000")
 
 
-# sp46: the moment we put positions of our own into the Union Room, the console started answering
+# the moment we put positions of our own into the Union Room, the console started answering
 # with COMPRESSED messages - 31 bytes of zlib around a 32-byte reliable ack. Read raw, those 31
 # bytes parse into a header claiming a payload of 0x6260, which is the trap this guards.
 SP46_COMPRESSED_MESSAGE = bytes.fromhex(

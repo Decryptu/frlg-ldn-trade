@@ -123,7 +123,7 @@ def build_connection_response(result, constant_id, variable_id):
         [0xD]  a variable id           u32 big-endian (0x1853b10)
 
     MEASURED: a wrong-platform request is answered with result 2 and both ids zero, which is this
-    with x3 and w4 both xzr - sw15 read back `0202090000...` byte for byte. WHOSE ids belong in the
+    with x3 and w4 both xzr; a console reads back `0202090000...` byte for byte. Whose ids belong in the
     accepted case is a DEDUCTION: the only other caller passes them out of the peer's own station
     location, so they are read here as the station being answered.
     """
@@ -138,7 +138,7 @@ def build_connection_response(result, constant_id, variable_id):
 
 def parse_station_location(data):
     """-> dict. The two size-prefixed addresses, then the fixed tail. MEASURED against the console's
-    own connection request (sw20), whose location carries a size-2 address and a size-6 one."""
+    own connection request, whose location carries a size-2 address and a size-6 one."""
     s1, s2 = data[0], data[1]
     a1, a2 = data[2:2 + s1], data[2 + s1:2 + s1 + s2]
     t = 2 + s1 + s2
@@ -158,7 +158,7 @@ def parse_station_location(data):
 def parse_incoming_request(data):
     """A connection request the CONSOLE sent us: the header, its location and the trailing ack id.
 
-    MEASURED, sw20: the console answers an accepted request by sending one of its own, addressed to
+    MEASURED: the console answers an accepted request by sending one of its own, addressed to
     the constant id and the variable id it read out of OUR location. Its own tail is
     `location || u32 ack id` - four bytes our first requests never sent, which is what
     `0x017d5750` reads by taking the message size minus four.
@@ -177,7 +177,7 @@ ACK_SIZE = 8
 def build_ack(ack_id):
     """The type-5 acknowledgement: `05 00 00 00` then a u32 big-endian.
 
-    MEASURED, sw21: the console answered our connection response with `05 00 00 00 121a8113`, eight
+    MEASURED: the console answered our connection response with `05 00 00 00 121a8113`, eight
     bytes, and 5.27-5.45 sends the same eight (`mesh_protocol.ack_for`). WHICH u32 is a DEDUCTION -
     the console put its own variable id there, and every message it sends ends in a counter that
     increments per message (7106cab5, b6, b7), so both readings are worth sweeping.

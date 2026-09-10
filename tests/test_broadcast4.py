@@ -1,4 +1,4 @@
-"""Protocol 0x84's framing, against the three messages our own console sent on sw71.
+"""Protocol 0x84's framing, against the three messages our own console sent.
 
 Those three are the whole point: a builder that cannot reproduce a message the console sent is a
 builder we have no reason to trust, and every earlier layer of this project was settled the same
@@ -11,11 +11,11 @@ import pytest
 
 from pokeldn.ldn import broadcast4
 
-# sw71, off the wire, headers only - the bodies are a player's data and stay out of the repository.
+# off the wire, headers only - the bodies are a player's data and stay out of the repository.
 CONTROL = bytes.fromhex("110000000000ffff00000d80057c000500000000")
 DATA_0 = bytes.fromhex("120000000001ffff00000000")
 DATA_2 = bytes.fromhex("120000000005ffff00000002")
-sw71 = 71          # the run these fixtures came from, and this test's seed
+SEED = 71          # this test's fixture seed
 
 
 def test_the_control_message_the_console_sent_is_rebuilt_byte_for_byte():
@@ -67,7 +67,7 @@ def test_a_body_that_does_not_shrink_is_sent_plain():
     test did. Our console's own fragments 0 and 1 go out plain at 1404 bytes; they are party data
     and stay out of the repository, so this uses a deterministic pseudo-random blob instead.
     """
-    body = random.Random(sw71).randbytes(400)
+    body = random.Random(SEED).randbytes(400)
     assert len(zlib.compress(body)) > len(body), "the fixture must be incompressible"
     payload, compressed = broadcast4.build_fragment(1, 0, body)
     assert compressed is False
@@ -91,7 +91,7 @@ def test_a_transfer_is_a_control_message_and_then_every_fragment_in_order():
 
 
 def test_the_sequence_counts_across_both_kinds_on_one_port():
-    """sw71: control at 0, fragment 0 at 1. One counter, not one per kind."""
+    """control at 0, fragment 0 at 1. One counter, not one per kind."""
     sender = broadcast4.Sender()
     messages = sender.transfer(bytes(3456), compress=False)
     assert [broadcast4.parse(m)["sequence"] for m, _ in messages] == [0, 1, 2, 3]
@@ -108,7 +108,7 @@ def test_every_message_echoes_the_peer_sequence_we_last_saw():
 
 
 def test_the_default_policy_matches_what_our_console_actually_did():
-    """sw71 sent fragments 0 and 1 PLAIN at 1404 bytes and deflated only the short last one.
+    """The console sends fragments 0 and 1 plain at 1404 bytes and deflates only the short last one.
 
     Fragment 1's own bytes compress to well under half, so "smaller wins" is demonstrably not the
     console's rule, and a sender that used it would differ from the console in a way no run has

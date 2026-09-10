@@ -1,6 +1,6 @@
 """Pia 5.29-5.43's reliable sliding window (protocol 0x7c) - where BDSP's game data is.
 
-The two fixtures are the whole reliable side of sp35: the console sent exactly these, to us by
+The two fixtures are the whole reliable side of one capture: the console sent exactly these, to us by
 station bitmap, and repeated them 3.1 s later because nothing acknowledged them.
 """
 
@@ -84,7 +84,7 @@ def test_a_message_without_the_application_flag_is_an_ack():
     assert rl.parse_ack_payload(out["payload"])["entries"][0]["ack_id"] == 2
 
 
-# The console's own bulk acknowledgement, sp44: what it sent back after we put two application
+# The console's own bulk acknowledgement: what it sent back after we put two application
 # messages (sequence 0 and 1) into its reliable window. This is the only ack anyone has captured.
 SP44_ACK = bytes.fromhex(
     "00000017ffff0003000001000002000100000000000000000000000000000000")
@@ -109,13 +109,13 @@ def test_build_ack_message_reproduces_it_byte_for_byte():
 
 # --------------------------------------------------------------------------- version 4
 # Sword/Shield. The header is this module's, unchanged; the ACK PAYLOAD is the fixed table 5.29
-# replaced. Read off the retail binary in session 57 after sw30's 96 acks were refused by size.
+# replaced. Read off the retail binary in session 57 after that run's 96 acks were refused by size.
 
 def test_the_version_four_ack_payload_is_the_size_the_handler_demands():
     from pokeldn.ldn import reliable4 as r4
     assert r4.ACK_PAYLOAD_SIZE == 0x260 == r4.ACK_ENTRIES * r4.ACK_ENTRY_SIZE == 32 * 19
     assert len(r4.build_ack_payload(21)) == r4.ACK_PAYLOAD_SIZE
-    # and it is NOT the 5.29 size. This is the payload sw30 sent 96 times, refused unread.
+    # and it is NOT the 5.29 size. This is the payload sent 96 times, refused unread.
     five = rl.build_ack_payload([{"stream_id": 0, "ack_id": 21, "field_0x50": 20, "mask": b""}])
     assert len(five) == 2 + rl.ACK_ENTRY_SIZE == 23 != r4.ACK_PAYLOAD_SIZE
 
@@ -153,12 +153,12 @@ def test_the_version_four_ack_message_is_this_modules_header_over_that_payload()
 def test_a_wrongly_sized_ack_payload_is_refused_here_the_way_the_console_refuses_it():
     from pokeldn.ldn import reliable4 as r4
     with pytest.raises(ValueError, match="0x260"):
-        r4.parse_ack_payload(b"\0" * 23)          # exactly what sw30 sent, 96 times
+        r4.parse_ack_payload(b"\0" * 23)          # exactly what was sent, 96 times
 
 
 def test_the_broadcast_reliable_message_is_a_seventeen_byte_header_over_the_same_ack():
-    """sw29's protocol-0x80 body, decompressed. The console's own ack, which had been on the wire
-    since sw29 and was unreadable because nothing decompressed it."""
+    """A run's protocol-0x80 body, decompressed. The console's own ack, which had been on the wire
+    since then and was unreadable because nothing decompressed it."""
     import zlib
     from pokeldn.ldn import reliable4 as r4
     raw = bytes.fromhex("484b6260604af8ff9f819151c87391e28d0806206064c000834268140c07"
@@ -215,7 +215,7 @@ def test_the_version_four_header_grows_eight_bytes_per_destination_not_a_bitmap(
 
 def test_our_first_data_message_is_the_consoles_own_first_message_byte_for_byte():
     """The only offline proof available for a message we have never sent: the console sent this
-    exact one at sw29, sequence 1 of its 0x7C stream, and `build_data_message` reproduces it."""
+    exact one, sequence 1 of its 0x7C stream, and `build_data_message` reproduces it."""
     from pokeldn.ldn import reliable4 as r4
     theirs = bytes.fromhex("0f0000060001000100" "610000000a00")
     assert r4.build_data_message(bytes.fromhex("610000000a00")) == theirs
@@ -252,7 +252,7 @@ def test_the_payload_bound_is_the_receivers_and_it_shrinks_with_the_destination_
 
 def test_the_ack_message_is_unchanged_from_what_slid_the_window_at_sw52():
     """The header builder moved from reliable5's to version 4's own; at count 0 they are the same
-    nine bytes, and sw52's ack is what must not move."""
+    nine bytes, and our ack is what must not move."""
     from pokeldn.ldn import reliable4 as r4
     assert r4.build_ack_message(21, lowest_pending=1) == (
         rl.build_header(0, rl.ACK_SEQUENCE, 0x260, lowest_pending=1) + r4.build_ack_payload(21))
@@ -260,7 +260,7 @@ def test_the_ack_message_is_unchanged_from_what_slid_the_window_at_sw52():
 
 def test_we_can_rebuild_the_consoles_own_broadcast_ack_byte_for_byte():
     """The whole 625-byte message out of `build_ack_message`, header and payload, against the one
-    the console sent at sw29 - which is the builder tested against a worked example rather than
+    the console sent on hardware - which is the builder tested against a worked example rather than
     against a reading of the disassembly."""
     import zlib
     from pokeldn.ldn import reliable4 as r4

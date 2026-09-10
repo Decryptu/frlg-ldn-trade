@@ -1,9 +1,9 @@
 """Read the decompilation's C sources the way the compiler did: definition order, and CALL order.
 
-This is the offline half of bs84's method. A dump gives a body's `bl` targets in address order
+The offline half of the worker-naming method. A dump gives a body's `bl` targets in address order
 (`thumb.bl_targets`); the decomp gives the same function's calls in the order agbcc has to emit
-them; zipping the two names every worker behind a table entry without spending a run. bs111, bs112
-and bs121 did exactly that by eye - "the decomp's call order names each bl" - and every name it
+them; zipping the two names every worker behind a table entry without spending a run. The same
+zip done by eye named every worker in two tables, and every name it
 produced held up. What is here is that reading, mechanised, so it can be run over all 500-odd
 bodies this project holds instead of the handful a session has time for.
 
@@ -19,7 +19,7 @@ THREE THINGS DECIDE WHETHER THE ZIP IS EVIDENCE OR A GUESS.
    GAME_REVISION=10, MODERN=0 [decomp:Makefile:227], so `#if REVISION >= 0xA` is LIVE code and
    `#if defined(LEAFGREEN)` is not. Reading both branches of 203 conditionals would add calls no
    `bl` corresponds to. `NDEBUG` is a MEASUREMENT rather than a build flag: ScrCmd_special's body
-   on the cartridge makes exactly two calls (bs121), and the assert branch would add a third, so
+   on the cartridge makes exactly two calls, and the assert branch would add a third, so
    the asserts compile to nothing.
 
 3. A LENGTH MATCH IS THE ALIGNMENT PROOF, and anything else is rejected. agbcc inlines, emits

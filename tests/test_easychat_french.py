@@ -4,11 +4,10 @@ An Easy Chat id is `(group << 9) | index` - a SLOT. `easychat_words` is generate
 ENGLISH decomp, so it names the slot and not what a French console prints in it. Two things say
 what the console prints, and they were gathered completely differently:
 
-  * a RENDER: ids put into a mail or a script and read off the console's screen by the player
-    (mev02, mev03, bs07). One slot at a time, and it needs a human eye.
+  * a RENDER: ids put into a mail or a script and read off the console's screen by the player. One slot at a time, and it needs a human eye.
   * the ROM TABLE: sEasyChatGroup_* read out of the cartridge with `--buffer-script
-    string-gather` (bs16 found the table by its own count fingerprint, bs17 read it, bs18 on
-    read the words). A whole group a run, and it is the data the game itself indexes.
+    string-gather`: the table was found by its own count fingerprint, then read, then the words
+    read the words). A whole group per run, and it is the data the game itself indexes.
 
 Neither is worth much alone. Together they are: where they overlap they must agree, and this
 file is what enforces that.
@@ -38,8 +37,8 @@ def test_the_rom_table_agrees_with_every_word_read_off_the_console_screen():
 
 
 def test_the_two_feelings_words_the_console_rendered_are_in_the_table_it_was_reading_from():
-    """bs18 is the run, and these two slots are why it could be trusted the moment it landed:
-    mev02 put EC_WORD_ENJOY in a mail and the console printed STRESSE, mev03 put EC_WORD_DONE in
+    """A run is the run, and these two slots are why it could be trusted the moment it landed:
+    EC_WORD_ENJOY in a mail printed STRESSE, and EC_WORD_DONE in
     a script and it printed FURAX. Both were known before any of sEasyChatGroups was found."""
     assert easychat_french.french(WORDS["enjoy"]) == "STRESSE"
     assert easychat_french.french(WORDS["done"]) == "FURAX"
@@ -60,7 +59,7 @@ def test_a_group_read_off_the_console_is_read_whole():
 def test_species_and_move_slots_need_no_table_at_all():
     """EC_GROUP_POKEMON, POKEMON_2, MOVE_1 and MOVE_2 print from gSpeciesNames / gMoveNames
     indexed by species number and move id [decomp:src/easy_chat.c:155], so the console prints its
-    own localized name and the slot means the same thing in every language. mev03 proved it: the
+    own localized name and the slot means the same thing in every language. Proven on hardware: the
     player typed AKWAKWAK and the console stored POKEMON/55, SPECIES_GOLDUCK."""
     assert easychat.is_language_safe(easychat.species_word(55))
     assert easychat.is_language_safe(easychat.move_word(177))
@@ -70,7 +69,7 @@ def test_species_and_move_slots_need_no_table_at_all():
 def test_check_still_names_a_slot_nobody_has_read():
     unread = easychat_french.check([WORDS["hot"], WORDS["enjoy"]])
 
-    assert WORDS["enjoy"] not in unread          # bs18 read it
+    assert WORDS["enjoy"] not in unread          # read off the console
     assert easychat_french.french(WORDS["enjoy"]) == "STRESSE"
 
 

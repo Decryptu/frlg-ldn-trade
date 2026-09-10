@@ -43,8 +43,9 @@ DUP_NACK_THRESHOLD = 1
 RTO_CEIL_MS = 120
 RTO_BACKOFF = 1.0
 RECV_NI_REACK_EVERY = 20
-# DO NOT RAISE THESE: child registration must finish inside the parent's establishConnection window of 240/360 frames
-# [link_rfu_2.c:340-345, 522-527], and the host's librfu NI receiver is intolerant of extra sub-frames - faster re-sends dropped the link.
+# Do not raise these: child registration must finish inside the parent's establishConnection window
+# of 240/360 frames [link_rfu_2.c:340-345, 522-527], and the host's librfu NI receiver drops the
+# link on extra sub-frames.
 HOST_ACK_REPEAT_BEFORE_RESEND = 10
 NULL_REEMIT_EVERY = 12
 NI_ACK_WAIT_RESEND = 12

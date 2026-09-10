@@ -484,7 +484,7 @@ CLIENT_SCRIPT_RUN_BUFFER = client_script(
 # for both buffer messages and the menu falls back to data->clientMsg [mystery_gift_menu.c:943]).
 # CLI_MSG_BUFFER_SUCCESS sets successMsg, which sends the menu on to MG_STATE_SAVE_LOAD_GIFT
 # [mystery_gift_menu.c:1379] - a save. CLIENT_SCRIPT_DYNAMIC_ERROR above is the same script with
-# CLI_MSG_BUFFER_FAILURE, which prints our message and returns to the menu without saving; mev04
+# CLI_MSG_BUFFER_FAILURE, which prints our message and returns to the menu without saving; a run
 # proved that half on hardware.
 CLIENT_SCRIPT_BUFFER_SUCCESS = client_script(
     (CLI_RECV, MG_LINKID_DYNAMIC_MSG),

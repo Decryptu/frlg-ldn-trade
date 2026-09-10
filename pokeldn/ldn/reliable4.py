@@ -1,6 +1,6 @@
 """Pia version 4's reliable sliding window - protocol 0x7C, and the ack shape that is NOT 5.29's.
 
-`reliable5.py` is the 5.29-5.43 wrapper, and sw29 and sw30 between them put 221887 of a retail
+`reliable5.py` is the 5.29-5.43 wrapper, and two captures between them put 221887 of a retail
 Sword's reliable messages through `reliable5.parse` without a field out of place - because every
 one of them carried NO destination, which is the only count at which the two headers agree.
 Version 4's own header is built and read here (`build_header`, `parse_message`, read off
@@ -15,7 +15,7 @@ original fixed table that 5.29 replaced with a counted list.
 
 so a version-4 ack payload is **exactly 0x260 bytes**, 32 * 19, and that is not a deduction: the
 handler at `0x01859a84` opens with `ldrh w8, [x2, #0xa]; cmp w8, #0x260; b.ne` and answers error
-0x2c03 without reading a byte of the body. sw30 sent 96 acks in 5.29's 23-byte shape and every one
+0x2c03 without reading a byte of the body. 96 acks in 5.29's 23-byte shape and every one
 of them died there - the console's own `lowest_pending` never moved off 1 across two runs and 221887
 messages. The serialiser `0x0185bfb0` is the layout: a bound of 0x260 on the buffer, a loop of 0x20,
 and per entry a stream id, an ack id written big-endian into [1] and [2], and sixteen mask bytes
@@ -24,9 +24,9 @@ written as two big-endian u64 halves.
 **THE 32 SLOTS ARE INDEXED BY STATION, and the console's own ack says so.** Its broadcast ack
 (protocol 0x80, decompressed - see `parse_broadcast_message`) fills slots **0..7** with the real ack
 id and leaves 8..31 at zero, and 8 is `max_total` from the join response: one entry per station the
-mesh can hold. Ours fills all 32, which is a superset of that and is what slid the window at sw52.
+mesh can hold. Ours fills all 32, a superset of that, which is what slides the window.
 
-**WHICH slot the console READS is still not settled.** The handler indexes
+Which slot the console reads is not settled. The handler indexes
 the table with its fourth argument (`0x01859c1c`: `add x9, x23, w22; ldrb w5, [x9, #8]`) and requires
 that slot's stream id to equal the window's own at `[x21+0x2e]` before it applies the ack id and mask
 at the matching offsets. A 32-slot table addressed by station index is one ack message answering up
@@ -102,7 +102,7 @@ def build_ack_message(ack_id, stream_id=0, mask=b"", slots=None, lowest_pending=
     A control message carries no sequence of its own, so it goes out as 0xFFFF. `lowest_pending` is
     OUR send window and we have never sent application data on this protocol, so 1 (the next id we
     would use, and what the console itself sends while waiting on its first) and 0 are both
-    readings of it. `destinations` defaults to none - which is what sw52 sent and what slid the
+    readings of it. `destinations` defaults to none, which is what slides the
     window, and what the receiver never filters; the console directs ITS acks at one id.
     """
     body = build_ack_payload(ack_id, stream_id=stream_id, mask=mask, slots=slots, filler=filler)
@@ -113,8 +113,8 @@ def build_ack_message(ack_id, stream_id=0, mask=b"", slots=None, lowest_pending=
 # --- The BROADCAST reliable window, protocol 0x80 --------------------------------------------
 #
 # `nn::pia::transport::BroadcastReliableProtocol` (vfunc4 at 0x0184d880 returns 0x80; the similarly
-# named `ReliableBroadcastProtocol` is 0x84 and is NOT this). Every one of its messages in sw29 and
-# sw52 is zlib compressed - see `pia4.MESSAGE_FLAG_ZLIB` - and read raw its 42 bytes look like a
+# named `ReliableBroadcastProtocol` is 0x84, a different class). Every one of its messages is zlib
+# compressed (see `pia4.MESSAGE_FLAG_ZLIB`), and read raw its 42 bytes look like a
 # well-formed message claiming a payload of 0x6260.
 #
 # Decompressed, it is 625 bytes: a SEVENTEEN-byte header and then the same 0x260 ack payload this
@@ -143,7 +143,7 @@ def parse_broadcast_message(data):
 # --- The version-4 header, and it is ONE class for BOTH protocols -----------------------------
 #
 # `nn::pia::transport::ReliableSlidingWindow::MessageHeader` serialises every reliable message
-# version 4 sends, on 0x7C and on 0x80 alike. Session 58 read all three of its methods:
+# version 4 sends, on 0x7C and on 0x80 alike. All three of its methods:
 #
 #     GetSize      0x0184e480    `ldrb w8, [x0,#0x10]; lsl w8, w8, #3; add w0, w8, #9`
 #     Deserialize  0x0184e390
@@ -163,7 +163,7 @@ def parse_broadcast_message(data):
 # rules agree only at count 0, which is every 0x7C message either side has ever sent, and that is
 # why `reliable5.parse` read 221887 of them without a field out of place.
 #
-# THE RECEIVE PATH IS `0x01859338`, and it refuses four things before the payload is looked at:
+# The receive path `0x01859338` refuses four things before the payload is looked at:
 #
 #     0x0185952c   payload size <= 0x57F - 8 * count      (a tighter bound than the deserialiser's)
 #     0x0185954c   the Pia message length must EQUAL 9 + 8 * count + size, exactly
@@ -172,8 +172,8 @@ def parse_broadcast_message(data):
 #                  is dropped in silence. A count of 0 is addressed to everyone and is never filtered
 #
 # and then dispatches on the flags at `0x01859734`: bit 5 RESET, bit 6 RESET_ACK, bit 0
-# APPLICATION_DATA -> `0x01859ca0`, and everything else falls through to the ack handler
-# `0x01859a70` - which is why a message with no flags at all is an ack.
+# APPLICATION_DATA -> `0x01859ca0`, everything else to the ack handler `0x01859a70`. A message with
+# no flags at all is an ack.
 MAX_PAYLOAD = 0x588                       # 0x0184e3cc refuses 0x589 and above
 MAX_DESTINATIONS = 31                     # 0x0184e404: `cmp x8, #0x20; b.lo`
 RECEIVE_BUDGET = 0x57F                    # 0x0185952c: size <= 0x57F - 8 * count
@@ -196,7 +196,7 @@ FIRST_DATA_FLAGS = (FLAG_APPLICATION_DATA | FLAG_MESSAGE_START | FLAG_MESSAGE_EN
                     | FLAG_IS_INITIALIZED)                 # 0x0F
 DATA_FLAGS = FLAG_APPLICATION_DATA | FLAG_MESSAGE_START | FLAG_MESSAGE_END   # 0x07
 
-# The console's broadcast ack asks us for sequence 1 in sw29 and sw52 alike - 256 messages, ack id
+# The console's broadcast ack asks us for sequence 1 in every capture: 256 messages, ack id
 # 1 in every filled slot, never moving. That is a window that has received nothing, so 1 is where
 # ours starts. It is not a constant in the binary: `0x01859d20` takes the start from whatever the
 # first message says.

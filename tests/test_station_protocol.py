@@ -15,7 +15,7 @@ import pytest
 
 from pokeldn.ldn import station_protocol as stp
 
-# off scratchpad/bdsp_net_facts.json and the sp4 update session
+# off scratchpad/bdsp_net_facts.json and a captured update session
 CONSOLE_MAC = bytes.fromhex("48f1eb209b22")
 CONSOLE_CONSTANT_FIELD = bytes.fromhex("000048f120229beb")     # as the message carries it
 HOST_VAR = 0x11BAC90D
@@ -45,7 +45,7 @@ def test_a_station_location_is_forty_bytes_and_inside_the_accepted_range():
     loc = stp.station_location("169.254.49.2", 12345, 0x1122334455667788, 0xAABBCCDD, 0x12345678)
     assert len(loc) == 40
     assert stp.STATION_LOCATION_MIN <= len(loc) <= stp.STATION_LOCATION_MAX
-    # THE SIZE INCLUDES THE PORT. 4 is what sp25-sp32 sent and the console rejects it outright:
+    # THE SIZE INCLUDES THE PORT. 4 is what an earlier build sent and the console rejects it outright:
     # its parser builds 1 << size and tests against 0x00040044, so only 2, 6 and 18 pass.
     assert loc[0] == 6 and loc[1] == 6
     assert loc[0] in stp.INET_SIZES and stp.INET_IPV4 == 6
@@ -155,14 +155,14 @@ def test_a_probe_result_reads_as_a_direction():
     assert stp.read_version(stp.RESULT_VERSION_TOO_LOW) == "higher"
     assert stp.read_version(stp.RESULT_VERSION_TOO_HIGH) == "lower"
     # the equality signal is a REPLY: the request got past the version loop and something later
-    # refused it, which on hardware is result 7 (sp28)
+    # refused it, which on hardware is result 7
     assert stp.read_version(stp.RESULT_VERSIONS_MATCHED) == "equal"
     assert stp.read_version(stp.RESULT_ACCEPTED) == "equal"
     assert stp.read_version(stp.RESULT_DENIED) == "equal"
 
 
 def test_silence_is_no_longer_read_as_a_match():
-    """The mistake sp28 corrected. Silence means a lost packet, and inventing a version from it is
+    """The mistake this corrects. Silence means a lost packet, and inventing a version from it is
     exactly the class of error rule 4 is about."""
     with pytest.raises(ValueError):
         stp.read_version(None)
@@ -224,7 +224,7 @@ def test_the_location_lands_the_variable_id_where_the_console_reads_it():
 
     This is the field the second stage tests, and a location whose size bytes are illegal never
     deserialises at all - the connection-request parser throws that error away, so the field stays
-    0 and every request looks identical no matter what was put in it. That is what sp25-sp32 sent.
+    0 and every request looks identical no matter what was put in it. That is what an earlier build sent.
     """
     loc = stp.station_location("169.254.14.2", 12345, 0x1249A221D8580000, 0x2B7F4C11, 0x32669AEA)
     rest = 2 + loc[0] + loc[1]
@@ -277,7 +277,7 @@ def test_an_acceptance_reads_back_the_whole_handshake():
 
 
 def test_a_location_whose_sizes_are_illegal_is_refused_not_misread():
-    """The sp25-sp32 bug, from the reading side: size 4 must raise, never parse to something."""
+    """The an earlier build bug, from the reading side: size 4 must raise, never parse to something."""
     bad = bytearray(stp.station_location("169.254.14.1", 12345, 1, 2, 3))
     bad[0] = bad[1] = 4
     with pytest.raises(ValueError):

@@ -2,10 +2,10 @@
 
 NOT protocol 0x80. `reliable4.py` carries the warning at length: `BroadcastReliableProtocol` is
 0x80 and is the ack window, and the similarly named `ReliableBroadcastProtocol` is this. Confusing
-them cost session 57 two sessions of reading.
+them took two sessions of reading.
 
 This is where a Sword sends its 3456-byte trade snapshot, and every field below is read off our own
-console's messages (sw71, and sw68/sw70 before it) rather than from any other implementation:
+console's own messages rather than from any other implementation:
 
     11 000000 0000 ffff  00000d80 057c 0005 00000000     control, 20 bytes
     12 000000 0001 ffff  00000000 <1404 bytes>           fragment 0
@@ -20,7 +20,7 @@ console's messages (sw71, and sw68/sw70 before it) rather than from any other im
 
 **THE BODY MAY BE DEFLATED AND THE HEADER NEVER IS.** Pia's message flag 0x10 - version 4's zlib
 flag, the same one that hid protocol 0x80 for two sessions - says the bytes AFTER the twelve-byte
-prefix are a zlib stream. Session 58 concatenated a compressed fragment raw and lost 491 bytes of
+prefix are a zlib stream. Concatenating a compressed fragment raw loses 491 bytes of
 the snapshot without noticing, which is why `swsh.trade_payload.reassemble` refuses a total it does
 not recognise.
 
@@ -155,7 +155,7 @@ def ack_fields(indexes):
 class Sender:
     """One port's outgoing side: the sequence counter, and the messages of one transfer.
 
-    The console counts a SINGLE sequence across control and data alike - sw71 shows control at 0,
+    The console counts a single sequence across control and data alike: control at 0,
     fragment 0 at 1 and fragment 2 at 5 - so the counter lives here rather than in the caller, and
     the gaps are the retransmits it sends in between.
     """
@@ -176,7 +176,7 @@ class Sender:
     def transfer(self, payload, compress=COMPRESS_LAST):
         """-> [(payload, compressed?), ...]: the control message and then every fragment, in order.
 
-        **THE DEFAULT MATCHES WHAT OUR CONSOLE DOES, WHICH IS NOT "COMPRESS WHEN IT HELPS".** sw71
+        The default matches what the console does, which is not "compress when it helps". It
         sent fragments 0 and 1 plain at the full 1404 bytes and deflated only the short last one -
         and fragment 1's own bytes deflate to 776, so the console left half of it on the table by
         choice. Whatever its rule is, "smaller wins" is not it, and a sender that compressed a
@@ -200,11 +200,11 @@ class Sender:
 class Receiver:
     """The incoming side of one port: what has arrived, and the ack that says so.
 
-    **NOTHING IN THIS PROJECT HAD EVER ACKED 0x84, AND THAT IS WHY IT REPEATS.** sw68 counted 15460
-    messages of the same snapshot and sw71 19142, because the console retransmits until a receiver
+    An unacknowledged 0x84 repeats: 15460 and 19142 messages of the same snapshot in two runs,
+    because the console retransmits until a receiver
     tells it what it has. Every other window here behaves the same way and every one of them had to
     be answered before the layer above it would move - the mesh's own reliable window took the
-    session down in four seconds when sw59 left it unacked.
+    session down in four seconds when it is left unacked.
     """
 
     def __init__(self):

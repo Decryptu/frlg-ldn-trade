@@ -1,6 +1,6 @@
 """Reading THUMB bodies out of a dump: where a function ends, what it calls, what it points at.
 
-bs84's method - a handler is an entry point and the worker behind it is what is worth calling - as
+A run's method - a handler is an entry point and the worker behind it is what is worth calling - as
 a module, so that any of the four function tables this project has read off a cartridge can be
 interpreted from the same 1 KB window. The fixtures are console bytes, not the decomp's.
 """
@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pokeldn.frlg.rom import rom_map, scrcmd, scrcmd_names, special_names, thumb  # noqa: E402
 from pokeldn.frlg.text import charmap  # noqa: E402
 
-# ScrCmd_special and the literal pool immediately after it, as bs92 dumped it. The two words in the
+# ScrCmd_special and the literal pool immediately after it, as dumped off the console. The two words in the
 # pool ARE gSpecials and gSpecialsEnd: this is the run that located the table.
 SPECIAL_BASE = 0x0806D7EC
 SPECIAL_BYTES = bytes.fromhex(
@@ -21,7 +21,7 @@ SPECIAL_BYTES = bytes.fromhex(
     "fc391608ec40160830b5041c"
 )
 
-# MEScrCmd_crc and the prologue of whatever follows it, as bs112 dumped it. The epilogue here is
+# MEScrCmd_crc and the prologue of whatever follows it, as dumped off the console. The epilogue here is
 # `pop {r4,r5,r6}; pop {r1}; bx r1` - agbcc's, not `pop {..., pc}`.
 CRC_BASE = 0x080DE830
 CRC_BYTES = bytes.fromhex(
@@ -30,12 +30,12 @@ CRC_BYTES = bytes.fromhex(
     "f066012070bc02bc08470000f0b5474680b4061c0c1c15062d0e"
 )
 
-# The string Std_ObtainItem points at, off the French cartridge (bs107): a placeholder, then '!'.
+# The string Std_ObtainItem points at, off the French cartridge: a placeholder, then '!'.
 OBTAINED_TEXT = bytes.fromhex("c9d6e8d9e2e9f000fd03ab")
 
 
 def test_the_literal_pool_of_scrcmd_special_is_where_gspecials_came_from():
-    """bs92 read the table's address out of this function's pool by eye. The reader has to get the
+    """A run read the table's address out of this function's pool by eye. The reader has to get the
     same two words, because the difference between them - 444 * 4 - is what proved the length."""
     values = [value for _site, _pool, value
               in thumb.pc_literals(SPECIAL_BYTES, SPECIAL_BASE, SPECIAL_BASE,
@@ -116,11 +116,11 @@ def test_data_pointers_reports_what_a_script_points_at_and_the_dump_holds():
     assert scrcmd.read_string(memory, 0x081A79F0) == "Obtenu: {STR_VAR_2}!"
 
 
-# --- what bs113 and bs114 read off the cartridge ------------------------------------------------
+# --- what was read off the cartridge ------------------------------------------------------------
 
 def test_null_field_special_is_a_two_byte_bx_lr():
-    """171 of the 444 indices point here. bs93's alignment argument was that they must all come
-    back with ONE address; bs113 read the function and it does nothing at all."""
+    """171 of the 444 indices point here, which is the alignment argument: they must all come back
+    with one address. The function itself does nothing at all."""
     assert rom_map.NULL_FIELD_SPECIAL == 0x080CE8DC
     assert rom_map.SPECIAL_ADDRESSES.count(rom_map.NULL_FIELD_SPECIAL) == 171
     body = bytes.fromhex("7047")     # bx lr
@@ -172,13 +172,13 @@ def test_get_lead_mon_index_is_the_body_four_lead_mon_specials_share():
 
 
 def test_the_high_leafgreen_segment_reaches_down_to_the_m4a_tables():
-    """bs117/lg190. The -0x12D8 segment used to start at 0x086003E0; five paired literal-pool words
+    """Two runs. The -0x12D8 segment used to start at 0x086003E0; five paired literal-pool words
     from the same m4a window on each console carried it down to 0x0847DCF8, which is a 3.5x
-    narrowing of the last big gap for two runs."""
+    narrowing of the last big gap."""
     low, high, delta, _evidence = [seg for seg in rom_map.LEAFGREEN_DELTA_SEGMENTS
                                    if seg[2] == -0x12D8][0]
     # Session 48 carried the low end down 138 KB further, from a direction the m4a pools knew
-    # nothing about: bs129/lg195 read -0x12D8 at four paired blocks, two of them 884 of 884 bytes.
+    # nothing about: -0x12D8 reads at four paired blocks, two of them 884 of 884 bytes.
     assert (low, high) == (0x0845F000, 0x086803FC)
     for firered, leafgreen in ((0x0847DCF8, 0x0847CA20), (0x0847DDAC, 0x0847CAD4),
                                (0x0847DF10, 0x0847CC38), (0x0849758C, 0x084962B4),
@@ -201,7 +201,7 @@ def test_the_gap_that_is_left_is_the_one_the_boundary_table_names():
     is where -0x1C4 becomes -0x12D8, and `leafgreen_guess` must still REFUSE inside it rather than
     interpolate."""
     # Session 48 split this boundary in two: there is a -0x124C segment in the middle of it, which
-    # is the same lesson -0x20 taught in session 42. What is left is the span either side of it.
+    # is the same lesson -0x20 taught. What is left is the span either side of it.
     boundary = [b for b in rom_map.LEAFGREEN_DELTA_BOUNDARIES if b[:2] == (-0x1C4, -0x124C)][0]
     _from, _to, low, high = boundary[:4]
     assert (low, high) == (0x0843AFFF, 0x08442800)
@@ -214,7 +214,7 @@ def test_the_gap_that_is_left_is_the_one_the_boundary_table_names():
 
 
 def test_stop_script_and_script_context_stop_are_two_different_functions():
-    """Named wrong until bs121. 0x0806D0EC is ScrCmd_end's one call and the decomp gives that as
+    """Named wrong until it was measured. 0x0806D0EC is ScrCmd_end's one call and the decomp gives that as
     StopScript(ctx) [src/script.c:76]; ScriptContext_Stop(void) [:360] is a different function, and
     it is 0x0806D418 - what ScrCmd_waitstate calls and nothing else does. The declaration order
     agrees with the addresses, which is the check that costs no run."""
@@ -224,8 +224,8 @@ def test_stop_script_and_script_context_stop_are_two_different_functions():
 
 
 def test_the_field_command_table_is_closed():
-    """213 handlers, and after bs121 every one of their bodies has been read off the cartridge.
-    The table itself was dumped at bs82; this is the code behind it."""
+    """213 handlers, and after that run every one of their bodies has been read off the cartridge.
+    The table itself was dumped; this is the code behind it."""
     assert len(scrcmd_names.HANDLERS) == 214      # 214 opcodes, two of them the same ScrCmd_nop
     assert len(set(scrcmd_names.HANDLERS)) == 213
 
@@ -243,14 +243,14 @@ def test_the_workers_bs121_named_match_how_many_commands_call_them():
 
 def test_the_easy_chat_segment_reaches_out_both_ways_after_bs120_lg191():
     """One needle moves one end. 27 paired literal-pool words moved BOTH: the -0x1C4 segment was
-    0x083DE528..0x083E3700, 21 KB, and 0x083BEE74..0x0841463E after bs120/lg191. Session 48's
+    0x083DE528..0x083E3700, 21 KB, and 0x083BEE74..0x0841463E.
     paired scattered blocks moved both ends again, to a boundary either side rather than a pool."""
     low, high, delta, _e = [seg for seg in rom_map.LEAFGREEN_DELTA_SEGMENTS if seg[2] == -0x1C4][0]
     assert (low, high) == (0x083B8000, 0x0843AFFF)
     assert rom_map.leafgreen_guess(0x083BEE74) == 0x083BEE74 - 0x1C4
     assert rom_map.leafgreen_guess(0x0841463E) == 0x0841463E - 0x1C4
-    # The control that rode along: 0x082370FC is inside the measured -0x24 segment, and lg191 read
-    # it back at -0x24. A run that answered otherwise there was answering about the wrong console.
+    # The control that rode along: 0x082370FC is inside the measured -0x24 segment and reads
+    # back at -0x24. Anything else there would be answering about the wrong console.
     assert rom_map.leafgreen_guess(0x082370FC) == 0x082370FC - 0x24
 
 
@@ -267,9 +267,9 @@ def test_no_boundary_is_wider_than_the_evidence_that_brackets_it():
 
 
 def test_there_is_a_minus_0x20_segment_between_the_species_table_and_easy_chat():
-    """bs121/lg192. Nobody had seen it, and it is WHY 0x0824CDFC..0x083BEE74 looked like one 1.5 MB
+    """Two runs. Nobody had seen it, and it is WHY 0x0824CDFC..0x083BEE74 looked like one 1.5 MB
     gap: the delta does not go -0x24 straight to -0x1C4, it sits at -0x20 for 1256 KB on the way.
-    Two points that far apart at one delta is a segment; one point is lg167's mistake."""
+    Two points that far apart at one delta is a segment; one point is the mistake one point makes."""
     low, high, delta, _e = [seg for seg in rom_map.LEAFGREEN_DELTA_SEGMENTS if seg[2] == -0x20][0]
     assert (low, high) == (0x08251DAD, 0x083B7B47)
     assert high - low > 1024 * 1024, "one point pretending to be a segment"
@@ -284,7 +284,7 @@ def test_there_is_a_minus_0x20_segment_between_the_species_table_and_easy_chat()
 
 
 def test_the_four_low_segments_step_by_exactly_four_bytes():
-    """CORROBORATION for -0x20, from a direction bs121/lg192 knew nothing about. The deltas do NOT
+    """Corroboration for -0x20, from an independent direction. The deltas do NOT
     simply grow along the link order - the four low segments are -0x2C, -0x28, -0x24 and -0x20,
     each four bytes LESS divergent than the one below it. -0x20 continues that run exactly, which
     is not what a pairing read at the wrong offset produces."""

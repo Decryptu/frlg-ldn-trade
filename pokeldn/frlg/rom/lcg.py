@@ -1,7 +1,7 @@
 """The game's RNG as arithmetic: where a state came from, and how far.
 
 `Random` is a full-period affine map on 32 bits [decomp:include/random.h:18], measured on the
-console at bs13-bs15. Being affine makes `distance` exact at any range by baby-step/giant-step,
+console. Being affine makes `distance` exact at any range by baby-step/giant-step,
 where `buffer_script.lcg_distance` only walks the near neighbourhood; being a permutation of all
 2**32 states means a distance ALWAYS exists, so one is evidence only when it is small. `SeedRng`
 takes a u16 [decomp:src/random.c:15], which is what lets `predecessors` walk a state back to the
@@ -128,7 +128,7 @@ def predecessors(value, limit=1 << 20, count=1):
 def seconds(turns, per_frame=2, fps=59.7275):
     """`turns` of the LCG as wall-clock seconds, at a measured consumption rate.
 
-    bs15 measured per_frame = 2 at the Mystery Gift link menu, on all 95 gaps. It is NOT a
+    per_frame = 2 is measured at the Mystery Gift link menu, on all 95 gaps. It is not a
     constant of the game - it is what that ONE screen consumes - so any use of it outside a menu
     is a hypothesis that the run has to check, not an assumption it may make.
     """
@@ -173,18 +173,18 @@ def recover_wild_state(personality, ivs, max_gap=32):
 
     `ivs` is (hp, atk, def, speed, spatk, spdef) as the mon stores them.
 
-    THE GAP IS SEARCHED, NOT ASSUMED, AND THAT IS NOT A CONVENIENCE. bs51 caught a Weedle whose
+    The gap is searched, not assumed. One measured Weedle had a
     personality and IVs are certain - the six stats it produces match what the console printed on
     its own summary screen, 6/6, and the nature reads DOUX = MILD = 16 - and NO state builds it
     with the IV draws immediately after the personality. Exactly one does with ONE draw in
     between. That extra advance is in no line of CreateBoxMon [decomp:src/pokemon.c]; it comes
     from outside the generation, and it is the Gen 3 "Method 2" spread, MEASURED here rather than
     taken from lore. Since the game produces more than one such layout, assuming any single one
-    turns a wrong model into a silent wrong answer - so the ANSWER decides the gap, the way bs38's
+    turns a wrong model into a silent wrong answer, so the answer decides the gap, the way a
     needle was built to let the answer decide the stride.
 
-    THERE ARE TWO GAPS, NOT ONE, AND BOTH ARE SEARCHED. bs51's Weedle put its blank draw BEFORE
-    the IVs (`gap` 1, `iv_gap` 0) - the Gen 3 "Method 2" spread. bs52's Caterpie and second Weedle
+    There are two gaps, not one, and both are searched. One Weedle put its blank draw before the
+    IVs (`gap` 1, `iv_gap` 0), the Gen 3 "Method 2" spread; a Caterpie and a second Weedle
     put it BETWEEN the two IV draws instead (`gap` 0, `iv_gap` 1) - "Method 4". Searching only the
     first gap finds the one and misses the other two, which is exactly what happened: those two mons
     came back empty until the second gap was searched as well.

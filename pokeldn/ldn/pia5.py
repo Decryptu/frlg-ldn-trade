@@ -2,8 +2,7 @@
 
 This is NOT the format `pia_connect.py` speaks. That module targets Pia 6.32+ (header 0x1D, 2-byte
 variable ids); BDSP advertises protocol version 9, which the NintendoClients wiki places in the
-5.27-5.45 band, and every field below was read off the console's own parser at main.bin 0x01681ee4
-(session 43, sp8/sp9) rather than taken from the wiki:
+5.27-5.45 band, and every field below was read off the console's own parser at main.bin 0x01681ee4 rather than taken from the wiki:
 
     off  size  field                         parser evidence
     0x00  4    magic 0x32AB9864, big-endian  ldr w8,[x1]; rev w8; str w8,[x0,#8]
@@ -72,7 +71,7 @@ def ciphertext(data, footer_size=None):
 
     A packet sent to more than one console at once carries a footer of one big-endian halfword per
     recipient - the low half of each station's variable id - and it is NOT covered by the GCM tag.
-    sp36 caught 111 packets with `footer size` 4, every one of them the game's own unreliable
+    One capture holds 111 packets with `footer size` 4, every one of them the game's own unreliable
     traffic, and every one of them failed to authenticate until those four bytes were taken off the
     end. The footer size is a header field, so nothing has to be guessed: pass it, or let this read
     it back off the packet.
@@ -120,7 +119,7 @@ def gcm_iv(station_crc, src_variable_id, nonce8):
 def ldn_session_key(game_key, seed):
     """Pia 5.x's LDN session key: AES-128-ECB(game_key) over sixteen bytes of SEAD output.
 
-    Read off BDSP's `nn::pia::local::LocalProtocol` at main.bin 0x016b14e8 (sp7): the seed is a u32
+    Read off BDSP's `nn::pia::local::LocalProtocol` at main.bin 0x016b14e8: the seed is a u32
     stored at +0x5b0, the game key sixteen bytes at +0x5bc, and the plaintext four consecutive SEAD
     draws packed little-endian. This is the LDN family's derivation and ONLY the LDN family's - the
     HMAC-SHA256 one belongs to `nn::pia::lan::LanProtocol`, and applying it to an LDN capture cannot
@@ -141,7 +140,7 @@ def ldn_game_key(crypto_key_data_seed, local_communication_version):
     Read off BDSP's own key construction (base_main.bin 0x1e3f404) and matching the NintendoClients
     wiki's "Pokemon Brilliant Diamond" page. The seed is what ships in the game's metadata; the key
     is what Pia is handed. So a PUBLISHED per-game key is a derived value for one game version, and
-    the seed is the thing that does not move - which is exactly the distinction that cost session 45
+    the seed is the thing that does not move, which is the distinction that cost
     a day of sweeps, because the published key and the measured seed differ in precisely these four
     bytes and that reads as corruption until you know the rule.
     """
@@ -232,7 +231,7 @@ def parse_messages(plaintext):
         body = plaintext[off:off + size]
         compressed = False
         # message flag 0x20 says the PAYLOAD is zlib compressed, and BDSP turns it on as soon as
-        # there is anything worth compressing - sp46's answer to our position messages was 31 bytes
+        # there is anything worth compressing: an answer to our position messages was 31 bytes
         # of zlib around a 32-byte reliable ack. Read raw, one of those parses into a well-formed
         # LOOKING header full of nonsense, so decompress here and let `compressed` say it happened.
         if flags & MESSAGE_FLAG_ZLIB and body:

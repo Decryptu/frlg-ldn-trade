@@ -979,7 +979,7 @@ class HostTransport:
         return out
 
     def _pin_neighbour(self, ip, mac):
-        """Install a PERMANENT ARP entry for the console (session 20, u21/u22/u25/u26). The console answers our ARP
+        """Install a PERMANENT ARP entry for the console. The console answers our ARP
         probes late (1-2 s) and by broadcast, so the kernel's neighbour entry cycles STALE -> PROBE -> FAILED ->
         INCOMPLETE and, while unresolved, queues every datagram to it (unres_qlen) and flushes them in a burst when
         the reply lands: a 0.1-1.1 s hole in which the console sees no parent frame, and its game declares link loss.

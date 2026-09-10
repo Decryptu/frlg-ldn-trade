@@ -60,19 +60,19 @@ class ChildEcho:
     INIT echoed and SendLastBlock repeats the last fragment until it sees that echoed, then re-sends
     every fragment missing from the mirrored bitmask [link_rfu_2.c:1366-1416].
 
-    So a dropped echo of a DISTINCT fragment is a lost fragment, permanently: bs05 asked for a
+    So a dropped echo of a distinct fragment is a lost fragment, permanently: the console asks for a
     608-byte dump, the old bound (keep the newest 2) dropped the echoes of fragments 13, 16, 17 and
     18 of a 21-fragment chunk when the console emitted them in bursts of two and four, the console
     re-sent exactly those four (HandleSendFailure) and errored before our echo of the re-send
     arrived. A REPEAT is different: the console re-sends the same fragment every frame while it waits,
-    and echoing each repeat is what put the mirror 0.5 s behind in lg122. Coalescing repeats and never
+    and echoing each repeat is what put the mirror 0.5 s behind. Coalescing repeats and never
     dropping distinct commands fixes both: one entry is enough, because the console is waiting to see
     that command once.
     """
 
     def __init__(self, max_backlog=ECHO_MAX, coalesce=True):
         self.max_backlog = max_backlog
-        # coalesce=False with max_backlog=2 is the historical policy (lg122..bs05): keep the newest
+        # coalesce=False with max_backlog=2 is the older policy: keep the newest
         # two commands and drop the rest. Kept reachable so a test can show what it costs.
         self.coalesce = coalesce
         self._queue = deque()

@@ -1281,7 +1281,7 @@ def build_bound_script(actions, *, slug="bound"):
     A delivery plan is resumable because the delivery man can be talked to again mid-sequence and
     must not repeat what he already gave. A bound script has no such contract - it ends in `end` and
     not `endram`, so the binding survives and the player can simply run the whole thing again
-    [rng_script's header, and mev03]. Anything that must happen once needs its own flag, as an
+    [rng_script's header]. Anything that must happen once needs its own flag, as an
     explicit SetVar or a condition, rather than getting one by accident.
 
     THE TRAP THAT GOVERNS ALL OF THIS: a Wonder Card and an NPC-bound script share one RAM script
@@ -1421,7 +1421,7 @@ def build_seed_rate_script(*, address=None, var_address=None, frames=RATE_PROBE_
 
     The answer is two 32-bit states and a frame count that is not an estimate, so
     `rng_script.measure_rate` divides one exact number by another. This is the first measurement of
-    the overworld rate with no clock in it since bs15 measured the Mystery Gift menu's.
+    the overworld rate with no clock in it; only the Mystery Gift menu's is measured.
 
     WHAT IT ACTUALLY MEASURES, stated precisely because the distinction is the whole reason the old
     numbers were wrong: the rate while a FIELD SCRIPT IS DELAYING, with the player locked. That is

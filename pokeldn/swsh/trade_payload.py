@@ -1,9 +1,8 @@
 """The 3456-byte trade snapshot a Sword sends on protocol 0x84.
 
-sw68 and sw70 caught this payload and session 58 read the party out of it. Session 59 found the rest
-of it NAMED, in two published clients that had solved the same problem first - `kwsch/PokePiaSWSH`
-(C#) and `lincoln-lm/swsh-lan-client` (Python), both over LAN mode rather than local wireless. The
-layout below is theirs; what verified it here is our own capture, field for field.
+The layout below comes from two published clients, `kwsch/PokePiaSWSH` (C#) and
+`lincoln-lm/swsh-lan-client` (Python), both over LAN mode rather than local wireless. What verified
+it here is our own capture, field for field.
 
     0x000  six PK8 records, party form, 0x158 each          -> 0x810
     0x810  u32   party count
@@ -12,24 +11,18 @@ layout below is theirs; what verified it here is our own capture, field for fiel
     0xAEC  660 bytes NOT named by any client read so far
                                                             -> 0xD80 = 3456
 
-**AND THE PAYLOAD IS 3456, NOT THE 2965 THIS PROJECT RECORDED.** The third fragment is COMPRESSED -
-Pia's message flag 0x10, the same version-4 zlib flag `docs/pia.md` documents for protocol 0x80 -
-and session 58 concatenated it raw. 1404 + 1404 + 157 gave 2965 and looked like a whole payload
-because nothing said what the length should be; inflated, the third fragment is 648 bytes and the
-total is exactly 3456. The "raw deflate stream in the trailer at 0xAF9" written up as an open
-question WAS that fragment, sitting unread in the middle of the record.
+The payload is 3456 bytes. The third fragment is compressed under Pia's message flag 0x10, the
+version-4 zlib flag `docs/pia.md` documents for protocol 0x80. Concatenated raw the three give
+1404 + 1404 + 157 = 2965, which looks like a whole payload because nothing states the length;
+inflated, the third is 648 bytes and the total is 3456. `reassemble` refuses anything but 3456: a
+reassembly that produces a plausible length is not a reassembly that is right.
 
-THE LESSON, AND IT IS THE SAME ONE AS THE BLOCK ORDER: a reassembly that produces a plausible
-length is not a reassembly that is right. `reassemble` refuses anything but 3456 for exactly that
-reason - sw68 and sw70 would both have raised, a session before the party was read.
-
-WHAT VERIFIED THE LAYOUT ON OUR OWN BYTES, none of it a checksum:
+What verifies the layout on our own bytes, none of it a checksum:
 
   - the party count reads 3, and slots 4-6 are the ones with a zero encryption constant;
   - MyStatus gives TID 56909 and SID 48474, and **those are the ids inside all three PK8s**;
   - the trainer name is at both named offsets, and matches the OT name in the party;
-  - the start date at TrainerCard+0x170 is 2019-11-15, which is where session 58's unexplained
-    "save date at 0xA94" came from - 0x924 + 0x170 IS 0xA94.
+  - the start date at TrainerCard+0x170 is 2019-11-15, and 0x924 + 0x170 is 0xA94.
 """
 import struct
 import zlib
@@ -77,8 +70,7 @@ def inflate(fragment):
 def reassemble(fragments):
     """-> the whole 3456-byte payload from its three fragment bodies, compressed ones inflated.
 
-    RAISES on any other total. That refusal is the whole point of this function: session 58's
-    2965-byte concatenation was wrong and nothing in it said so.
+    Raises on any other total: a short concatenation is wrong and nothing in it says so.
     """
     if len(fragments) != FRAGMENT_COUNT:
         raise ValueError(f"{len(fragments)} fragments, expected {FRAGMENT_COUNT}")
@@ -89,12 +81,12 @@ def reassemble(fragments):
     return payload
 
 
-SHORT_LENGTH = 2965                   # session 58's concatenation: 1404 + 1404 + 157 compressed
+SHORT_LENGTH = 2965                   # a raw concatenation: 1404 + 1404 + 157 still compressed
 FRAGMENT_2_END = 2808                 # where its third fragment begins
 
 
 def inflate_short(payload):
-    """-> a whole payload from one of session 58's short files, which are what is on disk.
+    """-> a whole payload from a short file, which is what earlier captures hold.
 
     A payload saved before the compressed fragment was understood is 2965 bytes with its third
     fragment still deflated. Nothing about those files is wrong except that they stop early, so
@@ -105,7 +97,7 @@ def inflate_short(payload):
         return payload
     if len(payload) != SHORT_LENGTH:
         raise ValueError(f"{len(payload)} bytes: neither whole ({PAYLOAD_LENGTH}) nor one of "
-                         f"session 58's short files ({SHORT_LENGTH})")
+                         f"a short file ({SHORT_LENGTH})")
     whole = payload[:FRAGMENT_2_END] + zlib.decompress(payload[FRAGMENT_2_END:])
     if len(whole) != PAYLOAD_LENGTH:
         raise ValueError(f"repaired to {len(whole)} bytes, expected {PAYLOAD_LENGTH}")
@@ -170,24 +162,22 @@ def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None, old_
     ours is the console's snapshot with the identity moved - the same method `swsh.pokemon.build_from`
     and `bdsp.pokemon.build_from` use on a single Pokemon, for the same reason.
 
-    THE IDENTITY HAS TO MOVE IN FOUR PLACES AT ONCE, AND SESSION 60 FOUND THE FOURTH. MyStatus, the
-    trainer card and **every party record** were the three; the fourth is a plain UTF-16 copy of the
-    name inside the tail at 0xAEC, the 660 bytes this project had never read. In sw70's payload it
-    sits at 0xB14 between two copies of an eight-byte account token, which is the shape of a player
-    record - and `nxldn-lab` builds one of those for its own connection response, with its own name
-    in it.
+    The identity has to move in four places at once: MyStatus, the trainer card, every party
+    record, and a plain UTF-16 copy of the name inside the tail at 0xAEC. In one payload the tail
+    copy sits at 0xB14 between two copies of an eight-byte account token, the shape of a player
+    record; `nxldn-lab` builds one of those for its own connection response, with its own name in
+    it.
 
-    SO EVERY SNAPSHOT THIS PROJECT HAS EVER SENT SAID TWO THINGS AT ONCE: PkCamp in MyStatus, the
-    trainer card and all six Pokemon, and Gurvan - the console's own player - in the tail. The
-    trade screen draws the partner from MyStatus, which is why it read `partenaire: PKCAMP` while
-    the payload still carried its own player's name. `party_matches_trainer` could not see it,
-    because it only compares the party against MyStatus.
+    Leaving the tail alone makes a snapshot say two things at once: our trainer in MyStatus, the
+    trainer card and all six Pokemon, and the console's own player in the tail. The trade screen
+    draws the partner from MyStatus, so the screen reads correctly while the payload does not, and
+    `party_matches_trainer` cannot see it because it only compares the party against MyStatus.
 
-    The tail copy is found by SEARCHING for the name being replaced rather than by offset: 0xB14 is
-    where it lands in one payload and the record around it is not read well enough to promise that
-    it is fixed. `old_name` is what to look for; without it the tail is left alone.
+    The tail copy is found by searching for the name being replaced rather than by offset: 0xB14 is
+    where it lands in one payload and the record around it is not read well enough to promise it is
+    fixed. `old_name` is what to look for; without it the tail is left alone.
 
-    AND THE TAIL IS A PLAYER RECORD WHOSE FIELDS THE LDN BEACON FRAMES FOR US. The same record
+    The tail is a player record whose fields the LDN beacon frames. The same record
     rides in the console's own session advertisement (`scratchpad/swsh_net_facts.json`,
     `application_data`), starting at byte 31 there and at TAIL_OFFSET here, and 90 bytes agree.
     Two contexts, one record, and the second one gives the field boundaries the first could not:
@@ -198,16 +188,14 @@ def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None, old_
         +0x28   16 bytes                    the trainer name, UTF-16, null-terminated
         +0x38    8 bytes                    THE SAME ID again
 
-    **SESSION 60 FIRST READ THIS AS A TEN-BYTE ID AND IT WAS WRONG.** Searching for the longest
-    repeated run found ten bytes, because the two bytes before each copy happen to match: at +0x0E
-    they are the tail of the account UID and at +0x36 they are uninitialised slack after the name's
-    terminator, and both are `6a 95` in this payload. A ten-byte replacement therefore clobbers the
-    end of the UID and the end of the name field as well as the id. sw94 did exactly that, so its
-    negative says nothing about the id - it changed three fields, two of them by accident.
+    The id is eight bytes, not ten. Searching for the longest repeated run finds ten, because the
+    two bytes before each copy happen to match: at +0x0E they are the tail of the account UID and
+    at +0x36 uninitialised slack after the name's terminator, both `6a 95` in this payload. A
+    ten-byte replacement clobbers the end of the UID and the end of the name field as well.
 
-    The id is the console's OWN, in both places, and every snapshot this project has sent handed it
-    straight back; the trade screen never draws it, because it draws the partner from MyStatus. The
-    UIDs at +0x00 and +0x18 are not understood and are left alone.
+    The id is the console's own in both places and is handed straight back unless replaced; the
+    trade screen never draws it. The UIDs at +0x00 and +0x18 are not understood and are left
+    alone.
     """
     if len(payload) != PAYLOAD_LENGTH:
         raise ValueError(f"{len(payload)} bytes, expected {PAYLOAD_LENGTH}")
@@ -223,9 +211,9 @@ def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None, old_
         tc = TRAINER_CARD_OFFSET + TRAINER_CARD_NAME
         out[tc:tc + NAME_LENGTH] = encoded
         if old_name:
-            # THE TAIL COPY. Null-terminated and NOT padded to NAME_LENGTH, so the replacement is
-            # written over exactly as many bytes as the old name occupied and the record around it
-            # keeps its length. Every occurrence, because one payload is not proof there is one.
+            # The tail copy is null-terminated and not padded to NAME_LENGTH, so the replacement
+            # is written over exactly as many bytes as the old name occupied and the record around
+            # it keeps its length. Every occurrence: there may be more than one.
             was = old_name.encode("utf-16-le") + b"\x00\x00"
             now = trainer_name.encode("utf-16-le") + b"\x00\x00"
             if len(now) > len(was):
@@ -242,9 +230,8 @@ def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None, old_
         account_id = bytes(account_id)
         if len(account_id) != ACCOUNT_ID_LENGTH:
             raise ValueError(f"an account id is {ACCOUNT_ID_LENGTH} bytes")
-        # AT THE TWO OFFSETS THE BEACON FRAMES, not wherever a search finds the bytes. sw94
-        # replaced a ten-byte run and took the end of the account UID and the end of the name
-        # field with it.
+        # At the two framed offsets, not wherever a search finds the bytes: a ten-byte run
+        # matches inside the account UID and inside the name field as well.
         for at in (TAIL_OFFSET + ACCOUNT_ID_FIRST, TAIL_OFFSET + ACCOUNT_ID_SECOND):
             out[at:at + ACCOUNT_ID_LENGTH] = account_id
 
@@ -268,9 +255,8 @@ def rewrite(payload, *, trainer_name=None, trainer_id=None, secret_id=None, old_
 def party_matches_trainer(fields):
     """-> True when every party member carries the trainer's own ids.
 
-    A cheap check with real content: the party records and MyStatus are different blocks of the
-    payload, and on sw68 and sw70 they agree on 56909/48474. A reassembly that had slipped would
-    not.
+    The party records and MyStatus are different blocks of the payload and agree on the ids. A
+    reassembly that had slipped would not.
     """
     ids = (fields["trainer_id"], fields["secret_id"])
     return all((p["trainer_id"], p["secret_id"]) == ids

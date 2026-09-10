@@ -6,22 +6,20 @@ has_children: true
 
 # FireRed and LeafGreen
 
-The Switch release of FireRed and LeafGreen is the **original GBA ROM running inside an emulator**,
-so two link layers are stacked on top of each other and they fail differently:
+The Switch release of FireRed and LeafGreen is the original GBA ROM running inside an emulator, so
+two link layers are stacked:
 
 | layer | whose | documented in |
 |---|---|---|
 | LDN and Pia | the emulator's, shared with every other Switch title | [The wireless layer](ldn.md) |
-| the GBA link — RFU frames, seats, block sends | the ROM's | these pages |
+| the GBA link: RFU frames, seats, block sends | the ROM's | these pages |
 
-Because the code the console runs is the code in the decompilation,
 [pret/pokefirered](https://github.com/pret/pokefirered) is authoritative for the whole game-level
-protocol at `REVISION >= 0xA`. The cartridge header confirms it: software version `0x0A`, game code
-`BPRF` (FireRed, French) and `BPGF` (LeafGreen, French), read off both consoles.
+protocol at `REVISION >= 0xA`. Cartridge header, read off both consoles: software version `0x0A`,
+game code `BPRF` (FireRed, French) and `BPGF` (LeafGreen, French).
 
-Almost every hard bug in this project came from mistaking one layer for the other. The three-second
-disconnection looked like a game timeout and was an 802.11 rate set; a stall in the transmit path
-looks like a kernel problem and crosses a userspace hop.
+The three-second disconnection was an 802.11 rate set; a stall in the transmit path crosses a
+userspace hop.
 
 ## Status
 
@@ -30,9 +28,9 @@ Gift in both directions, trade as host and as joiner, the whole Union Room inclu
 battles, Wonder News, the cable-club colosseum, and a visiting Battle Tower trainer.
 
 Through the gift link's two interpreters the console also runs code sent to it: its memory read and
-written, its ROM mapped into named functions for the build it actually runs, its own functions called
-with eight arguments, and a Pokemon chosen by the host built by its own `CreateMon` and left in the
-player's party. The RNG is closed end to end, so a shiny encounter costs one A press.
+written, its ROM mapped into named functions for the build it runs, its own functions called with
+eight arguments, and a Pokemon chosen by the host built by its own `CreateMon` and left in the
+player's party. The RNG is closed end to end; a shiny encounter costs one A press.
 
 ## Pages
 
@@ -49,19 +47,16 @@ player's party. The RNG is closed end to end, so a shiny encounter costs one A p
 ## The two cartridges
 
 LeafGreen is the same game with the same code at a different address. The offset is piecewise
-constant — four low segments stepping −0x2C, −0x28, −0x24, −0x20, then −0x1C4 and −0x12D8 higher up —
-and it is **not** monotonic, so a less divergent segment further up is not a mistake. Measured pairs
-live in `pokeldn.frlg.rom.leafgreen_twins` (738 addresses, each read off its own cartridge) and
-`rom_map.LEAFGREEN_DELTA_BOUNDARIES`. Never predict an address across a boundary that has not been
-bracketed.
+constant (four low segments stepping −0x2C, −0x28, −0x24, −0x20, then −0x1C4 and −0x12D8 higher up)
+and not monotonic. Measured pairs live in `pokeldn.frlg.rom.leafgreen_twins` (738 addresses, each
+read off its own cartridge) and `rom_map.LEAFGREEN_DELTA_BOUNDARIES`. Never predict an address across
+a boundary that has not been bracketed.
 
 ## Rules that hold across all of it
 
-**Nothing is inferred from the decompilation's addresses.** The decomp's *link order* is fair
-evidence and has been used several times; its addresses never are.
-`pokeldn/frlg/rom/rom_map.py` records how each address was obtained.
-
-**A payload is executed offline before it is ever sent.** `buffer_script.emulate` and
-`emulate_repeating` run it under unicorn on a model of the GBA memory map, and both simulated
-consoles run it too. A payload that faults, or never returns 1, hangs the Mystery Gift menu with no
-way out; a field stub that loops forever freezes the overworld with no menu at all.
+- Nothing is inferred from the decompilation's addresses. The decomp's link order is evidence; its
+  addresses are not. `pokeldn/frlg/rom/rom_map.py` records how each address was obtained.
+- A payload is executed offline before it is sent. `buffer_script.emulate` and `emulate_repeating`
+  run it under unicorn on a model of the GBA memory map, and both simulated consoles run it. A
+  payload that faults, or never returns 1, hangs the Mystery Gift menu with no way out; a field stub
+  that loops forever freezes the overworld with no menu.

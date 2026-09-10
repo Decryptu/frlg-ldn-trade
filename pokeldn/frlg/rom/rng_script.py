@@ -1,7 +1,7 @@
 """A field script that sets gRngValue with `setptr` [decomp:src/scrcmd.c:300], in the OVERWORLD.
 
 The Mystery Gift link is the wrong place to seed from: every route out of the menu re-runs
-`SeedRng` on the title screen, measured at bs50/bs51. A RAM script runs after that reseed, and
+`SeedRng` on the title screen. A RAM script runs after that reseed, and
 gRngValue is a link-time IWRAM global at 0x03004220, so `setptr` needs no address read and no sled
 - unlike `callnative`, which would have to aim at a save block that moves. The script ends with
 `end` (0x02), not `endram`, so the binding survives and can be re-triggered. docs/frlg_rng.md.
@@ -37,9 +37,8 @@ def build_seed_script(value, address=None, sound=SE_SUCCESS):
     """The field script that sets a 32-bit word - gRngValue by default - and says it did.
 
     `sound` is played so the player knows the script ran: talking to an object whose script does
-    nothing looks exactly like talking to an object whose script did not run, and mev03's evidence
-    was only that the NPC's normal dialogue did NOT appear. A sound is a positive signal. Pass
-    sound=None to write in silence.
+    nothing looks the same as talking to one whose script did not run. Pass sound=None to write in
+    silence.
     """
     address = rom_map.GRNG_VALUE if address is None else int(address)
     value = int(value) & 0xFFFFFFFF
@@ -109,12 +108,11 @@ VAR_0x8000 = 0x8000
 # [decomp:src/battle_main.c:614, src/overworld.c:1337], which re-rolls gSaveBlock1's address by a
 # multiple of 4 in 0..124 [src/load_save.c:75]; the engine keeps its pointer INTO that block
 # [GetRamScript, src/script.c:514] and so resumes where the script no longer is. One mechanism,
-# three symptoms: mev11's stray second battle, mev15/mev16 walking away clean, and mev18 freezing
-# the overworld dead. `releaseall` + `end` was never a fix - those bytes are simply not at the
-# address the engine returns to.
+# three symptoms: a stray second battle, a clean walk away, and a dead overworld. `releaseall` +
+# `end` is not a fix; those bytes are not at the address the engine returns to.
 #
 # The fix is to start the battle from outside the save block. `goto` (0x05) takes an absolute
-# address and gSpecialVar_0x8000 is a fixed EWRAM u16 [rom_map, bs57] that `setvar` (0x16) writes:
+# address and gSpecialVar_0x8000 is a fixed EWRAM u16 [rom_map] that `setvar` (0x16) writes:
 #
 #     setvar 0x8000, 0x02B7      ->  0x020370B4: B7 02   =   dowildbattle ; end
 #     goto   0x020370B4
@@ -183,12 +181,11 @@ def build_wild_battle_script(seed, species, level, item=0, address=None):
 def predict_wild_mon(seed, tid, sid):
     """-> {personality, ivs, shiny, ...}: what build_wild_battle_script's four draws will make.
 
-    BOTH personality half-orders are reported, because `Random32()` is `Random() | (Random() << 16)`
-    and C does not order the operands of `|` - the three mons bs51/bs52 recovered all read
-    low-half-first, but that was CreateMonWithNature's call site, and this is CreateBoxMon's.
-    It matters less than it looks: the shiny test is TID ^ SID ^ PIDhigh ^ PIDlow, which is
-    SYMMETRIC under swapping the halves, and the IVs come from the two draws after. So shininess
-    and every IV are the same either way, and only the nature, ability and gender differ.
+    Both personality half-orders are reported: `Random32()` is `Random() | (Random() << 16)` and C
+    does not order the operands of `|`. Measured mons read low-half-first at CreateMonWithNature's
+    call site; this is CreateBoxMon's. The shiny test TID ^ SID ^ PIDhigh ^ PIDlow is symmetric
+    under swapping the halves and the IVs come from the two draws after, so shininess and every IV
+    are the same either way and only the nature, ability and gender differ.
     """
     from pokeldn.frlg.rom import lcg
     (first, second, third, fourth), _ = lcg.draws(int(seed), 4)
@@ -205,12 +202,11 @@ def predict_wild_mon(seed, tid, sid):
     return out
 
 
-# --- reading the seed back out, which is the other half ------------------------------------------
-# Writing gRngValue was always the easy direction. READING it in the overworld is what a countdown
-# needs, and it was blocked for two sessions on one unknown: the absolute address of
-# gSpecialVar_0x8000, because `copybyte` needs a destination ADDRESS while `buffernumberstring` only
-# needs a var ID. bs57 found it at 0x020370B4 by searching the cartridge for the SHAPE of
-# gSpecialVars (pokeldn/frlg/rom/buffer_script.py, `table-scan`).
+# --- reading the seed back out --------------------------------------------------------------------
+# Reading gRngValue in the overworld is what a countdown needs, and it needs the absolute address
+# of gSpecialVar_0x8000: `copybyte` takes a destination address where `buffernumberstring` takes a
+# var id. It is at 0x020370B4, found by scanning the cartridge for the shape of gSpecialVars
+# (pokeldn/frlg/rom/buffer_script.py, `table-scan`).
 #
 # The script is `gift_composer.build_seed_read_script`; it lives there because that is where the
 # field-script builder and its relocatable-text machinery are. It READS gRngValue and writes

@@ -35,9 +35,9 @@ CTX_CMD_TABLE_END = 0x60
 
 # Where the answer has to fall if it is real. script_data opens at gScriptCmdTable and the mystery
 # event table is its LAST member [ld_script_rev10.ld:318-328], so the table sits above every event
-# script we have read and below .rodata, which starts below gSpeciesInfo (bs39).
-ANSWER_LOW = 0x081AB569                 # the last command of gStdScripts[8], read at bs108
-ANSWER_HIGH = 0x0824CDC0 - MYSTERY_EVENT_TABLE_BYTES     # gSpeciesInfo, bs39
+# script we have read and below .rodata, which starts below gSpeciesInfo.
+ANSWER_LOW = 0x081AB569                 # the last command of gStdScripts[8], read
+ANSWER_HIGH = 0x0824CDC0 - MYSTERY_EVENT_TABLE_BYTES     # gSpeciesInfo
 
 
 def _context(cmd_table):
@@ -87,7 +87,7 @@ def test_a_context_that_never_ran_a_script_answers_nothing():
 
 def test_the_field_script_context_is_the_control_and_its_answer_is_already_known():
     """The same shape with delta 856 finds the FIELD script context instead, whose cmdTable is
-    gScriptCmdTable - an address bs82 already measured. A scan that cannot find that on the console
+    gScriptCmdTable - an address a run already measured. A scan that cannot find that on the console
     is not measuring what it thinks, and it costs one ordinary run to check."""
     assert rom_map.G_SCRIPT_CMD_TABLE == 0x08163650
     field_table_bytes = 214 * 4
@@ -108,24 +108,24 @@ def test_the_field_script_context_is_the_control_and_its_answer_is_already_known
 
 def test_the_bracket_a_real_answer_has_to_fall_in():
     """A hit is only credible inside script_data, and both ends of that bracket are measurements
-    this project already made: bs108 read a script at the low end, bs39 the species table above the
+    this project already made: A run read a script at the low end, a run the species table above the
     high end. Anything outside is a coincidence in EWRAM, not the table."""
     assert ANSWER_LOW > rom_map.G_STD_SCRIPTS
     assert ANSWER_HIGH > ANSWER_LOW
     assert ANSWER_HIGH - ANSWER_LOW < 0x00200000, "the bracket is under 2 MB wide"
 
 
-# --- and then it was measured: bs109 found it, bs110 read it ---------------------------------------
+# --- and then it was measured: A run found it, a run read it ---------------------------------------
 
 def test_the_table_was_found_where_the_bracket_said_it_had_to_be():
-    """bs109: one hit in all 256 KB of EWRAM, no false positives. The scan's value is the table."""
+    """one hit in all 256 KB of EWRAM, no false positives. The scan's value is the table."""
     assert rom_map.G_MYSTERY_EVENT_CMD_TABLE == 0x081DE144
     assert ANSWER_LOW < rom_map.G_MYSTERY_EVENT_CMD_TABLE < ANSWER_HIGH
     assert rom_map.S_MYSTERY_EVENT_SCRIPT_CONTEXT + CTX_CMD_TABLE == 0x0203AA94
 
 
 def test_the_seventeen_entries_are_seventeen_functions():
-    """bs110 read the table. Every entry odd (THUMB), every one distinct, every one inside .text,
+    """A run read the table. Every entry odd (THUMB), every one distinct, every one inside .text,
     and all of them within about a kilobyte of each other - one object file's worth of functions.
     Seventeen coincidences would not do that."""
     addresses = [address for _name, address in rom_map.MYSTERY_EVENT_HANDLERS]
@@ -146,7 +146,7 @@ def test_the_table_order_is_the_vms_own_opcode_order():
 
 def test_the_end_of_the_table_is_the_end_of_script_data():
     """`mystery_event_script_cmd_table.o(script_data)` is the LAST member of script_data and
-    lib_text follows it [ld_script_rev10.ld:318-330]. bs110 read 0x4C41B510 at that address -
+    lib_text follows it [ld_script_rev10.ld:318-330]. A run read 0x4C41B510 at that address -
     `push {r4, lr}` - which is a THUMB prologue, so lib_text starts exactly there."""
     assert rom_map.SCRIPT_DATA_END == 0x081DE188
     assert rom_map.LIB_TEXT_START == rom_map.SCRIPT_DATA_END
@@ -158,7 +158,7 @@ def test_the_end_of_the_table_is_the_end_of_script_data():
 
 
 def test_the_vms_workers_were_read_by_position():
-    """bs111 dumped 16 of the 17 handlers and the bl targets name themselves against the decomp's
+    """A run dumped 16 of the 17 handlers and the bl targets name themselves against the decomp's
     call order. Both dead opcodes - setrecordmixinggift and enableresetrtc - make exactly one call,
     to the same address, which is SetIncompatible: that is what makes them dead
     [decomp:src/mystery_event_script.c], and it is the shape the dump actually came back with."""
@@ -172,7 +172,7 @@ def test_the_vms_workers_were_read_by_position():
 def test_memcpy_lands_inside_lib_text_and_checks_the_boundary():
     """addtrainer is `ScriptReadWord; memcpy; ValidateEReaderTrainer; StringExpandPlaceholders`
     [decomp:src/mystery_event_script.c], so its second call is memcpy - which comes from libgcc and
-    lives in lib_text. It has to be above the boundary bs110 found by reading a THUMB prologue, and
+    lives in lib_text. It has to be above the boundary a run found by reading a THUMB prologue, and
     nothing about that reading knew anything about this handler."""
     assert rom_map.MEMCPY > rom_map.LIB_TEXT_START
     assert rom_map.STRING_EXPAND_PLACEHOLDERS < rom_map.G_SCRIPT_CMD_TABLE   # ordinary .text
@@ -190,7 +190,7 @@ def test_the_last_handler_is_bounded_by_its_own_epilogue():
 
 def test_varset_was_reachable_only_through_the_vm():
     """No ScrCmd body calls VarSet - `setvar`'s worker is GetVarPointer and a store through what it
-    returns, which is why call-chain grew its `prev` mechanism in session 39. The Mystery Event VM
+    returns, which is why call-chain grew its `prev` mechanism. The Mystery Event VM
     does call it: setenigmaberry ends `VarSet(VAR_ENIGMA_BERRY_AVAILABLE, 1)`.
 
     The check is the layout. event_data.c declares GetVarPointer, VarGet, VarSet in that order, and

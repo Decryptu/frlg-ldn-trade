@@ -1,7 +1,7 @@
 """The RNG as arithmetic: exact distances, the seed behind a state, and a caught Pokemon read back.
 
 Every test here is offline arithmetic, but the shapes are the ones a hardware run has to answer in:
-a state read off the console (bs15's own samples are used as a fixture), and a Pokemon the console
+a state read off the console (its own samples are the fixture), and a Pokemon the console
 built by itself in the grass.
 """
 import random
@@ -48,7 +48,7 @@ def test_distance_is_exact_at_any_range(n):
 
 
 def test_distance_between_unrelated_states_is_huge_and_that_is_the_point():
-    # bs15's first sample against the trainer id the Switch-only RfuMain1 hook would have seeded
+    # A run's first sample against the trainer id the Switch-only RfuMain1 hook would have seeded
     # with [decomp:src/link_rfu_2.c:2116]. A reseed did not happen: the answer is not small.
     assert lcg.distance(0xDF65, 0x3C22BA3A) > 1 << 30
 
@@ -65,7 +65,7 @@ def test_predecessors_reports_nothing_when_the_seed_is_out_of_reach():
 
 
 def test_seconds_uses_the_measured_rate():
-    # bs15 measured two turns a frame at the Mystery Gift link menu, on all 95 gaps.
+    # A run measured two turns a frame at the Mystery Gift link menu, on all 95 gaps.
     assert lcg.seconds(2 * 60, per_frame=2, fps=60) == pytest.approx(1.0)
 
 
@@ -130,8 +130,8 @@ def test_bs15_samples_hold_the_recurrence_and_two_turns_a_frame():
     assert gaps == {2}, "the game turned the RNG exactly twice a frame at that menu"
 
 
-# --- bs51: a Pokemon the console caught by itself, in the grass ----------------------------------
-# The ASPICOT (Weedle, species 13, Lv7) the player caught on Route 24 between bs50 and bs51, read
+# --- a Pokemon the console caught by itself, in the grass ----------------------------------
+# The ASPICOT (Weedle, species 13, Lv7) the player caught on Route 24 between two runs, read
 # out of gPlayerParty at 0x02024280. This is the fixture that says the model here describes the
 # console rather than the decomp's English build, and it is the run that CORRECTED the model.
 
@@ -205,7 +205,7 @@ def test_every_mon_the_console_made_recovers_to_one_state(name):
 
 
 def test_the_scripted_battle_recovers_to_the_seed_we_actually_wrote():
-    """mev07's Ditto is the only one whose state was not inferred but CHOSEN: the field script wrote
+    """A run's Ditto is the only one whose state was not inferred but CHOSEN: the field script wrote
     it four commands earlier. It recovers to exactly that, with both gaps zero - so the scripted
     generation is plain Method 1, with none of the stray draws the walked encounters showed."""
     from pokeldn.frlg.gift import wonder_card_events
@@ -215,19 +215,19 @@ def test_the_scripted_battle_recovers_to_the_seed_we_actually_wrote():
 
 
 def test_the_union_room_does_not_reseed_either():
-    """ur01/bs54: a full Union Room session - LinkPlayer exchange, trainer cards, a greeting, 199
+    """a full Union Room session - LinkPlayer exchange, trainer cards, a greeting, 199
     seconds of RFU - then a Mankey caught on Route 22. If SVC4B_RESEED_RNG fired for the Union
     Room the state would descend from the console's own trainer id. It is 2.1 BILLION turns away.
-    Mystery Gift (bs15) and the Union Room are both ruled out now."""
+    Mystery Gift and the Union Room are both ruled out now."""
     assert lcg.distance(0xDF65, CONSOLE_MONS["bs54 Mankey"][2]) > 1 << 30
 
 
 def test_the_overworld_never_stops_turning_the_rng():
-    """bs55: a Mankey caught, then FIVE MINUTES standing still touching nothing, then a Rattata by
+    """a Mankey caught, then FIVE MINUTES standing still touching nothing, then a Rattata by
     Sweet Scent. 43,702 turns between the two states - which at exactly 2 a frame is 365.8 s, and
     the two catches were ~368 s apart by the clock (message sends, so a couple of seconds late).
 
-    So idling costs the same as anything else, and it is the same rate bs15 measured at the Mystery
+    So idling costs the same as anything else, and it is the rate measured at the Mystery
     Gift link menu on 95 of 95 gaps. This is the measurement that says reading the RNG and acting on
     it BY HAND is impossible: there is no state in which it waits for the player."""
     mankey, rattata = 0xC57E0CF6, 0x50281FE4

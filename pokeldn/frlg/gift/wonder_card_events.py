@@ -51,7 +51,7 @@ ITEM_TM29_PSYCHIC = 317
 ITEM_TM46_THIEF = 334
 SPECIES_BALTOY = 318
 SPECIES_CLAYDOL = 319
-SPECIES_PORYGON = 137        # 13 is WEEDLE; the card icon showed an Aspicot on mev01
+SPECIES_PORYGON = 137        # 13 is WEEDLE, which the card icon draws as an Aspicot
 OBJ_EVENT_GFX_CLEFAIRY = 113
 DIR_WEST = 3
 MOVE_ZAP_CANNON = 192
@@ -620,8 +620,7 @@ MEVENT_NPC_STATUS = 55          # our marker; initramscript leaves the status un
 
 # Anything the player has to talk to at a chosen moment binds to the mother, not to Pallet Town.
 # Both Pallet Town object events are MOVEMENT_TYPE_WANDER_AROUND
-# [decomp:data/maps/PalletTown/map.json], so mev03's fat man walks off mid-countdown and has to be
-# chased. The mother is MOVEMENT_TYPE_FACE_LEFT with flag 0: she never moves, is never hidden, and
+# [decomp:data/maps/PalletTown/map.json], so either walks off mid-countdown and has to be chased. The mother is MOVEMENT_TYPE_FACE_LEFT with flag 0: she never moves, is never hidden, and
 # is a step from where the player stands indoors. Group and map are indices into map_groups.json.
 MAP_GROUP_PLAYERS_HOUSE = 4
 MAP_NUM_PLAYERS_HOUSE = 0
@@ -667,8 +666,8 @@ def build_mevent_npc_script(*, map_group=MAP_GROUP_PALLET_TOWN, map_num=MAP_NUM_
     There is one RAM script slot, so this replaces the delivery man's script; any later Wonder Card
     takes the slot back.
 
-    TRAP, confirmed on hardware (mev03): while this is installed the console reports that it holds
-    NO Wonder Card. `ValidateSavedWonderCard` requires `ValidateRamScript`
+    Trap, confirmed on hardware: while this is installed the console reports that it holds no
+    Wonder Card. `ValidateSavedWonderCard` requires `ValidateRamScript`
     [decomp:src/mystery_gift.c:186], which only passes for MAP_UNDEFINED / object 0xFF. The card is
     intact in the save; the menu just will not show it, and the next session sees HAS_NO_CARD.
     """
@@ -803,8 +802,8 @@ def build_rng_seed_reader_script(**kwargs):
     in one frame, and writes nothing at all. `gift_composer.build_seed_read_script` is the body and
     says why the read cannot tear.
 
-    The address it needs, gSpecialVar_0x8000 = 0x020370B4, is bs57's (pokeldn/frlg/rom/rom_map.py). This
-    script is also its confirmation: `rng_script.check_two_readings` on two visits to the NPC.
+    The address it needs is gSpecialVar_0x8000 = 0x020370B4 (pokeldn/frlg/rom/rom_map.py). This
+    script also confirms it: `rng_script.check_two_readings` on two visits to the NPC.
     """
     return build_mevent_npc_script(
         field_script=build_seed_read_script(), **_at_mom(kwargs))
@@ -892,8 +891,8 @@ GIFT_RNG_RATE_PROBE_LONG = "rng-rate-probe-3000"
 RNG_RATE_PROBE_LONG_FLAG_ID = 1017
 RNG_RATE_PROBE_LONG_FRAMES = 3000
 
-# mev09 measured 1,202 turns over exactly 600 frames. TWO MODELS FIT THAT ONE POINT and they are
-# not the same claim:
+# Measured: 1,202 turns over exactly 600 frames. Two models fit that one point and they are not
+# the same claim:
 #
 #   exactly 2 per frame plus a constant 2   -> turns = 2N + 2   -> 6002 at N=3000
 #   a rate slightly above 2 (2.003333)      -> turns = 2.0033N  -> 6010 at N=3000
@@ -939,19 +938,20 @@ GIFT_MEVENT_SWEEP = "mevent-opcode-sweep"
 MEVENT_SWEEP_FLAG_ID = 1005
 
 # The last three Mystery Event opcodes in one card: setenigmaberry, addrareword and addtrainer.
-# Proven mev17, read back at bs61. One status comes back and every opcode writes the same field
-# (ctx->data[2]), so the ORDER is the experiment: markers after each opcode, setenigmaberry last
-# because its own status separates success from a berry that would not validate.
+# Proven on hardware and read back out of the save. One status comes back and every opcode writes
+# the same field (ctx->data[2]), so the order is the experiment: markers after each opcode,
+# setenigmaberry last because its own status separates success from a berry that would not
+# validate.
 #
 #     status 2   all three ran and the berry validated
 #     status 1   all three ran and the berry did not [IsEnigmaBerryValid, src/berry.c:984]
 #     status 42  addtrainer ran, setenigmaberry did not
 #     status 41  addrareword ran, addtrainer did not
 #
-# The two description pointers are the console's own, read off it at bs59: struct Berry2 keeps them
-# in the SAVE for ever and the Berry Pouch dereferences them, so an invented pointer would render
-# garbage on every future look at the berry. docs/frlg_gift.md.
-MEVENT_SWEEP_BERRY_DESC1 = 0x083D5CE8       # bs59, off the cartridge
+# The two description pointers are the console's own, read off it: struct Berry2 keeps them in the
+# save for ever and the Berry Pouch dereferences them, so an invented pointer renders garbage on
+# every future look at the berry. docs/frlg_gift.md.
+MEVENT_SWEEP_BERRY_DESC1 = 0x083D5CE8       # off the cartridge
 MEVENT_SWEEP_BERRY_DESC2 = 0x083D5CF8
 MEVENT_SWEEP_RARE_WORD = 0
 MEVENT_SWEEP_MARK_RAREWORD = 41
@@ -1023,8 +1023,7 @@ RNG_SHINY_HUNT_FLAG_ID = 1012
 # `callnative`, so the search happens on the console, in the overworld, at the encounter itself.
 # docs/frlg_rng.md; REFERENCES.local.md has where the technique came from.
 #
-# Ditto at 50, the drill mev07 already used. Nothing needs catching: shininess shows the instant
-# the battle starts.
+# Ditto at 50. Nothing needs catching: shininess shows the instant the battle starts.
 RNG_SHINY_HUNT_SPECIES = 132
 RNG_SHINY_HUNT_LEVEL = 50
 
@@ -1147,7 +1146,7 @@ GIFT_RNG_MON_HUNT_FAR = "rng-mon-hunt-far"
 RNG_MON_HUNT_FAR_FLAG_ID = 1000
 
 # The same hunt with one variable changed: where the code lives. rng-mon-hunt stages 160 bytes at
-# six script bytes each and stays the control (mev19 + bs62); this card stages a 36-byte trampoline
+# six script bytes each and stays the control; this card stages a 36-byte trampoline
 # and puts the search in the body behind the script at one byte each, because the field engine runs
 # a RAM script in place and never reads past the last command [GetRamScript, decomp:src/script.c:514].
 #
@@ -1219,10 +1218,10 @@ RNG_MON_HUNT_FAR_GIFT = WonderGift(
 GIFT_RNG_MON_HUNT_BOTH = "rng-mon-hunt-both"
 RNG_MON_HUNT_BOTH_FLAG_ID = 1001
 
-# The same hunt held against the stray draw. mev20 caught the thing that defeats a one-placement
-# search: one extra Random() between the personality and the IV draws, so the mon was shiny and
-# Jolly as asked with SPEED 10 against a floor of 20. asm/field/mon-seek-both.s tests the floors at
-# both placements, which covers all three methods.
+# The same hunt held against the stray draw: one extra Random() between the personality and the IV
+# draws defeats a one-placement search, giving a mon shiny and Jolly as asked with SPEED 10 against
+# a floor of 20. asm/field/mon-seek-both.s tests the floors at both placements, which covers all
+# three methods.
 #
 # One variable against rng-mon-hunt-far: the stub. What changes is the cost - the IV term is
 # squared, so 1 state in 1,456,000 rather than 546,000, about 4 s of frozen overworld typically. The
@@ -1287,10 +1286,9 @@ RNG_MON_HUNT_BOTH_GIFT = WonderGift(
 GIFT_RNG_MON_HUNT_LOG = "rng-mon-hunt-log"
 RNG_MON_HUNT_LOG_FLAG_ID = 1002
 
-# The same search, reporting. Everything mev19-mev21 established about a hunt was reconstructed
-# afterwards from the mon the player caught, and bs64 came back with two candidate states that only
-# the IVs told apart. The stub knows all of it while it runs, so it writes {marker, start, found,
-# iterations, cap} to SaveBlock1 + 0x348C. Read it back with
+# The same search, reporting. Reconstructing a hunt afterwards from the mon the player caught
+# leaves two candidate states that only the IVs tell apart. The stub knows all of it while it runs,
+# so it writes {marker, start, found, iterations, cap} to SaveBlock1 + 0x348C. Read it back with
 #
 #     --buffer-script save-dump --dump-block sav1 --dump-offset 0x348C --dump-size 32
 #
@@ -1353,9 +1351,8 @@ RNG_MON_HUNT_LOG_GIFT = WonderGift(
 GIFT_RNG_DRAW_COUNT = "rng-draw-count"
 RNG_DRAW_COUNT_FLAG_ID = 1018
 
-# Ditto at 50, the same mon mev07 put in front of the player, so the drill is familiar. The species
-# is not the point and nothing needs catching: the answer is the two numbers printed BEFORE the
-# battle starts. Method 1 predicts a distance of 4; docs/frlg_rng.md's unexplained stray draw, if it is
+# Ditto at 50. The species is not the point and nothing needs catching: the answer is the two
+# numbers printed before the battle starts. Method 1 predicts a distance of 4; docs/frlg_rng.md's unexplained stray draw, if it is
 # in this path, shows up as 5 or 6.
 RNG_DRAW_COUNT_SPECIES = 132
 RNG_DRAW_COUNT_LEVEL = 50
@@ -1412,10 +1409,10 @@ BATTLE_COUNT_PRIZE_TAKEN = VAR_MYSTERY_GIFT_2
 # the console keeps battlesWon/battlesLost/numTrades in WonderCardMetadata itself, and this card
 # reads one of them back through GetMysteryGiftCardStat and pays out at three wins.
 #
-# THE COUNTERS ARE NOT ARMED BY THE CARD. `MysteryGift_TryEnableStatsByFlagId` runs in the Union
-# Room card exchange, on the flag id THE PARTNER SENT - the u16 immediately after the trainer card
-# in the BLOCK_REQ_SIZE_100 buffer [decomp:src/union_room.c:1777] - and only arms if it equals the
-# card the console holds. So it is OUR trainer card that switches the console's counters on:
+# The card does not arm the counters. `MysteryGift_TryEnableStatsByFlagId` runs in the Union Room
+# card exchange, on the flag id the partner sent (the u16 immediately after the trainer card in the
+# BLOCK_REQ_SIZE_100 buffer [decomp:src/union_room.c:1777]), and only arms if it equals the card
+# the console holds. So our trainer card switches the console's counters on:
 # `frlg_trade_host.py --card-flag-id`. Then a completed trade increments numTrades
 # [decomp:src/trade_scene.c:2609] and a finished CABLE CLUB battle increments won/lost
 # [decomp:src/cable_club.c:792], each only for a trainer id the card has not counted before
@@ -1424,8 +1421,7 @@ BATTLE_COUNT_GIFT = WonderGift(
     slug=GIFT_BATTLE_COUNT,
     card=WonderCardSpec(
         icon_species=SPECIES_CLEFAIRY_MEVENT,
-        # THE TYPE IS THE MECHANISM. IncrementCardStat is a no-op for any other card type
-        # [decomp:src/mystery_gift.c:461], which is why bs76/bs78 read zero.
+        # IncrementCardStat is a no-op for any other card type [decomp:src/mystery_gift.c:461].
         card_type=CARD_TYPE_LINK_STAT,
         title="BATTLE COUNT CARD",
         subtitle="Your record against holders",
@@ -1525,8 +1521,8 @@ ALTERING_CAVE_GIFT = WonderGift(
 GIFT_MASTER_BALL = "master-ball"
 MASTER_BALL_FLAG_ID = 1014
 
-# The one the player spent catching the Ditto mev07 put in front of them. A plain item delivery -
-# no cutscene, no sprite, no battle - so the delivery man hands it over and nothing else happens.
+# A plain item delivery: no cutscene, no sprite, no battle, so the delivery man hands it over and
+# nothing else happens.
 # It also takes the RAM script slot back from the Ditto script, which ends that binding.
 MASTER_BALL_GIFT = WonderGift(
     slug=GIFT_MASTER_BALL,

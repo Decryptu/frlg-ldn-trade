@@ -16,12 +16,12 @@ nav_order: 1
     participants            1/8
     application_data        17 bytes
 
-The comm id is **Brilliant Diamond's title id** and the console was running Shining Pearl
-(`010018e011d92000`). Paired versions advertise one shared `local_communication_id` so they can find
-each other, so it does not identify which version is hosting.
+The comm id is Brilliant Diamond's title id; the console was running Shining Pearl
+(`010018e011d92000`). Paired versions advertise one shared `local_communication_id`, so it does not
+identify which version is hosting.
 
-Discovery costs nothing: the advertisement decrypts with `prod.keys` alone, no passphrase and no
-game key. `tools/ldn/ldn_scan.py` sees the session before anything about the game is known.
+The advertisement decrypts with `prod.keys` alone. `tools/ldn/ldn_scan.py` sees the session before
+anything about the game is known.
 
 The 17 bytes of application data parse against Pia's LDN advertisement layout
 ([The wireless layer](ldn.md)), with the CRC32 field reading 0 (the room was opened with no password)
@@ -31,11 +31,11 @@ and the header size reading 16 against a 17-byte blob, so one byte is applicatio
 
     WirelessStrongCryptoKey2021
 
-Used raw — 27 bytes, neither padded to 32 or 64 nor hashed. The LDN layer accepts any passphrase from
-16 to 64 bytes and stores the byte string with an explicit length.
+Used raw: 27 bytes, neither padded nor hashed. The LDN layer accepts any passphrase from 16 to 64
+bytes and stores the byte string with an explicit length.
 
-It is the **LDN** passphrase and nothing more. The game hands it straight to `nn::ldn::CreateNetwork`
-inside an `nn::ldn::SecurityConfig`; it never reaches Pia's own crypto.
+The game hands it to `nn::ldn::CreateNetwork` inside an `nn::ldn::SecurityConfig`; it never reaches
+Pia's crypto.
 
 ## Taking a seat
 
@@ -47,23 +47,22 @@ inside an `nn::ldn::SecurityConfig`; it never reaches Pia's own crypto.
 The console assigns the IP and holds the seat for as long as it is held. The Union Room's eight seats
 are the LDN `max_participants`, so the participant count is the room's population.
 
-**Nothing appears on the console's screen, and that is correct.** LDN association is below the game;
-a seat in the LDN session is not a seat in the Pia session.
+Nothing appears on the console's screen. LDN association is below the game; a seat in the LDN
+session is not a seat in the Pia session.
 
-LDN association succeeds roughly one attempt in two: `Connect failed with status code 1` with no
-`authenticate` line in dmesg is the known baseline, so retry before diagnosing. The console can also
-stop advertising while the player never leaves the Union Room — the screen does not change and scans
-across all three channels find nothing. Leaving and re-entering the room brings it back on a new
-channel, SSID and session parameter, all of which the key derivation handles live.
+LDN association succeeds roughly one attempt in two; `Connect failed with status code 1` with no
+`authenticate` line in dmesg is the baseline. Retry before diagnosing. The console can stop
+advertising while the player stays in the Union Room: the screen does not change and scans across
+all three channels find nothing. Leaving and re-entering the room brings it back on a new channel,
+SSID and session parameter; the key derivation handles all three live.
 
-A receiver on the LDN interface must filter its own source IP: broadcasts loop back on the tap, and a
-receiver that does not filter counts its own packet as an answer.
+A receiver on the LDN interface must filter its own source IP: broadcasts loop back on the tap.
 
-Unauthenticated Pia is discarded before it reaches anything that would reply. Holding the seat and
-sending unencrypted Pia datagrams — header-only, header aimed at the console's variable id, and
-header plus payload, to both the host and the broadcast address — drew nothing: over 70 seconds the
-console sent 630 packets, every one 176 bytes and every one addressed to `dst_var = 0`, and none of
-them to the sender. It did not answer, did not error and did not drop the seat.
+Unauthenticated Pia is discarded before it reaches anything that replies. Holding the seat and
+sending unencrypted Pia datagrams (header-only, header aimed at the console's variable id, header
+plus payload, to the host and to the broadcast address) drew nothing: over 70 seconds the console
+sent 630 packets, every one 176 bytes, every one addressed to `dst_var = 0`, none to the sender. It
+did not answer, did not error and did not drop the seat.
 
 ## What is on the wire
 
@@ -73,12 +72,12 @@ A hosting console broadcasts to `169.254.x.255:12345` at about nine datagrams a 
     32ab9864 89 00000000 11bac90d 0000 00 f5a83bd383ce712d 59baa5cbc320cb56 <144 bytes>
     magic    v  dst=0    src      pid  f  nonce (a counter) tag              ciphertext
 
-Version byte `0x89` is encrypted, version 9 — Pia 5.27–5.45. The header layout, message framing and
+Version byte `0x89` is encrypted, version 9: Pia 5.27-5.45. The header layout, message framing and
 transport protocols are on [The Pia layer](pia.md). `pokeldn/ldn/pia5.py` round-trips 674 captured
 packets byte-identically.
 
-The reliable protocol's version 3 pins Pia to 5.31–5.43, which is narrower than the mesh protocol's
-version 3 (5.30–5.45).
+The reliable protocol's version 3 pins Pia to 5.31-5.43, narrower than the mesh protocol's version 3
+(5.30-5.45).
 
 ## The key hierarchy
 
@@ -96,10 +95,10 @@ derived key and IV reproduces the console's own ciphertext and tag, byte for byt
 
 ### Where the seed lives
 
-`cryptoKeyDataSeed` is `9918bd0f dcfa6577` twice — one eight-byte pattern repeated.
+`cryptoKeyDataSeed` is `9918bd0f dcfa6577` twice.
 
-`INL1.IlcaNetSessionSetting` is a plain `[Serializable]` class rather than a Unity asset, so its
-defaults come from its constructor:
+`INL1.IlcaNetSessionSetting` is a plain `[Serializable]` class; its defaults come from its
+constructor:
 
     IlcaNetSessionSetting..ctor
       byte[16] cryptoKeyDataSeed  <- RuntimeHelpers.InitializeArray(array, fieldHandle)
@@ -107,13 +106,13 @@ defaults come from its constructor:
       ulong    localCommunicationId = 0x0100000011d90000
 
 The field handle resolves to
-`<PrivateImplementationDetails>.33F804682DF9E210AABDC4D939CBCD380EC7517F`, and a C# compiler names
-those fields after the SHA-1 of their own initial data — SHA-1 of the sixteen bytes above is that
-name. The `localCommunicationId` in the same constructor is BDSP's, which identifies the constructor.
+`<PrivateImplementationDetails>.33F804682DF9E210AABDC4D939CBCD380EC7517F`; a C# compiler names
+those fields after the SHA-1 of their initial data, and SHA-1 of the sixteen bytes above is that
+name. The `localCommunicationId` in the same constructor is BDSP's.
 
-An `InitializeArray` blob lives in `global-metadata.dat`'s field-default-value section, not in code
-and not in an asset, so neither a scan of the executables nor a scan of the 4.2 GB RomFS finds it.
-The general method is on [Reverse-engineering a Switch title](switch_re.md).
+An `InitializeArray` blob lives in `global-metadata.dat`'s field-default-value section; neither a
+scan of the executables nor a scan of the 4.2 GB RomFS finds it. The method is on
+[Reverse-engineering a Switch title](switch_re.md).
 
 ### The published key is the seed, derived
 
@@ -121,10 +120,9 @@ The general method is on [Reverse-engineering a Switch title](switch_re.md).
     published key     9900bd0c dcfa6563 9918bd0f c7fa6577
                         ^^   ^^         ^^         ^^        bytes 1, 3, 7, 12
 
-Those four bytes are what the game overwrites from the **local communication version**, which for
-1.3.0 is 199 — the `app_version: 199` the advertisement carries. `ldn_game_key(seed, 199)` reproduces
-the published row byte for byte. A published key and a measured seed therefore differ in exactly
-those four positions, which reads as a corrupt transcription.
+The game overwrites those four bytes from the local communication version, 199 for 1.3.0 (the
+`app_version: 199` the advertisement carries). `ldn_game_key(seed, 199)` reproduces the published
+row byte for byte. A published key and a measured seed differ in exactly those four positions.
 
 ### The session key
 
@@ -135,22 +133,21 @@ Read out of `nn::pia::local::LocalProtocol`, the LDN implementation:
     rnd   = four consecutive xorshift128 draws (shifts 11, 8, 19) -> 16 bytes, little-endian
     key   = AES-128-ECB(game key at LocalProtocol+0x5bc).encrypt(rnd)
 
-That generator is SEAD's, Nintendo's standard-library RNG. `pokeldn/ldn/sead.py` implements it and
-matches the wiki's published SEAD RNG exactly — the same init multiplier, the same 11/8/19 shifts, the
-same state rotation. A failed derivation is therefore a wrong key or a wrong nonce, not a wrong
-xorshift.
+The generator is SEAD's, Nintendo's standard-library RNG. `pokeldn/ldn/sead.py` implements it and
+matches the wiki's SEAD RNG: the same init multiplier, the same 11/8/19 shifts, the same state
+rotation. A failed derivation is a wrong key or a wrong nonce.
 
 ### The GCM nonce
 
-The IV is built by the **stream** object, one per network family — neither the Protocol nor the
-PacketHandler, and its RTTI name says nothing about crypto:
+The IV is built by the stream object, one per network family (its RTTI name says nothing about
+crypto):
 
     nn::pia::local::LdnOutputStream::vfunc3     0x16b39c4      the LDN sender
     nn::pia::local::LocalOutputStream::vfunc3   0x16bca80
     nn::pia::lan::LanOutputStream::vfunc3       0x16a0f80
     nn::pia::nex::NexOutputStream::vfunc3       0x16eca0c
 
-Each opens with `cmp w2, #0xb; b.hi` — the buffer must hold twelve bytes — and takes
+Each opens with `cmp w2, #0xb; b.hi` (the buffer must hold twelve bytes) and takes
 `(this, buf, buflen, packet)`. The sender calls it on the object at `PacketWriter+0x948` just before
 encrypting; the receiver memsets twelve zero bytes and calls the same slot on `PacketReader+0xc8`.
 
@@ -158,16 +155,12 @@ encrypting; the receiver memsets twelve zero bytes and calls the same slot on `P
     IV[3]     = overwritten with (packet.source_variable_id & 0xFF)
     IV[4..11] = the eight-byte header nonce, copied from packet+0x1b
 
-so only three bytes of the CRC reach the IV. The hash at `0x1719204` is ordinary CRC32 (its
-table-building fallback spells out `0xEDB88320`). The ten bytes are the **network id
-(little-endian) followed by the source MAC address**: read statically, a u32 from the network object
-at +0x450, which the joiner copies out of advertisement +0x00, followed by six bytes of a station
-record.
+Only three bytes of the CRC reach the IV. The hash at `0x1719204` is ordinary CRC32 (its
+table-building fallback spells out `0xEDB88320`). The ten bytes are the network id (little-endian)
+followed by the source MAC address: a u32 from the network object at +0x450, which the joiner copies
+out of advertisement +0x00, followed by six bytes of a station record.
 
-The source MAC is the field that cannot be recovered from the packet being decrypted. An exhaustive
-2^40 sweep of the three CRC bytes against every possible key found nothing because it was run with a
-different input pinned wrong; one `gh search code` on the seed constant found the wiki page that
-states the input.
+The source MAC cannot be recovered from the packet being decrypted.
 
 ## The Local Protocol, decoded
 
@@ -189,37 +182,31 @@ Protocol 36 is the Local Protocol and the message is its `0x11` update session, 
     nodes 2-7             empty, marked 0xff
     host migration state  0
 
-Eight nine-byte node slots then one byte — the Union Room's eight seats, seen from inside the
-encrypted channel. The sequence id never moves across 674 messages: the host is asking the same
-question 674 times and never being answered.
+Eight nine-byte node slots then one byte: the Union Room's eight seats. The sequence id never moves
+across 674 messages; the host repeats an unacknowledged update.
 
 The captured host constant id, read as the little-endian field it is, unpacks by the wiki's LDN rule
 (`mac[2] << 56 | mac[4] << 48 | mac[5] << 40 | mac[3] << 32 | mac[1] << 24 | mac[0] << 16`) to
 `48:f1:eb:20:9b:22`, the MAC the scan recorded.
 
-The byte order changes three times inside one message and each is wrong-able in a way that still
-parses: the Pia message header is big-endian, the Local Protocol's own fields are little-endian, and a
-local address inside them is big-endian again.
+The byte order changes three times inside one message: the Pia message header is big-endian, the
+Local Protocol's own fields are little-endian, and a local address inside them is big-endian again.
 
 ### The ack
 
 The 20-byte ack, its framing, and how the console attributes it are documented on
-[The Pia layer](pia.md#the-local-protocol-0x24). The framing that works is a **broadcast** to the
-network broadcast address with packet `dst_var` 0 and message destination 0, which is what the host
-itself sends; the three unicast framings queued behind it in the first run never ran.
+[The Pia layer](pia.md#the-local-protocol-0x24). The framing that works is a broadcast to the
+network broadcast address with packet `dst_var` 0 and message destination 0, the host's own framing.
+The three unicast framings have not been tested.
 
 Measured: 42 update sessions about 100 ms apart, the last at t=5.969, the first ack at t=6.003, and
-zero packets from the console for the remaining 78 seconds. Nothing appeared on the console's screen,
-and nothing should have.
+zero packets from the console for the remaining 78 seconds. Nothing appeared on the console's screen.
+That run was a fresh session (a different SSID, network id, session parameter, host variable id and
+sequence id from the capture the derivation was read against) with every key built live from the
+advertisement; all 42 packets authenticated.
 
-That run was a *fresh* session — a different SSID, network id, session parameter, host variable id and
-sequence id from the capture everything had been derived against — and every key was built live from
-the advertisement, with none of the 42 packets failing to authenticate. The derivation is general
-rather than fitted to one capture.
-
-**The message presence byte is 0x7F, not 0x0F.** Only bits 1/2/4/8 name a field in Pia 5.27–6.30 and
-the console's message carries exactly those four fields, but it sets three more bits that name
-nothing.
+The message presence byte is 0x7F. Only bits 1/2/4/8 name a field in Pia 5.27-6.30 and the console's
+message carries exactly those four fields; it sets three more bits that name nothing.
 
 ## Joining the mesh
 
@@ -243,17 +230,17 @@ where `MeshProtocol`'s constructor zeroes the same offset. The join response han
 the pointer it reads at `MeshProtocol + 0x128`, which `JoinMeshJob` stores through `0x0154e5c4`
 immediately after sending the join request at `0x0155cb8c`.
 
-The console's protocol count is **9**, measured by sweeping the count against a console that answers
-only on a match; the sweep drew a connection response at N=9 and at no other N. Its nine protocols,
-read off its own acceptance:
+The console's protocol count is 9, measured by sweeping the count against a console that answers
+only on a match: a connection response at N=9 and at no other N. Its nine protocols, read off its
+own acceptance:
 
     0x14 Station v2   0x18 Mesh v3      0x1c SyncClock v0
     0x24 Local v0     0x58 RTT v3       0x68 Unreliable v1
     0x7c Reliable v3  0x94 Session v1   0xa4 MonitoringData v0
 
 Five of the nine answer a version probe; the other four are registered at version 0, which the probe
-cannot tell from unregistered because both expect 0. The wiki gives the Local Protocol version 0 for
-5.19–5.45, which is where they are.
+cannot tell from unregistered (both expect 0). The wiki gives the Local Protocol version 0 for
+5.19-5.45.
 
 The join response for a two-station mesh:
 
@@ -261,23 +248,19 @@ The join response for a two-station mesh:
     station 0   the console
     station 1   us - our own station location read back, with the ids we sent
 
-`max_active` 8 is the Union Room's eight seats seen from a third layer. Within a second of the join
-the console begins sending RTT (0x58) and reliable (0x7c) traffic.
+`max_active` 8 is the Union Room's eight seats. Within a second of the join the console begins
+sending RTT (0x58) and reliable (0x7c) traffic.
 
-**Use a fresh `--src-var` every run.** Result 7 means "this variable id is already one of my
-stations"; re-using the previous run's id minutes later is refused, and changing one digit is
-accepted. Leaving and re-entering the room also clears them.
+Use a fresh `--src-var` every run. Result 7 means "this variable id is already one of my stations";
+re-using the previous run's id minutes later is refused, and changing one digit is accepted. Leaving
+and re-entering the room also clears them.
 
-## Two measurement methods worth keeping
+## Measurement methods
 
-**A check that refuses you is a measurement instrument.** The console compares the protocol count
-against its own and replies only when it matches, so sweeping the count measured a number that is not
-otherwise visible. An unregistered protocol id expects version 0, so a version of 1 against it is a
-guaranteed verdict, and bisection then reads any protocol's version. Neither needs one of the
-console's protocols to be known in advance.
-
-**Check whether the target says yes some other way.** The equality signal here is a *reply*, not
-silence — reading silence as a match would have invented a version out of a lost packet. Four runs
-were spent sweeping a reliable-window ack against silence, learning nothing from any of them, because
-the probe had no positive answer available; a window that accepts application data must acknowledge
-it, so sending data and sweeping only the sequence id replaced the whole search.
+- A check that refuses is an instrument. The console compares the protocol count against its own
+  and replies only on a match, so sweeping the count measures a number not otherwise visible. An
+  unregistered protocol id expects version 0, so a version of 1 against it is a guaranteed verdict,
+  and bisection then reads any protocol's version.
+- The equality signal must be a reply. Silence is a lost packet as often as a mismatch. A
+  reliable-window ack cannot be swept against silence; a window that accepts application data must
+  acknowledge it, so send data and sweep only the sequence id.

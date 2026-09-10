@@ -3,8 +3,8 @@
 
 The NSO images written by nso_read.py put every segment at its memory offset, so a file offset IS
 the address. That makes an xref a scan: ADRP loads a 4 KB page into Xd, and a following ADD or LDR
-with the same base register completes the address. Written for the BDSP work (session 43) - Pia's
-transport carries no searchable constant (sp5), so its code is reached from the strings instead.
+with the same base register completes the address. Written for the BDSP work - Pia's
+transport carries no searchable constant, so its code is reached from the strings instead.
 """
 import struct, sys
 

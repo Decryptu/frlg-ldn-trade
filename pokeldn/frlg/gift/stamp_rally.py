@@ -76,7 +76,7 @@ class MysteryGiftDistribution:
     buffer_dump_blocks: int = 1
     buffer_dump_address: int = 0
     # memory-dump-scatter only: the TABLE of bases the payload carries, one per block. A scattered
-    # block's address is its entry here, not `first + n * size` - bs127 printed that arithmetic
+    # block's address is its entry here, not `first + n * size`; that arithmetic
     # against a scattered run and named an address 4 MB from where the bytes came from.
     buffer_dump_addresses: tuple = ()
     # The payloads whose answer is a structure rather than a region (memory-scan's hit table,

@@ -1,14 +1,14 @@
 """Naming the workers from the decomp's call order, and the two cartridges not being mixed.
 
-bs84 read a handler's workers off a 1 KB window by hand: every ScrCmd body is
+A run read a handler's workers off a 1 KB window by hand: every ScrCmd body is
 `VarGet(ScriptReadHalfword(ctx))` per argument and then one call, so the `bl`s come out in the
-decomp's own call order and name themselves. bs111, bs112 and bs121 did the same for three more
+decomp's own call order and name themselves. The same method named three more
 tables. `scripts/gen_worker_names.py` is that reading mechanised, and these are the checks that
 decide whether what it produces is evidence: evaluation order, the right preprocessor branch, an
 equal call count, an anchor that lands back on its own name, callers that agree, and the link
 script's own order over the whole ROM.
 
-THE BUG THESE TESTS EXIST FOR, session 42: `--with-every-dump` folded lg191's 16 KB of LeafGreen
+THE BUG THESE TESTS EXIST FOR: `--with-every-dump` folded 16 KB of LeafGreen
 into the same image as the FireRed dumps. LeafGreen keeps that code at FireRed's address minus 0x2C,
 so the image answered with whichever cartridge's copy it had placed there, and a body read out of
 the wrong one calls that cartridge's workers. It named nothing wrong only because the anchor check

@@ -28,7 +28,7 @@
 @     CreateMon(&gEnemyParty[0], species, level, 32, 0, 0, OT_ID_PLAYER_ID, 0);
 @
 @ hasFixedPersonality is 0, so CreateBoxMon takes `personality = Random32()` - TWO draws, low half
-@ first at this call site (measured, bs58) - and otIdType is OT_ID_PLAYER_ID, which READS
+@ first at this call site (measured) - and otIdType is OT_ID_PLAYER_ID, which READS
 @ gSaveBlock2Ptr->playerTrainerId and draws NOTHING [decomp:src/pokemon.c]. fixedIV is 32, which is
 @ not < USE_RANDOM_IVS, so the two IV draws follow. Shininess therefore depends on the FIRST TWO
 @ draws only, which is all this stub computes:
@@ -38,8 +38,8 @@
 @ THE TRAINER ID IS READ OFF THE CONSOLE, NOT PATCHED IN BY THE HOST. gSaveBlock2Ptr is a POINTER
 @ at a fixed IWRAM address (0x0300422C); the block it points at carries a re-rolled ASLR offset and
 @ moves on every battle and load [SetSaveBlocksPointers, decomp:src/load_save.c:75, measured
-@ bs45/bs46], so the stub dereferences the pointer every call and reads playerTrainerId at +0x0A
-@ [struct SaveBlock2, decomp:include/global.h:327; the offset bs04 already used]. That makes the
+@ measured], so the stub dereferences the pointer every call and reads playerTrainerId at +0x0A
+@ [struct SaveBlock2, decomp:include/global.h:327]. That makes the
 @ stub console-agnostic: the same bytes are correct on FireRed and on LeafGreen, and no id has to
 @ be known, typed or kept in step with anything.
 @
@@ -97,7 +97,7 @@ _start:
 
     .align 2
     .global p_rng, p_mult, p_add, p_sav2ptr, p_cap
-p_rng:  .word 0x03004220            @ gRngValue [rom_map.GRNG_VALUE, bs14/bs15]
+p_rng:  .word 0x03004220            @ gRngValue [rom_map.GRNG_VALUE]
 p_mult: .word 0x41C64E6D            @ RAND_MULT [decomp:include/random.h:18]
 p_add:  .word 0x00006073            @ RAND_ADD  [:19]
 p_sav2ptr: .word 0x0300422C         @ &gSaveBlock2Ptr [rom_map.GSAVEBLOCK2PTR]

@@ -9,7 +9,7 @@ BYTE ORDER IS MIXED, and it is the trap here. The Pia message header around thes
 (`pia5.parse_messages`); the Local Protocol's own fields are LITTLE-endian; and a local address
 inside them is BIG-endian again. Each of the three is what the captured session reads back with.
 
-Read against a real Shining Pearl session (session 45) and the NintendoClients wiki's
+Read against a real Shining Pearl session and the NintendoClients wiki's
 "Local Protocol" page. docs/bdsp_session.md "What the console is saying".
 """
 

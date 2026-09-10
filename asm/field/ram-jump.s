@@ -19,7 +19,7 @@
 @ The only reason that was not usable before is aiming at it. pokeldn/frlg/rom/rng_script.py's header says
 @ so in as many words: gSaveBlock1Ptr "carries a random 4-aligned offset re-rolled on every battle
 @ and load" [SetSaveBlocksPointers, decomp:src/load_save.c:75], measured moving 76 bytes between
-@ two runs (bs45, bs46), so a `callnative` address baked in when the card is built is a guess.
+@ two runs, so a `callnative` address baked in when the card is built is a guess.
 @ THAT PARAGRAPH IS ABOUT A BUILD-TIME CONSTANT AND THIS IS NOT ONE. The offset is re-rolled at a
 @ battle or a load; it is fixed for the whole frame our script runs in, and `gSaveBlock1Ptr` is a
 @ LINK-TIME IWRAM word at 0x03004228 [rom_map.GSAVEBLOCK1PTR] that says what it currently is. Read

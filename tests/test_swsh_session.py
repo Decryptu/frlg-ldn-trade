@@ -66,7 +66,7 @@ def test_a_game_key_of_the_wrong_length_is_refused():
 
 
 def test_the_advertisement_carries_the_seed_twelve_bytes_in():
-    """sw01's own advertisement, and the key that authenticated all 484 of its packets."""
+    """A run's own advertisement, and the key that authenticated all 484 of its packets."""
     class _Net:
         application_data = bytes.fromhex("0330112400000000051800008b718ac6")
 
@@ -86,6 +86,6 @@ def test_a_short_advertisement_is_refused_rather_than_read_past():
 
 
 def test_the_local_communication_id_is_swords_not_shields():
-    # Read off the advertisement (session 55). The binary this project reads is a SHIELD image, so
+    # Read off the advertisement. The binary this project reads is a SHIELD image, so
     # nothing about this id can be assumed to hold for the other cartridge.
     assert COMM_ID == 0x0100ABF008968000

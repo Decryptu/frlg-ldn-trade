@@ -202,7 +202,7 @@ class HostPeerProtocol:
         self.tracer = tracer
         self.nonces = PiaNonceSequence(native=native_nonce_sequence)
         # One RFU slot per GBA VBlank is what the emulated link expects, and it is what every
-        # run before cc6 sent. Measured on the air, a console answers that with ~162 frames/s
+        # Measured on the air, a console answers that with ~162 frames/s
         # while a real console peer draws ~25 [docs/frlg_link.md]. This is the knob that tests
         # whether the console's answer rate follows ours.
         self.protocol_tick_seconds = float(protocol_tick_seconds)

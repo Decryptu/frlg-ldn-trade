@@ -68,7 +68,7 @@ RAM_SCRIPT_VIRTUAL_BASE = 0x08000000
 
 
 # --- reading a script the console holds -----------------------------------------------------------
-# The opcode table is bs82's (scrcmd_names.COMMANDS) and the operand widths are the decomp's own
+# The opcode table is measured (scrcmd_names.COMMANDS) and the operand widths are the decomp's own
 # macros (scrcmd_args.ARGS, generated). Together they turn a dump into the script it is - which is
 # the only way to check a pointer into script data is really a script. docs/frlg_rom.md.
 

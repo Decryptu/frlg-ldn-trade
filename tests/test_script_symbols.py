@@ -13,7 +13,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pokeldn.frlg.rom import buffer_script, scrcmd, symbol_names  # noqa: E402
 from tests.test_script_cmd_table import TRAINER_BATTLE_BASE, TRAINER_BATTLE_BYTES  # noqa: E402
 
-# gStdScripts as bs97 read it off the console, ten pointers [decomp:data/event_scripts.s].
+# gStdScripts as read off the console, ten pointers [decomp:data/event_scripts.s].
 STD_SCRIPT_POINTERS = (0x081A8E49, 0x081A8F81, 0x081A7624, 0x081A762F, 0x081A7639,
                        0x081A7641, 0x081A780A, 0x081A8F3A, 0x081AB501, 0x081A764B)
 
@@ -29,7 +29,7 @@ def test_the_var_bounds_are_the_ones_the_save_writer_already_enforces():
 
 
 def test_the_altering_cave_var_lands_on_the_offset_measured_on_hardware():
-    """The generated name table and a hardware measurement, meeting. bs74/bs75 read the Altering
+    """The generated name table and a hardware measurement, meeting. Two runs read the Altering
     Cave counter at SaveBlock1 + 0x1048 and watched it move; the decomp calls that var
     VAR_ALTERING_CAVE_WILD_SET, and the two only agree if the id is right."""
     altering = [value for value, name in symbol_names.VARS.items()
@@ -144,7 +144,7 @@ def test_an_entry_point_the_dump_does_not_hold_is_what_to_dump_next():
 
 def test_the_plan_puts_the_window_that_catches_the_most_first():
     """Five of the ten standard scripts share the 1 KB window at 0x081A7400, and a run that catches
-    five costs exactly what a run that catches one does."""
+    five costs exactly what one that catches a single script does."""
     _reached, referenced = scrcmd.follow(
         TRAINER_BATTLE_BYTES, TRAINER_BATTLE_BASE, STD_SCRIPT_POINTERS)
     plan = scrcmd.dump_plan(referenced)
@@ -155,7 +155,7 @@ def test_the_plan_puts_the_window_that_catches_the_most_first():
 
 
 def test_two_dumps_that_touch_become_one_region():
-    """A block that straddles the join between two runs has to disassemble, so overlapping and
+    """A block that straddles the join between two dumps has to disassemble, so overlapping and
     adjacent segments merge rather than sitting side by side."""
     memory = scrcmd.Memory([(0x08000000, b"\x00" * 16), (0x08000010, b"\x11" * 16)])
     assert len(memory.segments) == 1 and len(memory) == 32
@@ -183,7 +183,7 @@ def test_a_script_split_across_two_dumps_still_walks():
 def test_a_dump_that_ends_mid_command_says_so():
     """A command with a known shape whose operands run off the end means the DUMP is short, not
     that the bytes are not a script. Reading `no shape here` for that sends you looking for a bug
-    in the table - it happened, on the last command of bs107."""
+    in the table - it happened, on the last command of one run."""
     truncated = bytes([0x0F, 0x00, 0x11, 0x22])          # loadword wants 1 + 4, four bytes given
     assert scrcmd.shape(truncated, 0, 0) is None
     assert "truncated" in scrcmd.disassemble(truncated, 0, 0)[-1]

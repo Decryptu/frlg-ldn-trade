@@ -3,7 +3,7 @@
 via Mystery Gift -> Wonder Cards -> Friend -> send; we join its LDN session as the child and save what it pushes.
 
     sudo -E ./.venv/bin/python -u bin/frlg_mg_client.py --live --version firered --language french \\
-        --capture scratchpad/mc1.pcap --out scratchpad/mc1
+        --capture scratchpad/CAPTURE.pcap --out scratchpad/OUT
 
 Outputs (with --out PREFIX): PREFIX_card.bin, PREFIX_ramscript.bin, PREFIX_messages.jsonl, PREFIX_trace.jsonl.
 """

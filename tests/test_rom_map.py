@@ -27,7 +27,7 @@ def _dump(name):
 
 
 def test_the_table_and_the_anchor_agree():
-    """bs08 measured Client_RunBufferScript's return address from the CPU; bs12 read the function's
+    """A run measured Client_RunBufferScript's return address from the CPU; a run read the function's
     address out of sClientFuncs. They are the same function reached two different ways, so the entry
     must be the function and the anchor must be inside it."""
     assert rom_map.client_func("Client_RunBufferScript") == rom_map.CLIENT_RUN_BUFFER_SCRIPT
@@ -47,7 +47,7 @@ def test_every_client_func_is_a_plausible_thumb_function_in_order():
 
 def test_the_server_table_follows_the_client_table_and_names_five():
     """sFuncTable is 5 entries [FUNC_INIT..FUNC_RUN] and sits directly after sClientFuncs's 8, which
-    is how bs12's single dump caught both."""
+    is how a single dump catches both."""
     assert rom_map.S_SERVER_FUNCS == rom_map.S_CLIENT_FUNCS + 4 * len(rom_map.CLIENT_FUNCS)
     assert len(rom_map.SERVER_FUNCS) == 5
     addresses = [address for _name, address in rom_map.SERVER_FUNCS]
@@ -91,7 +91,7 @@ def test_a_header_from_another_build_is_rejected():
 
 def test_the_client_func_table_bs12_read_is_the_one_in_the_map():
     """The self-check that mattered: entry 7 read out of ROM is the function whose return address
-    the CPU handed us in bs08, and every entry lands where bs11's disassembly shows a prologue."""
+    the CPU handed us, and every entry lands where the disassembly shows a prologue."""
     read = rom_map.read_client_funcs(_dump("bs12_dump.bin"))
 
     assert [(name, address) for name, address, _thumb in read] == list(rom_map.CLIENT_FUNCS)
@@ -99,11 +99,11 @@ def test_the_client_func_table_bs12_read_is_the_one_in_the_map():
     assert read[7][1] == rom_map.CLIENT_RUN_BUFFER_SCRIPT
 
 
-BS39_DUMP_AT = 0x0824CDC0            # --dump-address bs39 was launched with
+BS39_DUMP_AT = 0x0824CDC0            # the --dump-address the run was launched with
 
 
 def test_the_species_table_address_reproduces_bs38s_three_hits():
-    """The map's address and stride ARE bs38's measurement: the three species whose base stats are
+    """The map's address and stride ARE the measurement: the three species whose base stats are
     all 100 must land exactly on the three addresses the scan returned, with no slack. A wrong
     stride or a base off by one entry breaks this immediately."""
     computed = tuple(rom_map.GSPECIES_INFO + rom_map.SPECIES_INFO_STRIDE * species
@@ -117,7 +117,7 @@ def test_the_species_table_address_reproduces_bs38s_three_hits():
 
 def test_the_species_table_sits_below_the_easy_chat_data_link_order_predicted():
     """src/pokemon.o is the 26th .rodata entry and src/easy_chat.o the 104th, so the whole table
-    must end below the word data bs17 measured at 0x083DE2C8."""
+    must end below the word data measured at 0x083DE2C8."""
     end = rom_map.GSPECIES_INFO + rom_map.SPECIES_INFO_STRIDE * rom_map.SPECIES_INFO_SLOTS
 
     assert rom_map.GSPECIES_INFO > 0x08200000        # in .rodata, past all of .text
@@ -140,7 +140,7 @@ def test_create_mon_is_thumb_and_callable():
 
 
 def test_the_species_table_dump_is_the_table():
-    """bs39 dumped 1024 bytes from 60 before the base. Bulbasaur is species 1, so its entry must
+    """A run dumped 1024 bytes from 60 before the base. Bulbasaur is species 1, so its entry must
     start exactly one stride in, and its base stats are fixed game data."""
     dump = _dump("bs39_dump.bin")
     start = rom_map.GSPECIES_INFO - BS39_DUMP_AT
@@ -157,7 +157,7 @@ def test_the_species_table_dump_is_the_table():
 
 def test_the_two_parties_are_adjacent_as_the_decomp_declares_them():
     """gEnemyParty[6] is declared immediately before gPlayerParty[6] [decomp:src/pokemon.c:61-62],
-    so they are exactly 600 bytes apart. bs42 read both out of two literal pools and bs47 confirmed
+    so they are exactly 600 bytes apart. Both come out of two literal pools, and a second run confirmed
     the player's by finding the player's Chansey in it, so this is two routes to one answer."""
     assert rom_map.GPLAYER_PARTY - rom_map.GENEMY_PARTY == 6 * 100
     assert rom_map.GPLAYER_PARTY_COUNT < rom_map.GENEMY_PARTY, (
@@ -172,7 +172,7 @@ def test_the_two_parties_are_adjacent_as_the_decomp_declares_them():
 # --- LeafGreen ------------------------------------------------------------------------------
 
 def test_leafgreen_is_its_own_table_and_never_falls_back_to_firered():
-    """The two builds diverge along the link order - lg160 measured 0x24 of it at the Mystery Gift
+    """The two builds diverge along the link order: 0x24 of it is measured at the Mystery Gift
     client while random.o sat at the same address in both. An address read low in the ROM says
     nothing about one read high in it, so a missing symbol must RAISE, not borrow."""
     assert rom_map.leafgreen("gRngValue") == rom_map.GRNG_VALUE == 0x03004220
@@ -183,7 +183,7 @@ def test_leafgreen_is_its_own_table_and_never_falls_back_to_firered():
 
 
 def test_the_leafgreen_party_was_found_by_finding_a_pokemon():
-    """lg164, the bs47 method: every 4-aligned window of a dump that decodes as a struct Pokemon
+    """The method: every 4-aligned window of a dump that decodes as a struct Pokemon
     with a valid checksum. The user named the same four back, in order, unprompted."""
     assert rom_map.leafgreen("gPlayerParty") == 0x02024280
     assert rom_map.leafgreen("gEnemyParty") == 0x02024280 - 600
@@ -196,16 +196,16 @@ def test_every_leafgreen_address_carries_the_run_that_measured_it():
 
 
 def test_the_leafgreen_cartridge_is_identified_off_the_cartridge():
-    assert rom_map.LEAFGREEN_GAME_CODE == b"BPGF"        # lg163; FireRed is BPRF
+    assert rom_map.LEAFGREEN_GAME_CODE == b"BPGF"        # off the cartridge; FireRed is BPRF
     assert rom_map.LEAFGREEN_SOFTWARE_VERSION == 0x0A
 
 
 def test_the_leafgreen_delta_is_four_measured_segments_and_refuses_the_gaps():
-    """The eleven RAND_MULT hits lg161 found on LeafGreen pair one to one with the eleven bs13
+    """The eleven RAND_MULT hits on LeafGreen pair one to one with the eleven on
     found on FireRed, and the pairs give the delta at eleven points: 0, then -0x2C, then -0x28,
     then -0x24. At least three differences, not the one a two-point reading suggested.
 
-    lg176b/bs68b then did the same with the species table's own address as the needle -- 56 hits on
+    two runs then did the same with the species table's own address as the needle -- 56 hits on
     each console, one to one -- which widened every segment and left the gaps below."""
     assert rom_map.leafgreen_guess(rom_map.CREATE_MON) == rom_map.leafgreen("CreateMon")
     assert rom_map.leafgreen_guess(rom_map.RANDOM) == rom_map.leafgreen("Random")
@@ -216,7 +216,7 @@ def test_the_leafgreen_delta_is_four_measured_segments_and_refuses_the_gaps():
                                (0x080AFC00, 0x080AFBD4), (0x080F1EA0, 0x080F1E78),
                                (0x08122518, 0x081224F0), (0x0814CBFC, 0x0814CBD8)):
         assert rom_map.leafgreen_guess(firered) == leafgreen
-    # The 56 lg176b/bs68b pairs, at the ends of each run of one delta.
+    # The 56 paired hits, at the ends of each run of one delta.
     for firered, leafgreen in ((0x080001BC, 0x080001BC), (0x0805359C, 0x0805359C),
                                (0x080CBFB0, 0x080CBF84), (0x080CE36C, 0x080CE340),
                                (0x080EBA14, 0x080EB9EC), (0x0813E8CC, 0x0813E8A4),
@@ -234,17 +234,17 @@ def test_the_leafgreen_delta_is_four_measured_segments_and_refuses_the_gaps():
 
 
 def test_the_high_segment_was_measured_without_knowing_a_symbol_up_there():
-    """bs69/lg178 and bs72/lg179: dump 1 KB off one console, take a word that occurs once in it, and
+    """dump 1 KB off one console, take a word that occurs once in it, and
     scan the other for it. Both points read -0x12D8, half a megabyte apart, so it is a segment. One
-    point would have been lg167's mistake again."""
-    assert rom_map.leafgreen_guess(0x086003E0) == 0x085FF108      # lg178, needle 0xE1926F4D
-    assert rom_map.leafgreen_guess(0x086803FC) == 0x0867F124      # lg179, needle 0xC35D61AE
+    point would not settle it."""
+    assert rom_map.leafgreen_guess(0x086003E0) == 0x085FF108      # needle 0xE1926F4D
+    assert rom_map.leafgreen_guess(0x086803FC) == 0x0867F124      # needle 0xC35D61AE
     assert rom_map.leafgreen_guess(0x086003E0) - 0x086003E0 == -0x12D8
     # It is its own segment, far from the Easy Chat region's -0x1C4 and not reachable from it.
     assert rom_map.leafgreen_guess(0x083E3700) - 0x083E3700 == -0x1C4
-    # bs117/lg190 carried its low end down to the m4a tables, so 0x08500000 is now INSIDE it.
+    # Two runs carried its low end down to the m4a tables, so 0x08500000 is now INSIDE it.
     assert rom_map.leafgreen_guess(0x08500000) - 0x08500000 == -0x12D8
-    # And bs120/lg191 carried the -0x1C4 segment UP past 0x08400000 from the other side.
+    # And a paired dump carried the -0x1C4 segment up past 0x08400000 from the other side.
     assert rom_map.leafgreen_guess(0x08400000) - 0x08400000 == -0x1C4
     # What is still a gap is the 422 KB between them, and leafgreen_guess must refuse in there.
     with pytest.raises(ValueError, match="gap between measured segments"):
@@ -271,9 +271,9 @@ def test_every_leafgreen_boundary_sits_between_the_segments_it_joins():
 
 
 def test_the_easy_chat_region_has_its_own_delta_and_it_is_not_the_one_below_it():
-    """lg167 carried -0x24 up from gSpeciesInfo to sEasyChatGroups and found nothing - the
+    """A run carried -0x24 up from gSpeciesInfo to sEasyChatGroups and found nothing - the
     prediction failed. The region's real delta is -0x1C4, uniform across the table and all 18
-    word-list pointers lg169 read [lg168 found the table by bs16's 0x00450045 fingerprint]."""
+    word-list pointers read off the console [the table was found by its 0x00450045 fingerprint]."""
     from pokeldn.frlg.text import easychat_french_words
     assert rom_map.leafgreen("sEasyChatGroups") == 0x083E353C
     assert rom_map.leafgreen_guess(0x083E3700) == 0x083E353C
@@ -284,7 +284,7 @@ def test_the_easy_chat_region_has_its_own_delta_and_it_is_not_the_one_below_it()
 
 
 def test_the_french_vocabulary_itself_transfers_because_a_console_said_so():
-    """lg170 read LeafGreen's group 1 with string-gather: 26/26 words identical to bs20's FireRed
+    """A run read LeafGreen's group 1 with string-gather: 26/26 words identical to a run's FireRed
     reading, same slots, same order. The counts matching was evidence; this is the confirmation."""
     from pokeldn.frlg.text import easychat_french_words
     _run, _address, words = easychat_french_words.GROUPS[1]
@@ -293,8 +293,8 @@ def test_the_french_vocabulary_itself_transfers_because_a_console_said_so():
 
 
 def test_the_leafgreen_save_block_pointers_are_the_firered_ones():
-    """lg175 read them past gRngValue, which could not be dumped. Both values had moved by exactly
-    12 since lg160's anchors - one shared 4-aligned offset in the 0..124 SetSaveBlocksPointers
+    """A run read them past gRngValue, which could not be dumped. Both values had moved by exactly
+    12 since then's anchors - one shared 4-aligned offset in the 0..124 SetSaveBlocksPointers
     rolls, which two arbitrary words could not agree on."""
     assert rom_map.leafgreen("gSaveBlock1Ptr") == rom_map.GSAVEBLOCK1PTR
     assert rom_map.leafgreen("gSaveBlock2Ptr") == rom_map.GSAVEBLOCK2PTR
@@ -302,12 +302,12 @@ def test_the_leafgreen_save_block_pointers_are_the_firered_ones():
     assert seen[0] == seen[1] and seen[0] % 4 == 0 and seen[0] <= rom_map.SAVEBLOCK_MOVE_MASK
 
 
-# --- gSpecials, bs92 and bs93 --------------------------------------------------------------------
+# --- gSpecials --------------------------------------------------------------------
 
 def test_the_specials_table_sits_where_the_link_script_puts_it():
-    """bs92 read both ends out of ScrCmd_special's literal pool. Neither number is checked against
+    """A run read both ends out of ScrCmd_special's literal pool. Neither number is checked against
     itself here: the span is the decomp's own entry count, and the start is where ld_script puts
-    the table - immediately after the 21 gSpecialVars that bs57 measured."""
+    the table, immediately after the 21 measured gSpecialVars."""
     assert rom_map.G_SPECIALS == rom_map.G_SPECIAL_VARS + 21 * 4 == 0x081639FC
     assert rom_map.G_SPECIALS_END - rom_map.G_SPECIALS == 444 * 4
     assert rom_map.SPECIAL_COUNT == special_names.SPECIAL_COUNT == 444
@@ -324,8 +324,8 @@ def test_every_dumped_special_is_a_thumb_rom_pointer():
 
 def test_the_dump_proves_its_own_alignment_through_nullfieldspecial():
     """171 of the 444 entries are the same function in the decomp. If either dump were read at the
-    wrong offset they could not all share one address - and the two dumps (bs93's 256 entries and
-    bs95's 188) corroborate each other, because the set is taken across both."""
+    wrong offset they could not all share one address, and the two dumps (256 entries and
+    a run's 188) corroborate each other, because the set is taken across both."""
     null = {address for address, name
             in zip(rom_map.SPECIAL_ADDRESSES, special_names.SPECIALS)
             if name == "NullFieldSpecial"}

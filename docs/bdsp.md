@@ -6,12 +6,11 @@ has_children: true
 
 # Brilliant Diamond and Shining Pearl
 
-Brilliant Diamond and Shining Pearl are native Switch titles built in Unity by ILCA. There is no ROM
-and no emulator: Pia is the game's own transport and IL2CPP game code sits directly on it.
+Brilliant Diamond and Shining Pearl are native Switch titles built in Unity by ILCA. Pia is the
+game's own transport and IL2CPP game code sits directly on it.
 
-Measured against a **French Shining Pearl, version 1.3.0**, in the Union Room (Pokemon Center 2F,
-the left attendant, the plain "yes" — not the password or group options) and in the Grand
-Underground.
+Measured against a French Shining Pearl, version 1.3.0, in the Union Room (Pokemon Center 2F, the
+left attendant, the plain "yes") and in the Grand Underground.
 
 ## Status
 
@@ -40,21 +39,20 @@ Proven on retail hardware, end to end:
 
 ## Unresolved
 
-- **One payload never on the wire.** Twelve of the 65 message structs hold a C# string, an array
-  or a list, and the source decides no layout for them; `netdata.OPAQUE` names all twelve. The executable's `Il2CppTypeDefinitionSizes` decides the size and packing of all twelve,
-  and eleven have been on the wire and match (`room.MEASURED`), from the Union Room and the Grand
-  Underground. The twelfth, `NetDigGroupIdData` (0x29), has no sender in 1.3.0
-  ([the protocol page](bdsp_protocol.md)).
-- **The Session Protocol (0x94)**, which sits above the reliable transport and has never carried a
-  byte in any capture.
-- **Whether the console reads a `NetCharacterStateData` answer at all.** The answers are accepted by
-  the transport, land on the right stream with the right bytes, and have no observable effect.
-- **`NetDataReturnSelectData`** (id 69), which appears only after a completed trade and is repeated
-  once a second until the peer's station leaves. By its name it offers the select window again, i.e.
-  a second trade inside the same association. Nothing builds an answer.
-- **The name the game shows for a talked-to character.** It is not a value pokeldn sent — no
-  `NetPlayerNameData` and no trainer card went out in the run that produced it.
-- **Whether the console sets `IsNicknamed` on every received Pokemon** or only when the name differs
+- One payload never on the wire. Twelve of the 65 message structs hold a C# string, an array or a
+  list; `netdata.OPAQUE` names them. The executable's `Il2CppTypeDefinitionSizes` decides the size
+  and packing of all twelve; eleven have been on the wire and match (`room.MEASURED`). The twelfth,
+  `NetDigGroupIdData` (0x29), has no sender in 1.3.0 ([the protocol page](bdsp_protocol.md)).
+- The Session Protocol (0x94) sits above the reliable transport and has never carried a byte in any
+  capture.
+- Whether the console reads a `NetCharacterStateData` answer. The answers are accepted by the
+  transport, land on the right stream with the right bytes, and have no observable effect.
+- `NetDataReturnSelectData` (id 69) appears only after a completed trade and is repeated once a
+  second until the peer's station leaves. By its name it offers the select window again (a second
+  trade inside the same association). Nothing builds an answer.
+- The name the game shows for a talked-to character. No `NetPlayerNameData` and no trainer card
+  went out in the run that produced it.
+- Whether the console sets `IsNicknamed` on every received Pokemon or only when the name differs
   from the species name. One run with a name equal to the species name separates those.
-- **`NetDataSelectData`'s index.** The two runs that swept it were declining the conversation before
-  the index could matter, so it is unmeasured rather than shown not to matter.
+- `NetDataSelectData`'s index. The two runs that swept it declined the conversation before the index
+  could matter; it is unmeasured.

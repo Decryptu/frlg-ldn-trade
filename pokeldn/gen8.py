@@ -16,14 +16,14 @@ An LCG (`seed = seed * 0x41C64E6D + 0x6073`, high half of each step) XORs every 
 the four blocks are then permuted by `(EC >> 13) & 31` into one of the 24 orderings of four things.
 
 **THE PARTY STATS RESTART THE LCG.** `PokeCrypto.Decrypt8` calls `CryptArray` twice, both seeded
-from the same encryption constant - the stream does not run on across 0x148. sw70's party read
+from the same encryption constant - the stream does not run on across 0x148. A party read
 levels of 110 and 118 out of a tail that had never been decrypted at all.
 
 **THE CHECKSUM DOES NOT CHECK THE BLOCK ORDER, AND THIS PROJECT HAS BEEN CAUGHT BY THAT TWICE.**
 It is the 16-bit sum of the decrypted body, so a wrong LCG stream cannot survive it - but
 permuting whole 80-byte blocks leaves a sum of 16-bit words untouched, because addition commutes.
-Session 54 shipped an inverted order behind nine agreeing checksums (`bdsp/pokemon.py` tells that
-one); session 58's `sw84_read.py` reintroduced the same inversion independently and called six
+An inverted order survives behind agreeing checksums (`bdsp/pokemon.py` tells that
+one); `sw84_read.py` reintroduced the same inversion independently and called six
 verifying checksums self-proving while reporting an empty slot that held a Dragonite. What catches
 a wrong order is reading fields and seeing whether a Pokemon comes out.
 """
@@ -37,17 +37,12 @@ SIZE_PARTY = SIZE_STORED + 0x10                            # 0x158, 344
 
 # The orderings of four blocks, indexed by (EC >> 13) & 31.
 #
-# THAT INDEX IS 0..31 AND THERE ARE ONLY 24 ORDERINGS, so the table has to be 32 long: entries
-# 24-31 REPEAT 0-7. PKHeX's `PokeCrypto.BlockPosition` is written exactly this way and says why in
-# a comment - "duplicates of 0-7 to eliminate modulus (32 => 24)" - and its first 24 rows are ours,
-# row for row. `BLOCK_ORDER[sv % 24]` is the same function; the repeat is kept because it is what
-# the game does and what every other implementation looks like.
+# The index is 0..31 and there are only 24 orderings, so the table is 32 long with entries 24-31
+# repeating 0-7. PKHeX's `PokeCrypto.BlockPosition` is written the same way ("duplicates of 0-7 to
+# eliminate modulus (32 => 24)") and its first 24 rows match row for row.
 #
-# sp97 is why this is not a footnote. Every Pokemon this project had ever decoded - sp82's Zubat,
-# through nine runs - happened to have an encryption constant with sv < 24, so a 24-long table
-# worked for months. The third trade of sp97 was a Keunotor whose EC put sv >= 24, `decrypt` raised
-# IndexError inside the trade answer, and the console sat on "veuillez patienter" while we never
-# replied. A lookup table one entry short of its index range is a bug that waits for its input.
+# A 24-long table raises IndexError on any record whose encryption constant gives sv >= 24, inside
+# the trade answer and mid-trade.
 BLOCK_ORDER = (
     (0, 1, 2, 3), (0, 1, 3, 2), (0, 2, 1, 3), (0, 3, 1, 2), (0, 2, 3, 1), (0, 3, 2, 1),
     (1, 0, 2, 3), (1, 0, 3, 2), (2, 0, 1, 3), (3, 0, 1, 2), (2, 0, 3, 1), (3, 0, 2, 1),
@@ -62,10 +57,10 @@ assert len(BLOCK_ORDER) == 32, "the index is 5 bits; the table has to cover all 
 # offsets into the DECRYPTED, UNSHUFFLED record, header included - PKHeX's own numbering, so a
 # constant here can be read straight off `G8PKM.cs` and back again.
 #
-# The first block is what sp82 confirmed against the console's own two messages. The rest is from
+# The first block is confirmed against a console's own two messages. The rest is from
 # PKHeX - and it is worth saying WHY that is not a guess: PKHeX names 102 fields and **every one of
-# the twelve sp82 read independently agrees**, offset for offset. Twelve out of twelve is not a
-# coincidence, so the other ninety are as good as the twelve. sw70 then read three PK8s with the
+# the twelve read independently agrees**, offset for offset. Twelve out of twelve is not a
+# coincidence, so the other ninety are as good as the twelve. Three PK8s then read with the
 # same map and got the player's own team, levels included.
 OFF_SPECIES = 0x08
 OFF_HELD_ITEM = 0x0A
@@ -93,11 +88,11 @@ OFF_MOVE_PP_UPS = 0x7E                # 4 x u8
 OFF_RELEARN = 0x82                    # 4 x u16
 OFF_HT_NAME = 0xA8                    # HandlingTrainerName, 26 bytes like the others. PKHeX's
                                       # `IsUntraded` IS `Data[0xA8] == 0`: an empty handler name is
-                                      # what "never been traded" looks like. sp99 watched a Pokemon
+                                      # what "never been traded" looks like. A console watched
                                       # cross that line.
 OFF_HT_LANGUAGE = 0xC3
 OFF_CURRENT_HANDLER = 0xC4            # 0 = the original trainer still holds it
-OFF_HT_ID = 0xC6                      # PKHeX writes this one `// unused?`, and sp99 says it is:
+OFF_HT_ID = 0xC6                      # PKHeX writes this one `// unused?`, and it is:
                                       # the console filled in name, language, handler and
                                       # friendship on a traded Pokemon AND LEFT THIS ZERO.
 OFF_HT_FRIENDSHIP = 0xC8
@@ -112,9 +107,8 @@ OFF_BALL = 0x124
 OFF_MET_LEVEL = 0x125                 # low 7 bits; bit 7 is the OT's gender
 OFF_HYPER_TRAIN = 0x126               # one bit per stat, bit 0 = HP .. bit 5 = SPE, PKHeX's HT_* order
 
-# THE PARTY STATS, past SIZE_STORED. Present only in the 0x158 form, outside the four blocks and
-# so never permuted - which is why a level reads correctly even when the block order is wrong, and
-# is what settled sw70's party against the three levels the player named.
+# The party stats, past SIZE_STORED. Present only in the 0x158 form, outside the four blocks and
+# never permuted, so a level reads correctly even when the block order is wrong.
 OFF_STAT_LEVEL = 0x148
 OFF_STAT_HP_CURRENT_PARTY = 0x149     # PKHeX leaves 0x149 unnamed; the stats start at 0x14A
 OFF_STATS = 0x14A                     # HP, ATK, DEF, SPE, SPA, SPD - u16 each, PKHeX's order
@@ -168,11 +162,11 @@ def decrypt(raw):
     ec = struct.unpack_from("<I", raw, 0)[0]
     out = bytearray(raw)
     out[HEADER_SIZE:SIZE_STORED] = crypt(raw[HEADER_SIZE:SIZE_STORED], ec)
-    # THE STREAM RESTARTS HERE, seeded from the same constant. PokeCrypto.Decrypt8, two calls.
+    # The stream restarts here, seeded from the same constant. PokeCrypto.Decrypt8, two calls.
     out[SIZE_STORED:] = crypt(raw[SIZE_STORED:], ec)
-    # BLOCK_ORDER[sv] IS THE READ ORDER FOR DECRYPTION, APPLIED DIRECTLY. It is not "where each
-    # block went", and inverting it here is wrong for any sv whose permutation is not its own
-    # inverse - which is 24 of the 32. PKHeX's decrypt path uses BlockPosition[sv] as it stands and
+    # BLOCK_ORDER[sv] is the read order for decryption, applied directly. Inverting it here is
+    # wrong for any sv whose permutation is not its own inverse, which is 24 of the 32. PKHeX's
+    # decrypt path uses BlockPosition[sv] as it stands and
     # only its ENCRYPT path goes through BlockPositionInvert. Both of this project's block-order
     # bugs were that inversion, in two different modules, three sessions apart.
     plain = permute(bytes(out), BLOCK_ORDER[(ec >> 13) & 31])
@@ -238,10 +232,9 @@ def read(plain):
         "ivs": tuple((ivs >> s) & 31 for s in IV_SHIFTS),
         "nickname": text(plain, OFF_NICKNAME),
         "ot_name": text(plain, OFF_OT_NAME),
-        # THE NAME IS ONLY SHOWN WHEN THIS IS SET. A Gen-8 record always carries a name string -
-        # the species name, if the player never renamed it - so `nickname` alone does not say what
-        # the console displays. sp92 sent 'PKCAMP' with the flag clear and the game showed
-        # 'Nosferapti'.
+        # The name is only shown when this is set. A Gen-8 record always carries a name string
+        # (the species name if the player never renamed it), so `nickname` alone does not say what
+        # the console displays.
         "is_nicknamed": bool(ivs & IV32_NICKNAMED),
         "is_egg": bool(ivs & IV32_EGG),
         "gender": (plain[OFF_GENDER] >> 2) & 3,
@@ -337,7 +330,7 @@ def write(plain, **fields):
             u32(OFF_IVS, (old & ~0x3FFFFFFF) | packed)
         elif key == "nickname":
             name(OFF_NICKNAME, value)
-            # AND SET THE FLAG, or the console shows the species name and the edit is invisible.
+            # Set the flag too, or the console shows the species name and the edit is invisible.
             # An explicit is_nicknamed= after this still wins; dict order is insertion order.
             u32(OFF_IVS, struct.unpack_from("<I", plain, OFF_IVS)[0] | IV32_NICKNAMED)
         elif key == "ot_name":

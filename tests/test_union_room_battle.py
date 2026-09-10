@@ -470,7 +470,7 @@ def test_the_leader_keeps_one_echo_record_per_console_block():
 def test_the_echo_never_drops_a_distinct_child_command():
     """The console's own block sender and MGL_Send both wait on row one, and the console cannot ask
     for one fragment back - it only sees that its mirrored bitmask is short. So a distinct command
-    dropped from the relay costs a whole HandleSendFailure repair round (bs05 lost fragments 13, 16,
+    dropped from the relay costs a whole HandleSendFailure repair round (one run lost fragments 13, 16,
     17 and 18 of a 21-fragment chunk to a bound of two and never recovered)."""
     from pokeldn.gba import rfu, rfu_leader
     echo = rfu_leader.ChildEcho()
@@ -483,7 +483,7 @@ def test_the_echo_never_drops_a_distinct_child_command():
 
 def test_the_echo_folds_away_a_repeat_that_is_still_waiting():
     """SendLastBlock re-sends the same fragment every frame while it waits [link_rfu_2.c:1398], and
-    mirroring each repeat is what put the row one behind by 0.5 s in lg122. One entry is enough: the
+    mirroring each repeat is what put the row one behind by 0.5 s. One entry is enough: the
     console is waiting to see that command once."""
     from pokeldn.gba import rfu, rfu_leader
     echo = rfu_leader.ChildEcho()

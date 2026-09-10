@@ -2,8 +2,7 @@
 
 The stub is EXECUTED here, not asserted about - unicorn on a model of the GBA memory map, the same
 rule asm/*.s lives under - and what its answer is checked against is `rng_countdown`, the model
-that predicted seven fields of a mon the console built from a state it chose for itself
-(mev11/bs58). Two independent things agreeing, rather than one restating the other.
+that predicted seven fields of a mon the console built from a state it chose for itself. Two independent things agreeing, rather than one restating the other.
 """
 
 import os
@@ -28,7 +27,7 @@ except ImportError:
 needs_unicorn = pytest.mark.skipif(not _HAVE_UNICORN,
                                    reason="offline execution needs unicorn")
 
-# The console's own, read off it: trainer-id-probe (bs04) returned 0xE5BBDF65, and the player's
+# The console's own, read off it: trainer-id-probe returned 0xE5BBDF65, and the player's
 # trainer card shows 57189 = 0xDF65. Not chosen here.
 CONSOLE_TID = 0xDF65
 CONSOLE_SID = 0xE5BB
@@ -176,7 +175,7 @@ def test_the_species_and_level_are_checked_before_a_console_ever_sees_them():
     0x128B2F33, 0xD23F0824, 0x892F902B, 0x1818E811, 0x5D9DC9F8, 0x9531985D,
 ])
 def test_the_stub_lands_on_a_state_whose_encounter_is_shiny(state):
-    """The stub searches; `rng_countdown` - validated on hardware by mev11/bs58 - says what the
+    """The stub searches; `rng_countdown`, validated on hardware, says what the
     console would build from what it found. The two are written from different directions."""
     landed = int.from_bytes(_run(state)["memory"][rom_map.GRNG_VALUE], "little")
     mon = rng_countdown._mon_from(landed, CONSOLE_TID, CONSOLE_SID)
@@ -240,14 +239,14 @@ def test_a_stub_that_never_returns_is_refused_rather_than_run():
 
 
 def test_the_battle_never_starts_from_inside_the_save_block():
-    """mev18, and it is the sharpest rule this project has about RAM scripts.
+    """and it is the sharpest rule this project has about RAM scripts.
 
     `CB2_InitBattle` and `InitOverworldBgs` both call `MoveSaveBlocks_ResetHeap`
     [decomp:src/battle_main.c:614, src/overworld.c:1337], which re-rolls gSaveBlock1's address by
     a multiple of 4 in 0..124 [SAVEBLOCK_MOVE_RANGE, src/load_save.c:75]. The engine holds the RAM
     script by a POINTER INTO THAT BLOCK, so after a battle it resumes at an address the script no
-    longer occupies - `releaseall` + `end` written after dowildbattle are simply not there. mev11's
-    stray second battle, mev15/mev16 walking away clean and mev18 freezing the overworld dead are
+    longer occupies: `releaseall` + `end` written after dowildbattle are simply not there. A stray
+    second battle, a clean walk away and a dead overworld are
     all the same mechanism landing in different places.
 
     So no builder may leave `dowildbattle` in the body: the battle is started from
@@ -291,7 +290,7 @@ def test_the_opcode_sweep_runs_all_three_and_the_order_is_the_experiment():
 def test_the_sweep_berry_validates_and_keeps_the_cartridge_own_description_pointers():
     """IsEnigmaBerryValid needs stageDuration and maxYield nonzero [decomp:src/berry.c:984]; the
     checksum is recomputed by SetEnigmaBerry, so we do not have to produce one. The two ROM pointers
-    are NOT invented - bs59 read them out of gSaveBlock1Ptr->enigmaBerry. They live in the save for
+    are not invented: they are read out of gSaveBlock1Ptr->enigmaBerry. They live in the save for
     ever and the Berry Pouch dereferences them to print the description."""
     from pokeldn.frlg.gift import wonder_card_events as w
     berry = w.build_sweep_berry()
@@ -499,7 +498,7 @@ def test_the_bytes_the_console_will_actually_be_sent_search_for_what_the_card_sa
     """THE WHOLE CHAIN, from the card down to the CPU, and starting from the bytes that go on the
     air rather than from what we meant to build. The Mystery Event VM is run [mystery_event.run],
     its `initramscript` payload is the field script the console would store, the `setptr` run in it
-    is read back into the bytes it stages, and THOSE are what unicorn executes. bs56's family of
+    is read back into the bytes it stages, and those are what unicorn executes. That family of
     bug - a path that only the live host takes - has no room left here."""
     from pokeldn.frlg.gift import wonder_card_events as w
     from pokeldn.frlg.rom import mystery_event
@@ -567,7 +566,7 @@ def test_the_body_carries_several_times_what_staging_ever_could():
     tail = rng_script.battle_and_exit(129, 5, 0)   # setwildbattle + setvar + goto
     assert len(tail) == 16
     room = native_script.body_capacity(len(tail))
-    assert room["staged_equivalent"] == 162              # what mev19's card could hold
+    assert room["staged_equivalent"] == 162              # what the control card could hold
     assert room["payload"] == 755
     assert room["payload"] > 4 * room["staged_equivalent"]
     assert room["prefix"] + room["payload"] == native_script.MAX_RAM_SCRIPT_SIZE
@@ -598,7 +597,7 @@ def _far(state, criteria, *, sb1_base=0x02025734, magic=native_script.RAM_SCRIPT
 @needs_unicorn
 def test_the_whole_script_finds_the_mon_it_was_asked_for_from_the_body():
     """Not the stub on its own: the 36 `setptr`s, the `callnative`, the trampoline reading
-    gSaveBlock1Ptr and branching back into the body, and the search. bs56 was lost to exercising
+    gSaveBlock1Ptr and branching back into the body, and the search. A run can be lost to exercising
     everything except the one path the hardware takes."""
     criteria = native_script.MonCriteria(natures=(13,), iv_minimums=(0, 0, 0, 20, 0, 0))
     for state in (0x12345678, 0x7041F74F, 1, 0xFFFFFFFF):
@@ -632,8 +631,8 @@ def test_a_wrong_save_block_offset_bails_instead_of_executing_anything():
 @needs_unicorn
 def test_it_follows_the_save_block_wherever_this_load_put_it():
     """`offset = Random() & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3)` [decomp:src/load_save.c:75] is a
-    multiple of 4 in 0..124, re-rolled at every battle and load; bs45 and bs46 measured 76 bytes
-    of movement between two runs minutes apart. The trampoline reads the pointer at run time, so
+    multiple of 4 in 0..124, re-rolled at every battle and load; measured moving 76 bytes
+    of movement between two reads minutes apart. The trampoline reads the pointer at run time, so
     the offset is not a thing the card has to know."""
     criteria = native_script.MonCriteria(natures=(13,))
     answers = {_far(0x12345678, criteria, sb1_base=0x02025734 + offset)["rng"]
@@ -642,10 +641,10 @@ def test_it_follows_the_save_block_wherever_this_load_put_it():
 
 
 # --- the stray draw, and the search that holds against it ----------------------------------------
-# mev20 read this off the console. It is the evidence for asm/field/mon-seek-both.s and it is a
+# A run read this off the console. It is the evidence for asm/field/mon-seek-both.s and it is a
 # fixture so that a change to the draw model has to answer for it.
 
-MEV20_PID = 0xCCCFF615                      # bs63, party slot 5, caught after mev20
+MEV20_PID = 0xCCCFF615                      # party slot 5, caught after the hunt
 MEV20_IVS = (25, 7, 14, 10, 10, 30)         # hp atk def spe spa spd, off the Misc substructure
 MEV20_STATE = 0x429D2189                    # the unique state whose draws 1,2 are that PID
 
@@ -661,8 +660,8 @@ def test_mev20_needed_one_extra_draw_between_the_personality_and_the_ivs():
     shiny Jolly MAGIKARP with SPEED 10. The state is not in doubt - exactly one state in 2**32 has
     that PID on its next two draws - and from it the criteria are satisfied at draws 3,4 and the
     mon that appeared came from draws 4,5. So the search was right and one Random() ran in
-    between. docs/frlg_rng.md already had this for wild encounters (bs51, Method 2); mev20 is the first
-    time it has been seen on a SCRIPTED one, where bs53 and mev19 were both clean."""
+    between. docs/frlg_rng.md already had this for wild encounters (Method 2); this is the first time
+    it has been seen on a scripted one, where earlier runs were clean."""
     assert lcg.nature_of(MEV20_PID) == 13                       # Jolly
     draws, _ = lcg.draws(MEV20_STATE, 5)
     assert (draws[0], draws[1]) == (MEV20_PID & 0xFFFF, MEV20_PID >> 16), "low half first"
@@ -693,8 +692,8 @@ def test_two_words_cover_all_three_methods_docs_rng_records():
         body, rng_state=0x12345678, trainer_id=CONSOLE_TID, secret_id=CONSOLE_SID)
     d, _ = lcg.draws(result["rng"], 5)
     methods = {"1 (clean)": _ivs_from(d[2], d[3]),
-               "2 (mev20)": _ivs_from(d[3], d[4]),
-               "4 (bs52/bs54)": _ivs_from(d[2], d[4])}
+               "2": _ivs_from(d[3], d[4]),
+               "4": _ivs_from(d[2], d[4])}
     mon = rng_countdown._mon_from(result["rng"], CONSOLE_TID, CONSOLE_SID)
     assert mon["shiny"] and mon["nature"] == 13
     for name, ivs in methods.items():
@@ -741,7 +740,7 @@ def test_the_second_placement_squares_the_iv_term_and_nothing_else():
 # --- the hunt that reports what it did -----------------------------------------------------------
 
 def test_the_log_region_is_the_decomps_unused_block():
-    """bs65 read all 400 bytes of it off the console as zero before anything was written there, so
+    """A run read all 400 bytes of it off the console as zero before anything was written there, so
     the decomp's `unused_348C` is true of the build this Switch runs and not only of the source."""
     assert native_script.HUNT_LOG_OFFSET == 0x348C
     assert (native_script.HUNT_LOG_OFFSET + 400
@@ -792,12 +791,12 @@ def test_an_exhausted_search_still_says_what_it_spent():
     assert result["rng"] == 0x12345678, "a miss must leave gRngValue exactly as it was"
 
 
-# --- mev22: the log closed the loop, and Method 4 fired ------------------------------------------
+# --- the log closed the loop, and Method 4 fired ------------------------------------------
 
-MEV22_FOUND = 0x4FB97B07                    # bs66, written into the save by the stub itself
+MEV22_FOUND = 0x4FB97B07                    # written into the save by the stub itself
 MEV22_ITERATIONS = 603745                   # counted by the console
 MEV22_START = 0x91D7F204
-MEV22_PID = 0x590263DF                      # bs67, party slot 3
+MEV22_PID = 0x590263DF                      # party slot 3
 MEV22_IVS = (25, 10, 30, 21, 3, 1)
 
 
@@ -809,7 +808,7 @@ def test_the_consoles_own_counter_agrees_with_the_lcg_from_the_other_end():
 
 
 def test_the_logged_state_predicts_the_caught_mon_with_no_recovery_at_all():
-    """Every earlier run brute-forced 2**16 candidates out of the PID and bs64 got two of them.
+    """Every earlier run brute-forced 2**16 candidates out of the PID, and one came back with two.
     Here the state was read out of the save and the PID follows from it."""
     draws, _ = lcg.draws(MEV22_FOUND, 5)
     assert (draws[1] << 16) | draws[0] == MEV22_PID
@@ -819,7 +818,7 @@ def test_the_logged_state_predicts_the_caught_mon_with_no_recovery_at_all():
 def test_mev22_fired_method_4_and_the_two_placement_search_still_held():
     """Method 4 puts the first IV triple on d3 and the second on d5 - a word mon-seek-both never
     builds. It passes as a CONSEQUENCE of the floors holding on d3 and d4 and on d4 and d5, and
-    mev22 is that consequence happening on hardware."""
+    this is that consequence on hardware."""
     criteria = native_script.MonCriteria(natures=(13,), iv_minimums=(0, 0, 0, 20, 0, 0))
     draws, _ = lcg.draws(MEV22_FOUND, 5)
     placements = {"1": _ivs_from(draws[2], draws[3]),

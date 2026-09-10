@@ -6,22 +6,20 @@ nav_order: 2
 
 # Raspberry Pi 4 Mystery Gift host
 
-This project can host Mystery Gift on a 64-bit Raspberry Pi 4 using the
-TP-Link Archer T3U / AC1300 USB adapter (`2357:012d`, `rtw88_8822bu`).  The
-repository includes the patched LDN implementation in `vendor/LDN`, so a Pi
-does not need a second LDN checkout and must not install the unpatched PyPI
-package instead.
+A 64-bit Raspberry Pi 4 with the TP-Link Archer T3U / AC1300 USB adapter
+(`2357:012d`, `rtw88_8822bu`) hosts Mystery Gift. The patched LDN
+implementation is in `vendor/LDN`; the unpatched PyPI package must not be
+installed on the Pi.
 
-The normal deployment transfers committed Git objects through your SSH alias
-to a bare Git repository on the Pi. It does not use GitHub, `rsync`, or a copy
-of the desktop working tree. Consequently it also does not transfer ignored
-reference repositories, `.venv`, captures, Pokemon files, or Switch keys.
+Deployment transfers committed Git objects through an SSH alias to a bare Git
+repository on the Pi. It does not use GitHub or `rsync`, and it transfers no
+ignored files: reference repositories, `.venv`, captures, Pokemon files,
+Switch keys.
 
 ## First deployment
 
-On the desktop, choose the existing SSH alias/tunnel and the Pi login user.
-The paths below are defaults used by the deployment helper; change them with
-`--path` and `--repo` if your Pi uses a different layout.
+On the desktop, with the SSH alias and the Pi login user (`--path` and
+`--repo` change the default layout):
 
 ```bash
 cd /path/to/pokeldn
@@ -32,14 +30,12 @@ git commit -m "Prepare Raspberry Pi deployment"
 ```
 
 `deploy_pi.sh` refuses a dirty desktop checkout, runs the configuration and
-documentation tests, creates `/home/PI_USER/repos/pokeldn.git` on the
-Pi if needed, pushes the current commit to its `deploy` branch, and creates or
-fast-forwards `/home/PI_USER/pokeldn`. It never force-resets a Pi
-checkout. A Pi checkout with its own uncommitted files is rejected rather than
-overwritten.
+documentation tests, creates `/home/PI_USER/repos/pokeldn.git` on the Pi if
+needed, pushes the current commit to its `deploy` branch, and creates or
+fast-forwards `/home/PI_USER/pokeldn`. It never force-resets a Pi checkout;
+a Pi checkout with uncommitted files is rejected.
 
-If the SSH alias already specifies the remote user, explicitly provide the
-paths instead:
+If the SSH alias already specifies the remote user, provide the paths:
 
 ```bash
 ./scripts/deploy_pi.sh --host pi-ldn \
@@ -56,20 +52,18 @@ cd ~/pokeldn
 ```
 
 The setup script requires 64-bit Raspberry Pi OS (`aarch64`) and Python 3.11
-or newer (Bookworm supplies Python 3.11; current Trixie supplies Python 3.13). It installs the Python virtual environment from `requirements.txt`,
-which uses `vendor/LDN`, installs the required system tools, and tells
-NetworkManager to leave `ldnclient`, `ldn`, `ldn-mon`, and `ldn-tap` alone.
-Use `--no-apt` only after system dependencies are already installed. Use
-`--no-networkmanager` only when another network manager is deliberately
-responsible for those interfaces.
+or newer (Bookworm supplies 3.11; Trixie supplies 3.13). It installs the
+virtual environment from `requirements.txt` (which uses `vendor/LDN`),
+installs the system tools, and tells NetworkManager to leave `ldnclient`,
+`ldn`, `ldn-mon`, and `ldn-tap` alone. `--no-apt` skips the system
+dependencies; `--no-networkmanager` skips the exclusion.
 
 Keep SSH on Ethernet or the Pi's built-in Wi-Fi. Hosting takes exclusive
 control of the TP-Link adapter.
 
 ## Machine-local configuration and Switch keys
 
-`config/host.toml` is tracked and already defaults to the proven TP-Link live
-profile:
+`config/host.toml` is tracked and defaults to the TP-Link live profile:
 
 ```toml
 [host]
@@ -81,17 +75,17 @@ accept_decrypted_ccmp = true
 phy = "auto"
 ```
 
-Create the ignored `config/host.local.toml` on the Pi only when a setting must
-vary by machine. Use an absolute key path because the host runs under `sudo`:
+The ignored `config/host.local.toml` holds settings that vary by machine. The
+key path must be absolute; the host runs under `sudo`:
 
 ```toml
 [ldn]
 keys_path = "/home/PI_USER/.switch/prod.keys"
 ```
 
-Install your own `prod.keys` separately. It is never copied by deployment;
-the safe installer and SSH streaming example are in [Switch key setup](hardware_switch_keys.md).
-For a key file already accessible on the Pi:
+`prod.keys` is never copied by deployment; the installer and the SSH
+streaming example are in [Switch key setup](hardware_switch_keys.md). For a
+key file already on the Pi:
 
 ```bash
 ./scripts/install_switch_keys.sh --source /absolute/path/to/prod.keys
@@ -111,48 +105,43 @@ Preflight is read-only. It verifies Python and the vendored LDN package,
 loads `config/host.toml` plus optional `config/host.local.toml`, verifies the
 TP-Link USB ID and `rtw88_8822bu` driver, checks AP and monitor support, checks
 the NetworkManager exclusion, and verifies that the configured key file is
-mode `0600`. It also rejects an effective TP-Link invocation that disables
-either `skip_encryption` or `accept_decrypted_ccmp`; arguments passed through
-`run_mystery_gift.sh` are included in that check. The script supplies Debian's
-standard `sbin` command paths itself, so it behaves the same in an interactive
-shell and through a one-line SSH command.
+mode `0600`. It rejects an effective TP-Link invocation that disables either
+`skip_encryption` or `accept_decrypted_ccmp`, including arguments passed
+through `run_mystery_gift.sh`. It supplies Debian's `sbin` paths itself, so it
+behaves the same in an interactive shell and through a one-line SSH command.
 
-The normal run command has no Wi-Fi flags because those safe, tested defaults
-come from TOML. `run_mystery_gift.sh` runs preflight once, then supervises
-short-lived root host processes. Each process gets a newly generated random
-TID/SID, and the wrapper restarts it after a successful delivery, an
-unsuccessful attempt, or five minutes without a Switch join or Pia/RFU traffic.
-Use Ctrl-C once to stop the supervisor. For a temporary diagnostic override,
-pass a normal host option after the script name, for example `--verbose`.
+`run_mystery_gift.sh` runs preflight once, then supervises short-lived root
+host processes. Each process gets a random TID/SID, and the wrapper restarts
+it after a successful delivery, an unsuccessful attempt, or five minutes
+without a Switch join or Pia/RFU traffic. Ctrl-C once stops the supervisor.
+A host option after the script name is passed through.
 
-`bin/frlg_mg_host.py` also exposes the lifecycle controls used by the wrapper:
-`--end-on-success` ends after the safe post-delivery close sequence, and
-`--idle-timeout SECONDS` ends after a specified period without meaningful
-Switch traffic. They are useful for direct, supervised integrations; the shell
-wrapper always uses `--end-on-success --idle-timeout 300` and owns `--id` so a
-saved `--id` cannot accidentally reuse an old identity.
+`bin/frlg_mg_host.py` lifecycle controls: `--end-on-success` ends after the
+post-delivery close sequence; `--idle-timeout SECONDS` ends after that period
+without Switch traffic. The wrapper always uses `--end-on-success
+--idle-timeout 300` and owns `--id`, so a saved `--id` cannot reuse an old
+identity.
 
-Each joined attempt is also appended to the ignored daily CSV ledger under
-`logs/`, named `mystery-gift-attempts-YYYY-MM-DD.csv`. The columns are
-`attempt`, `received_result`, `time`, `trainer_name`, and `trainer_ot`.
-`received_result` is `true` only when the host sent a Wonder Card or Stamp;
-the trainer name and five-digit trainer ID come from the Switch's LinkPlayer
-block. An attempt that fails before that block arrives is retained with blank
-identity fields. For direct `bin/frlg_mg_host.py` usage, enable the same ledger with
-`--attempt-log-dir logs`.
+Each joined attempt is appended to the ignored daily CSV ledger
+`logs/mystery-gift-attempts-YYYY-MM-DD.csv`. Columns: `attempt`,
+`received_result`, `time`, `trainer_name`, `trainer_ot`. `received_result` is
+`true` only when the host sent a Wonder Card or Stamp; the trainer name and
+five-digit trainer ID come from the Switch's LinkPlayer block. An attempt that
+fails before that block arrives is retained with blank identity fields. For
+direct `bin/frlg_mg_host.py` usage, `--attempt-log-dir logs` enables the same
+ledger.
 
-Every `bin/frlg_mg_host.py` option is forwarded by the wrapper. View the
-authoritative list without running preflight or using root:
+Every `bin/frlg_mg_host.py` option is forwarded by the wrapper. The list,
+without preflight or root:
 
 ```bash
 ./scripts/run_mystery_gift.sh --help
 ./scripts/run_mystery_gift.sh --print-effective-config
 ```
 
-The normal event controls are `--gift`, `--flag-id`, `--verbose`, `--capture`,
-`--ot`, `--version`, and `--id`. `--client-ready-idle-frames N` is a Mystery
-Gift timing diagnostic for hardware tests; leave it unset for normal use. For
-example:
+Event controls: `--gift`, `--flag-id`, `--verbose`, `--capture`, `--ot`,
+`--version`, `--id`. `--client-ready-idle-frames N` is a timing diagnostic for
+hardware tests; leave it unset otherwise.
 
 ```bash
 ./scripts/run_mystery_gift.sh --gift celebi --verbose
@@ -160,9 +149,8 @@ example:
   --client-ready-idle-frames 45 --capture /tmp/solrock-45.jsonl
 ```
 
-To keep an annotated byte listing for a run, add `--make-artifact`. It is off
-by default, writes a deterministic `.ram.lst` file under `artifacts/`, and can
-be redirected with `--artifact-dir DIR`:
+`--make-artifact` writes a deterministic `.ram.lst` listing under
+`artifacts/` (`--artifact-dir DIR` redirects it):
 
 ```bash
 ./scripts/run_mystery_gift.sh --gift worlds-xp --make-artifact
@@ -170,16 +158,16 @@ be redirected with `--artifact-dir DIR`:
   --artifact-dir /home/chase/mystery-gift-artifacts
 ```
 
-The listing records the exact compiled RAM script bytes, decoded instructions,
-checksums, branch/message destinations, and its source delivery-stage summary.
-Pass `--no-make-artifact` to explicitly disable generation in a saved command.
+The listing records the compiled RAM script bytes, decoded instructions,
+checksums, branch/message destinations, and the delivery-stage summary.
+`--no-make-artifact` disables it in a saved command.
 
 Leave `--phy`, `--adapter`, `--skip-encryption`, and
 `--accept-decrypted-ccmp` at their tracked TP-Link defaults unless diagnosing
 different hardware.
 
-For the previously tested Gen5 / ALFA `mt76x0u` adapter, select its current
-PHY explicitly and disable only the TP-Link-specific receive normalization:
+For the ALFA `mt76x0u` adapter, select its current PHY and disable the
+TP-Link receive normalization:
 
 ```bash
 ./scripts/run_mystery_gift.sh --gift worlds-xp --phy phy1 \
@@ -187,19 +175,17 @@ PHY explicitly and disable only the TP-Link-specific receive normalization:
 ```
 
 An explicit `--phy` bypasses the named TP-Link selector. Preflight then checks
-that selected PHY's AP and monitor modes and verifies the known `mt76x0u` CCMP
-profile. Use `iw dev` after reconnecting the adapter to find its current PHY;
-the number can change after a replug.
+that PHY's AP and monitor modes and verifies the `mt76x0u` CCMP profile. `iw
+dev` gives the current PHY; the number changes after a replug.
 
 ### MT7601U adapter with the custom AP driver
 
-The separate MT7601U adapter uses the stock `mt7601u` driver by default. That
-driver has monitor mode but does **not** advertise AP mode, so it cannot host
-LDN until the project-pinned `mt7601u-ap` DKMS module is installed. The source
-is tracked under `vendor/mt7601u-ap-1.0`; it is built on the Pi for the
-currently running ARM64 kernel. Do not copy a desktop-built `.ko` file.
+The stock `mt7601u` driver has monitor mode and no AP mode. Hosting needs the
+project-pinned `mt7601u-ap` DKMS module, source under `vendor/mt7601u-ap-1.0`,
+built on the Pi for the running ARM64 kernel. Do not copy a desktop-built
+`.ko`.
 
-After deploying a clean commit, install it explicitly either from the desktop:
+Install it from the desktop:
 
 ```bash
 ./scripts/deploy_pi.sh --host pi-ldn --user PI_USER --install-mt7601u-ap
@@ -212,12 +198,11 @@ cd ~/pokeldn
 ./scripts/setup_pi.sh --install-mt7601u-ap --no-networkmanager
 ```
 
-This uses Raspberry Pi OS's APT packages `dkms` and `linux-headers-rpi-v8`,
-then registers a DKMS module for every installed kernel that has matching
-headers. This matters because APT can install a newer kernel before the Pi is
-rebooted. If the running kernel lacks matching headers, the installer stops
-instead of compiling against the wrong ABI. Unplug/reconnect the MT7601U
-adapter (or reboot), use `iw dev` to find its new PHY number, then run:
+This installs the APT packages `dkms` and `linux-headers-rpi-v8`, then
+registers a DKMS module for every installed kernel with matching headers (APT
+can install a newer kernel before the Pi reboots). If the running kernel lacks
+matching headers, the installer stops. Replug the MT7601U adapter (or reboot),
+read its new PHY number from `iw dev`, then:
 
 ```bash
 ./scripts/run_mystery_gift.sh --gift worlds-xp --phy phyN \
@@ -225,7 +210,7 @@ adapter (or reboot), use `iw dev` to find its new PHY number, then run:
 ```
 
 Preflight confirms that the selected `mt7601u` module comes from
-`updates/dkms` and now exposes both AP and monitor mode.
+`updates/dkms` and exposes both AP and monitor mode.
 
 ## Later desktop changes
 
@@ -237,15 +222,14 @@ git commit -m "Describe the change"
 ./scripts/deploy_pi.sh --host pi-ldn --user PI_USER
 ```
 
-The helper fast-forwards code only. If dependency files or `vendor/LDN` change,
-the Pi refreshes its virtual environment automatically. To update manually on
-the Pi after a successful push, run:
+The helper fast-forwards code only. If dependency files or `vendor/LDN`
+change, the Pi refreshes its virtual environment. To update manually on the
+Pi after a push:
 
 ```bash
 cd ~/pokeldn
 ./scripts/update_pi.sh
 ```
 
-Do not edit tracked source files directly on the Pi. Make and test changes on
-the desktop, commit them, and deploy. Keep `config/host.local.toml`, Switch
-keys, and diagnostic captures Pi-local and ignored.
+Do not edit tracked source files on the Pi. Keep `config/host.local.toml`,
+Switch keys, and diagnostic captures Pi-local and ignored.

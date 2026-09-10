@@ -3,16 +3,16 @@
 
     ./.venv/bin/python tools/frlg/cartridge_pair.py
     ./.venv/bin/python tools/frlg/cartridge_pair.py --names        # the LeafGreen twin of what we name
-    ./.venv/bin/python tools/frlg/cartridge_pair.py --pair bs121 lg192
+    ./.venv/bin/python tools/frlg/cartridge_pair.py --pair FIRERED_TAG LEAFGREEN_TAG
 
-THE MEASUREMENT lg169 made without naming it: a POINTER dumped off both consoles is a delta point at
+A pointer dumped off both consoles is a delta point at
 wherever it points, and one window holds hundreds of them. Sessions 40 and 41 read the literal pools
 that way - 27 paired words moved both ends of the -0x1C4 segment, 13 more found the -0x20 segment
 nobody had seen. What this adds is the OTHER pointer in every window, and there are more of them:
 a `bl` is a relative call, so the same instruction on the two cartridges resolves to two addresses
 whose difference is the delta AT THE TARGET. 16 KB of handlers is 834 of those.
 
-WHY IT COSTS NOTHING. The dumps are already on disk. bs120/lg191 and bs121/lg192 were each spent to
+It costs nothing: the dumps are already on disk. The paired 16 KB dumps were each spent to
 pair one pool; they hold 1592 paired call sites between them, and every one is a delta point at a
 place no needle was ever aimed at.
 

@@ -2,10 +2,10 @@
 
 Everything this needs was settled on hardware and none of it rests on a clock:
 
-- `gRngValue` can be READ in the overworld (mev08, `gSpecialVar_0x8000` = 0x020370B4 [bs57]).
-- The state advances **exactly 2 turns per frame** (mev09 1202/600, mev10 6002/3000, both `2N+2`).
+- `gRngValue` can be read in the overworld (`gSpecialVar_0x8000` = 0x020370B4).
+- The state advances exactly 2 turns per frame (1202/600 and 6002/3000, both `2N+2`).
 - The offset between the reading and the generation is **zero**, and the mon is the next four
-  draws (mev11/bs58: PID, nature, shininess and all six IVs predicted from a state the console
+  draws (PID, nature, shininess and all six IVs predicted from a state the console
   chose for itself).
 
 So the states a press can land on are `advance(S, 2k)` for whole frames k, and the mon each one
@@ -20,11 +20,11 @@ from pokeldn.frlg.rom import lcg
 
 SHINY_ODDS = 8
 FPS = 59.7275                   # for turning frames into a spoken countdown, and nothing else
-TURNS_PER_FRAME = 2             # MEASURED, mev09 and mev10; not assumed
+TURNS_PER_FRAME = 2             # MEASURED; not assumed
 
 # In the game's own order, so that index == the value `personality % NUM_NATURES` produces
 # [decomp:include/constants/pokemon.h, NATURE_HARDY..NATURE_QUIRKY]. ONE list: native_script's
-# criteria parse against this one rather than carrying a second copy (the bs56 family of bug).
+# criteria parse against this one rather than carrying a second copy.
 NATURE_NAMES = ("Hardy Lonely Brave Adamant Naughty Bold Docile Relaxed Impish Lax Timid Hasty "
                 "Serious Jolly Naive Modest Mild Quiet Bashful Rash Calm Gentle Sassy Careful "
                 "Quirky").split()
@@ -34,7 +34,7 @@ NUM_NATURES = len(NATURE_NAMES)         # 25 [decomp:include/constants/pokemon.h
 def _mon_from(state, tid, sid):
     """-> the mon `setwildbattle` would build from `state`: the next four draws, in order."""
     (d1, d2, d3, d4), _end = lcg.draws(state, 4)
-    personality = d1 | (d2 << 16)               # low half first, at this call site [bs58]
+    personality = d1 | (d2 << 16)               # low half first, at this call site
     ivs = (d3 & 31, (d3 >> 5) & 31, (d3 >> 10) & 31,
            d4 & 31, (d4 >> 5) & 31, (d4 >> 10) & 31)
     shiny_value = tid ^ sid ^ (personality >> 16) ^ (personality & 0xFFFF)

@@ -11,9 +11,8 @@ Linux LDN network, Pia establishes the peer session, and Reliable carries an emu
 whose game-level endpoint is the leader-side trade state machine. `bin/frlg_mg_host.py` reuses
 everything below the activity.
 
-The live-tested protocol bytes, message order, retry cadence, VBlank timing and disconnect grace
-period live in the layer that owns them. The seams below are architectural boundaries, not extra
-buffering or protocol translation.
+Protocol bytes, message order, retry cadence, VBlank timing and the disconnect grace period live in
+the layer that owns them.
 
 ## Components and ownership
 
@@ -31,23 +30,22 @@ flowchart TD
     TRADE --> PK3[party .pk3/.ek3<br/>and received output]
 ```
 
-- `TradeRunConfig` is immutable shared run configuration. It composes `TrainerProfile`, `TradePlan`,
-  `LdnConfig`, and role-specific `HostOptions` or `JoinerOptions` rather than mixing unrelated
-  settings in an argument namespace.
-- `HostApplication` owns resource ordering: input validation, transport startup, beacon injection, the
-  event loop, interruption handling and cleanup. Narrow activity hooks supply startup, progress and
+- `TradeRunConfig` is immutable shared run configuration: `TrainerProfile`, `TradePlan`, `LdnConfig`,
+  and role-specific `HostOptions` or `JoinerOptions`.
+- `HostApplication` owns resource ordering: input validation, transport startup, beacon injection,
+  the event loop, interruption handling and cleanup. Activity hooks supply startup, progress and
   close messages and role-specific persistence; the trade and Mystery Gift hosts share the loop.
 - `HostTransport` owns the LDN AP/network, virtual interfaces, participant events and UDP sockets. It
   neither parses Pia nor advances the game state machine.
 - `HostPeerProtocol` owns one Switch peer's Pia state: Net negotiation and property updates, Session
   acceptance, RTT, packet ids, native/random nonce selection, encryption and framing, and Reliable
   message batching. It emits transport-independent `OutboundDatagram` values.
-- `HostSession` composes Reliable, `RFULeader` and the activity engine. This is the boundary the
-  offline end-to-end tests use; it has no socket or LDN dependency. It takes an `engine=` keyword, so
-  the LDN/Pia/Reliable/RFU stack is shared verbatim between the trade and Mystery Gift hosts.
+- `HostSession` composes Reliable, `RFULeader` and the activity engine. It has no socket or LDN
+  dependency; the offline end-to-end tests use this boundary. Its `engine=` keyword selects the
+  trade or Mystery Gift activity over the same stack.
 - `HostTradeEngine` owns the leader-side room entry, party and card exchange, selection and
   confirmation, animation and save barriers, menu cancellation, room exit, and the close grace period.
-  `HostTradeTiming` names the live-proven frame counts.
+  `HostTradeTiming` names the frame counts.
 - `BeaconInjector` owns its raw monitor-interface socket and worker thread. `HostApplication` starts
   and stops it with the rest of the runtime resources.
 
@@ -167,47 +165,43 @@ flowchart TD
 
 TID and SID are combined as `SID << 16 | TID` for game records. Discovery exposes the public TID; the
 Pia participant uses the readable name; LinkPlayer and trainer-card data use the Gen III encoding.
-Host LinkPlayer and card names use `0xFF` padding — a live-tested serialization rule rather than
-profile configuration. Joiners retain native `0x00` padding.
+Host LinkPlayer and card names use `0xFF` padding. Joiners retain native `0x00` padding.
 
 ## Failure handling
 
 - Host preflight rejects radios without AP support before LDN creation and identifies the selected PHY
   and driver capability.
-- The two hardware-proven hosting profiles are ALFA AWUS036ACHM / `mt76x0u` with
+- The two proven hosting profiles are ALFA AWUS036ACHM / `mt76x0u` with
   `--skip-encryption --no-accept-decrypted-ccmp`, and TP-Link Archer T3U USB `2357:012d` /
-  `rtw88_8822bu` with `--skip-encryption --accept-decrypted-ccmp`. Startup identifies either known
-  driver and warns if its compatibility flags do not match the proven profile.
+  `rtw88_8822bu` with `--skip-encryption --accept-decrypted-ccmp`. Startup identifies either driver
+  and warns if the flags do not match its profile.
 - Transport startup and beacon-thread failures abort the run and unwind already-created resources.
 - Authentication, decryption and malformed-message failures do not enter the RFU/trade stack.
-- **After LDN authentication succeeds, the AP must mark the station `NL80211_STA_FLAG_AUTHORIZED`.**
-  The AP starts with userspace control-port handling, so omitting this kernel-side transition made the
-  Realtek station disappear about three seconds after joining, even while monitor-injected traffic was
-  still flowing.
-- `--accept-decrypted-ccmp` is an opt-in receive compatibility path for monitor drivers that retain
-  CCMP metadata around hardware-decrypted plaintext; it trusts the driver's completed decryption and
-  removes the retained MIC before TAP delivery. Radiotap-advertised trailing FCS bytes are removed
-  independently for every driver.
+- After LDN authentication succeeds, the AP must mark the station `NL80211_STA_FLAG_AUTHORIZED`.
+  The AP starts with userspace control-port handling; without the transition the Realtek station
+  disappears about three seconds after joining while monitor-injected traffic still flows.
+- `--accept-decrypted-ccmp` is a receive path for monitor drivers that retain CCMP metadata around
+  hardware-decrypted plaintext; it removes the retained MIC before TAP delivery. Radiotap-advertised
+  trailing FCS bytes are removed for every driver.
 - Net and Session establishment retry at their proven cadence until acknowledged; RTT samples feed
   Reliable timing once the Session is finalized.
-- An unexpected participant leave halts protocol output. After the normal room-close confirmation the
-  host retains the fifteen-second grace period even if the participant disappears, because the Switch
-  may still be completing its fade, warp and bridge teardown.
+- An unexpected participant leave halts protocol output. After the normal room-close confirmation
+  the host keeps the fifteen-second grace period even if the participant disappears; the Switch may
+  still be completing its fade, warp and bridge teardown.
 - Output is written only when a complete received Pokemon exists. Input `.pk3` and `.ek3` files are
-  never treated as disposable runtime artifacts.
+  never modified.
 
 ## Extending the host
 
-Add protocol behaviour at the lowest layer that understands it. Shared settings belong in the immutable
-run configuration; OS and network behaviour belongs in the application or transport; Pia messages
-belong in `HostPeerProtocol`; RFU behaviour belongs in `RFULeader`; Direct Corner decisions belong in
-`HostTradeEngine`. Keep encoders pure where possible and test each boundary using emitted datagrams,
-Reliable payloads, RFU frames or command rows. Do not duplicate trainer fields — derive new identity
+Add protocol behaviour at the lowest layer that understands it. Shared settings belong in the run
+configuration; OS and network behaviour in the application or transport; Pia messages in
+`HostPeerProtocol`; RFU behaviour in `RFULeader`; Direct Corner decisions in `HostTradeEngine`. Test
+each boundary on emitted datagrams, Reliable payloads, RFU frames or command rows. Derive identity
 representations from `TrainerProfile`.
 
-The current implementation supports one joining Switch. Supporting more peers would require an explicit
-`HostPeerProtocol` per participant, independent Pia variables, nonces and packet ids, and a game-level
-RFU policy; raising the LDN participant limit alone is insufficient.
+The implementation supports one joining Switch. More peers need a `HostPeerProtocol` per
+participant, independent Pia variables, nonces and packet ids, and a game-level RFU policy; raising
+the LDN participant limit alone is insufficient.
 
 ## Source map
 
@@ -222,7 +216,7 @@ RFU policy; raising the LDN participant limit alone is insufficient.
 | `pokeldn/host_support.py` | OS-facing support such as sudo-aware key-path resolution |
 | `pokeldn/ldn/transport.py` | LDN host lifecycle, interfaces, participant events, UDP data plane |
 | `pokeldn/ldn/host_pia.py` | Pia framing and `HostPeerProtocol` |
-| `pokeldn/frlg/link/host_session.py` | Reliable → RFU leader → activity composition |
+| `pokeldn/frlg/link/host_session.py` | Reliable -> RFU leader -> activity composition |
 | `pokeldn/ldn/reliable.py` | ordered, retransmitted application channel |
 | `pokeldn/gba/rfu_leader.py` | parent RFU framing, NI/UNI handshake, echo table |
 | `pokeldn/frlg/link/host_trade.py` | leader trade-room state machine and timing |

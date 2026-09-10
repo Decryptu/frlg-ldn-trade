@@ -229,7 +229,7 @@ def test_the_session_key_of_the_captured_bdsp_session():
 
 
 def test_the_whole_chain_reproduces_the_iv_of_a_captured_packet():
-    """seed -> key -> session key, and network id + MAC -> CRC -> IV, as sp4 authenticates."""
+    """seed -> key -> session key, and network id + MAC -> CRC -> IV, as a run authenticates."""
     from pokeldn.ldn.pia5 import gcm_iv, ldn_game_key, ldn_nonce_crc
     key = ldn_game_key(BDSP_SEED, 199)
     crc = ldn_nonce_crc(SP4_NETID_LE, SP4_MAC)
@@ -242,7 +242,7 @@ def test_a_captured_packet_actually_decrypts_and_authenticates():
     """The GCM tag is the oracle: a wrong key, session key, IV or layout cannot pass this."""
     from Crypto.Cipher import AES
     from pokeldn.ldn.pia5 import gcm_iv, ldn_nonce_crc, ldn_session_key
-    nonce8 = bytes.fromhex("f5a83bd383ce712d")          # the first sp4 packet's header nonce
+    nonce8 = bytes.fromhex("f5a83bd383ce712d")          # the first captured packet's header nonce
     sk = ldn_session_key(BDSP_KEY, SP4_SESSPARAM)
     assert sk == SP4_SESSION_KEY
     iv = gcm_iv(ldn_nonce_crc(SP4_NETID_LE, SP4_MAC), 0x11BAC90D, nonce8)

@@ -2,7 +2,7 @@
 @ for, and with every IV at or above a floor we chose.
 @
 @ asm/field/shiny-seek.s is this stub's ancestor and stays exactly as it is: it is the one PROVEN
-@ ON HARDWARE (mev15, mev16, three shinies), so it remains the control. Everything in its header
+@ ON HARDWARE (three shinies), so it remains the control. Everything in its header
 @ about the mechanism holds here unchanged - staged a byte at a time by a RAM script with `setptr`
 @ (0x11) and reached with `callnative` (0x23), both of which return FALSE, so the search, the
 @ `setwildbattle` and the `dowildbattle` all happen in ONE pass of the field engine with nothing
@@ -18,7 +18,7 @@
 @ pokemon.h:232], so `fixedIV < USE_RANDOM_IVS` is FALSE and the IVs are drawn
 @ [decomp:src/pokemon.c:1836]:
 @
-@     personality = Random32()   -> draws 1 and 2, low half first at this call site (bs58)
+@     personality = Random32()   -> draws 1 and 2, low half first at this call site
 @     value = Random()           -> draw 3: HP = v & 31, ATK = (v >> 5) & 31, DEF = (v >> 10) & 31
 @     value = Random()           -> draw 4: SPE = v & 31, SPATK = (v >> 5) & 31, SPDEF = (v >> 10) & 31
 @
@@ -153,7 +153,7 @@ _start:
 
     .align 2
     .global p_rng, p_mult, p_add, p_sav2ptr, p_cap, p_nature, p_ivmin
-p_rng:  .word 0x03004220            @ gRngValue [rom_map.GRNG_VALUE, bs14/bs15]
+p_rng:  .word 0x03004220            @ gRngValue [rom_map.GRNG_VALUE]
 p_mult: .word 0x41C64E6D            @ RAND_MULT [decomp:include/random.h:18]
 p_add:  .word 0x00006073            @ RAND_ADD  [:19]
 p_sav2ptr: .word 0x0300422C         @ &gSaveBlock2Ptr [rom_map.GSAVEBLOCK2PTR]

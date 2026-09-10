@@ -17,7 +17,7 @@ live console:
   ``MGL_Send`` gates every chunk on ``MGL_HasReceived(1)`` [mystery_gift_link.c:176,205] - the
   mirror, not anything the host says. Its RFU block sender waits on the same mirror
   [HandleBlockSend / SendLastBlock / HandleSendFailure, link_rfu_2.c:1366-1416]. Modelling this is
-  what makes a lost echo visible offline; bs05 lost four fragments to it on hardware.
+  what makes a lost echo visible offline; one run lost four fragments to it on hardware.
 
 Run standalone (no pytest needed):   python tests/test_mystery_gift_flow.py
 """
@@ -464,7 +464,7 @@ class ConsoleClientModel:
 
         A SEND_BLOCK that is not the last fragment while the sender is holding is HandleSendFailure
         re-queueing a fragment missing from the console's own mirrored bitmask [link_rfu_2.c:1015,
-        1404]: proof that an echo of ours never came back. bs05 showed exactly four of these on the
+        1404]: proof that an echo of ours never came back. One run showed exactly four of these on the
         wire (fragments 13, 16, 17, 18)."""
         words = self._sender.tick(self._own_mirror())
         if self._sender.state == block.HOLD:
@@ -776,7 +776,7 @@ def _drive(console, *, max_frames=4000, card=None, ram_script=None,
     host publishes from.
 
     ``child_burst``/``burst_every`` model the console's RfuSendQueue flushing: every ``burst_every``
-    frames the next ``child_burst`` commands are held and handed over together, as bs05's console did
+    frames the next ``child_burst`` commands are held and handed over together, as a console does
     twice a second (two at ts 283831, four at ts 283833). A relay that drops on a burst loses those
     fragments for good, and the console has no way to know which.
     """
@@ -1181,7 +1181,7 @@ def test_end_to_end_a_console_holding_another_card_is_asked_to_toss_first():
 
 def test_the_host_status_line_reports_the_state_of_row_one():
     """A live run must be able to say, from its own log, whether it gave the console back everything
-    it sent - the one number that decided bs05."""
+    it sent - the one number that decided a run."""
     card, ram_script = wonder_card.build_default_gift()
     said = []
     engine = host_mystery_gift.HostMysteryGiftEngine(card, ram_script, log=said.append)

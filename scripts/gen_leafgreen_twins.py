@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-"""Regenerate pokeldn/frlg/rom/leafgreen_twins.py: LeafGreen's address for what FireRed holds, MEASURED.
+"""Regenerate pokeldn/frlg/rom/leafgreen_twins.py: LeafGreen's measured address for a FireRed one.
 
     ./.venv/bin/python scripts/gen_leafgreen_twins.py [--scratchpad scratchpad]
 
-`rom_map.leafgreen_guess` applies a segment's delta and refuses inside a boundary, which is the
-right answer when nothing better exists. Something better exists for every pointer that appears in a
-window both cartridges have been dumped at: `tools/frlg/cartridge_pair.py` reads the same instruction off
-both consoles and the two targets it resolves to are FireRed's address and LeafGreen's, each read
-off its own cartridge. No delta is applied and no segment has to be trusted.
+For a pointer inside a window both cartridges have been dumped at,
+`tools/frlg/cartridge_pair.py` reads the same instruction off both consoles; the two targets it
+resolves to are FireRed's address and LeafGreen's, each read off its own cartridge, with no delta
+applied. Elsewhere `rom_map.leafgreen_guess` applies a segment's delta and refuses inside a
+boundary.
 
-Two 16 KB pairs and one 1 KB pair are on disk (bs120/lg191, bs121/lg192, bs117/lg190) and they hold
-1863 such points. The generator keeps the ones that are consistent: an address that pairs to two
-different LeafGreen addresses across the runs is dropped rather than picked between.
+An address that pairs to two different LeafGreen addresses across runs is dropped rather than
+picked between.
 """
 import argparse
 import collections
@@ -20,10 +19,8 @@ import pathlib
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# tools/frlg, not tools/: session 44 moved the tools one directory deeper and this line kept
-# pointing at the parent, so `from rom_functions import ...` raised ModuleNotFoundError and the
-# generator could not be run at all. conftest.py hides that from the suite - the guard is
-# test_documentation's standalone check, which now covers scripts/ too.
+# tools/frlg, not tools/. conftest.py hides a wrong path from the suite; the guard is
+# test_documentation's standalone check over scripts/.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "tools", "frlg"))
 
@@ -37,14 +34,13 @@ HEADER = '''"""LeafGreen's address for a FireRed one, read off LeafGreen. Genera
 
 `scripts/gen_leafgreen_twins.py`, from the windows both cartridges have been dumped at. A `bl` is a
 relative call, so the same instruction resolves to a different address on each cartridge and the
-pair is two measurements rather than one plus a delta; a literal-pool word is the same trick for
-data. Nothing here is interpolated - an address absent from this table has not been measured, and
-`leafgreen()` falls back to `rom_map.leafgreen_guess`, which applies the segment delta and REFUSES
+pair is two measurements rather than one plus a delta; a literal-pool word is the same for data.
+Nothing here is interpolated: an address absent from this table has not been measured, and
+`leafgreen()` falls back to `rom_map.leafgreen_guess`, which applies the segment delta and refuses
 inside a boundary.
 
-THE DELTA IS A PROPERTY OF A REGION. These pairs are also what the segment map is built from: 1863
-points across three run pairs, quantised into seven deltas with no outlier, which is what says the
-windows are really each other's twin. docs/frlg_leafgreen.md.
+The segment map is built from these pairs: 1863 points quantised into seven deltas with no outlier.
+docs/frlg_leafgreen.md.
 """
 import os
 import sys
@@ -95,7 +91,7 @@ def main():
     lines = [HEADER, "TWINS = {"]
     for ours in sorted(twins):
         lines.append(f"    0x{ours:08X}: 0x{twins[ours]:08X},".ljust(40)
-                     + f"# {twins[ours] - ours:#x}, {provenance[ours]}")
+                     + f"# {twins[ours] - ours:#x}")
     lines.append("}")
     lines.append("")
     lines.append("TWIN_COUNT = len(TWINS)")

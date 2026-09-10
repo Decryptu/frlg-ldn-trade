@@ -1,13 +1,13 @@
 @ FIELD STUB: mon-seek-both, made to REPORT. It writes what it did into the save.
 @
-@ WHY. Everything mev19-mev21 learned about a hunt was reconstructed AFTER the fact from the mon
+@ A hunt reconstructed after the fact, from the mon
 @ the player caught: brute-force 2**16 candidate states out of the PID, then read which pair of
-@ draws the IVs came from. bs64 came back with TWO candidate states and only the IVs told them
+@ draws the IVs came from, leaves two candidate states and only the IVs tell them
 @ apart. And the only measurement of how long the overworld froze was the player with a stopwatch.
 @ None of that has to be inferred - the stub knows all of it while it runs.
 @
 @ WHERE IT WRITES: gSaveBlock1Ptr + 0x348C, `u8 unused_348C[400]` [decomp:include/global.h], read
-@ back as 400 zero bytes off this console at bs65 before anything was ever written there. It is IN
+@ back as 400 zero bytes off this console before anything was ever written there. It is in
 @ THE SAVE, so it survives the battle - MoveSaveBlocks_ResetHeap copies the blocks rather than
 @ abandoning them [decomp:src/load_save.c] - and it reaches flash when the player saves. It is NOT
 @ in ramScript, so it does not disturb CalculateRamScriptChecksum and the binding still survives:
@@ -25,7 +25,7 @@
 @     measured every run instead of inferred from the four we happen to have;
 @   - the exact instruction count (iterations * 15), which against the player's stopwatch is the
 @     first real measurement of CYCLES_PER_INSTRUCTION_FROM_EWRAM. docs/frlg_rom_rng.md carries 3 as an
-@     estimate from the GBA's clock and mev20/mev21 both ran high against it.
+@     estimate from the GBA's clock, and measured runs come in above it.
 @
 @ A MISS IS NOW INFORMATIVE TOO. If the cap is exhausted, `found` stays 0 and `iterations` says the
 @ whole cap was spent - so an ordinary encounter is distinguishable from a stub that never ran at
@@ -201,7 +201,7 @@ _start:
     .align 2
     .global p_rng, p_mult, p_add, p_sav2ptr, p_cap, p_nature, p_ivmin, p_padlen, p_padsum
     .global p_sb1ptr, p_logoff, p_logmagic
-p_rng:  .word 0x03004220            @ gRngValue [rom_map.GRNG_VALUE, bs14/bs15]
+p_rng:  .word 0x03004220            @ gRngValue [rom_map.GRNG_VALUE]
 p_mult: .word 0x41C64E6D            @ RAND_MULT [decomp:include/random.h:18]
 p_add:  .word 0x00006073            @ RAND_ADD  [:19]
 p_sav2ptr: .word 0x0300422C         @ &gSaveBlock2Ptr [rom_map.GSAVEBLOCK2PTR]
@@ -211,7 +211,7 @@ p_ivmin: .word 0x40000000           @ patched: six 5-bit floors + the terminator
 p_padlen: .word 0x00000000          @ patched: filler bytes following this stub in the body
 p_padsum: .word 0x00000000          @ patched: their 32-bit wrapping sum
 p_sb1ptr: .word 0x03004228          @ &gSaveBlock1Ptr [rom_map.GSAVEBLOCK1PTR]
-p_logoff: .word 0x0000348C          @ SaveBlock1 -> unused_348C[400]; bs65 read it all zero
+p_logoff: .word 0x0000348C          @ SaveBlock1 -> unused_348C[400]; reads all zero unwritten
 p_logmagic: .word 0x474F4C31        @ so an untouched region is not mistaken for a report
 
     .align 2

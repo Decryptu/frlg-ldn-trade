@@ -86,7 +86,7 @@ _VALUE_GROUPS = {
 def species_word(species):
     """-> the Easy Chat word for a species, printed as that console's own name for it.
 
-    Language-safe by construction. Proven on a French console (mev03): the player typed AKWAKWAK
+    Language-safe by construction. Proven on a French console: the player typed AKWAKWAK
     and the console stored POKEMON/55, and SPECIES_GOLDUCK is 55.
     """
     species = int(species)
@@ -100,7 +100,7 @@ def species_word(species):
 def move_word(move):
     """-> the Easy Chat word for a move, printed as that console's own name for it.
 
-    Language-safe by construction. Proven on a French console (mev03): AEROBLAST came back as
+    Language-safe by construction. Proven on a French console: AEROBLAST came back as
     MOVE_1/177, and MOVE_AEROBLAST is 177.
     """
     move = int(move)

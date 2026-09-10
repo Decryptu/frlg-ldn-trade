@@ -123,7 +123,7 @@ def test_the_match_wait_answer_carries_the_value_the_trade_is_gated_on():
     """isMatchWait is the ONE byte UnionRoomManager$$SetNetData compares against 1.
 
     `cmp w23, #1; b.ne; bl UnionFrontDeskTradeController$$StartMatch` [main.bin 0x01fd56e4], and
-    w23 is `ldrb [received, #0x10]`. Every run from session 46 to sp76 answered 0, which is a
+    w23 is `ldrb [received, #0x10]`. Every run so far answered 0, which is a
     station declining to be matched - the console asked fifty sessions running and was told no.
     """
     req = room.parse(SMALL_A)
@@ -141,9 +141,9 @@ def test_the_approach_reproduces_the_console_s_own_talk_reserve_bytes():
     """We approach THEM when they are the one advertising - the roles reversed.
 
     Picking an emote locks a player in place waiting to be interacted with (the user, at the
-    console, sp78), so a recruiting console can only be reached by someone walking up to it.
+    console), so a recruiting console can only be reached by someone walking up to it.
     NetDataTalkReserveData has no layout in the generated table, so the check that our approach is
-    well formed is the console's own bytes, seen in sp70 and sp76.
+    well formed is the console's own bytes, seen.
     """
     assert room.build_talk_reserve() == bytes.fromhex("63000100")
     parsed = room.parse(room.build_talk_reserve())
@@ -152,7 +152,7 @@ def test_the_approach_reproduces_the_console_s_own_talk_reserve_bytes():
     assert parsed["length"] == 1
 
 
-# sp82: the console's own NetDataTradeTranerData, sent when its player entered the trade
+# the console's own NetDataTradeTranerData, sent when its player entered the trade
 TRADE_TRANER_SP82 = bytes.fromhex(
     "470075007200760061006e000000000018a4010014a401000000b2adf00f3103")
 
@@ -162,7 +162,7 @@ def test_the_trade_trainer_record_reads_and_agrees_with_the_pokemon_it_came_with
 
     opendpr declares no layout for this id (it holds a string), so the only check available is
     that the trainer id and secret id in the clear here are the same pair carried INSIDE the
-    encrypted PB8 of the same trade - sp82's Zubat, TID 44466 SID 4080.
+    encrypted PB8 of the same trade: the console's Zubat, TID 44466 SID 4080.
     """
     r = room.parse_trade_traner(TRADE_TRANER_SP82)
     assert r["name"] == "Gurvan"
@@ -192,7 +192,7 @@ def test_the_generic_packer_agrees_with_the_hand_written_builders():
 
 
 def test_a_pos_span_covers_the_whole_stride_rather_than_creeping():
-    """sp57: twelve points 0.008 apart made the avatar creep and then jump a tenth of a unit."""
+    """twelve points 0.008 apart made the avatar creep and then jump a tenth of a unit."""
     span = room.pos_span((0.0, 0.0), (1.2, 0.0), 90)
     assert len(span) == room.POS_POINTS == 12
     assert span[0][:2] == (0.0, 0.0)
@@ -252,7 +252,7 @@ def test_trainer_card_is_seventy_five_blittable_bytes():
 
 
 def test_the_ready_ok_we_send_is_the_console_s_own_message_byte_for_byte():
-    """sp87's own is `21 00 02 00 02` on the wire and ours is that, byte for byte.
+    """A run's own is `21 00 02 00 02` on the wire and ours is that, byte for byte.
 
     `TradeSelectPokeModel$$ReciveReadyOk` [main.bin 0x1cd4860] is three instructions and only
     `[netdata + 0x11]` - the SECOND field - reaches the game, so `isTradeOk` is left at the value
@@ -301,7 +301,7 @@ def test_the_security_phase_answer_mirrors_the_state_that_advances_theirs():
 
 
 def test_the_post_trade_question_is_built_the_way_the_console_asks_it():
-    """sp92 and sp93 both ended on `45 00 01 00`, repeated once a second until we left.
+    """Two runs both ended on `45 00 01 00`, repeated once a second until we left.
 
     dump_base cannot explain this message - the base game has no such type, and the console runs
     1.3.0 - so the shape is taken from the wire and the value from opendpr's parameter name.

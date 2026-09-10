@@ -1,6 +1,6 @@
 """Pia version 4, against the packets a retail Sword actually sent us.
 
-The two packets below are from sw01 (session 55), captured while we held a seat in a Sword's LDN
+The two packets below are, captured while we held a seat in a Sword's LDN
 session with its Link Trade over local communication open. They are a GOLDEN VECTOR in the strict
 sense: the tag is sixteen bytes and unforgeable, so a change that breaks the derivation, the IV or
 the framing cannot pass these.
@@ -174,7 +174,7 @@ def test_the_tag_refuses_a_packet_built_under_the_wrong_station_byte():
 
 
 # --------------------------------------------------------------------------- more than one message
-# sw29, the first capture in which a Sword ever put two messages in one packet. Both vectors are
+# the first capture in which a Sword ever put two messages in one packet. Both vectors are
 # the decrypted plaintext of a real packet, taken from the capture rather than typed.
 
 SW29_RELIABLE = bytes.fromhex(          # RTT, then three reliable-window messages
@@ -200,7 +200,7 @@ def test_a_header_is_as_long_as_its_presence_byte_says():
 
 def test_a_presence_byte_of_zero_is_a_message_and_not_the_end_of_the_packet():
     """The console's own walk stops at 0xFF alone (0x01852da0). Stopping at 0x00 as well threw
-    away two of the three reliable messages in this packet. Over sw29 the old walk found
+    away two of the three reliable messages in this packet. Over one capture the old walk found
     247 messages where there are 1740, and left a non-padding tail on 159 of 238 packets."""
     msgs = pia4.parse_packet(SW29_RELIABLE)
     assert [m["present"] for m in msgs] == [0x7F, 0x06, 0x00, 0x00]
@@ -238,7 +238,7 @@ def test_parse_messages_still_hands_back_the_header_as_sent():
 
 
 def test_swords_rtt_and_reliable_messages_read_through_the_modules_we_have():
-    """sw29's own bodies. RTT needed a version-4 size; the reliable window needed nothing."""
+    """A run's own bodies. RTT needed a version-4 size; the reliable window needed nothing."""
     from pokeldn.ldn import reliable5 as r5, rtt_protocol as rtt
 
     req = bytes.fromhex("000000000000000000000e7840e6df87")

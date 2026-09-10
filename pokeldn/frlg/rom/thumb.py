@@ -1,6 +1,6 @@
 """Reading THUMB code out of a ROM dump: where a function ends, what it calls, what it points at.
 
-bs84 established the method by hand and `scratchpad/handler_workers.py` automated it for one table:
+The method was established by hand and `scratchpad/handler_workers.py` automates it for one table:
 a handler is an entry point, the worker behind it is what is worth calling, and the `bl` targets a
 body makes - in order - name those workers against the decomp's own call order. This module is that
 reading, table-agnostic, so `tools/frlg/rom_functions.py` can point it at gSpecials, gScriptCmdTable or
@@ -17,7 +17,7 @@ reader looking only for 0xBDxx walks straight into the next function. docs/frlg_
 BL_HI, BL_LO, BL_MASK = 0xF000, 0xF800, 0xF800
 
 # `ldr Rd, [pc, #imm8*4]` - 0x48xx..0x4Fxx. The literal pool is where a function keeps the addresses
-# it touches, which is how G_SPECIALS was read out of ScrCmd_special (bs92).
+# it touches, which is how G_SPECIALS was read out of ScrCmd_special.
 LDR_PC, LDR_PC_MASK = 0x4800, 0xF800
 
 
@@ -69,7 +69,7 @@ def pc_literals(data, base, start, stop):
     """-> [(site, pool address, value or None)] for the `ldr Rd, [pc, #imm]` between the two.
 
     The value is None when the pool word falls outside this dump. A function's pool is its list of
-    globals: bs92 read G_SPECIALS and G_SPECIALS_END straight out of ScrCmd_special's, and their
+    globals: G_SPECIALS and G_SPECIALS_END come straight out of ScrCmd_special's, and their
     difference - 444 * 4 - is what proved the table's length without a second run."""
     out = []
     for at in range(start - base, min(stop - base, len(data) - 1), 2):

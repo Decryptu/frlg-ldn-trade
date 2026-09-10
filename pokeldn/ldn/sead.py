@@ -5,8 +5,8 @@ Pia and under ENL. This project needs it because Pia's LDN session key is AES ov
 its output (`pia5.ldn_session_key`).
 
 TWO INDEPENDENT READINGS AGREE, which is why the generator is not a suspect when a derivation
-fails. Session 43 (sp7) read it instruction by instruction off BDSP's own ARM64 - the init at
-main.bin 0x15691c8 and the draw at 0x1569250 - and session 45 checked that against the
+fails. It is read instruction by instruction off BDSP's own ARM64: the init at
+main.bin 0x15691c8 and the draw at 0x1569250, checked against the
 NintendoClients wiki's "SEAD RNG" page. Identical, down to the state rotation and the order the
 draws are packed in.
 

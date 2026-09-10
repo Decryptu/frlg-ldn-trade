@@ -1,7 +1,7 @@
 """Pia's RTT Protocol (0x58) - the thirteen bytes the mesh times a station with.
 
 There is no wiki page for this one, so every field is read off BDSP's own ARM64 and then checked
-against the thirteen messages sp35 captured. `docs/bdsp_session.md` "The RTT protocol".
+against the thirteen messages captured. `docs/bdsp_session.md` "The RTT protocol".
 """
 
 import struct
@@ -11,7 +11,7 @@ import pytest
 from pokeldn.ldn import rtt_protocol as rtt
 
 
-# The first RTT request off the console, sp35, byte for byte out of scratchpad/sp35_pia.jsonl.
+# The first RTT request off the console, byte for byte out of scratchpad/sp35_pia.jsonl.
 SP35_REQUEST = bytes.fromhex("0000000b0df9d3437b00000000")
 
 

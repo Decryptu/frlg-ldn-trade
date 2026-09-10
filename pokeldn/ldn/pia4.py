@@ -1,7 +1,7 @@
 """Pia version 4 packet header and message framing - the wire format Sword/Shield speaks.
 
-Read off the game's own deserializer at `main` 0x1774730 (session 54) and then MEASURED against 484
-packets a retail Sword broadcast at us while we held a seat in its LDN session (session 55, sw01).
+Read off the game's own deserializer at `main` 0x1774730 and then MEASURED against 484
+packets a retail Sword broadcast at us while we held a seat in its LDN session.
 Every one of them authenticated.
 
     off  size  field                            parser evidence
@@ -86,32 +86,28 @@ def ciphertext(data):
     return data[CT_OFF:]
 
 
-# A MESSAGE HEADER IS NOT A FIXED 24 BYTES. The presence byte at [0] says which fields follow, in
-# bit order, and the size is the arithmetic the library inlines at eighteen sites (session 56):
+# A message header is not a fixed 24 bytes. The presence byte at [0] says which fields follow, in
+# bit order, and the size is the arithmetic the library inlines at eighteen sites:
 #
 #     1 + (bit0: flags, 1) + (bit1: size, 2) + (bit2: protocol|port, 4)
 #       + (bit3: destination, 8) + (bit4: source, 8)
 #
-# so 0x7F gives 24 and bits 0x20/0x40 own nothing. Every packet of sw01, sw02 and sw03 carried ONE
-# message with every field present, which is why a fixed 24 held for three sessions.
+# so 0x7F gives 24 and bits 0x20/0x40 own nothing.
 #
-# AND A FIELD THE PRESENCE BYTE OMITS IS INHERITED FROM THE PREVIOUS MESSAGE IN THE SAME PACKET,
-# not defaulted and not implied by the remaining length. `0x01853050` is that rule bit by bit: it
-# takes the newly parsed header and the previous one and, for each clear bit, copies flags at +9,
-# size at +0xA, protocol|port at +0xC, destination at +0x10 and source at +0x18. `0x01852da0` is
-# what saves the previous header before parsing the next. sw29 is the first capture with any of it:
-# its 0x80 packets carry the same 42-byte body twice, port 0 then port 1, and the second message's
-# header is FIVE bytes - `04 80 00 00 01`.
+# A field the presence byte omits is inherited from the previous message in the same packet, not
+# defaulted and not implied by the remaining length. `0x01853050` is that rule bit by bit: for each
+# clear bit it copies flags at +9, size at +0xA, protocol|port at +0xC, destination at +0x10 and
+# source at +0x18 from the previous header, which `0x01852da0` saves before parsing the next. A
+# console's 0x80 packets carry the same 42-byte body twice, port 0 then port 1, and the second
+# message's header is five bytes: `04 80 00 00 01`.
 MESSAGE_FIELDS = ((0x01, 1, "flags"), (0x02, 2, "size"), (0x04, 4, "proto_port"),
                   (0x08, 8, "destination"), (0x10, 8, "source"))
 
-# AND THE PAYLOAD CAN BE ZLIB, on a flag that is NOT 5.27-5.45's. There the message flag is 0x20;
-# at version 4 it is **0x10**, and the two captures say so without ambiguity: over sw29 and sw52,
-# 2835 messages, `flags & 0x10` predicts zlib-decompressibility exactly - 256 set and every one a
-# valid stream, 2579 clear and not one of them decompressing. Every message carrying it is protocol
-# 0x80, `nn::pia::transport::BroadcastReliableProtocol`, and read raw its 42 bytes look like a
-# well-formed message header claiming a payload of 0x6260. That is the trap `docs/pia.md` describes
-# for 5.27-5.45, one bit to the right.
+# The payload can be zlib, on a different flag from 5.27-5.45's 0x20: at version 4 it is 0x10.
+# Over 2835 messages in two captures, `flags & 0x10` predicts zlib-decompressibility exactly: 256
+# set and every one a valid stream, 2579 clear and none decompressing. Every message carrying it is
+# protocol 0x80, `nn::pia::transport::BroadcastReliableProtocol`; read raw, its 42 bytes look like
+# a well-formed message header claiming a payload of 0x6260.
 MESSAGE_FLAG_ZLIB = 0x10
 
 
@@ -129,7 +125,7 @@ def parse_packet(plaintext):
 
     THE WALK STOPS AT 0xFF AND AT NOTHING ELSE. `0x01852da0` reads the presence byte and compares
     it against 0xFF alone; a presence byte of **0x00 is a legal one-byte header** that inherits
-    every field, and stopping on it throws away real messages. sw29's reliable-window packets are
+    every field, and stopping on it throws away real messages. Reliable-window packets are
     where that shows: they carry three 0x7C messages, the second and third of them one byte of
     header each, and a walk that stops at 0x00 sees only the first and leaves 32 bytes of the
     plaintext unaccounted for.
@@ -184,33 +180,31 @@ def parse_messages(plaintext):
     return [(m["header"], m["payload"]) for m in parse_packet(plaintext)]
 
 
-# --- Building one. Session 56: the first version-4 packet OUT. ---------------------------------
+# --- Building one --------------------------------------------------------------------------------
 #
-# Every field below is MIRRORED from what a retail Sword broadcast at us, not chosen. sw01's 484
-# packets all carry the same message header constants (`tests/test_pia4.py` asserts them), and
-# `build_message` reproduces the console's own 24 bytes exactly when handed the console's own
-# values - which is the only offline check available for a header we have never sent.
+# Every field below is mirrored from what a retail Sword broadcasts, not chosen. Its packets all
+# carry the same message header constants (`tests/test_pia4.py` asserts them), and `build_message`
+# reproduces the console's own 24 bytes exactly when handed the console's own values.
 #
 # The extra eight-byte field is the sender's STATION CONSTANT ID: the console's message header
 # reads eb9b2220f1480000, which is `station_protocol.ldn_constant_id` over the MAC the scan
 # recorded for it, and the same value the Local Protocol's own update session carries as
-# `host_constant_id`. Two independent fields agreeing is what makes this a FACT rather than a guess
-# about a field full of MAC-shaped bytes.
+# `host_constant_id`. Two independent fields carry the same value.
 #
-# AND THE TWO FIELDS DISAGREE ABOUT BYTE ORDER, which is `local_protocol`'s own trap seen from the
-# other side: the Pia message header is BIG-endian, so the id is `>Q` here, while the Local
-# Protocol's body is LITTLE-endian and its copy of the same id reads 000048f120229beb.
+# The two fields disagree about byte order: the Pia message header is big-endian, so the id is `>Q`
+# here, while the Local Protocol's body is little-endian and its copy of the same id reads
+# 000048f120229beb.
 
 ALL_FIELDS_PRESENT = 0x7F         # what the console emits; bits above 0x08 add no field we can see
-MESSAGE_FLAGS = 0x09              # the console's own, on every message in sw01
+MESSAGE_FLAGS = 0x09              # the console's own, on every message it sends
 SOURCE_OFF = 16                   # inside the message header, after the eight-byte destination
 
 
 def build_message(payload, protocol, source, port=0, message_flags=MESSAGE_FLAGS, destination=0):
-    """One version-4 message, padded to four bytes - the shape sw01 measured.
+    """One version-4 message, padded to four bytes.
 
-    `source` is this station's constant id as an integer - `station_protocol.ldn_constant_id` over
-    its MAC - big-endian like every other field of this header.
+    `source` is this station's constant id as an integer (`station_protocol.ldn_constant_id` over
+    its MAC), big-endian like every other field of this header.
     """
     payload = bytes(payload)
     out = (bytes([ALL_FIELDS_PRESENT, message_flags & 0xFF]) + struct.pack(">H", len(payload))
@@ -242,7 +236,7 @@ def parse_message_header(header):
 
 
 def pad_payload(plaintext):
-    """0xFF-pad to a multiple of sixteen, exactly as 5.27 does - and as sw01 measures.
+    """0xFF-pad to a multiple of sixteen, exactly as 5.27 does, and as a capture measures.
 
     The station announcement is 24 + 121 = 145 bytes, padded to 148 as a message and then to 160 as
     a packet, and 160 is what the ciphertext length is. So version 4 pads the same way even though
@@ -274,7 +268,7 @@ def build_packet(session_key, iv, plaintext, station=0, session_id=0, nonce8=b"\
     """A whole version-4 packet: header, ciphertext, sixteen-byte tag in the header.
 
     UNKNOWN, and the thing to sweep if the console ignores us: the byte at 0x05 and the halfword at
-    0x06. The console sends 0 in both on every packet of sw01, so 0 is what we send first - but a
+    0x06. The console sends 0 in both on every packet, so 0 is what we send first, but a
     field we have only ever seen one value of cannot be said to mean anything yet.
     """
     ct, tag = encrypt_payload(session_key, iv, pad_payload(plaintext))

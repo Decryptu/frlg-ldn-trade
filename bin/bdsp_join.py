@@ -3,7 +3,7 @@
 
 Layer under test is LDN ONLY: scan, then associate with the title's 64-byte passphrase and report
 what the session says about itself. Nothing Pia, nothing game-level. A successful association is
-the milestone - `vendor/LDN` already reads these advertisements with prod.keys alone (sp2), so the
+the milestone - `vendor/LDN` already reads these advertisements with prod.keys alone, so the
 passphrase is the only thing between us and a seat in the session.
 
 The passphrase length is NOT settled: the NintendoClients wiki gives BDSP as the ASCII string
@@ -29,7 +29,7 @@ from pokeldn.host_support import resolve_keys
 STALE_VIFS = ["ldn", "ldn-mon", "ldn-tap", "ldnclient"]
 
 # NintendoClients wiki, "LDN Passphrases", row "Pokemon Brilliant Diamond". Shining Pearl shares
-# Brilliant Diamond's local_communication_id (sp2), so it shares the passphrase.
+# Brilliant Diamond's local_communication_id, so it shares the passphrase.
 BDSP_PASSPHRASE = b"WirelessStrongCryptoKey2021"
 
 
@@ -107,9 +107,9 @@ def main():
         print("[join] target network not seen - is the console sitting in the room right now?")
         return 3
     print(f"[join] target: {describe(net)} ssid={net.ssid.hex()}")
-    # Everything the session's key derivation could possibly be built from. sp10: the HMAC path
+    # Everything the session's key derivation could be built from. The HMAC path
     # (main.bin 0x1693714) takes a 32-BYTE input, and ssid||server_random is the only 32 bytes LDN
-    # gives every station - sp4 was unusable for testing it because server_random was never logged.
+    # gives every station; a capture without server_random cannot test it.
     import json as _json
     facts = {
         "ssid": net.ssid.hex(),

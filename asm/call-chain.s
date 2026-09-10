@@ -1,14 +1,14 @@
 @ CLI_RUN_BUFFER_SCRIPT payload: A LIST OF ROM CALLS AND MEMORY ACCESSES, IN ONE FRAME.
 @
 @ call.s makes ONE call and reads one watched word either side of it. That was the right shape
-@ while the question was "does calling the ROM work at all" (bs43/bs44) and "is this address the
-@ function we think it is" (bs85, AddBagItem). It is the wrong shape now that bs84 has named
+@ while the question was "does calling the ROM work at all" and "is this address the
+@ function we think it is" (AddBagItem). It is the wrong shape now that the tables name
 @ twenty-four workers: every question about the console's game state is two or three calls -
 @ read it, change it, read it back - and a hardware run is the expensive thing, not a call.
 @
 @ So: up to CHAIN_MAX_STEPS steps, executed in order in a single frame, each one leaving a word
 @ in the answer. Nothing here is new machinery. The calling convention is call.s's, which is
-@ bs42's disassembly of CreateMon's prologue proven on hardware at bs43/bs44/bs85; the send is
+@ CreateMon's own prologue, proven on hardware; the send is
 @ call.s's; the one addition is that a step can use the PREVIOUS step's result, which is what
 @ makes a pointer-returning function usable:
 @
@@ -16,7 +16,7 @@
 @     write16 [prev] = 7              -> the var set, through the game's own pointer
 @     read16  [prev]                  -> read back, which is the evidence
 @
-@ That sequence is the reason this payload exists. There is no VarSet in the workers bs84 read -
+@ That sequence is the reason this payload exists. There is no VarSet among the field-script
 @ ScrCmd_setvar writes through GetVarPointer's return [decomp:src/scrcmd.c:472] - so setting a var
 @ the game's way is a call followed by an indirect store, and no single-call payload can do it.
 @

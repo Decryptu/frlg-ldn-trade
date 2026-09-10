@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Hold an LDN seat in a BDSP session and SPEAK to the console on Pia's port instead of listening.
 
-Session 43 established that BDSP's Pia session key depends on state the console never advertises
-(NOTES sp11), so passive decryption is the wrong goal - this project solved FRLG by joining and
-speaking, not by decrypting from outside. This is the first step of that: take the seat sp3 proved
+BDSP's Pia session key depends on state the console never advertises, so passive decryption is the
+wrong goal; the way in is joining and speaking. This is the first step of that: take the seat
 we can take, then find out whether the console answers anything we send.
 
 What it sends is deliberately minimal and UNENCRYPTED (the version byte's 0x80 bit clear). We cannot
@@ -107,7 +106,7 @@ async def main_async(args):
                     print(f"[rx] {addr[0]} {len(data)}B non-Pia {data[:16].hex()}")
                     continue
                 if addr[0] == our_ip:
-                    continue          # our own broadcast, looped back - not an answer (sp13)
+                    continue          # our own broadcast, looped back - not an answer
                 h = PiaHeader5.parse(data)
                 if seen_src is None:
                     seen_src = h.src_var

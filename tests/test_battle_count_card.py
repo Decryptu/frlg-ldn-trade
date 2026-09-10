@@ -46,7 +46,7 @@ def _talk(wins, *, prize_taken=0):
 
 def test_the_card_declares_the_type_that_makes_the_counters_move():
     """`IncrementCardStat` returns without writing unless the held card is CARD_TYPE_LINK_STAT
-    [decomp:src/mystery_gift.c:461]. bs76 and bs78 are what a CARD_TYPE_GIFT card reads: zero,
+    [decomp:src/mystery_gift.c:461]. A CARD_TYPE_GIFT card reads zero,
     after a trade that had every other condition right."""
     card = compile_definition(event.BATTLE_COUNT_GIFT).card
     assert card[8] & 0x3 == mystery_gift.CARD_TYPE_LINK_STAT == 2

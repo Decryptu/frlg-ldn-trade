@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Name Pia's C++ classes and their virtual methods from the binary's own RTTI.
 
-main.bin keeps Itanium-ABI type_info records for nn::pia (session 43, sp15). Each one is
+main.bin keeps Itanium-ABI type_info records for nn::pia. Each one is
 {vtable-of-type_info, name*, [bases...]}, and every polymorphic class's vtable holds
 {offset-to-top, type_info*, method0, method1, ...}. Both the name pointer and the type_info pointer
 are RELATIVE relocations, so the whole map falls out of the relocation table - no heuristics.

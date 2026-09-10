@@ -72,7 +72,7 @@ def test_the_type_table_names_what_a_capture_will_hold():
     assert mp.parse_message(bytes([0x7E]))[1].startswith("unknown")
 
 
-# The sp35 join response, off the console, byte for byte out of scratchpad/sp35_pia.jsonl. Eleven
+# The join response, off the console, byte for byte out of a capture. Eleven
 # identical copies arrived 500 ms apart because nothing acknowledged it.
 SP35_JOIN_RESPONSE = bytes.fromhex(
     "0202000101000200080008000000000002060000a9fe0e013039000000000000eb9b2220f148"
@@ -117,7 +117,7 @@ def test_the_real_join_response_reads_back_as_the_mesh_the_console_named():
     assert us["location"]["variable_id"] == 0x2B7F4C11
 
 
-# One real UPDATE_MESH off the console, sp45. It sent 110 of these, every one identical, about once
+# One real UPDATE_MESH off the console. It sent 110 of these, every one identical, about once
 # a second, and always at the full 556 bytes with the six empty seats left zero.
 SP45_UPDATE_MESH = bytes.fromhex(
     "20020000000000050100020002060000a9fe07013039000000000000eb9b2220f1480000406a4ae6597bc2a30000000100000000000000000000000000000000000000000000000000000000000000000606a9fe07023039a9fe070230390000000000001249a221d85800002b7f4c1a32669aea0501000100000000000000000000000000000000000000000000000001000300000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")
@@ -134,11 +134,11 @@ def test_the_update_mesh_is_always_the_full_eight_seats():
     assert len(out["station_info"]) == 2          # entries, not the length, says how many
     host, us = out["station_info"]
     assert host["station_index"] == 0 and host["join_order"] == 0
-    # join order 3, not 1: it counts JOINS, and sp43/sp44/sp45 each took a seat in the same room
+    # join order 3, not 1: it counts joins, and two runs each took a seat in the same room
     # session. That is the field naming itself.
     assert us["station_index"] == 1 and us["join_order"] == 3
     assert host["location"]["private"][1] == 12345
-    assert us["location"]["variable_id"] == 0x2B7F4C1A     # the --src-var sp45 ran with
+    assert us["location"]["variable_id"] == 0x2B7F4C1A     # the --src-var the capture ran with
 
 
 def test_a_wrong_type_is_refused():
@@ -218,14 +218,14 @@ def test_the_version_four_join_request_is_the_one_we_already_build():
 
 def test_the_lengths_sw29_measured_only_fit_the_sixty_four_byte_entry():
     """The wire confirms the stride twice, by length alone - no disassembly in either number."""
-    assert mp.JOIN_RESPONSE_TWO_STATIONS_V4 == 148            # sw29's join response
+    assert mp.JOIN_RESPONSE_TWO_STATIONS_V4 == 148            # a measured join response
     assert 0x10 + 2 * mp.STATION_INFO_SIZE + 4 == 156         # what 68-byte entries would give
-    assert mp.UPDATE_MESH_SIZE_V4 == 524                      # sw29's update mesh
+    assert mp.UPDATE_MESH_SIZE_V4 == 524                      # a measured update mesh
     assert mp.UPDATE_MESH_SIZE == 556                         # BDSP's, unchanged
 
 
 def test_the_real_version_four_join_response_reads_back_as_the_mesh_the_console_named():
-    """sw29, byte for byte off the console. Two stations, us at index 1."""
+    """byte for byte off the console. Two stations, us at index 1."""
     raw = bytes.fromhex(
         "0202000101000200020008000000000002060000a9fe5f013039000000000000"
         "eb9b2220f148000069a75e26597bc2a300000001000000000000000000000000"
@@ -247,8 +247,9 @@ def test_the_real_version_four_join_response_reads_back_as_the_mesh_the_console_
 
 # --- Host migration, session 60 ----------------------------------------------------------------
 #
-# `440001` on 0x18 port 1 is the last thing a retail Sword ever says: sw81 and sw83 both carry it
-# byte-identical, they are the only two runs where the player pressed accept, and no other run in
+# `440001` on 0x18 port 1 is the last thing a retail Sword ever says. Every run where the player
+# accepted carries it
+# byte-identical, they appear only in runs where the player pressed accept, and no other run in
 # the project has one. It is a MESH message riding the mesh protocol's own reliable port, which is
 # what session 59 missed when it read the three bytes as an application payload and raised on them.
 
@@ -257,7 +258,7 @@ SW83_MIGRATION_START = bytes.fromhex("440001")     # host 0 names station 1 - us
 
 def test_the_console_names_us_the_next_host():
     got = mp.parse_migration_start(SW83_MIGRATION_START)
-    # sw83's join response: stations=2 host_index=0 our_index=1.
+    # A run's join response: stations=2 host_index=0 our_index=1.
     assert got == {"host_index": 0, "new_host_index": 1}
 
 
@@ -278,7 +279,7 @@ def test_the_bound_both_handlers_check_is_thirty_two_stations():
     b"", b"\x44", bytes.fromhex("4400"), bytes.fromhex("44000102"), bytes.fromhex("410001"),
 ])
 def test_a_reader_on_a_live_run_returns_none_rather_than_raising(payload):
-    # sw81 reached the confirmation prompt, a reader raised on these three bytes, the receive task
+    # A run reached the confirmation prompt, a reader raised on these three bytes, the receive task
     # died and the console reported the communication as interrupted - because we were the one who
     # left. Every length the wire can carry has to come back as None, not as an exception.
     assert mp.parse_migration_start(payload) is None
@@ -300,7 +301,7 @@ SW83_MIGRATION_WIRE = bytes.fromhex("0f0000030001000100" "440001")
 
 
 def test_the_twelve_bytes_off_the_wire_decode_to_the_answer():
-    """sw81 and sw83's own bytes, end to end: reliable header, mesh message, our response.
+    """Two runs' own bytes, end to end: reliable header, mesh message, our response.
 
     The header is version 4's - flags 0x0f (application data, start, end, initialized), stream 0,
     payload size 3, sequence 1, lowest pending 1, no destinations - and the mesh message is what is
@@ -315,12 +316,12 @@ def test_the_twelve_bytes_off_the_wire_decode_to_the_answer():
 
     start = mp.parse_migration_start(got["payload"])
     assert start == {"host_index": 0, "new_host_index": 1}
-    # sw83's join response gave our_index 1, and that - not the host's 0 - is what goes back.
+    # A run's join response gave our_index 1, and that - not the host's 0 - is what goes back.
     assert mp.build_migration_response(1) == bytes.fromhex("4801")
 
 
 def test_the_station_named_next_host_owes_a_finish_not_a_response():
-    """sw84, and it cost a run to learn: the two messages travel in opposite directions.
+    """The two messages travel in opposite directions.
 
     `SendMigrationResponse` (0x017c3250) takes a DESTINATION index in w1 and its only caller
     (0x017ca1a0) passes `this[0x86]` - which the migration acceptor writes as the NEW host index.
@@ -328,7 +329,7 @@ def test_the_station_named_next_host_owes_a_finish_not_a_response():
     sender (0x017c2e90) refuses to build one unless our own index IS the host index.
     """
     start = mp.parse_migration_start(SW83_MIGRATION_START)
-    our_index = 1                                     # sw83 and sw84's join response both said 1
+    our_index = 1                                     # the join response said 1
     assert start["new_host_index"] == our_index       # so the console named US
     assert mp.build_migration_finish(our_index) == bytes.fromhex("410101")
     # The flag is read as a bool - 0x017c1014 is `cmp w19, #0; cset w1, ne`.

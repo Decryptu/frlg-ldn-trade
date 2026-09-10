@@ -15,7 +15,7 @@ def test_the_table_is_the_decomps_length():
 
 
 def test_the_address_is_derived_from_the_measured_gspecialvars():
-    """script_data opens with the table and gSpecialVars follows it [ld_script_rev10.ld:318]; bs57
+    """script_data opens with the table and gSpecialVars follows it [ld_script_rev10.ld:318]; it is
     measured gSpecialVars, so the table costs no run of its own."""
     assert rom_map.G_SCRIPT_CMD_TABLE == 0x08163650
     assert rom_map.G_SPECIAL_VARS - rom_map.G_SCRIPT_CMD_TABLE == \
@@ -52,7 +52,7 @@ def test_a_table_read_at_the_wrong_address_fails_the_shape_test():
     assert scrcmd_names.plausible(entries) == []
 
 
-# --- the measured table, bs82 -------------------------------------------------------------------
+# --- the measured table -------------------------------------------------------------------
 
 def test_every_measured_handler_is_a_rom_address():
     assert len(scrcmd_names.HANDLERS) == 214
@@ -76,7 +76,7 @@ def test_a_handler_is_reachable_by_name():
     assert scrcmd_names.handler("nop") == scrcmd_names.HANDLERS[0]
 
 
-# --- the workers behind the handlers, bs84 ------------------------------------------------------
+# --- the workers behind the handlers ------------------------------------------------------
 
 def test_the_worker_addresses_sit_inside_the_dumped_rom():
     for name in ("ADD_BAG_ITEM", "REMOVE_BAG_ITEM", "CHECK_BAG_HAS_SPACE", "CHECK_BAG_HAS_ITEM",
@@ -88,8 +88,8 @@ def test_the_worker_addresses_sit_inside_the_dumped_rom():
 
 
 def test_the_extraction_lands_on_an_address_measured_independently():
-    """ScrCmd_random's third call is Random, found at bs13 from its own literal pool. This is the
-    check that the bs84 extraction is aligned, not the item addresses themselves."""
+    """ScrCmd_random's third call is Random, found independently from its own literal pool. This is the
+    check that the extraction is aligned, not the item addresses themselves."""
     assert rom_map.RANDOM == 0x080486B0
 
 
@@ -104,7 +104,7 @@ def test_calling_add_bag_item_needs_the_thumb_bit():
     assert rom_map.thumb(rom_map.ADD_BAG_ITEM) == 0x0809DA71
 
 
-# --- reading a script the console holds, bs97/bs98 ------------------------------------------------
+# --- reading a script the console holds ------------------------------------------------
 # 42 bytes read off the console at 0x081A7624, where gStdScripts points: five standard scripts laid
 # out back to back. They are the fixture because they are the one place a script's boundaries are
 # known independently - data/scripts/std_msgbox.inc says what each one is, and gStdScripts says
@@ -156,7 +156,7 @@ def test_every_command_the_project_emits_has_a_shape():
         assert opcode in scrcmd_args.ARGS, f"{scrcmd_names.COMMANDS[opcode]} has no operand shape"
 
 
-# 0x081A7699..0x081A77A3 of the French FireRed cartridge, read off the console at bs98 (a 1 KB
+# 0x081A7699..0x081A77A3 of the French FireRed cartridge, read off the console (a 1 KB
 # memory-dump at 0x081A7600). It is data/scripts/trainer_battle.inc: seven labels, four runs that
 # each end on `end`, and the region every trainer on every map goes through.
 TRAINER_BATTLE_BASE = 0x081A7699

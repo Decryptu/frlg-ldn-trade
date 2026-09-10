@@ -461,7 +461,7 @@ class HostMysteryGiftEngine:
 
     def _echo_status_detail(self):
         """Row one health. The console's own block sender and MGL_Send both wait on the mirror, and a
-        DROPPED distinct command is a fragment it must repair blind (bs05). Anything but 0 here is the
+        DROPPED distinct command is a fragment it must repair blind. Anything but 0 here is the
         first thing to read after a stall."""
         dropped = getattr(self, "echo_dropped", 0)
         return (f"; row-one echo backlog {getattr(self, 'echo_backlog', 0)} "

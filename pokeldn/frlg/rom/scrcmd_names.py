@@ -5,7 +5,7 @@ The index IS the opcode: `gScriptCmdTable[opcode]` is the handler the field engi
 `ScrCmd_` prefix dropped. `pokeldn/frlg/rom/scrcmd.py` holds the opcodes this project actually emits.
 
 The table's own address is not searched for: `script_data` opens with it and puts `gSpecialVars`
-immediately after [ld_script_rev10.ld:318], and gSpecialVars was measured at bs57, so the table
+immediately after [ld_script_rev10.ld:318], and gSpecialVars is measured, so the table
 starts SCRIPT_CMD_TABLE_SIZE bytes below it. docs/frlg_rom.md.
 """
 
@@ -85,7 +85,7 @@ def plausible(entries, low=0x08000000, high=0x08400000):
     return [e for e in entries if low <= e[2] < high and e[3]]
 
 
-# --- measured, bs82 -----------------------------------------------------------------------------
+# --- measured -------------------------------------------------------------------------------------
 # The table read off the console at G_SCRIPT_CMD_TABLE, 856 bytes in one dump. Every one of the 214
 # words came back a THUMB pointer into 0x0806D7C0..0x080700B8, and the ONLY two entries sharing an
 # address are 0 and 213 - exactly the two the decomp names ScrCmd_nop, with ScrCmd_nop1 distinct at

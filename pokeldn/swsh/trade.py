@@ -19,10 +19,9 @@ The message SHAPES are the game's own, out of the `FileDescriptorProto`s `main` 
         Pokemon                 1 bytes serializePokemonParam
         PokemonTradeDataHolder  1 Pokemon pokemon
 
-WHAT THIS PROJECT HAS MEASURED, from sw70's own capture (`scratchpad/sw_app_payloads.py`): id 97
-with all three of its fields, and id 60000 with `result{}` on 0x7C and `imReady{isReady:true}` on
-0x80. Those five payloads and no others. Everything past the trade snapshot is in `SYNC_ANSWERS`
-and is NOT ours - see its comment.
+Measured on this console (`scratchpad/sw_app_payloads.py`): id 97 with all three of its fields,
+and id 60000 with `result{}` on 0x7C and `imReady{isReady:true}` on 0x80. Those five payloads and
+no others. Everything past the trade snapshot is in `SYNC_ANSWERS` and is borrowed; see its comment.
 """
 import struct
 
@@ -56,8 +55,8 @@ def field_varint(number, value):
 
 SYNC_PING = 97                        # gflnet.p2p.sync.ping.pb.SyncPingDataHolder
 BLOCK = 60000                         # gflnet.p2p.block.pb.BlockDataHolder
-POKEMON_TRADE = 20030                 # MEASURED at sw76: the console offered its own Pokemon here
-                                      # (session 59 first wrote 40030, which is the RPC envelope)
+POKEMON_TRADE = 20030                 # measured: the console offers its own Pokemon here.
+                                      # 40030 is the RPC envelope, not this
 
 PING, PING_REPLY, PING_SYNCED = 1, 2, 3           # SyncPingDataHolder's three fields
 RESULT, IM_READY = 1, 2                           # BlockDataHolder's two
@@ -85,12 +84,12 @@ def sync(message_id, which):
 
 
 def result():
-    """`result{}` on the block holder - what the console asks for on 0x7C. Measured, sw70."""
+    """`result{}` on the block holder, what the console asks for on 0x7C. Measured."""
     return message(BLOCK, field(RESULT, b""))
 
 
 def im_ready(ready=True):
-    """`imReady{isReady:true}` - what the console asks for on 0x80. Measured, sw68 and sw70."""
+    """`imReady{isReady:true}`, what the console asks for on 0x80. Measured."""
     return message(BLOCK, field(IM_READY, field_varint(1, 1 if ready else 0)))
 
 
@@ -108,27 +107,25 @@ def pokemon_trade(pk8):
     return message(POKEMON_TRADE, field(1, field(1, pk8)))
 
 
-# --- the trade RPC envelope, MEASURED at sw75 -------------------------------------------------
+# --- the trade RPC envelope, measured -----------------------------------------------------------
 
-# sw75 is where the trade screen opened and the console started talking, and these are its own
-# bytes. Message id 40030 carries ONE nested field whose five members decode without a guess:
+# The console's own bytes when the trade screen opens. Message id 40030 carries one nested field
+# whose five members decode without a guess:
 #
 #     id 40030          = 40000 + 30, and field 1 below is that same 30
-#       1  syncId       30            the game's own names, session 62: this envelope is
+#       1  syncId       30            the game's own names: this envelope is
 #       2  elementId    10000 / 20000 `gflnet.p2p.sync.pb.Data`, and the schema is in
-#       3  ownerId      THE SENDER'S  `scratchpad/swsh_schema.txt` at data.proto
+#       3  ownerId      the sender's  `scratchpad/swsh_schema.txt` at data.proto
 #       4  clock        a counter that advances between messages
 #       5  body         00000000 / 000018fc here; a 344-byte PK8 in the console's own 40050
 #
-# `ownerId` is byte-identical to the `host_constant` our own seat record holds, which is what turns
-# a 6-byte find-and-replace into a field we can simply write. It is also what the RECEIVING side
-# resolves to a station index before it will look at a body: `docs/swsh.md`, "A content is three
-# holders", on `0x010d5e40`.
+# `ownerId` is byte-identical to the `host_constant` our own seat record holds, so it is a field to
+# write rather than a six-byte find-and-replace. The receiving side resolves it to a station index
+# before it looks at a body (`0x010d5e40`, docs/swsh_protocol.md).
 #
-# **AND THIS IS WHERE 20030 COMES FROM.** `swsh_msgid.py` found that the high ids are a base plus
-# an offset and that no literal 20030 exists anywhere in the image. It does not need to: the base
-# and the offset travel as separate fields of this envelope, and 20000 + 30 is assembled from them.
-# The deduction session 59 wrote down is now a measurement, and its mechanism is on the wire.
+# This is also where 20030 comes from: the high ids are a base plus an offset and no literal 20030
+# exists in the image. The base and the offset travel as separate fields of this envelope, and
+# 20000 + 30 is assembled from them on the wire.
 RPC_ENVELOPE_BASE = 40000             # the envelope's own id is this plus the same offset
 RPC_ENVELOPE = 40030                  # the only one the console has ever sent us: offset 30
 RPC_PREFIX = struct.pack("<I", RPC_ENVELOPE)      # its four-byte header, for recognising a member
@@ -136,40 +133,35 @@ RPC_PREFIX = struct.pack("<I", RPC_ENVELOPE)      # its four-byte header, for re
 RPC_OFFSET, RPC_BASE, RPC_STATION, RPC_CLOCK, RPC_BODY = 1, 2, 3, 4, 5
 RPC_BASES = (10000, 20000)            # the pair the console sends, and the pair it expects back
 
-# THE OFFSET IS THE PROCEDURE, and the envelope's id carries it twice - once as `40000 + offset`
-# and once as field 1. 30 is the offer, the only one measured from our own console. 50 and 40 are
-# `andyjusa/nxldn-lab`'s selection and confirmation, and what makes them more than borrowed
-# constants is the dispatcher at main.bin `0x013b2c00`: a message id is banded and INDEXED, and an
-# id in 40001..60000 indexes its container at `id - 40001`. So 40050 and 40040 are legal ids in
-# the same band as the 40030 the console does send, at indexes 49 and 39.
-OFFER_OFFSET = 30                     # MEASURED, sw75-sw83
-SELECTION_OFFSET = 50                 # nxldn-lab's, structurally consistent, NOT measured here
+# The offset is the procedure, and the envelope's id carries it twice: as `40000 + offset` and as
+# field 1. The dispatcher at main.bin `0x013b2c00` bands and indexes a message id, and an id in
+# 40001..60000 indexes its container at `id - 40001`, so 40050 and 40040 are legal ids in the same
+# band as the 40030 the console sends, at indexes 49 and 39.
+OFFER_OFFSET = 30                     # measured on this console
+SELECTION_OFFSET = 50                 # nxldn-lab's, structurally consistent, not measured here
 CONFIRMATION_OFFSET = 40              # the same
 
-# WHICH CONTENT IS WHICH, and it reframes what this project has been sending. `main` ships three
-# trade holders and the registry has three trade contents, so they pair off - and each pairing is
-# forced by something on the wire rather than chosen:
+# `main` ships three trade holders and the registry has three trade contents, so they pair off.
+# Each pairing is forced by something on the wire:
 #
 #   content 30  BoxSyncStateDataHolder   1 boxSendPokemon, 2 boxSyncStateCommand
-#               MEASURED. `3e4e000012020801` is a FIELD 2 on 20030 and only this holder has one.
+#               Measured: `3e4e000012020801` is a field 2 on 20030 and only this holder has one.
 #   content 50  PokemonTradeDataHolder   1 Pokemon{1 serializePokemonParam}
-#               nxldn-lab's `decode_rpc_pokemon_offer` pulls a 344-byte PK8 out of FIELD 5 of a
+#               nxldn-lab's `decode_rpc_pokemon_offer` pulls a 344-byte PK8 out of field 5 of a
 #               40050 envelope, so content 50 is the one that carries a Pokemon.
 #   content 40  SyncSaveDataHolder       1 syncCommand{int32 data}
 #               what is left, and a save sync is what a finished trade would run.
 #
-# **SO 20030 IS THE BOX EXCHANGE - SHOWING EACH OTHER A POKEMON - AND NOT THE TRADE.** Everything
-# sw75 onward has done is content 30. The transfer itself is content 50, which this project has
-# never spoken with a Pokemon in it, and the save sync is content 40. That is what the console
-# runs out of after the accept.
+# So 20030 is the box exchange, showing each other a Pokemon, and not the trade. The transfer
+# itself is content 50 and the save sync is content 40.
 CONTENT_HOLDERS = {OFFER_OFFSET: "BoxSyncStateDataHolder",
                    SELECTION_OFFSET: "PokemonTradeDataHolder",
                    CONFIRMATION_OFFSET: "SyncSaveDataHolder"}
 RPC_POKEMON_FIELD = 5                 # where a PK8 rides inside the envelope's inner message
 
-# THE TWO BODIES ARE THE CONSOLE'S OWN. Its 40030 pair carries `00000000` against base 10000 and
-# `000018fc` against base 20000, and nxldn-lab's 40050 pair carries exactly the same two - so the
-# pair's shape is the envelope's, not the procedure's, and building a 40050 is writing one field.
+# The two bodies are the console's own: its 40030 pair carries `00000000` against base 10000 and
+# `000018fc` against base 20000, and the 40050 pair carries the same two. The pair's shape belongs
+# to the envelope, not to the procedure.
 RPC_PAIR_BODIES = (b"\x00\x00\x00\x00", bytes.fromhex("000018fc"))
 
 
@@ -180,8 +172,8 @@ def build_rpc(offset, base, station_id, clock, body=b"\x00\x00\x00\x00", envelop
     selection one 40050; pass it only to reproduce bytes that disagree with that rule.
     """
     inner = field_varint(RPC_OFFSET, offset)
-    if base is not None:                      # sx36: the console's OWN Pokemon-carrying 40050
-        inner += field_varint(RPC_BASE, base)  # has neither of these two, only 1, 4 and 5
+    if base is not None:                      # the console's own Pokemon-carrying 40050 has
+        inner += field_varint(RPC_BASE, base)  # neither of these two, only fields 1, 4 and 5
     if station_id is not None:
         inner += field_varint(RPC_STATION, station_id)
     inner += field_varint(RPC_CLOCK, clock) + field(RPC_BODY, body)
@@ -206,14 +198,12 @@ def build_rpc_pokemon(offset, base, station_id, clock, pk8):
 def mirror_pokemon_offer(offset, clock, pk8):
     """-> a Pokemon-carrying envelope with the console's OWN field set: syncId, clock, body.
 
-    MEASURED, sx36. The console's selection offer decodes to fields 1, 4 and 5 and nothing else -
-    no `elementId`, no `ownerId` - where `build_rpc_pokemon` writes all five. sx36 sent all five
-    with our own ownerId, the transport acknowledged every sequence of it, and the console said
-    nothing further: it took the bytes and the game layer did not act on them.
+    The console's selection offer decodes to fields 1, 4 and 5 only, with no `elementId` and no
+    `ownerId`, where `build_rpc_pokemon` writes all five. All five with our own ownerId is
+    acknowledged on every sequence and moves nothing.
 
-    AND THE IDENTITY IS NOT THE REASON. Our ownerId in sx36 was 0x1249a221d8580000, which is the
-    id the console itself addressed a reliable ack TO in the same run. It knows us by that value.
-    So what is left to vary is the field set, and this is the console's.
+    The identity is not the reason: the ownerId sent was the id the console addressed a reliable
+    ack to in the same run, so it knows us by that value. The field set is what is left to vary.
     """
     pk8 = bytes(pk8)
     if len(pk8) not in (0x148, 0x158):
@@ -236,10 +226,9 @@ def build_rpc_pair(offset, station_id, clock, bodies=RPC_PAIR_BODIES):
 def parse_rpc(payload):
     """-> the five members of a trade RPC, or None if this is not one."""
     got = _maybe_parse(payload)
-    # ANY ENVELOPE IN THE BAND, NOT JUST 40030. sx17 is the first run to get past the offer phase:
-    # the console opened the SELECTION phase and started sending 40050 pairs, and a parser that
-    # only knew 40030 had no answer for them. The envelope's id is 40000 + the same offset its
-    # field 1 carries, so the band is the test and the offset is read from the message.
+    # Any envelope in the band, not just 40030: past the offer phase the console sends 40050
+    # pairs. The envelope's id is 40000 + the same offset its field 1 carries, so the band is the
+    # test and the offset is read from the message.
     if got is None or not (RPC_ENVELOPE_BASE < got[0] <= RPC_ENVELOPE_BASE + 1000):
         return None
     _, body = got
@@ -255,20 +244,16 @@ def parse_rpc(payload):
 def answer_rpc(payload, station_id, clock_delta=5):
     """-> the same RPC with OUR station id and the clock advanced, or None if it is not one.
 
-    THE STATION ID IS THE WHOLE POINT AND IT IS NOT A PATCH. `nxldn-lab` replaces six bytes it
-    found by searching for a known identity, because it works from a capture; sw75 says those six
-    bytes are the high half of a varint-encoded station constant id, so the field is written rather
-    than hunted for. Ours is the constant id the mesh already gave us.
+    The six bytes `nxldn-lab` patches by searching for a known identity are the high half of a
+    varint-encoded station constant id, so the field is written rather than hunted for. Ours is the
+    constant id the mesh gave us.
 
-    `clock_delta` is nxldn-lab's 5 and is NOT measured. It is the one number here that is still
-    somebody else's, and the run that answers an RPC is what tests it.
+    `clock_delta` is nxldn-lab's 5 and is not measured here.
     """
     got = parse_rpc(payload)
-    # EVERY FIELD OR NOTHING. Widening the parser to the whole 40000 band let members through that
-    # 40030-only parsing never saw: the console's Pokemon rides a 40050 envelope with NO base field
-    # at all, and its echo of ours carries base 1. `varint(None)` raised inside both senders at
-    # sx25 and killed them mid-trade. A reader must not raise on a live run - session 59's rule -
-    # and "I cannot answer this" is a None, not an exception.
+    # Every field or nothing. The console's Pokemon rides a 40050 envelope with no base field at
+    # all, and its echo of ours carries base 1, so a rebuild would call `varint(None)`. A reader
+    # must not raise on a live run: "I cannot answer this" is a None.
     if got is None or any(got[k] is None for k in ("offset", "base", "clock")):
         return None
     return build_rpc(got["offset"], got["base"], station_id, got["clock"] + clock_delta,
@@ -312,9 +297,9 @@ def _varint(data, i):
 # in the low table - and its bytes for id 97 and id 60000 agree with ours exactly, which is the
 # only part of it we can check.
 #
-# THE MEASUREMENT THAT SETTLES THE REST COSTS NO EXTRA ASSOCIATION: answer the whole set on the next
-# run and log every id the console sends after the snapshot. Until a run does that, treat an entry
-# below as a hypothesis about what comes next, and NOT as a description of our console.
+# Entries below that this console has not sent are a hypothesis about what comes next, not a
+# description of it. Answering the whole set and logging every id the console sends after the
+# snapshot settles the rest.
 #
 #   received payload            ->   what to send back, in order
 SYNC_ANSWERS = {
@@ -340,7 +325,7 @@ def answers_for(payload):
 
 # --- 20030 IS A BoxSyncStateDataHolder, AND ITS FIELD 2 IS A COMMAND ENUM --------------------
 #
-# Session 60, and it reframes the whole trade. Two holders in `main`'s own schema have the SAME
+# Two holders in `main`'s own schema have the same
 # wire shape, and this project picked the wrong one:
 #
 #     PokemonTradeDataHolder   1 Pokemon{1 bytes serializePokemonParam}
@@ -353,25 +338,21 @@ def answers_for(payload):
 # the host sending `data: 4` as well. A holder with only one field cannot carry either, so 20030 is
 # the BOX one and the trade runs over a COMMAND ENUM this project has been sending one guess of.
 #
-# WHAT THAT EXPLAINS. sw90 offered the console its own Pokemon back, byte for byte out of its own
-# save, and it aborted at the same place - so the record was never the problem. Between its offer
-# and the teardown it sends nothing but acks: it is not waiting to be told something in a message
-# it names, it is waiting for the state machine to move, and `data` is what moves it.
+# Offering the console its own Pokemon back, byte for byte out of its own save, aborts in the same
+# place, so the record is not what it is waiting for. Between its offer and the teardown it sends
+# nothing but acks: it is waiting for the state machine to move, and `data` is what moves it.
 BOX_SEND_POKEMON, BOX_SYNC_STATE_COMMAND = 1, 2
 
-# --- OPENING A CONTENT, WHICH IS WHAT `nxldn-lab`'s CLIENT DOES AND OURS NEVER HAS -------------
+# --- opening a content ---------------------------------------------------------------------------
 #
-# A content registered at offset N gets four ids, and session 62 read where each comes from: its
-# registrar builds holders for 10000+N, 20000+N and **30000+N** (the third has never been seen on
-# the air here), and the framework's own start call mints 40000+N. This project has only ever
-# spoken the 20000 and 40000 ones. Their client opens the confirmation phase
-# by sending `382700000a00` on port 0, and that is id 10040: **10000 + 40**, the `ping` field of
-# content 40's holder. It sends it unprompted, as an opener, exactly as it sends the 40050 pair.
+# A content registered at offset N gets four ids: its registrar builds holders for 10000+N, 20000+N
+# and 30000+N (the third has never been on the air here), and the framework's own start call mints
+# 40000+N. `382700000a00` on port 0 is id 10040, the `ping` field of content 40's holder, sent
+# unprompted as an opener the way the 40050 pair is.
 #
-# Our console never sends 10040, 10050, 40040 or 40050, and it never sends a box command either -
-# so every phase after the offer is one nobody has opened. sw93 opened 40050 properly (acked, ten
-# seconds before the teardown) and the console ignored it; 10040 is the other opener in their
-# capture and the one this has never tried.
+# This console never sends 10040, 10050, 40040 or 40050, and never a box command, so every phase
+# after the offer has to be opened from here. A 40050 pair opened properly, acknowledged ten seconds
+# before the teardown, is ignored; 10040 is the other opener in the borrowed capture.
 CONTENT_BASE_LOW = 10000              # the fourth id a content gets, and the one their client opens
 
 
@@ -383,12 +364,11 @@ def open_content(offset, which=PING):
 def pokemon_offer(offset, pk8):
     """-> PokemonTradeDataHolder on content `offset`'s 10000-base holder: id 10050 for offset 50.
 
-    MEASURED AT sx20, from the console's side. Once the selection phase's pair is answered the
-    console offers ITS Pokemon as a 344-byte PK8 in field 5 of a 40050 envelope and then sends a
-    status whose body ends `0100`. `nxldn-lab`'s client answers that status by putting its own
-    Pokemon here - `4227` little-endian is 10050 - on reliable PORT 0, not on the 20030 holder the
-    offer phase uses. The offer phase and the selection phase each carry a Pokemon and they are
-    different messages on different windows.
+    Measured from the console's side: once the selection phase's pair is answered it offers its
+    Pokemon as a 344-byte PK8 in field 5 of a 40050 envelope, then a status whose body ends `0100`.
+    The answer to that status is our own Pokemon here (`4227` little-endian is 10050) on reliable
+    port 0, not on the 20030 holder the offer phase uses. The offer phase and the selection phase
+    each carry a Pokemon, on different messages and different windows.
 
     **AND SESSION 63 CONFIRMED THE SHAPE OUT OF THE BINARY.** Content 50's 10000-base holder parses
     its body with `0x010d9ee0`, which accepts tag 0x0a and nothing else, and the submessage's
@@ -410,14 +390,12 @@ def pokemon_offer_high(offset, pk8):
     the exchange that reaches the player. In the selection phase it sends its pair on 40050 and its
     own Pokemon on 40050, the sync layer's own envelope.
 
-    **DEAD, MEASURED, SESSION 63.** `0x010d81d0` returns silently when `[holder+0x168]` is null, and
-    content 50 installs a listener on its 10000-base holder (`0x010d50ac`) and its 30000-base one
-    (`0x010d533c`) and **never on the 20000-base one**. sx39 addressed an object with nothing behind
-    it: it is a void run, not a negative. Kept because the run log names the flag.
+    Inert by construction. `0x010d81d0` returns silently when `[holder+0x168]` is null, and content
+    50 installs a listener on its 10000-base holder (`0x010d50ac`) and its 30000-base one
+    (`0x010d533c`) but never on the 20000-base one, so a message addressed here reaches nothing.
 
-    sx36 offered ours as a five-field Data on 40050 and sx37 as the console's own three-field one,
-    byte-identical in shape and length; both were acknowledged on every sequence and neither moved
-    the console's trade state. sx34 offered it as this holder on 10050.
+    A five-field Data on 40050 and the console's own three-field one, byte-identical in shape and
+    length, are both acknowledged on every sequence and move nothing.
     """
     pk8 = bytes(pk8)
     if len(pk8) not in (0x148, 0x158):
@@ -430,17 +408,17 @@ def pokemon_offer_high(offset, pk8):
 SYNC_SAVE_COMMAND = 1                 # SyncSaveDataHolder's only field
 SYNC_COMMAND_DATA = 1                 # SyncCommand's only field
 
-# THE FOUR THE CONSOLE ITSELF SENDS, read out of content 40's state machine `0x010dae70`, which is
-# the only caller of the send `0x010db840(delegate, data, flag)`. Each send parks the machine in an
-# idle state, so the four are a handshake and not a burst: the partner's own command is what moves
-# it on. The flag argument is always `data + 1` and is not part of the message.
+# The four the console itself sends, out of content 40's state machine `0x010dae70`, the only
+# caller of the send `0x010db840(delegate, data, flag)`. Each send parks the machine in an idle
+# state, so the four are a handshake: the partner's own command moves it on. The flag argument is
+# always `data + 1` and is not part of the message.
 SYNC_COMMANDS = {0: "0x010db308, out of state 1  -> state 2",
                  1: "0x010db0b0, out of state 3  -> state 4",
                  2: "0x010db0dc / 0x010db104, states 6 and 8 -> states 7 and 9",
                  3: "0x010db16c, out of state 12 -> state 0, and the machine is done"}
 
-# AND THE LADDER BETWEEN THEM, read out of `0x010dbf40` - the state setter, which is the only writer
-# of the machine's state field `delegate+0x5c` outside the machine itself and its constructor. It
+# The ladder between them is `0x010dbf40`, the state setter, the only writer of the machine's state
+# field `delegate+0x5c` outside the machine itself and its constructor. It
 # takes a u16 0..4, puts the machine in the state that sends the NEXT command, and returns without
 # touching anything when the value is above 4. Its only caller is content 40's pump `0x010db3e0`,
 # which passes the content's own phase `+0x17c` once that phase has caught up with the `+0x86` the
@@ -493,8 +471,8 @@ def answer_rpc_with_phase(payload, station_id, phase, clock_delta=5):
     that can change the value the phase is read from. Every answer this project has sent echoed the
     console's own halves back, which cannot move a value that is already what it says.
 
-    Returns None rather than raising when the payload is not a four-byte RPC - a reader on a live
-    run must not raise (session 59's rule).
+    Returns None rather than raising when the payload is not a four-byte RPC: a reader on a live
+    run must not raise.
     """
     got = parse_rpc(payload)
     if got is None or any(got[k] is None for k in ("offset", "base", "clock")):
@@ -509,15 +487,15 @@ def answer_rpc_with_phase(payload, station_id, phase, clock_delta=5):
 def parse_sync_step(body):
     """-> `(phase, announced)` out of a content's four-byte step body, or None if it is not four.
 
-    **THE FOUR-BYTE BODY IS TWO u16s AND BOTH HALVES ARE NAMED IN THE IMAGE**, session 65. The
-    sub-element keeps its body at `sub+0x88`, and `0x006d3980` - the publish - rebuilds it as
+    The four-byte body is two u16s and both halves are named in the image. The sub-element keeps
+    its body at `sub+0x88`, and the publish `0x006d3980` rebuilds it as
     `<u16 newValue><u16 sub+0x8a>`: a new low half and the high half carried over unchanged, handed
     to `0x006d3860`, which is `0x010dbe20` one layer down. The low half is what the element then
     adopts as its phase (`element+0xac`, which IS `content+0x17c`, the element sitting at
     `content+0xd0`), and `0x006d3260` reads it back out of that same four bytes.
 
-    So the low half is the PHASE and the high half is the phase the sender has ANNOUNCED, which is
-    `data + 1` for the last command it sent. sx52e and sx53's three bodies read straight:
+    So the low half is the phase and the high half is the phase the sender has announced, which is
+    `data + 1` for the last command it sent. Three observed bodies:
 
         00000100   phase 0, announced 1     the cue: it had sent command 0
         01000100   phase 1, announced 1     our command let the phase catch up
@@ -533,8 +511,8 @@ def parse_sync_step(body):
 def sync_command(offset, data):
     """-> `SyncSaveDataHolder{syncCommand{data: <int32>}}` on content `offset`'s 10000-base holder.
 
-    **THE CONFIRMATION CONTENT DOES NOT TAKE A POKEMON, IT TAKES ONE int32**, and session 64 read
-    that out of the image rather than borrowing it. Content 40's 10000-base holder parses its body
+    The confirmation content takes one int32, not a Pokemon. Content 40's 10000-base holder parses
+    its body
     with `0x010df6d0`, which accepts tag 0x0a and nothing else; the submessage's own parser
     `0x010debc0` accepts tag 0x08 and nothing else and stores the varint at `+0x14`. The game's own
     descriptors agree, which is two independent readings of one shape:
@@ -572,13 +550,12 @@ def parse_sync_command(payload):
     return value if isinstance(value, int) else None
 
 
-SELECTION_SWEEP_NOTE = """The shapes left after sx34-sx44, and why they are swept together.
+SELECTION_SWEEP_NOTE = """The selection-offer shapes that remain, swept together.
 
-Every one of these was acknowledged at the transport and moved nothing: the holder on 10050 (sx34),
-a five-field Data on 40050 with our ownerId (sx36), the console's own three-field Data on 40050,
-byte-identical in shape and length (sx37), the holder on 20050 (sx39), and the 120 pingSynced the
-borrowed trace calls the confirmation's opener (sx44 - and the console uses 97, 110 and 130 all run
-and never 120, so that expectation is dead).
+Every one of these is acknowledged at the transport and moves nothing: the holder on 10050, a
+five-field Data on 40050 with our ownerId, the console's own three-field Data on 40050
+(byte-identical in shape and length), the holder on 20050, and the 120 pingSynced the borrowed
+trace calls the confirmation's opener (the console uses 97, 110 and 130 all run and never 120).
 
 What is left comes from the binary rather than from another project's capture. Each content's
 registrar builds THREE holders - 10000+off, 20000+off and 30000+off - and the 30000 family has
@@ -624,14 +601,12 @@ def parse_box_command(payload):
 def trade_ready(ready=True):
     """`imReady{isReady:true}` on the TRADE holder, 20030 - the same shape as the block one.
 
-    NOT MEASURED FROM OUR CONSOLE, and the reasoning is worth writing down. `nxldn-lab`'s client
-    waits for exactly these bytes before it sends its own Pokemon, and then echoes them back. Ours
-    never sends them: across sw76, sw79 and sw80 the only thing the console ever put on 20030 was
-    the offer itself. So either it is waiting for this from us, or the roles in their capture are
-    not ours.
+    Not measured from this console: the only thing it ever puts on 20030 is the offer itself.
+    `nxldn-lab`'s client waits for exactly these bytes before it sends its own Pokemon, then echoes
+    them back, so either the console wants them from us or the roles in that capture are not ours.
 
-    It is the same shape that unlocked the snapshot - `imReady` on the block holder - one holder
-    further along, which is the reason to try it before anything more elaborate.
+    It is the same shape that releases the snapshot (`imReady` on the block holder) one holder
+    further along.
     """
     return message(POKEMON_TRADE, field(IM_READY, field_varint(1, 1 if ready else 0)))
 
@@ -639,10 +614,9 @@ def trade_ready(ready=True):
 def _maybe_parse(payload):
     """-> (id, body), or None for anything too short to be one.
 
-    **A READER ON A LIVE RUN MUST NOT RAISE.** sw81 reached the confirmation prompt - the player
-    saw our Pokemon and pressed accept - and then the console sent a THREE-BYTE message, this
-    module raised, and the run died mid-trade. The console reported the communication as
-    interrupted, which is exactly what had happened: we were the one who left.
+    A reader on a live run must not raise. At the confirmation prompt the console sends a
+    three-byte message; raising on it kills the run mid-trade and the console reports the
+    communication as interrupted.
     """
     payload = bytes(payload)
     if len(payload) < 4:
@@ -653,11 +627,9 @@ def _maybe_parse(payload):
 def offered_pokemon(payload):
     """-> the 0x158 PK8 inside a trade offer, or None when this is not one.
 
-    sw76: the console sent `PokemonTradeDataHolder{pokemon{serializePokemonParam}}` on id 20030
-    holding a 344-byte party-form record, and it decoded to the Pokemon the player had just picked
-    on screen - `Pomdrapi`, level 18, their own trainer name and ids. Rebuilding that message from
-    the record it carried gives the console's bytes back exactly, which is what says the framing is
-    read and not merely guessed.
+    The console sends `PokemonTradeDataHolder{pokemon{serializePokemonParam}}` on id 20030 holding
+    a 344-byte party-form record, which decodes to the Pokemon the player picked on screen.
+    Rebuilding that message from the record it carried gives the console's bytes back exactly.
     """
     got = _maybe_parse(payload)
     if got is None or got[0] != POKEMON_TRADE:
@@ -690,11 +662,10 @@ def answers_for_rpc(payload, station_id, clock_delta=5):
 def next_answer(said, queue=(), station_id=None, clock_delta=5, offer_pk8=None):
     """-> (what to send now, the queue after it). The table where there is a rule, the mirror else.
 
-    THE MIRROR IS THE PROVEN POLICY AND THIS DOES NOT REPLACE IT. sw68 and sw70 reached the trade
-    snapshot by echoing the console's own last payload back per protocol, and `SYNC_ANSWERS` has a
-    rule for only some of what they saw - `pingReply` and `result{}` on 0x7C have none. A run that
-    used the table alone would fall silent on those two and lose the path that works, so a rule
-    REPLACES the echo where it exists and the echo stands everywhere else.
+    Echoing the console's own last payload back per protocol is what reaches the trade snapshot,
+    and `SYNC_ANSWERS` has no rule for some of what that path carries (`pingReply` and `result{}`
+    on 0x7C). The table alone would fall silent on those, so a rule replaces the echo where it
+    exists and the echo stands everywhere else.
 
     A rule may be more than one payload; the queue carries the rest so they go out in order, one
     per sequence, because a window sends one message at a time.
@@ -703,12 +674,12 @@ def next_answer(said, queue=(), station_id=None, clock_delta=5, offer_pk8=None):
     if not queue:
         queue = list(answers_for(said))
     if not queue:
-        # AN OFFER IS ANSWERED WITH AN OFFER. Echoing this one would hand the console back the very
-        # Pokemon it just offered us, under its own trainer's name.
+        # An offer is answered with an offer: echoing hands the console back the Pokemon it just
+        # offered, under its own trainer's name.
         queue = list(answers_for_offer(said, offer_pk8))
     if not queue and station_id is not None:
-        # A TRADE RPC IS ANSWERED BY REBUILDING IT, not by echoing it. Mirroring one would send the
-        # console its own station id back, which is the one field that has to change.
+        # A trade RPC is answered by rebuilding it: mirroring sends the console its own station id
+        # back, which is the one field that has to change.
         queue = list(answers_for_rpc(said, station_id, clock_delta))
     if queue:
         return queue[0], queue[1:]

@@ -27,11 +27,11 @@ void SeedRng(u16 seed) { gRngValue = seed; }
 | `gSpecialVar_0x8000` | `0x020370B4` | that run's first entry, read out by the same run |
 
 `RAND_MULT` cannot be encoded by any ARM or THUMB instruction, so it sits in `Random`'s literal pool
-next to `&gRngValue`. A scan for it returned eleven hits across 4 MB; the decomp's **link order**
-picked the right one without a run — `grep -rl 'ISO_RANDOMIZE1\|RAND_MULT' src/` gives eight files, and
+next to `&gRngValue`. A scan for it returned eleven hits across 4 MB; the decomp's link order
+picked the right one without a run, `grep -rl 'ISO_RANDOMIZE1\|RAND_MULT' src/` gives eight files, and
 `ld_script.ld` puts `src/random.o` at #86 with the next user, `src/title_screen.o`, at #123, so the
 lowest hit is random.o's pool. Dumping it gives `Random` instruction for instruction
-[random.c:9-13], and `SeedRng` follows with the same pool word — two independent functions naming
+[random.c:9-13], and `SeedRng` follows with the same pool word, two independent functions naming
 `gRngValue` in one dump.
 
 `Random` returns only the top half of the state. That is what makes recovery non-trivial and also what
@@ -40,7 +40,7 @@ a personality alone leaves 2<sup>16</sup> candidate states.
 
 `pokeldn/frlg/rom/lcg.py` is the arithmetic. `distance(a, b)` is exact at any range via
 baby-step/giant-step on the affine map, 2<sup>17</sup> operations instead of up to 2<sup>32</sup>. The
-map is a permutation of all 2<sup>32</sup> states, so **a distance always exists**; it is evidence only
+map is a permutation of all 2<sup>32</sup> states, so a distance always exists; it is evidence only
 when it is small (odds N / 2<sup>32</sup>).
 
 `gRngValue` and `gSpecialVar_0x8000` are link-time globals that do not move, so hardcoding them is
@@ -65,7 +65,7 @@ Two runs five times apart in N, byte-identical scripts but for the `delay` opera
 
 `rng-trace` measured the same 2 at the Mystery Gift link menu by a different route: sampling `gRngValue`
 once a frame gave gaps of exactly 2, 95 times out of 95, with no stopwatch in it. That second answer is
-about the console rather than the tool — between a call in one frame and a read in the next, the game
+about the console rather than the tool, between a call in one frame and a read in the next, the game
 had turned the RNG exactly twice, which is FRLG's own Random consumption while it sits in the Mystery
 Gift link menu.
 
@@ -75,7 +75,7 @@ The probe measures the rate while a field script is *delaying*, with the player 
 measures the unlocked case. Four independent press trials (below) give turn counts that are all even,
 which extends the result to ordinary overworld play.
 
-**Nothing here may rest on a hand-timed elapsed.** One turn is about 8 ms. Earlier figures on this
+Nothing here may rest on a hand-timed elapsed. One turn is about 8 ms. Earlier figures on this
 subject were wrong because they divided an exact turn count by a hand-timed elapsed, and one of them
 divided by a number the tool had itself computed by assuming the answer. The two clocks that need no
 seconds at all are two seed readings (`distance`) and the mon that appears (`recover_wild_state`).
@@ -91,7 +91,7 @@ void SeedRngAndSetTrainerId(void) { u16 val = REG_TM1CNT_L; SeedRng(val); gTrain
 [:351], so the seed is a free-running hardware timer sampled at the moment the player presses START:
 unpredictable, but only 65536 possible values.
 
-**This closes the whole idea of setting the seed during a link.** Backing out of Mystery Gift runs
+This closes the whole idea of setting the seed during a link. Backing out of Mystery Gift runs
 `MainCB_FreeAllBuffersAndReturnToInitTitleScreen` → `CB2_InitTitleScreen` [mystery_gift_menu.c:463],
 and pressing START there re-runs the seeding. There is no route from the Mystery Gift menu to the
 overworld that does not reseed. Seeding `gRngValue` to `0xC0DE` and then taking an encounter gave a
@@ -117,28 +117,28 @@ if ((svc_4b() & SVC4B_RESEED_RNG) != 0)
 set bit would pin the state near the console's own advertised `playerTrainerId` (`0xDF65` here)
 continuously. It does not: sampled at the Mystery Gift menu the state free-ran with gaps of exactly 2
 and its first sample was 1,374,895,295 turns from `0xDF65`, and after a full Union Room session an
-encounter was 2,098,390,873 turns from it. **Keep that as a control on any run that reads the RNG**: a
+encounter was 2,098,390,873 turns from it. Keep that as a control on any run that reads the RNG: a
 state that turns out to descend from `0xDF65` names the hook instead of leaving a run unexplained.
 
-**Hitting a chosen seed by timing the START press does not work either.** Timer 1 runs at F/1 and a
+Hitting a chosen seed by timing the START press does not work either. Timer 1 runs at F/1 and a
 frame is 280,896 cycles, so a frame-aligned read would make every seed a multiple of
 `gcd(280896 mod 65536, 65536) = 64`. Recovered seeds are `0xB8C0` (mod 64 = 0), `0x3742` (2), `0x8E94`
-(20), `0x1376` (54) — three of four are not multiples, so `REG_TM1CNT_L` is sampled with sub-frame
+(20), `0x1376` (54), three of four are not multiples, so `REG_TM1CNT_L` is sampled with sub-frame
 jitter and the press frame does not determine the seed.
 
 ## Reading a Pokemon back into the state that made it
 
 `GenerateWildMon` calls `CreateMonWithNature(..., USE_RANDOM_IVS, Random() % NUM_NATURES)`
 [wild_encounter.c:233], which rolls the personality until it matches that nature, then draws the IVs. A
-wild Pokemon is **four draws**: personality low, personality high, HP/ATK/DEF, SPEED/SPATK/SPDEF.
+wild Pokemon is four draws: personality low, personality high, HP/ATK/DEF, SPEED/SPATK/SPDEF.
 
 The personality alone leaves 2<sup>16</sup> candidates; the two IV draws are 30 more bits of check on
 the draws that follow, and exactly one state survives. `lcg.recover_wild_state`, and
-`scratchpad/rng_encounter.py` on the command line. The half-order of `Random32()` —
-`(Random() | (Random() << 16))`, whose operand order C does not define — is low half first, at both call
+`scratchpad/rng_encounter.py` on the command line. The half-order of `Random32()`,
+`(Random() | (Random() << 16))`, whose operand order C does not define, is low half first, at both call
 sites, on every mon measured.
 
-**There are two gaps and both must be searched.** The console does not use one layout:
+There are two gaps and both must be searched. The console does not use one layout:
 
 | Pokemon | gap before IVs | gap between IVs | method |
 |---|---|---|---|
@@ -157,10 +157,10 @@ state builds this mon", which reads like a broken recovery rather than an incomp
 draw is in no line of `CreateBoxMon`. It comes from outside the generation and is recorded here as
 measured and unexplained.
 
-**A scripted encounter is not immune**, and it is worse there than an always-present draw would be: on
+A scripted encounter is not immune, and it is worse there than an always-present draw would be: on
 a scripted encounter the stray draw is intermittent, so a one-placement search is right most of the
 time and silently wrong the rest. One run asked for shiny + Jolly + SPEED >= 20 and the console produced
-a shiny Jolly Magikarp with SPEED 10. The state is not in doubt — exactly one state in 2<sup>32</sup>
+a shiny Jolly Magikarp with SPEED 10. The state is not in doubt, exactly one state in 2<sup>32</sup>
 has that PID on its next two draws:
 
     state 0x429D2189
@@ -185,10 +185,10 @@ dowildbattle                     the battle starts          (0xB7)
 `CreateMon(&gEnemyParty[0], species, level, 32, 0, 0, OT_ID_PLAYER_ID, 0)` [script_pokemon_util.c:128]:
 `USE_RANDOM_IVS`, no fixed personality, and no nature rejection loop, so it is plain four-draw Method 1.
 
-**There is no drift between the seed and the roll.** Both commands return FALSE, and the field engine
+There is no drift between the seed and the roll. Both commands return FALSE, and the field engine
 runs commands until one returns TRUE, so all four `setptr`s and the generation happen back to back in a
-single frame. Nothing that yields may be emitted between them — a `playse` there would break it silently
-— and a test asserts none is.
+single frame. Nothing that yields may be emitted between them (a `playse` there would break it silently), and a
+test asserts none is.
 
 Delivered as a RAM script bound to a map object by `initramscript`, ending in `end` (0x02) rather than
 `endram` (0x0d), so the binding survives being used and can be re-triggered.
@@ -214,13 +214,13 @@ AFTER   0x8EEB8648
 ```
 
 Predicted offline from `BEFORE` alone and checked against the caught mon dumped out of `gPlayerParty`:
-PID 0x0BF87DD1, nature 13 Jolly, not shiny, IVs 25/10/28/9/19/3 — seven fields, all of them. That closes
+PID 0x0BF87DD1, nature 13 Jolly, not shiny, IVs 25/10/28/9/19/3, seven fields, all of them. That closes
 the read-only chain end to end: the address, the atomic read, the draw order, and the offset between a
-reading and the generation, which is **zero**. The four draws start at the state that was read.
+reading and the generation, which is zero. The four draws start at the state that was read.
 
-`distance(BEFORE, AFTER)` is **6** where `CreateBoxMon` says 4: `Random32()` for the personality (2), no
+`distance(BEFORE, AFTER)` is 6 where `CreateBoxMon` says 4: `Random32()` for the personality (2), no
 draws for the OT because the player is the OT [pokemon.c:1796], and 2 for the IVs [:1836,1845]. The
-extra 2 land *after* the generation, not before it — which is what the seven matching fields prove,
+extra 2 land *after* the generation, not before it, which is what the seven matching fields prove,
 since a mon built from `advance(BEFORE, 2)` would have had a different PID. Two turns is exactly one
 frame of overworld consumption. Deriving the 4 first is what makes the 6 a finding rather than a number.
 
@@ -240,14 +240,14 @@ msgbox                                          the NPC prints the value
 
 It alters nothing. `rng_script.seed_from_printed(low, high)` reassembles the word.
 
-**The read is atomic, and that is the part that could have failed silently.** The RNG never idles, so
+The read is atomic, and that is the part that could have failed silently. The RNG never idles, so
 four byte copies spread over four frames would tear: the halves would come from different states and the
 reassembled word would be a value the console never held, which looks exactly like a working script
 returning a plausible number. `copybyte` and `buffernumberstring` both return FALSE and the field engine
 runs commands until one returns TRUE, so all six run back to back inside one frame. A test asserts
 nothing that yields is emitted between them.
 
-**The text pointer has to be relative.** A RAM script lives in `gSaveBlock1Ptr->ramScript` and the base
+The text pointer has to be relative. A RAM script lives in `gSaveBlock1Ptr->ramScript` and the base
 is re-rolled on every battle and load, so an absolute pointer to the script's own message is wrong the
 moment anything happens. `setvaddress` (0xB8) sets `sAddressOffset = addr2 - (ctx->scriptPtr - 1)`
 [scrcmd.c:171] and `vmessage` (0xBD) subtracts it, so the operand becomes a plain offset into the
@@ -257,7 +257,7 @@ script's own body.
 message two lines. It takes a var id rather than an address, so only `copybyte`'s destination ever needed
 an address hunt.
 
-**The proof is talking twice.** The same NPC was asked twice, about twenty seconds apart:
+The proof is talking twice. The same NPC was asked twice, about twenty seconds apart:
 
 ```
 reading 1   RNG HI 4685   RNG LO 26687   -> 0x124D683F
@@ -269,11 +269,11 @@ Two unrelated 32-bit numbers sit about 2<sup>31</sup> apart; these are 2,595 apa
 1,655,093. A wrong address prints values that do not satisfy the recurrence at any plausible distance.
 `rng_script.check_two_readings`.
 
-**Where to bind it.** Both Pallet Town object events are `MOVEMENT_TYPE_WANDER_AROUND`
+Where to bind it. Both Pallet Town object events are `MOVEMENT_TYPE_WANDER_AROUND`
 [data/maps/PalletTown/map.json], so an NPC there walks off mid-countdown and the player has to chase him
 to press A. Everything binds to the player's mother now (group 4, map 0, object 1):
 `MOVEMENT_TYPE_FACE_LEFT`, flag 0 so she is never hidden, indoors, a step from where the player stands.
-Nothing in the script depends on the object standing still — the requirement comes from what the script
+Nothing in the script depends on the object standing still, the requirement comes from what the script
 is *for*, which is why no test caught it.
 
 ## How precisely a human can press A
@@ -290,7 +290,7 @@ Four trials against a chosen target 30.00 s ahead, read off the seed-printing NP
 Mean +9.2 frames, standard deviation 4.5, whole range 11. The mean is a fixed offset (screen to script
 read, plus press to read) and cancels; the spread is what matters, and presses land within about ±6
 frames of where they are aimed. Every one of the four turn counts is even, which it has to be if the
-state only moves 2 per frame — a check passing on data taken for another purpose.
+state only moves 2 per frame, a check passing on data taken for another purpose.
 
 A fifth trial read +39.2 frames and is discarded: it was taken against the wandering NPC and most of the
 error was the player chasing him.
@@ -322,27 +322,27 @@ bool8 ScrCmd_callnative(struct ScriptContext * ctx)      // 0x23
 
 [scrcmd.c:300, :120]
 
-`setptr` writes one arbitrary byte to one arbitrary address, and the bytes it writes can be **code**,
-which `callnative` runs. So a RAM script can stage a payload into EWRAM and execute it in the overworld —
+`setptr` writes one arbitrary byte to one arbitrary address, and the bytes it writes can be code,
+which `callnative` runs. So a RAM script can stage a payload into EWRAM and execute it in the overworld,
 the one place `CLI_RUN_BUFFER_SCRIPT` cannot reach.
 
 The technique came from outside the project: `notblisy/RUBYSAPPHIREDLC` does this on Ruby/Sapphire,
 staging sixteen bytes with `writebytetoaddr` and `callasm`ing them, with an LCG loop that runs until the
 PID would be shiny. Different game, different delivery, not one usable address; the technique transfers.
 
-**There is no aiming left.** `hasFixedPersonality` is 0 in `CreateScriptedWildMon`, so the personality is
+There is no aiming left. `hasFixedPersonality` is 0 in `CreateScriptedWildMon`, so the personality is
 `Random32()` (two draws), and `OT_ID_PLAYER_ID` reads the save and draws nothing. Shininess is decided by
 the first two draws after the state at that instant and nothing else. `setptr`, `callnative` and
 `setwildbattle` all return FALSE, so the field engine runs the whole script in one pass without yielding:
 the state the stub leaves in `gRngValue` is the state `CreateScriptedWildMon` consumes two commands
 later.
 
-**The stub reads the trainer id off the console** rather than being handed one: `gSaveBlock2Ptr` is a
+The stub reads the trainer id off the console rather than being handed one: `gSaveBlock2Ptr` is a
 pointer at a fixed IWRAM address even though the block it points at moves, and `playerTrainerId` is at
 +0x0A. The same bytes are therefore correct on FireRed and on LeafGreen. It writes exactly one word,
 `gRngValue`, and reads nothing else.
 
-**It cannot hang**, and that matters more here than in a buffer script: a buffer script that loops
+It cannot hang, and that matters more here than in a buffer script: a buffer script that loops
 forever freezes the Mystery Gift menu, but a field stub that loops forever freezes the overworld inside a
 script, with no menu at all. The search is bounded, and on exhaustion `gRngValue` is left untouched and
 the player gets an ordinary encounter. Every stub runs under unicorn before it can be staged
@@ -356,15 +356,15 @@ overworld.c:1337], which re-rolls `gSaveBlock1`'s address by a multiple of 4 in 
 [`SAVEBLOCK_MOVE_RANGE` 128, load_save.c:75]. A RAM script lives in
 `gSaveBlock1Ptr->ramScript.data.script` and the engine runs it through a pointer into that block
 [`GetRamScript`, script.c:514], which it keeps across the battle. The field engine therefore resumes at
-an address the script no longer occupies, and **nothing written after `dowildbattle` is reachable**.
+an address the script no longer occupies, and nothing written after `dowildbattle` is reachable.
 
 One mechanism, three symptoms: a stray second battle (the landing hit a 0xB6/0xB7); walking away clean
-(it hit the zero fill, which is `nop`); and a frozen overworld with no A, no B and no START — the app
-killed from the Switch menu — because a bigger stub pushed the resume point to byte 972 of 995, where a
+(it hit the zero fill, which is `nop`); and a frozen overworld with no A, no B and no START, the app
+killed from the Switch menu, because a bigger stub pushed the resume point to byte 972 of 995, where a
 negative shift lands inside the six-byte `setptr` records and decodes a command that waits forever.
 `releaseall` + `end` was never a fix.
 
-**The fix is to start the battle from outside the save block**, in ten bytes
+The fix is to start the battle from outside the save block, in ten bytes
 [`rng_script.battle_and_exit`]:
 
     setvar 0x8000, 0x02B7      ->  0x020370B4: B7 02  =  dowildbattle ; end
@@ -375,8 +375,8 @@ only in `event_data.c`'s table and `scrcmd.c`'s var commands, and no field scrip
 `ScriptContext_RunScript` calls `UnlockPlayerFieldControls()` the moment a script stops [script.c:335],
 so the `end` beside it gives the player back.
 
-**No RAM script may rely on an address inside the save block surviving a yield that involves a battle or
-a map load.**
+No RAM script may rely on an address inside the save block surviving a yield that involves a battle or
+a map load.
 
 ## Choosing the nature and the IVs
 
@@ -389,13 +389,13 @@ SPE/SPATK/SPDEF]. Nothing between them draws, so one state settles the whole mon
 
 Proven on hardware: asked for shiny + Jolly + Speed IV >= 20 on a level 5 Magikarp, the player talked to
 their mother, caught it, and a party dump read back PID 0x01503B8A, shiny value 4, Jolly, IVs
-6/2/25/**28**/12/7, which `lcg.recover_wild_state` puts at state 0x7041F74F and `rng_countdown`
+6/2/25/28/12/7, which `lcg.recover_wild_state` puts at state 0x7041F74F and `rng_countdown`
 reproduces field for field. Level 5 Magikarp because the nature and the IVs cannot be read off a screen:
 the mon has to be caught for the run to prove anything, and catch rate 255 at level 5 is one Ultra Ball.
 
-**The filter order is the cost model.** Shininess is tested in the hot loop, whose fifteen instructions
+The filter order is the cost model. Shininess is tested in the hot loop, whose fifteen instructions
 are the whole search rate; the division by 25 and the six IV comparisons sit in a block only 1 state in
-8192 reaches, so they cost nothing on average. A criterion never slows an iteration down — it multiplies
+8192 reaches, so they cost nothing on average. A criterion never slows an iteration down, it multiplies
 how many are needed:
 
 | asked for | 1 state in | typical freeze | worst at the cap |
@@ -427,21 +427,21 @@ const u8 *GetRamScript(u8 objectId, const u8 *script)
 { ... return scriptData->script; }
 ```
 
-[script.c:514]. The field engine does not copy the body anywhere. It runs it **in place**, out of
+[script.c:514]. The field engine does not copy the body anywhere. It runs it in place, out of
 `gSaveBlock1Ptr->ramScript.data.script`, and never reads past the last command. Bytes appended after it
 are storage that has already been delivered, at one script byte each.
 
 The only obstacle was aiming at it, and that argument was about a *build-time* constant. The save-block
 offset is re-rolled at a battle or a load and is then fixed for the whole frame the script runs in, and
 `&gSaveBlock1Ptr` is a link-time IWRAM word at 0x03004228 that says what it currently is. Read the
-pointer at run time and the target is exact — no sled, no search, no aiming.
+pointer at run time and the target is exact, no sled, no search, no aiming.
 
 `asm/field/ram-jump.s` is 36 bytes and is the only thing that still pays six per byte:
 
 | | staged | body |
 |---|---|---|
 | cost per payload byte | 6 script bytes | 1 script byte |
-| room in a 995-byte body | 162 bytes of code | **755 bytes** |
+| room in a 995-byte body | 162 bytes of code | 755 bytes |
 
     setptr x36    the trampoline, into gDecompressionBuffer        216 bytes
     callnative    -> trampoline -> payload -> back                   5
@@ -453,9 +453,9 @@ It is a tail branch, not a call: `bx r0` with `lr` untouched, so the payload's o
 returns straight to `ScrCmd_callnative`'s caller and the script carries on to the battle. ARMv4T has no
 `blx <reg>` and does not need one here.
 
-**The guard is the whole safety argument.** The trampoline checks that `ramScript.data.magic` is
+The guard is the whole safety argument. The trampoline checks that `ramScript.data.magic` is
 `RAM_SCRIPT_MAGIC` = 51 [script.c:12] before it branches. If the save-block offset is not what the host
-thinks, that byte is not 51 and the stub returns — the player gets an ordinary encounter, a miss rather
+thinks, that byte is not 51 and the stub returns, the player gets an ordinary encounter, a miss rather
 than a frozen overworld. There is no menu to back out of in the field, so a wrong address must not be
 able to execute anything.
 
@@ -464,20 +464,20 @@ able to execute anything.
 A THUMB stub reaches its literal pool with `ldr rN, [pc, #imm]` and its own tail with `adr`, and both use
 `Align(PC, 4)`. The assembler lays those immediates out believing the code begins word-aligned. Place the
 same bytes two off and the branch still lands, the code still runs, and every pool word is read two bytes
-past where it lives — for one stub that meant a filler length of `0x0433CF15` and a fault inside its own
+past where it lives, for one stub that meant a filler length of `0x0433CF15` and a fault inside its own
 checksum loop. An even offset is enough to branch, so the fault appears later and elsewhere.
 
 Four is also sufficient, and provably: `offset = Random() & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3)`
 [load_save.c:75] is `& 0x7C`, and `gSaveBlock1` is an EWRAM struct of u32 fields, so the base is
 word-aligned and `RAMSCRIPT_BODY_OFFSET` (0x3624) keeps it that way.
 
-`native_script.emulate_body_script` catches it, because it walks the real script bytes — the 36
-`setptr`s, the `callnative`, the trampoline reading `gSaveBlock1Ptr`, the branch back into the body —
+`native_script.emulate_body_script` catches it, because it walks the real script bytes (the 36
+`setptr`s, the `callnative`, the trampoline reading `gSaveBlock1Ptr`, the branch back into the body)
 rather than running a stub at an address a harness chose.
 
 ### Proving the size rather than the jump
 
-If the branch missed, nothing shiny appears — which proves the *jump* and says nothing about the *size*.
+If the branch missed, nothing shiny appears, which proves the *jump* and says nothing about the *size*.
 So `asm/field/mon-seek-far.s` is followed by non-zero filler out to the last byte of the 995, and the stub
 sums it and refuses to search unless the sum matches. `InitRamScript` zero-fills what it was not given
 [`ClearRamScript`, script.c:495], so a short delivery sums low and the stub leaves `gRngValue` alone.
@@ -489,7 +489,7 @@ matched.
 ## Searching so the stray draw cannot move the answer
 
 `asm/field/mon-seek-both.s` (232 bytes, `--gift rng-mon-hunt-both`, flag id 1001) tests the floors at
-**two** placements, and two cover all three methods. Let d3, d4, d5 be the draws after the personality:
+two placements, and two cover all three methods. Let d3, d4, d5 be the draws after the personality:
 
 | method | first triple (HP/ATK/DEF) | second triple (SPE/SPATK/SPDEF) |
 |---|---|---|
@@ -509,14 +509,14 @@ while a 99% cap costs 18 s of stare on the unlucky run.
 
 This stub is 232 bytes and could not have been staged; it exists because the payload moved into the body.
 
-**On hardware**, one run produced shiny, Jolly, SPEED 22 from state 0xFCB5674F, and the whole row is the
+On hardware, one run produced shiny, Jolly, SPEED 22 from state 0xFCB5674F, and the whole row is the
 point:
 
 | method | IVs | floors |
 |---|---|---|
-| 1 (clean) | 4/1/10/**22**/14/21 | ok — what the console made |
-| 2 | 22/14/21/**25**/1/18 | ok |
-| 4 | 4/1/10/**25**/1/18 | ok |
+| 1 (clean) | 4/1/10/22/14/21 | ok, what the console made |
+| 2 | 22/14/21/25/1/18 | ok |
+| 4 | 4/1/10/25/1/18 | ok |
 
 The console used Method 1 that run, so it did not itself exercise a stray draw; what it shows is that the
 search accepts only states that are correct whichever method fires.
@@ -533,21 +533,21 @@ and no candidate ambiguity, and the IVs came from Method 4:
 SPEED 21 against a floor of 20, passed. Method 4 is the placement `mon-seek-both` never builds a word
 for, so the derivation has been exercised on hardware by the very method it covers indirectly.
 
-Across five scripted encounters the methods were 1, 1, 2, 1, 4 — two in five carry a stray draw, on a
+Across five scripted encounters the methods were 1, 1, 2, 1, 4, two in five carry a stray draw, on a
 path that had looked clean.
 
 ## Where a hunt writes its report
 
 `asm/field/mon-seek-log.s` (288 bytes, `--gift rng-mon-hunt-log`, flag id 1002) writes
-`{marker, start, found, iterations, cap}` to `gSaveBlock1Ptr + 0x348C` — `u8 unused_348C[400]`
+`{marker, start, found, iterations, cap}` to `gSaveBlock1Ptr + 0x348C`, `u8 unused_348C[400]`
 [include/global.h]. Two things had to be true before pointing native code at the save, and both were
 checked rather than assumed:
 
-- **All 400 bytes read back as zero off this console** before anything was written there, so the decomp's
+- All 400 bytes read back as zero off this console before anything was written there, so the decomp's
   name for the block is true of the build the Switch runs. That dump was sized to 400 so it stopped one
   byte short of `ramScript` at 0x361C: a region that changes between the CRC frame and the send frame
   kills the link, and the RAM script is written during a session.
-- **It is outside `ramScript`**, so `CalculateRamScriptChecksum` is untouched and the binding survives.
+- It is outside `ramScript`, so `CalculateRamScriptChecksum` is untouched and the binding survives.
   The player can talk again and the log is simply overwritten.
 
 It is in the save, so it survives the battle (`MoveSaveBlocks_ResetHeap` copies the blocks rather than
@@ -558,16 +558,16 @@ abandoning them) and reaches flash when the player saves. Read it back with
 and `native_script.decode_hunt_log`. A miss is legible too: an exhausted search writes `found` 0 with the
 marker present, which until then was indistinguishable from a stub that never ran.
 
-**The cost of an iteration, measured rather than modelled**, from the first log read back:
+The cost of an iteration, measured rather than modelled, from the first log read back:
 
 | | |
 |---|---|
 | iterations | 603,745 |
-| `lcg.distance(start, found)` | 603,745 — difference 0 |
+| `lcg.distance(start, found)` | 603,745, difference 0 |
 | instructions (15 each) | 9,056,175 |
 | model at 3 cycles/instruction | 1.62 s |
-| observed by the player | 2–3 s |
-| implied | 3.7–5.6 cycles/instruction |
+| observed by the player | 2-3 s |
+| implied | 3.7-5.6 cycles/instruction |
 
 The distance check is worth stating on its own: the console's own counter and a discrete log over the LCG
 computed here agree to the iteration, from opposite ends.
@@ -575,17 +575,17 @@ computed here agree to the iteration, from opposite ends.
 `CYCLES_PER_INSTRUCTION_FROM_EWRAM = 3` therefore looks low, consistent with two other runs pausing
 longer than predicted. It is left at 3: the instruction count is exact but the other side of the division
 is a person with a stopwatch, and a single search is exponentially distributed, so two samples above the
-mean settle nothing. The freeze ceiling errs in the safe direction either way — a real cost above the
+mean settle nothing. The freeze ceiling errs in the safe direction either way, a real cost above the
 estimate means a search is refused sooner than it needs to be, never later.
 
 ## LeafGreen
 
-The stubs need no porting. Every literal they use — `gRngValue`, `gSaveBlock1Ptr`, `gSaveBlock2Ptr`, the
-LCG pair — is a link-time IWRAM word or a constant, all measured identical on LeafGreen, and `TID ^ SID`
+The stubs need no porting. Every literal they use, `gRngValue`, `gSaveBlock1Ptr`, `gSaveBlock2Ptr`, the
+LCG pair, is a link-time IWRAM word or a constant, all measured identical on LeafGreen, and `TID ^ SID`
 is read off the console at run time.
 
 What was missing was somewhere to put a RAM script, because the player has to talk to a map object. The
 binding went on Mewtwo's own object in Cerulean Cave B1F (group 1, map 74, object 3), with
 `setwildbattle` set to species 150 at level 70. `GetRamScript` replaces the object's script outright, so
-**Mewtwo's own script did not run** — the battle started immediately — and the Mewtwo that appeared was
+Mewtwo's own script did not run, the battle started immediately, and the Mewtwo that appeared was
 shiny. See [LeafGreen](frlg_leafgreen.md).

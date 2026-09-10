@@ -5,16 +5,15 @@
 @ address, up to eight argument words, and the r0 that comes back. Every symbol in rom_map.py
 @ becomes callable with chosen arguments instead of only the one CreateMon was written for.
 @
-@ THE ARGUMENT MECHANICS ARE NOT NEW AND ARE NOT GUESSED. bs42 disassembled CreateMon's own
-@ prologue and read its four stack arguments at entry sp + 0, 4, 8 and 12; bs43 and bs44 then
-@ called it on hardware with eight arguments and got 13/13 predicted fields back, bs44 existing
-@ only to prove the fourth stack word ([sp+12]) that bs43's otIdType left unread. So r0..r3 and
+@ The argument mechanics are measured. CreateMon's own prologue reads its four stack arguments at
+@ entry sp + 0, 4, 8 and 12, and calling it on hardware with eight arguments returns 13 of 13
+@ predicted fields, including the fourth stack word ([sp+12]). So r0..r3 and
 @ [sp+0..12] is a MEASURED calling convention here, not one taken on trust. The sixteen bytes are
 @ pushed for every call, whatever `argc` says, because the callee never pops them and a function
 @ that takes fewer simply does not read them - which is the same thing create-mon.s does.
 @
 @ WHY IT IS WORTH A RUN: SeedRng(k). SeedRng is a one-argument function [0x080486D0, named out of
-@ its own literal pool in bs14] that assigns gRngValue = k outright [decomp:src/random.c:15], and
+@ its own literal pool] that assigns gRngValue = k outright [decomp:src/random.c:15], and
 @ NOTHING reseeds it afterwards in ordinary play - the only other call sites are two unused debug
 @ screens and the title screen [decomp:src/title_screen.c:735], which runs before the main menu and
 @ so before Mystery Gift. Seeding during the link therefore fixes the console's RNG for everything
@@ -94,7 +93,7 @@ _start:
     cmp     r0, #0
     beq     .Lafter                 @ nothing to call: the two reads are the whole answer
 
-    sub     sp, sp, #16             @ arguments five to eight, where bs42 read them
+    sub     sp, sp, #16             @ arguments five to eight, where the callee's prologue reads them
     ldr     r1, [r4, #0x1C]
     str     r1, [sp, #0]
     ldr     r1, [r4, #0x20]

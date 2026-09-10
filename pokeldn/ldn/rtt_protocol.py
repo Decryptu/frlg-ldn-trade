@@ -2,7 +2,7 @@
 
 The console starts sending these the moment a station joins the mesh, and there is no wiki page for
 it: every field below is read off BDSP's own ARM64 and then checked against the thirteen messages
-sp35 captured.
+captured off a real host.
 
 A message is thirteen bytes and always thirteen (`nn::pia::transport::RttProtocol::Data`, size
 main.bin 0x015adab4 -> 0xd, serialise 0x015ada24, parse 0x015ad54c - the parse refuses anything
@@ -12,7 +12,7 @@ main.bin 0x015adab4 -> 0xd, serialise 0x015ada24, parse 0x015ad54c - the parse r
     u64  timestamp     big-endian, the sender's own clock. A response ECHOES it unchanged
     u32  target        big-endian, whose reply this is. ZERO IS ACCEPTED BY EVERYONE
 
-The host broadcasts a REQUEST every ~410 ms with target 0 (13 of 13 in sp35, message flags 0x01,
+The host broadcasts a REQUEST every ~410 ms with target 0 (13 of 13, message flags 0x01,
 destination bitmap 0xffffffff - the local protocol's 0x11 is the local protocol's alone). A station
 answers with kind 1, the same timestamp, and the requester's own id in `target`; the receiver's
 first test is `if target == 0: accept` (0x015ad000), so answering with 0 needs no id at all.
@@ -21,7 +21,7 @@ What the host does with the answer (0x015ad058): `(now - echoed) / ticks per ms`
 sample ring per station at `[protocol + 0x120] + index * 0x34`, and the median becomes that
 station's RTT once the ring is full. **NOTHING IN THIS PROTOCOL DROPS A STATION FOR STAYING
 SILENT** - a station that never answers simply never gets a sample. Read the code before believing
-the opposite; sp35 sat through 78 s of it.
+the opposite; one capture sat through 78 s of it.
 
 `docs/bdsp_session.md` "The RTT protocol".
 """
@@ -57,7 +57,7 @@ def parse(data):
             "target": struct.unpack_from(">I", data, 9)[0]}
 
 
-# --- Version 4 (Sword/Shield). Session 57, off the binary and off sw29. -----------------------
+# --- Version 4 (Sword/Shield), off the binary and off a capture ----------------------------------
 #
 # THE MESSAGE IS SIXTEEN BYTES, NOT THIRTEEN. `nn::pia::transport::RttProtocol` is at vtable
 # 0x25db4f8 in the Sword image, its GetProtocolId (vfunc4, 0x0185d590) returns 0x58 as BDSP's does,
@@ -65,7 +65,7 @@ def parse(data):
 # 0x0185d320. So BDSP's thirteen-byte builder would be short by three at a Sword, which is why
 # `build`/`parse` above are not simply reused.
 #
-# WHAT sw29 SHOWS, 26 of 26 messages, all from the console and all requests:
+# What a capture shows, 26 of 26 messages, all from the console and all requests:
 #
 #     0000000000000000 | 00000e783eaa067c
 #     0000000000000000 | 00000e783f68f4d2

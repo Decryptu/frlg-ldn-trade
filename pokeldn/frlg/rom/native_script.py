@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pokeldn.frlg.rom import rom_map
 from pokeldn.frlg.rom.field_stubs import STUBS
 from pokeldn.frlg.rom.rng_countdown import NATURE_NAMES, NUM_NATURES
-# ONE encoder for `setptr`, not two. bs56 was lost to the same shape of duplication in config.py.
+# One encoder for `setptr`, not two: duplicated encoders go out of step and cost a run.
 from pokeldn.frlg.rom.rng_script import (MAX_RAM_SCRIPT_SIZE, SCR_END, SCR_SETPTR, RngScriptError,  # noqa: F401
                          SCR_DOWILDBATTLE, SCR_SETWILDBATTLE, SCR_RELEASEALL, SCR_GOTO,
                          SCR_SETVAR, BATTLE_TAIL, TRAMPOLINE_ADDRESS, TRAMPOLINE_WORD,
@@ -121,7 +121,7 @@ def build_shiny_hunt_script(species, level, *, item=0, cap=1 << 18, scratch=SCRA
 def _stage_and_battle(code, species, level, *, item=0, scratch=SCRATCH):
     """-> the staged stub, the call, and the encounter. ONE of these, for every hunt stub.
 
-    The tail is the whole reason the builders share a path, and mev18 is why it is what it is: a
+    The tail is why the builders share a path: a
     battle MOVES the save block the RAM script lives in, so the engine comes back from the battle
     to an address the script no longer occupies. `battle_and_exit` starts the battle from
     gSpecialVar_0x8000 instead, which does not move [rng_script, and the block above it].
@@ -159,20 +159,19 @@ ANY_NATURE = (1 << NUM_NATURES) - 1
 # THUMB instructions for a state that is not shiny, which is 8191 states in 8192.
 INSTRUCTIONS_PER_ITERATION = 15
 
-# HOW LONG A SEARCH MAY FREEZE THE OVERWORLD. There is no menu to back out of, the field engine
-# has not returned, and the player is looking at a still frame with the music still playing.
-# The ceiling is on the WORST case - the whole cap - which by construction of `cap_for` is what
-# 1 search in 100 costs; the expected search is `SEARCH_CONFIDENCE`-dependent and several times
-# shorter, and `search_cost` reports both so the number the player will actually see is the one
-# quoted to them. AN ESTIMATE FROM THE GBA's CLOCK, NOT A MEASUREMENT - see
-# CYCLES_PER_INSTRUCTION_FROM_EWRAM below, and the first run to report a visible pause settles it.
+# How long a search may freeze the overworld. There is no menu to back out of and the field engine
+# has not returned; the player sees a still frame with the music still playing. The ceiling is on
+# the worst case, the whole cap, which by construction of `cap_for` is what 1 search in 100 costs;
+# the expected search is `SEARCH_CONFIDENCE`-dependent and several times shorter, and `search_cost`
+# reports both. An estimate from the GBA's clock, not a measurement; see
+# CYCLES_PER_INSTRUCTION_FROM_EWRAM below.
 MAX_FREEZE_FRAMES = 900                 # ~15 s at 59.7275 Hz
 SEARCH_CONFIDENCE = 0.99                # the default cap is the one that finds a state this often
 
 
 @dataclass(frozen=True)
 class MonCriteria:
-    """What mon-seek will accept. SHINY IS NOT A FIELD HERE - the hot loop always tests it.
+    """What mon-seek will accept. Shininess is not a field here; the hot loop always tests it.
 
     `natures` is a tuple of nature ids (empty means any) and `iv_minimums` six floors in DRAW
     order, IV_FIELDS. Both turn into one packed word the stub reads out of its literal pool.
@@ -296,7 +295,7 @@ def probability_for(criteria, placements=1):
     """-> the fraction of states that pass, when the IV floors must hold in `placements` words.
 
     asm/field/mon-seek-both.s tests the floors at TWO draw placements because the stray draw moves
-    them (mev20; docs/frlg_rng.md's Methods 1, 2 and 4), so the IV term is raised to that power. The
+    them (docs/frlg_rng.md's Methods 1, 2 and 4), so the IV term is raised to that power. The
     shiny and nature terms are not: both come from the personality, which is drawn before the stray
     and is the same word in every method.
     """
@@ -492,7 +491,7 @@ def emulate(code, *, base=SCRATCH, memory=None, instruction_limit=_INSTRUCTION_L
 # so ~370k cycles - a little over ONE FRAME. The worst case allowed by the default cap is ~50
 # frames, or most of a second. That is a visible hitch and nothing worse: interrupts stay enabled
 # throughout, so VBlank, DMA and the music carry on; the field engine simply has not returned yet.
-# NOT MEASURED ON HARDWARE. It is an estimate from the clock, and the run will say what it was.
+# Not measured on hardware: an estimate from the clock.
 CYCLES_PER_INSTRUCTION_FROM_EWRAM = 3
 CYCLES_PER_FRAME = 280896
 
@@ -522,7 +521,7 @@ RAMSCRIPT_MAGIC_OFFSET = RAMSCRIPT_IN_SAVEBLOCK1 + 4        # past the u32 check
 RAMSCRIPT_BODY_OFFSET = RAMSCRIPT_MAGIC_OFFSET + 4          # past magic, mapGroup, mapNum, objectId
 RAM_SCRIPT_MAGIC = 51                   # [decomp:src/script.c:12], written by InitRamScript [:505]
 
-# Where a hunt reports what it did: SaveBlock1.unused_348C[400] [decomp:include/global.h]. bs65 read
+# Where a hunt reports what it did: SaveBlock1.unused_348C[400] [decomp:include/global.h]. It reads
 # all 400 bytes off the console as zero before anything was written there. It is in the save, so it
 # survives the battle and reaches flash when the player saves, and it is outside ramScript, so the
 # RAM script checksum is untouched and the binding survives.
@@ -533,12 +532,12 @@ HUNT_LOG_FIELDS = ("magic", "start", "found", "iterations", "cap")
 
 TRAMPOLINE_STUB = "ram-jump"
 
-# THE PAYLOAD MUST START AT A MULTIPLE OF FOUR, not merely an even offset. A Thumb stub reaches its
-# literal pool with `ldr rN, [pc, #imm]` and its tail with `adr`, and both use Align(PC, 4). Place
-# the same bytes two off and the branch still lands and the code still runs, but every pool word is
-# read two bytes past where it lives - for mon-seek-far, a filler length of 0x0433CF15 and a fault
-# inside its own checksum loop. Caught by emulate_body_script below, which walks the real script
-# bytes rather than running a stub at an address a harness chose.
+# The payload must start at a multiple of four, not merely an even offset. A Thumb stub reaches its
+# literal pool with `ldr rN, [pc, #imm]` and its tail with `adr`, and both use Align(PC, 4). Two
+# bytes off, the branch still lands and the code still runs, but every pool word is read two bytes
+# past where it lives: for mon-seek-far, a filler length of 0x0433CF15 and a fault inside its own
+# checksum loop. Caught by emulate_body_script below, which walks the real script bytes rather than
+# running a stub at an address a harness chose.
 #
 # Four is also sufficient, provably, which is why nothing checks it at run time:
 # `offset = Random() & ((SAVEBLOCK_MOVE_RANGE - 1) & ~3)` [decomp:src/load_save.c:75] is `& 0x7C`,
@@ -633,11 +632,9 @@ def filler_bytes(count, seed=FILLER_SEED):
     return bytes(out)
 
 
-# THE SEARCH MUST HOLD AT 95%, NOT 99%, WHEN THE FLOORS ARE TESTED TWICE, and the reason is what a
-# miss costs. The RAM script ends in `end` and not `endram`, so the binding SURVIVES and the player
-# re-triggers the whole thing by talking to their MOM again [rng_script]. A miss is one A press; a
-# 99% cap would freeze the overworld for 18 s on the unlucky run, every time it is unlucky. Cheap
-# retry, expensive stare - so buy the retry.
+# 95%, not 99%, when the floors are tested twice. The RAM script ends in `end` and not `endram`, so
+# the binding survives and a miss costs the player one A press [rng_script]. A 99% cap would freeze
+# the overworld for 18 s on every unlucky run.
 BOTH_CONFIDENCE = 0.95
 
 
@@ -649,7 +646,7 @@ def build_mon_hunt_far_script(species, level, *, criteria=None, item=0, cap=None
                               confidence=SEARCH_CONFIDENCE):
     """build_mon_hunt_script, with the code RUN OUT OF THE BODY and the body FILLED to prove it.
 
-    ONE variable changes against mev19's card: where the search code lives. Same criteria, same
+    One variable changes against the control card: where the search code lives. Same criteria, same
     species, same cap, same battle tail. What is new is the filler behind the stub and the sum the
     stub takes over it before it will search at all - so the run distinguishes three things the
     screen could not otherwise tell apart:
@@ -696,7 +693,7 @@ def build_mon_hunt_far_script(species, level, *, criteria=None, item=0, cap=None
 
 
 # --- running the WHOLE script offline, not just the stub ----------------------------------------
-# bs56's lesson, and it cost a run: "the offline harness passed throughout because it builds its
+# The offline harness can pass throughout: "it builds its
 # distribution DIRECTLY - the one path the hardware uses was the one never exercised offline."
 # `emulate` above runs a stub at an address someone hands it. That is not the path any more. The
 # path is: the engine walks the body, `setptr` writes the trampoline a byte at a time, `callnative`
@@ -780,7 +777,7 @@ def build_mon_hunt_both_script(species, level, **kwargs):
     """build_mon_hunt_far_script with asm/field/mon-seek-both.s: the floors tested at BOTH draw
     placements, so the stray draw cannot move the IVs out from under the answer.
 
-    mev20 is why this exists and the .s header has the derivation: two words cover all three
+    The .s header has the derivation: two words cover all three
     methods docs/frlg_rng.md records, because word A puts the first IV triple on d3 and the second on
     d4, and word B puts them on d4 and d5.
     """
@@ -793,7 +790,7 @@ def build_mon_hunt_both_script(species, level, **kwargs):
 def decode_hunt_log(blob):
     """-> what a hunt wrote into SaveBlock1.unused_348C, or None if nothing did.
 
-    `magic` is checked rather than assumed: the region is zero on an untouched save (bs65), and a
+    `magic` is checked rather than assumed: the region is zero on an untouched save, and a
     run whose search was exhausted writes a `found` of 0 on purpose - so without the marker a miss
     and a stub that never ran would decode identically, which is exactly the pair this is for.
     """

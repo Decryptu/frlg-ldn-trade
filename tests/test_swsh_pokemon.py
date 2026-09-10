@@ -1,6 +1,6 @@
 """The 0x158-byte PK8 a Sword sends on protocol 0x84, and the party of six it arrives in.
 
-sw68 and sw70 are captures and stay out of the repository (CLAUDE.md rule 6), so everything here is
+Two runs are captures and stay out of the repository (CLAUDE.md rule 6), so everything here is
 built from synthetic records. What the real ones proved - and what these reproduce - is that the
 party stats RESTART the LCG, that they are outside both the shuffle and the checksum, and that the
 block order is applied and not inverted.
@@ -57,7 +57,7 @@ def test_the_party_stats_restart_the_lcg_rather_than_continuing_the_body_stream(
 
     A round trip cannot catch this - the cipher is its own inverse either way - so the test asserts
     the keystream directly: the first word of the tail is masked with the SAME step as the first
-    word of the body. sw70 read levels of 110 and 118 out of a tail nothing had decrypted.
+    word of the body. Levels of 110 and 118 were read out of a tail nothing had decrypted.
     """
     ec = 0x39C5F2CC
     plain = a_record(ec=ec)
@@ -118,7 +118,7 @@ def test_every_block_order_puts_the_fields_back_where_they_belong():
 
 
 def test_a_party_reads_six_slots_and_an_empty_one_is_an_encryption_constant_of_zero():
-    """Slots 4-6 arrive zero-filled from a player carrying three, and sw70 is exactly that."""
+    """Slots 4-6 arrive zero-filled from a player carrying three, and a real party is exactly that."""
     filled = [pokemon.encrypt(a_record(ec=0x39C5F2CC, species=94, nickname="Ectoplasma", level=100)),
               pokemon.encrypt(a_record(ec=0xC89430E0, species=254, nickname="Jungko", level=75)),
               pokemon.encrypt(a_record(ec=0xF5213B38, species=149, nickname="Dracolosse", level=73))]

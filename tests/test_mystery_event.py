@@ -343,7 +343,7 @@ def test_a_phrase_must_be_exactly_four_words():
 
 def test_a_refusal_message_longer_than_the_console_copies_is_refused():
     """Two bounds, and the tighter one bites first: a line wider than the message window wraps
-    around inside it (bs01), well before 64 bytes is reached. Pre-encoded bytes skip the line
+    around inside it, well before 64 bytes is reached. Pre-encoded bytes skip the line
     check and still have to fit what CLI_COPY_MSG copies."""
     from pokeldn.frlg.text import easychat
     card, ram_script = _probe_card()
@@ -414,7 +414,7 @@ def test_a_marker_status_follows_initramscript_because_it_sets_none():
 def test_an_npc_bound_script_makes_the_console_report_no_wonder_card():
     """ValidateSavedWonderCard calls ValidateRamScript [decomp:src/mystery_gift.c:186], which only
     passes for MAP_UNDEFINED / object 0xFF - so a card and an NPC-bound script cannot coexist, and
-    MysteryGift_LoadLinkGameData then reports flagId 0. Confirmed on hardware, mev03."""
+    MysteryGift_LoadLinkGameData then reports flagId 0. Confirmed on hardware."""
     distribution = gift_registry.GIFT_REGISTRY.build_distribution("mystery-event-npc")
     _, name, (map_group, map_num, object_id, _, _) = mystery_event.decode(distribution.mevent)[0]
 
@@ -430,7 +430,7 @@ def test_an_npc_bound_script_makes_the_console_report_no_wonder_card():
 # --- the language-safe part of the Easy Chat vocabulary ---------------------------------------
 
 def test_species_and_move_words_are_built_from_ids_not_from_the_english_table():
-    """mev03: the player typed AKWAKWAK and the console stored POKEMON/55 (SPECIES_GOLDUCK); they
+    """the player typed AKWAKWAK and the console stored POKEMON/55 (SPECIES_GOLDUCK); they
     typed AEROBLAST and it stored MOVE_1/177 (MOVE_AEROBLAST). Our constructors must produce
     exactly those ids."""
     from pokeldn.frlg.text import easychat
@@ -453,15 +453,15 @@ def test_an_illegal_species_or_move_is_refused():
 
 def test_the_french_check_passes_language_safe_words_and_flags_guesses():
     """All 1006 language-dependent slots have been read out of the console's own
-    sEasyChatGroup_* tables (bs18-bs36), so `check` flags no real word: what it still catches is
+    sEasyChatGroup_* tables, so `check` flags no real word: what it still catches is
     an id that is not a word at all."""
     from pokeldn.frlg.text import easychat, easychat_french
     assert easychat_french.check([easychat.species_word(55)]) == ()
     assert easychat_french.check([easychat.WORDS["hello"]]) == ()          # observed on hardware
-    assert easychat_french.check([easychat.WORDS["trade"]]) == ()          # bs20: ECHANGER
+    assert easychat_french.check([easychat.WORDS["trade"]]) == ()          # ECHANGER
     assert easychat_french.french(easychat.WORDS["trade"]) == "ECHANGER"
 
-    # EC_GROUP_TRAINER holds 26 words [bs17], so index 30 is past the end of the group and no
+    # EC_GROUP_TRAINER holds 26 words, so index 30 is past the end of the group and no
     # console prints anything for it.
     past_the_end = (1 << 9) | 30
     assert easychat_french.check([past_the_end]) == (past_the_end,)
@@ -472,7 +472,7 @@ def test_the_french_check_passes_language_safe_words_and_flags_guesses():
 def test_the_phrase_read_off_the_console_gates_a_gift():
     """Every session logs the console's four questionnaire ids; they are the key the gate compares
     against. CONSOLE_QUESTIONNAIRE is whatever the console currently holds - the default phrase since
-    bs07 - so this test follows the console rather than pinning a phrase."""
+    a run - so this test follows the console rather than pinning a phrase."""
     from pokeldn.frlg.text import easychat_french
     card, ram_script = _probe_card()
     server = mg_server.MysteryGiftServer(
@@ -490,8 +490,8 @@ def test_the_phrase_read_off_the_console_gates_a_gift():
 
 
 def test_the_cli_parses_a_phrase_in_every_form_it_accepts():
-    """Every accepted spelling of the custom phrase mev04/mev06 gated on, plus the default the
-    console holds now (bs07), which is four plain group/index slots."""
+    """Every accepted spelling of the custom phrase the gate was set to, plus the default the
+    console holds now, which is four plain group/index slots."""
     from pokeldn.frlg.text import easychat, easychat_french
     import frlg_mg_host
     assert easychat.parse_phrase("species:55,FEELINGS/60,move:177,why") \

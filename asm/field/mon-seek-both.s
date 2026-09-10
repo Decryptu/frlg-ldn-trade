@@ -1,6 +1,6 @@
 @ FIELD STUB: mon-seek-far, made to hold against the STRAY DRAW.
 @
-@ WHY. mev20 delivered 995 bytes into the body and the search ran - a shiny JOLLY MAGIKARP, from a
+@ 995 bytes delivered into the body and the search ran: a shiny Jolly Magikarp, from a
 @ state that could only have been found by testing all three criteria. Its SPEED came out 10 against
 @ a floor of 20, and the reason is not this code:
 @
@@ -10,17 +10,17 @@
 @
 @ ONE EXTRA Random() ran between the personality draw and the IV draws. `CreateBoxMon` has no draw
 @ there [decomp:src/pokemon.c], and docs/frlg_rom_rng.md already records this as measured and unexplained for
-@ WILD encounters - bs51's Weedle (Method 2, the stray before the IVs), bs52 and bs54 (Method 4,
-@ between the IV draws). What mev20 adds is that it happens on a SCRIPTED encounter too: bs53's
-@ Ditto was clean and so was mev19, so it is intermittent there rather than absent. A search that
+@ wild encounters: a Weedle (Method 2, the stray before the IVs), a Caterpie and a second Weedle
+@ (Method 4, between the IV draws). It happens on a scripted encounter too, where other runs were
+@ clean, so it is intermittent there rather than absent. A search that
 @ assumes one placement is right most of the time and silently wrong the rest.
 @
 @ THE FIX, AND WHY TWO TESTS COVER THREE METHODS. Let d3, d4, d5 be the three draws after the
 @ personality. The first IV triple (HP, ATK, DEF) and the second (SPE, SPATK, SPDEF) come from:
 @
 @     Method 1 (clean)     first d3, second d4
-@     Method 2 (mev20)     first d4, second d5
-@     Method 4 (bs52/54)   first d3, second d5
+@     Method 2     first d4, second d5
+@     Method 4             first d3, second d5
 @
 @ This stub builds word A = d3 | d4<<15 and word B = d4 | d5<<15 and requires the floors to hold in
 @ BOTH. That puts the first triple's floors on d3 (from A) and d4 (from B), and the second triple's
@@ -33,7 +33,7 @@
 @ host's cost model takes `placements` and refuses anything past the freeze ceiling as before.
 @
 @ THE UNROLL IS THE POINT. Checking twice costs about forty bytes of code, and the reason that is
-@ affordable at all is the change mev20 proved: the payload lives in the RAM script body at one
+@ affordable at all is that the payload lives in the RAM script body at one
 @ script byte each, so there are 755 bytes here instead of 162 [asm/field/ram-jump.s]. This stub is
 @ the first thing that could not have been staged.
 @
@@ -180,7 +180,7 @@ _start:
 
     .align 2
     .global p_rng, p_mult, p_add, p_sav2ptr, p_cap, p_nature, p_ivmin, p_padlen, p_padsum
-p_rng:  .word 0x03004220            @ gRngValue [rom_map.GRNG_VALUE, bs14/bs15]
+p_rng:  .word 0x03004220            @ gRngValue [rom_map.GRNG_VALUE]
 p_mult: .word 0x41C64E6D            @ RAND_MULT [decomp:include/random.h:18]
 p_add:  .word 0x00006073            @ RAND_ADD  [:19]
 p_sav2ptr: .word 0x0300422C         @ &gSaveBlock2Ptr [rom_map.GSAVEBLOCK2PTR]

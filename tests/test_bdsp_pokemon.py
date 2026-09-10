@@ -1,6 +1,6 @@
 """The 328-byte PB8 a NetTradePokeData carries.
 
-sp82's real Zubat is a capture and stays out of the repository (CLAUDE.md rule 6), so everything
+A run's real Zubat is a capture and stays out of the repository (CLAUDE.md rule 6), so everything
 here is built from synthetic bodies. What the real one proved, and what these reproduce, is that
 the checksum verifies a decryption and that encrypt is exactly the inverse of decrypt.
 """
@@ -48,7 +48,7 @@ def test_a_corrupted_body_is_refused_by_its_own_checksum():
 
 
 def test_a_block_order_that_is_not_its_own_inverse_still_round_trips():
-    """sp97 is the run this test exists for.
+    """A run is the run this test exists for.
 
     Every PB8 the project had decoded came from one Pokemon, whose EC gave sv=21 and the ordering
     (3, 1, 2, 0) - SELF-INVERSE, so decrypt inverting the order was a no-op and nothing complained
@@ -115,11 +115,11 @@ def test_building_from_a_template_changes_only_what_was_asked_for():
 
 
 def test_a_nickname_sets_the_flag_that_makes_the_console_draw_it():
-    """sp92's whole visible edit was lost to this: the name field is only shown when IV32 bit 31 is
+    """A run's whole visible edit was lost to this: the name field is only shown when IV32 bit 31 is
     set, and a PB8 always carries a name string, so a nickname with the flag clear is invisible."""
     template = pokemon.encrypt(a_body())
     plain = bytearray(a_body())
-    struct.pack_into("<I", plain, pokemon.OFF_IVS, 0x14A65C08)      # flag clear, as sp82's was
+    struct.pack_into("<I", plain, pokemon.OFF_IVS, 0x14A65C08)      # flag clear, as the console's was
     template = pokemon.encrypt(bytes(plain))
     assert pokemon.read(template)["is_nicknamed"] is False
 
@@ -134,7 +134,7 @@ def test_a_nickname_sets_the_flag_that_makes_the_console_draw_it():
 
 
 def test_the_fields_pkhex_names_survive_a_round_trip():
-    """The offsets beyond sp82's twelve come from PKHeX's G8PKM, where all twelve agree."""
+    """The offsets beyond the twelve measured come from PKHeX's G8PKM, where all twelve agree."""
     template = pokemon.encrypt(a_body())
     edits = dict(moves=(71, 48, 0, 0), move_pp=(25, 20, 0, 0), relearn=(1, 2, 3, 4),
                  ball=4, met_level=4, met_location=357, egg_location=65535, language=3,
@@ -168,7 +168,7 @@ def test_the_trade_messages_wrap_the_payloads_the_console_wraps_them_in():
     assert room.parse_trade_traner(rec[3:])["trainer_id"] == 44466
 
 
-# the two trainer records this project has seen, sp82 and sp83. They differ at 0x18.
+# the two trainer records this project has seen. They differ at 0x18.
 TRADE_TRANER_SP82 = bytes.fromhex(
     "470075007200760061006e000000000018a4010014a401000000b2adf00f3103")
 TRADE_TRANER_SP83 = bytes.fromhex(
@@ -176,7 +176,7 @@ TRADE_TRANER_SP83 = bytes.fromhex(
 
 
 def test_the_trainer_record_is_parsed_from_the_game_message_not_the_reliable_frame():
-    """sp83 handed the parser the reliable frame and the exception took the station down.
+    """A run handed the parser the reliable frame and the exception took the station down.
 
     The console reads a station that vanishes mid-trade as a cancellation, which is exactly what
     the player saw. The parser must refuse a wrong length loudly - it did - and the caller must
@@ -193,7 +193,7 @@ def test_the_trainer_record_is_parsed_from_the_game_message_not_the_reliable_fra
 
 
 def test_the_bytes_behind_the_name_vary_between_sessions_and_no_field_is_read_out_of_them():
-    """sp82 and sp83 differ only in the slack, and every declared field holds still.
+    """Two runs differ only in the slack, and every declared field holds still.
 
     The record is a marshalled struct out of an uncleared `AllocHGlobal` block, so what follows the
     name's terminator is heap residue. It is carried, not interpreted.
@@ -209,7 +209,7 @@ def test_the_bytes_behind_the_name_vary_between_sessions_and_no_field_is_read_ou
 
 
 def test_the_trainer_record_we_build_is_the_console_s_own_bytes():
-    """Byte-identical to sp82: the layout is not just readable, it is reproducible."""
+    """Byte-identical to the console's own: the layout is readable and reproducible."""
     assert room.build_trade_traner("Gurvan", 44466, 4080)[3:] == TRADE_TRANER_SP82
     parsed = room.parse(room.build(room.TRADE_TRANER, TRADE_TRANER_SP83))
     assert parsed["traner"]["name"] == "Gurvan"
@@ -274,7 +274,7 @@ def test_the_standby_list_reads_the_record_the_console_sent_back():
 
 
 def test_the_handler_block_is_readable_and_settable():
-    """sp99 gave a console a Pokemon whose OT was not the player and asked for it back.
+    """A run gave a console a Pokemon whose OT was not the player and asked for it back.
 
     Eleven bytes changed: the handler name at 0xA8, language at 0xC3, CurrentHandler at 0xC4,
     friendship at 0xC8, and the checksum. 0xC6 - which PKHeX carries as `// unused?` - stayed zero

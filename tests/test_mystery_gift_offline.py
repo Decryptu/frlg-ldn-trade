@@ -233,7 +233,7 @@ def test_ni_send_sequence_matches_verified_child_sender():
 
 def test_parent_ni_sender_join_status_frames():
     """PARENT NI sender for the 1-byte join status: two NI_STARTs (payloadSize 5 < 7-byte header),
-    one NI (the status), NI_END, NULL — byte-exact in 3-byte PARENT LLSF."""
+    one NI (the status), NI_END, NULL, byte-exact in 3-byte PARENT LLSF."""
     sender = ni.ParentNISender(status=ni.RFU_STATUS_JOIN_GROUP_OK)
     got = []
     while not sender.done:
@@ -251,7 +251,7 @@ def test_parent_ni_sender_join_status_frames():
 
 def test_child_acks_of_parent_ni_match_reference_capture():
     """Round-trip: wrap each ParentNISender frame in a HOST 'T', parse_in it, feed the child's
-    NIReceiver — the child's recv-ack sequence must equal the reference capture (8006/0007/800a/000e),
+    NIReceiver: the child's recv-ack sequence must equal the reference capture (8006/0007/800a/000e),
     and the child must read the join status 5. Exercises wrap_t_parent + parse_in on NI frames too."""
     sender = ni.ParentNISender()
     recv = ni.NIReceiver()
@@ -306,7 +306,7 @@ def test_b85_encode_inverts_decode():
 
 def test_beacon_record_round_trips_through_dump_decoder():
     """build_beacon's RFU record must decode back to the same fields transport._dump_beacon reads
-    (trainer id, name, RFU session id, tradeSpecies) — the only fields the decoder proves."""
+    (trainer id, name, RFU session id, tradeSpecies), the only fields the decoder proves."""
     app = beacon.build_beacon(trainer_id=0x2288, name="EMU", rfu_session_id=beacon.RFU_SERIAL_GAME,
                               trade_species=277)
     assert len(app) == beacon.PIA_HDR + 30                 # 0x5C header + base85(24B) = 30 chars

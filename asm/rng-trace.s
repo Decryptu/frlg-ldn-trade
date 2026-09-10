@@ -1,7 +1,7 @@
 @ CLI_RUN_BUFFER_SCRIPT payload: sample one word of the console's memory ONCE A FRAME, optionally
 @ calling a ROM function between the two halves of each sample.
 @
-@ bs13 found RAND_MULT and bs14's dump named gRngValue at 0x03004220 [Random, 0x080486B0, whose
+@ A scan for RAND_MULT names gRngValue at 0x03004220 [Random, 0x080486B0, whose
 @ disassembly is byte for byte src/random.c:11]. Both are still only READ addresses: a word that
 @ changes proves nothing, and at the Mystery Gift menu the game may not call Random at all.
 @

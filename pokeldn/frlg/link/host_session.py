@@ -16,7 +16,7 @@ HOST_RTX_LIMIT = 2
 # The console releases in-order Reliable frames to the game in one burst when a hole closes, and its
 # RFU receive queue is 8 deep (h5). If we keep emitting new frames while the console's cumulative ack
 # is stuck behind a lost frame, the backlog grows without bound and the release burst overflows the
-# queue, silently dropping block fragments (the ident-25 stall, lg150, session 16). Cap the frames the
+# queue, silently dropping block fragments (the ident-25 stall). Cap the frames the
 # console has not yet cumulatively acked: below its queue depth, so any single release fits.
 HOST_OUTSTANDING_MAX = 6
 
@@ -151,7 +151,7 @@ class HostSession:
         # Hole guard: while the console's cumulative ack lags our send by more than its RFU receive
         # queue can release at once, stop emitting NEW frames and let poll()'s retransmits refill the
         # hole. A closed hole then releases at most HOST_OUTSTANDING_MAX frames, which the 8-deep queue
-        # accepts without dropping block fragments (lg150, session 16). Never gate the close/disconnect
+        # accepts without dropping block fragments. Never gate the close/disconnect
         # path: those must still go out even if an ack is outstanding.
         if (not (self.close_poll_sent and self.activity.disconnect_requested)
                 and self.reliable.link.outstanding() >= HOST_OUTSTANDING_MAX):

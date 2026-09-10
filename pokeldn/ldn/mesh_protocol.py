@@ -64,24 +64,23 @@ LOCATION_FIELD = 64
 ACK_PROTOCOL = stp.PROTOCOL       # 0x14 - a mesh message is acked on the STATION protocol
 
 # ---------------------------------------------------------------------------
-# Version 4 (Sword/Shield), read off the retail binary in session 57. Addresses are
+# Version 4 (Sword/Shield), read off the retail binary. Addresses are
 # scratchpad/swsh/main.bin, and docs/swsh.md "The Mesh Protocol" carries the disassembly.
 #
-# The MESSAGE TABLE IS THE SAME TABLE. The version-4 dispatcher is `MeshProtocol::vfunc9`
-# (0x017bfc30) -> 0x017c0c80: `type - 1`, a 0x80 bound, and the jump table at 0x02081564. Its
-# nineteen live entries are exactly the constants above MINUS 0x22 and 0x23 - version 4 has no
-# DUMMY_MESSAGE and no DUMMY_ACK, and those two fall to the default case.
+# Version 4 uses the same message table. Its dispatcher is `MeshProtocol::vfunc9` (0x017bfc30) ->
+# 0x017c0c80: `type - 1`, a 0x80 bound, and the jump table at 0x02081564. The nineteen live entries
+# are the constants above minus 0x22 DUMMY_MESSAGE and 0x23 DUMMY_ACK, which fall to the default
+# case.
 #
-# THE JOIN REQUEST NEEDS NO CHANGE. The version-4 handler for type 1 is 0x017c1700: it reads the
-# ack id as the message's last four bytes (0x017d5750, `size - 4` then a big-endian load) and
-# compares byte [1] against 0xFD at 0x017c1800 - the same six bytes `build_join_request` already
-# sends. It answers on 0x14 with the eight-byte ack built at 0x017c6dd0, so `ack_for` holds too.
+# The join request is unchanged. The version-4 handler for type 1 is 0x017c1700: it reads the ack
+# id as the message's last four bytes (0x017d5750, `size - 4` then a big-endian load) and compares
+# byte [1] against 0xFD at 0x017c1800, the six bytes `build_join_request` sends. It answers on 0x14
+# with the eight-byte ack built at 0x017c6dd0, so `ack_for` holds too.
 #
-# WHAT DID CHANGE IS THE ENTRY STRIDE: 64 bytes, not 68, and the index sits at 0x3E inside it
-# rather than after a 64-byte location. The parser at 0x017b4830 is self-proving on this - it
-# rejects a response longer than 0x810 bytes, and 0x810 is exactly 0x10 + 32 * 0x40 against the
-# 32-station bound at 0x017bfa34. The loop is `add x20, x20, #0x4e` (0x10 + 0x3E), then
-# `ldrb w8, [x20], #0x40` per entry.
+# The entry stride differs: 64 bytes, not 68, with the index at 0x3E inside it rather than after a
+# 64-byte location. The parser at 0x017b4830 rejects a response longer than 0x810 bytes, and 0x810
+# is 0x10 + 32 * 0x40 against the 32-station bound at 0x017bfa34. The loop is
+# `add x20, x20, #0x4e` (0x10 + 0x3E), then `ldrb w8, [x20], #0x40` per entry.
 MESH_TYPES_V4 = frozenset([
     JOIN_REQUEST, JOIN_RESPONSE, LEAVE_REQUEST, LEAVE_RESPONSE,
     DESTROY_MESH, DESTROY_RESPONSE, UPDATE_MESH, KICKOUT_NOTICE,
@@ -95,10 +94,9 @@ INDEX_FIELD_V4 = 0x3E
 MAX_STATIONS_V4 = 32
 JOIN_RESPONSE_MAX_V4 = 0x810      # 0x10 + MAX_STATIONS_V4 * STATION_INFO_SIZE_V4, checked inline
 
-# CONFIRMED ON THE WIRE, sw29, and by length alone. A retail Sword's join response is 148 bytes for
-# two stations - 0x10 + 2 * 0x40 + 4 - where a 68-byte entry would give 156; and its update mesh is
-# 524 bytes, 12 + 8 * 0x40, where BDSP's eight 68-byte seats are 556. Two message shapes, two
-# lengths, one stride. docs/pia.md "The version-4 Mesh Protocol".
+# Confirmed on the wire by length alone. A retail Sword's join response is 148 bytes for two
+# stations (0x10 + 2 * 0x40 + 4) where a 68-byte entry would give 156, and its update mesh is 524
+# bytes (12 + 8 * 0x40) where BDSP's eight 68-byte seats are 556. docs/pia.md.
 JOIN_RESPONSE_TWO_STATIONS_V4 = 0x10 + 2 * STATION_INFO_SIZE_V4 + 4        # 148
 
 
@@ -181,7 +179,7 @@ def parse_join_response(data, version4=False):
 
 UPDATE_MESH_HEADER = 12
 UPDATE_MESH_SIZE = UPDATE_MESH_HEADER + 8 * STATION_INFO_SIZE      # 556: always the full 8 seats
-UPDATE_MESH_SIZE_V4 = UPDATE_MESH_HEADER + 8 * STATION_INFO_SIZE_V4        # 524, measured at sw29
+UPDATE_MESH_SIZE_V4 = UPDATE_MESH_HEADER + 8 * STATION_INFO_SIZE_V4        # 524, measured
 
 
 def parse_update_mesh(data, version4=False):
@@ -189,7 +187,7 @@ def parse_update_mesh(data, version4=False):
 
     BDSP sends this about once a second and always at the FULL 556 bytes - twelve bytes of header
     and room for all eight seats, the unused ones left zero - so the length says nothing and
-    `entries` is what to walk. sp45 caught 110 of them, every one identical, update counter 5.
+    `entries` is what to walk. 110 in one capture were identical, update counter 5.
     """
     if len(data) < UPDATE_MESH_HEADER or data[0] != UPDATE_MESH:
         raise ValueError(f"not a mesh update: {data[:12].hex()}")
@@ -210,9 +208,9 @@ def parse_update_mesh(data, version4=False):
 def rewrite_update_mesh(data, host_index, update_counter=None):
     """-> the console's own update mesh with the host index (and optionally the counter) changed.
 
-    THE HOST IS THE ONE THAT SENDS THIS, and after a migration that is us. sw87: the console
+    The host sends this, and after a migration that is us. The console
     answered our MIGRATION_FINISH, kept its RTT and its acks running - so the finish itself was
-    accepted, where sw84's MIGRATION_RESPONSE froze it - and then **stopped sending UPDATE_MESH**,
+    accepted, where a MIGRATION_RESPONSE freezes it, and then stopped sending UPDATE_MESH,
     because it was no longer the host. 1.3 seconds later the mesh was gone and the player saw
     2-ALZAA-0016. Nothing had taken over the job it had just handed us.
 
@@ -273,18 +271,18 @@ def parse_message(data):
 # --- Host migration, and it is THE LAST THING A SWORD SAYS ------------------------------------
 #
 # When the player accepts a trade, a retail Sword sends THREE BYTES on the mesh protocol's own
-# reliable port and then never speaks again. sw81 and sw83 both carry it, byte-identical, and no
+# reliable port and then never speaks again. Every run where the player accepted carries it, and no
 # other run in the project does - those two are the only runs where the player pressed accept:
 #
 #     0f 00 00 03 00 01 00 01   44 00 01
 #     ^ the version-4 reliable header, sequence 1     ^ the mesh message
 #
-# Session 59 read the three bytes as an application payload, `swsh.trade.parse` raised on them and
+# Read as an application payload the three bytes make `swsh.trade.parse` raise, and
 # the run died mid-trade. They are not an application payload. **Mesh protocol port 1 IS the
 # reliable one** (the wiki's own port table), so the reliable window is the TRANSPORT and a mesh
 # message rides inside it - and `44` is MIGRATION_START.
 #
-# THE HANDLER NAMES EVERY FIELD (main.bin 0x017c1f00, reached from the type table at 0x02081564
+# The handler names every field (main.bin 0x017c1f00, reached from the type table at 0x02081564
 # entry 0x43). It refuses the message unless:
 #
 #     size == 3                                       0x017c1f54
@@ -292,19 +290,18 @@ def parse_message(data):
 #     [2] <= 0x1f                                     0x017c1f78, the 32-station bound
 #     [2] != that same host index                     0x017c1f8c - a host cannot migrate to itself
 #
-# and the sender builds exactly those three (0x017c31b8): `[0x44, host index, NEW host index]`.
-# sw83's join response gave `host_index=0 our_index=1` and the console sent `44 00 01`, so the
-# console is naming US as the next host of its mesh.
+# and the sender builds exactly those three (0x017c31b8): `[0x44, host index, new host index]`.
+# Against a join response of `host_index=0 our_index=1` the console sends `44 00 01`, naming us as
+# the next host of its mesh.
 #
-# THE ANSWER IS TWO BYTES. The MIGRATION_RESPONSE handler (0x017c10ac) refuses anything but
+# The answer is two bytes. The MIGRATION_RESPONSE handler (0x017c10ac) refuses anything but
 # `size == 2` and passes [1] on to 0x017b8900; the builder (0x017c3310) writes
 # `[0x48, own station index]`, where the index is the mesh's byte 0xAC (0x017bc430) - the same
 # getter MIGRATION_FINISH uses for its own [1]. Two getters, one byte apart, and they are not
 # interchangeable: 0xAB is the HOST's index and 0xAC is OURS.
 #
-# MIGRATION_FINISH is three bytes, `[0x41, host index, flag & 1]` (0x017c2ef0), and its handler
-# (0x017c0fb0) checks size == 3 and [1] against the host index. Nothing here builds one: the host
-# sends it, we receive it.
+# MIGRATION_FINISH is three bytes, `[0x41, host index, flag & 1]` (0x017c2ef0); its handler
+# (0x017c0fb0) checks size == 3 and [1] against the host index.
 MIGRATION_START_SIZE = 3
 MIGRATION_RESPONSE_SIZE = 2
 MIGRATION_FINISH_SIZE = 3
@@ -315,7 +312,7 @@ def parse_migration_start(data):
     """-> {'host_index', 'new_host_index'}, or None when this is not a migration start.
 
     A READER ON A LIVE RUN MUST NOT RAISE - see `swsh.trade._maybe_parse`. This one returns None
-    for everything it does not recognise, including the short buffers that ended sw81.
+    for everything it does not recognise, including a short buffer.
     """
     data = bytes(data)
     if len(data) != MIGRATION_START_SIZE or data[0] != MIGRATION_START:
@@ -338,7 +335,7 @@ def build_migration_response(station_index):
 def build_migration_finish(station_index, ok=True):
     """-> the three bytes the NEW host broadcasts to close a migration.
 
-    THE RESPONSE GOES TO THE NEW HOST, NOT FROM IT, and sw84 is what taught this project the
+    The response goes TO the new host, not from it. The
     difference. `SendMigrationResponse` (`0x017c3250`) takes a DESTINATION index in w1 and its only
     caller (`0x017ca1a0`) passes `this[0x86]`, which the migration acceptor writes as the NEW host
     index (`0x017c9df0`, from `0x017c9e50`'s third argument). So a station that is named the next

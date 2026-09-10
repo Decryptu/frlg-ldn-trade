@@ -1,8 +1,8 @@
 @ CLI_RUN_BUFFER_SCRIPT payload: CALL A ROM FUNCTION THAT TAKES EIGHT ARGUMENTS, and send back the
 @ 100 bytes it built - optionally APPENDING them to the player's party.
 @
-@ bs15 called `Random` - no arguments, a u16 back, and the LCG's own recurrence to check it by.
-@ CreateMon is the other end of the range [0x08041150, bs42, disassembled against pokemon.c:1755]:
+@ `Random` takes no arguments, returns a u16, and has the LCG's own recurrence to check it by.
+@ CreateMon is the other end of the range [0x08041150, disassembled against pokemon.c:1755]:
 @
 @   void CreateMon(struct Pokemon *mon, u16 species, u8 level, u8 fixedIV,
 @                  u8 hasFixedPersonality, u32 fixedPersonality, u8 otIdType, u32 fixedOtId)
@@ -19,7 +19,7 @@
 @ so the four go at sp+0..sp+12 in that order, in whole words, at the moment of the call. The
 @ callee does not pop them [080411b4: add sp,#28; pop {r3}; pop {r4-r7}; pop {r0}; bx r0], so we
 @ take the 16 bytes back ourselves - and RETURNING AT ALL is the proof that we did, because a
-@ payload that forgot would pop a garbage lr. Proven on hardware, bs43 and bs44.
+@ payload that forgot would pop a garbage lr. Proven on hardware.
 @
 @ THE MON IS ALWAYS BUILT INSIDE OUR OWN IMAGE, where nothing but the payload can be hurt, and read
 @ back from there; there are 32 bytes of guard between it and the code so that an overrun of a
@@ -27,7 +27,7 @@
 @ there are two ways to ask for that:
 @
 @ `party_append` = 1 APPENDS IT TO THE PLAYER'S PARTY - gPlayerParty, NOT the save block's copy.
-@ bs46 wrote gSaveBlock1Ptr->playerParty, correctly reported APPENDED at slot 2 with the count
+@ A write to gSaveBlock1Ptr->playerParty reports APPENDED at slot 2 with the count
 @ raised, and the mon was not there afterwards: SavePlayerParty [decomp:src/load_save.c:160] copies
 @ gPlayerPartyCount and all six gPlayerParty[i] INTO the save block when the console saves, so the
 @ save block's party is a destination, never the live one. Writing gPlayerParty makes that same
@@ -35,9 +35,9 @@
 @
 @ Both addresses are given, not computed, and that is correct HERE precisely where it was wrong
 @ for the save block: gPlayerParty and gPlayerPartyCount are ordinary EWRAM globals fixed at link
-@ time - bs42 read 0x02024280 as a literal constant out of ZeroPlayerPartyMons' pool - while
+@ time (0x02024280 is a literal constant in ZeroPlayerPartyMons' pool) while
 @ gSaveBlock1Ptr carries a random 4-aligned offset re-rolled on every battle and load
-@ [SetSaveBlocksPointers, decomp:src/load_save.c:75], which bs45 and bs46 measured moving 76 bytes.
+@ [SetSaveBlocksPointers, decomp:src/load_save.c:75], measured moving 76 bytes.
 @
 @ It writes at slot == the CURRENT COUNT and then raises the count by one, which is what the game
 @ itself does when a mon is caught: an occupied slot is never touched, so this cannot destroy a
@@ -61,8 +61,8 @@
 @   0x004  function        THUMB pointer to CreateMon, or 0 to call nothing
 @   0x008  destination     absolute address to copy the finished mon to, or 0
 @   0x00C  party_append    1 = append to gPlayerParty; 2 = DRY RUN
-@   0x010  party_base      gPlayerParty  [0x02024280, measured bs47]
-@   0x014  party_count     &gPlayerPartyCount  [0x02024025, measured bs47]
+@   0x010  party_base      gPlayerParty  [0x02024280, measured]
+@   0x014  party_count     &gPlayerPartyCount  [0x02024025, measured]
 @   0x018  species         u16 in a word (the callee masks it itself)
 @   0x01C  level           u8 in a word
 @   0x020  fixedIV         u8 in a word; 32 or more means "roll them" [USE_RANDOM_IVS]
@@ -82,11 +82,11 @@
 @   0x0A4  32 bytes of guard
 @   0x0C4  the code
 @
-@ The first 116 bytes of the answer are exactly what bs43 and bs44 returned, so their dumps still
+@ The first 116 bytes of the answer are the older header-then-mon shape, so older dumps still
 @ read; the party word is an addendum past them.
 @
 @ *param comes back as the mon's first word, which for a real struct Pokemon is its PERSONALITY -
-@ the whole of the Gen 3 shiny check together with the trainer ids bs01 read.
+@ the whole of the Gen 3 shiny check together with the measured trainer ids.
 @
 @ Writes its own image, the two link fields, and - only when asked - 100 bytes and one count byte
 @ in the save. Position independent.

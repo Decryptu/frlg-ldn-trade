@@ -73,7 +73,7 @@ def test_the_wild_battle_script_is_the_seed_then_the_battle_out_of_the_save_bloc
     assert int.from_bytes(script[28:30], "little") == 0         # no held item
     # NO `dowildbattle` IN THE SAVE BLOCK. A battle relocates gSaveBlock1 twice
     # [decomp:src/battle_main.c:614, src/overworld.c:1337, SAVEBLOCK_MOVE_RANGE 128], so the
-    # engine returns from the battle to an address this script no longer occupies - mev18 froze
+    # engine returns from the battle to an address this script no longer occupies; one run froze
     # the overworld solid that way. The battle is started from gSpecialVar_0x8000 instead.
     assert script[30:] == (bytes([rng_script.SCR_SETVAR]) + b"\x00\x80"
                            + rng_script.TRAMPOLINE_WORD.to_bytes(2, "little")
@@ -136,7 +136,7 @@ def test_a_field_script_and_lines_are_not_both_accepted():
 
 
 def test_mev07_the_console_built_exactly_what_was_predicted():
-    """mev07/bs53, on hardware, first try. The prediction was committed before the console had
+    """on hardware, first try. The prediction was committed before the console had
     ever seen the seed; this is what came back out of gPlayerParty afterwards. Every bit of the
     personality, all six IVs, the nature and the shininess.
 
@@ -154,7 +154,7 @@ def test_mev07_the_console_built_exactly_what_was_predicted():
 
 # --- reading the seed: the script that prints gRngValue and writes nothing ----------------------
 # The write direction was always the easy one. Reading gRngValue in the OVERWORLD is what a
-# countdown needs, and it was blocked on one unknown until bs57: the absolute address of
+# countdown needs, and it was blocked on one unknown until it was measured: the absolute address of
 # gSpecialVar_0x8000, because `copybyte` needs a destination ADDRESS where `buffernumberstring`
 # only needs a var id.
 
@@ -342,7 +342,7 @@ def test_a_rate_that_is_not_two_is_reported_as_such_rather_than_rounded():
 
 
 def test_the_two_rate_models_are_told_apart_by_the_frame_count_and_only_that():
-    """mev09's 1,202 turns over 600 frames fits both `2N+2` and `2.003333N`. They diverge by ~27
+    """A run's 1,202 turns over 600 frames fits both `2N+2` and `2.003333N`. They diverge by ~27
     turns over an 8192-frame countdown, against a target one state wide, so the run that separates
     them changes the frame count and nothing else."""
     from pokeldn.frlg.gift import wonder_card_events as events

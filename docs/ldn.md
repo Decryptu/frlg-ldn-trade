@@ -7,19 +7,19 @@ has_children: true
 # The wireless layer
 
 A Nintendo Switch communicates with nearby consoles over **LDN**, Nintendo's local wireless, and
-above that over **Pia**, Nintendo's peer-to-peer session middleware. Both belong to the console
-rather than to the game, so an implementation carries from one title to the next. What changes
-above is the Pia version and what the game does with the payloads.
+above that over Pia, Nintendo's peer-to-peer session middleware. Both belong to the console, so
+an implementation carries from one title to the next. What changes per title is the Pia version and
+what the game does with the payloads.
 
 ## The two secrets
 
 | layer | secret | purpose |
 |---|---|---|
-| LDN | the title's **LDN passphrase**, 16–64 bytes | authenticates the 802.11 association |
-| Pia | the title's **game key**, 16 bytes | derives the session key that encrypts every datagram |
+| LDN | the title's LDN passphrase, 16-64 bytes | authenticates the 802.11 association |
+| Pia | the title's game key, 16 bytes | derives the session key that encrypts every datagram |
 
-They are distinct values with distinct uses. In Brilliant Diamond the passphrase is an ASCII string
-handed straight to `nn::ldn::CreateNetwork` and it never reaches Pia's crypto.
+In Brilliant Diamond the passphrase is an ASCII string handed straight to `nn::ldn::CreateNetwork`;
+it never reaches Pia's crypto.
 
 Known values:
 
@@ -34,13 +34,13 @@ Scarlet/Violet, and differs from its Legends: Arceus row in one character (`HGhG
 ## Discovery
 
 Reading an advertisement needs only `prod.keys`. The LDN beacon payload is decrypted with console
-key material, so any title's session can be seen — its `local_communication_id`, `scene_id`,
-version, channel, accept policy, participant count and application data — with nothing known about
-the game. `tools/ldn/ldn_scan.py` does this.
+key material, so any title's session can be seen with nothing known about the game:
+`local_communication_id`, `scene_id`, version, channel, accept policy, participant count and
+application data. `tools/ldn/ldn_scan.py` does this.
 
-Association is the first step that needs a title secret. The passphrase is used **verbatim**: the
-byte string as published, neither padded nor hashed. `nn::pia::local::LdnBackgroundProcessJob`
-validates the length as 16–64 before use.
+Association is the first step that needs a title secret. The passphrase is used verbatim, neither
+padded nor hashed. `nn::pia::local::LdnBackgroundProcessJob` validates the length as 16-64 before
+use.
 
 ## The advertisement's application data
 
@@ -55,18 +55,18 @@ Pia's LDN advertisement layout, as parsed from a Shining Pearl session:
     +0x10     application data
 
 The network id and the session parameter both change per session. A key derivation tested against a
-capture from a different session fails on every packet with no distinguishing symptom, so the
-advertisement and the capture must be matched before the derivation is doubted.
+capture from a different session fails on every packet with no distinguishing symptom. Match the
+advertisement and the capture before doubting the derivation.
 
 ## Channels
 
-LDN allows 5 GHz channels 36/40/44/48 and a host may use them, but the FireRed/LeafGreen application
-scans 2.4 GHz only. A console re-hosting picks a new channel; read the frequency out of the kernel
-before a run rather than carrying one from a previous session:
+LDN allows 5 GHz channels 36/40/44/48 and a host may use them; the FireRed/LeafGreen application
+scans 2.4 GHz only. A console re-hosting picks a new channel. Read the frequency out of the kernel
+before a run:
 
     sudo iw dev <managed iface> scan | grep -A3 <console MAC>
 
 ## Pages
 
-- [The Pia layer](pia.md) — packet header formats by version, message framing, the transport
+- [The Pia layer](pia.md): packet header formats by version, message framing, the transport
   protocols, and the session-key derivations.

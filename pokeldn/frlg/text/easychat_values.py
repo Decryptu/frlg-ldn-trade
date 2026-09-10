@@ -15,7 +15,7 @@ The index IS the species number or the move id, and the console prints it from i
 name table. A species word is therefore the right word in every language by construction - the only
 part of the Easy Chat vocabulary that needs no verification on hardware.
 
-Confirmed on a French console (mev03): the player typed AKWAKWAK and POKEMON/55 came back, and
+Confirmed on a French console: the player typed AKWAKWAK and POKEMON/55 came back, and
 SPECIES_GOLDUCK is 55; they typed AEROBLAST and MOVE_1/177 came back, and MOVE_AEROBLAST is 177.
 
 `IsECWordInvalid` checks the index against the group's value list rather than a count

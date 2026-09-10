@@ -100,7 +100,7 @@ BUFFER_EXPECT_TRAINER_ID = buffer_script.EXPECT_TRAINER_ID
 # What AddTextPrinterToWindow1 draws into: window 1 of sMainWindows, 28 tiles wide and 4 high
 # [decomp:src/mystery_gift_menu.c:97,524] - two lines. The ROM's own longest string in it is
 # gText_WonderCardReceivedFrom's first line, "A WONDER CARD has been received", 31 characters
-# [decomp:src/strings.c:1291]. bs01 proved what happens past that: a 47-character line overflowed
+# [decomp:src/strings.c:1291]. Past that, a 47-character line overflowed
 # the window's pixel buffer and wrapped around it, printing "ly. code ran and read yourTRAINER IDc"
 # on the console.
 MAX_MESSAGE_LINES = 2
@@ -112,7 +112,7 @@ def _encode_message(text, default):
 
     `\n` becomes 0xFE, the game's line break. charmap.encode DROPS characters it does not know,
     newline included, so encoding a two-line message with it alone silently produces one long line
-    - which is exactly what went out in bs01.
+    - which is exactly what a wrapped line does.
     """
     if text is None:
         return default
@@ -407,7 +407,7 @@ _SCRIPT_BUFFER_SUCCESS = (
 )
 
 # CLIENT_SCRIPT_DYNAMIC_ERROR is the ROM's CLI_MSG_BUFFER_FAILURE exit, proven on hardware by the
-# questionnaire refusal (mev04): our message prints and the console returns to the menu, no save.
+# questionnaire refusal: our message prints and the console returns to the menu, no save.
 _SCRIPT_BUFFER_FAILURE = (
     (SVR_LOAD_CLIENT_SCRIPT, mg_script.CLIENT_SCRIPT_DYNAMIC_ERROR),
     (SVR_SEND,),
@@ -627,7 +627,7 @@ class MysteryGiftServer:
         self.buffer_dump_blocks = int(buffer_dump_blocks)
         self.buffer_dump_address = int(buffer_dump_address)
         # memory-dump-scatter carries a TABLE of bases, so a block's address is the table's entry
-        # and not `first + n * size`. bs127 printed the multi-dump arithmetic against a scattered
+        # and not `first + n * size`. The multi-dump arithmetic against a scattered
         # payload and named 0x08083400 for bytes that came off 0x0847DC00: the dump file and its
         # placement were right, the line above them was not.
         self.buffer_dump_addresses = tuple(int(a) for a in buffer_dump_addresses)
@@ -689,7 +689,7 @@ class MysteryGiftServer:
             raise MysteryGiftServerError(
                 f"a questionnaire phrase is exactly {NUM_QUESTIONNAIRE_WORDS} Easy Chat words, "
                 f"got {len(self.questionnaire)}")
-        # Same window, same trap: a refusal message wraps around inside it just as bs01's did.
+        # Same window, same trap: a refusal message wraps around inside it too.
         self.denied_message = _encode_message(denied_message, DEFAULT_DENIED_MESSAGE)
         self.questionnaire_matched = None
         self.is_mevent_distribution = self.mevent is not None

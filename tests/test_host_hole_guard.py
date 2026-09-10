@@ -1,5 +1,5 @@
 """The host stops emitting new Reliable frames while the console's cumulative ack is stuck behind a hole,
-keeps retransmitting the hole, and resumes once the ack catches up (lg150: an unbounded backlog behind a
+keeps retransmitting the hole, and resumes once the ack catches up (an unbounded backlog behind a
 lost frame is released in one burst that overflows the console's 8-deep RFU queue)."""
 import os
 import sys

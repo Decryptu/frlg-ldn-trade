@@ -59,8 +59,8 @@ def bracketed(runs, rom, named):
     else, and it does: the candidate must land EXACTLY on a function start, and only one of the two
     may. An offset that is wrong by even two bytes lands mid-instruction, and the ones this finds
     are the three libgcc helpers agbcc emits for a division nobody wrote (`__divsi3`, `__modsi3`,
-    `__umodsi3`) - which is what session 42 said the unnamed residue would turn out to be, from a
-    direction that knew nothing about any of this."""
+    `__umodsi3`), which is what the unnamed residue was predicted to be from a direction that knew
+    nothing about any of this."""
     out = {}
     for address in sorted(call_targets()):
         if address in named or english_build.offset_at(runs, address)[0] is not None:

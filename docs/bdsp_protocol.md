@@ -6,10 +6,9 @@ nav_order: 2
 
 # BDSP's own protocol, and controlling a character
 
-Inside the Pia payloads BDSP runs a typed protocol of its own. It does not have to be guessed:
-`TeamLumi/opendpr` is a decompiled C# recreation of the game, and `Dpr.NetworkUtils.NetDataParser`
-lists every message it speaks. Each is an `ANetData<T>` with a one-byte `DataID`, and each `T` is a
-plain struct.
+Inside the Pia payloads BDSP runs a typed protocol of its own. `TeamLumi/opendpr` is a decompiled
+C# recreation of the game, and `Dpr.NetworkUtils.NetDataParser` lists every message it speaks. Each
+is an `ANetData<T>` with a one-byte `DataID`, and each `T` is a plain struct.
 
 ## Framing
 
@@ -17,17 +16,16 @@ plain struct.
     0x1  2  payload length, BIG-endian
     0x3  .  the struct, little-endian, as C# lays it out
 
-**The layout is packed.** `JoinData` is `byte, byte, byte, short, Vector3`: seventeen bytes packed,
-twenty with C#'s default alignment, because an aligned `short` would sit at offset 4 rather than 3.
-The console's own message is seventeen bytes and its length field says `0x0011`. Every payload in
-every capture agrees with the packed reading.
+The layout is packed. `JoinData` is `byte, byte, byte, short, Vector3`: seventeen bytes packed,
+twenty with C#'s default alignment (an aligned `short` would sit at offset 4). The console's own
+message is seventeen bytes and its length field says `0x0011`. Every payload in every capture agrees
+with the packed reading.
 
-`NetDataParser` registers **65** messages and `pokeldn/bdsp/netdata.py` holds all of them, generated
-from an `opendpr` checkout by `scripts/gen_bdsp_netdata.py`. 53 have a layout the source decides; the
-other twelve carry a C# string, an array or a list and are listed in `netdata.OPAQUE`, because the
-source does not decide their layout.
+`NetDataParser` registers 65 messages and `pokeldn/bdsp/netdata.py` holds all of them, generated
+from an `opendpr` checkout by `scripts/gen_bdsp_netdata.py`. 53 have a layout the source decides;
+the other twelve carry a C# string, an array or a list and are listed in `netdata.OPAQUE`.
 
-The binary does. A payload is the **marshalled** struct: `ANetData<T>.ConvertStructToBytes`
+The binary decides those twelve. A payload is the marshalled struct: `ANetData<T>.ConvertStructToBytes`
 [main.bin 0x27bb0e0] goes through `Marshal.SizeOf`, `Marshal.AllocHGlobal` and
 `Marshal.StructureToPtr`, so a string and an array become fixed-size fields rather than references,
 and the size of every struct is its `native_size` in the executable's `Il2CppTypeDefinitionSizes`
@@ -67,12 +65,11 @@ from `NetworkManager.GetGamerData(myIndex)`, and the next answer to a 0x22 reque
 `22 0014 01 00 01 03` followed by sixteen zero bytes. `isAddPlayer = 0` takes the removal branch.
 Nothing changed on the console's screen when the record was added.
 
-The marshaller does not clear what it allocates, so a fixed field carries heap residue past the
-value it holds — ten bytes of it in `NetDataTradeTranerData`, on
-[the trading page](bdsp_trade.md).
+The marshaller does not clear what it allocates; a fixed field carries heap residue past the value
+it holds (ten bytes of it in `NetDataTradeTranerData`, on [the trading page](bdsp_trade.md)).
 
-The ids are nibble-grouped — 0x01 to 0x09, 0x10 to 0x19, 0x20 to 0x29 and so on, no low nibble ever
-reaching 0xA — so a gap in the numbering is the grouping rather than a missing message.
+The ids are nibble-grouped: 0x01 to 0x09, 0x10 to 0x19, 0x20 to 0x29 and so on, no low nibble
+reaching 0xA. A gap in the numbering is the grouping.
 
 ## What has been on the air
 
@@ -91,30 +88,30 @@ with no battle set up, and `NetDataStandbyWaitListData` (0x22), twenty bytes. Tw
 player picks the activity (the transitionType table below): `NetDataRecodeData` (0x14) and
 `NetDataAttachSealNetData` (0x15). The trade messages are on [the trading page](bdsp_trade.md).
 
-Every payload in the archive is a well-formed game message declaring a length that exactly accounts
-for its bytes, over six thousand messages and nineteen runs.
+Every payload in the archive (over six thousand messages, nineteen runs) is a well-formed game
+message declaring a length that exactly accounts for its bytes.
 
-`NetPosData` shows what a capture settles that the source cannot: its struct is an array, so it is one
-of the twelve with no decidable layout, and yet 72 bytes is 12 points of 6 and nothing else divides.
+`NetPosData`'s struct is an array, one of the twelve; 72 bytes is 12 points of 6 and nothing else
+divides.
 
 ## The messages the console repeats
 
-**`NetJoinData`** is a player's arrival — the whole of `JoinData` and nothing else:
+`NetJoinData` is a player's arrival, the whole of `JoinData`:
 
 | offset | size | field |
 |---|---|---|
 | 0x00 | 1 | `avatarId`, 8 in every capture |
 | 0x01 | 1 | `colorId`, 0 |
 | 0x02 | 1 | `cassetVersion`, 0x31 |
-| 0x03 | 2 | `InitRotY`, the facing in **degrees**, little-endian and unaligned |
+| 0x03 | 2 | `InitRotY`, the facing in degrees, little-endian and unaligned |
 | 0x05 | 12 | `InitPos`, three little-endian floats: x, y, z |
 
-Four captures of four different places on the Union Room floor gave angles of 0, 90, 90 and 225 —
-every one a multiple of 45, which is what an eight-direction facing is. `y` is 0.0 in three of them
-and 1.5e-08 in the fourth, so it is a height on a flat room rather than a constant.
+Four captures of four places on the Union Room floor gave angles of 0, 90, 90 and 225, every one a
+multiple of 45 (an eight-direction facing). `y` is 0.0 in three of them and 1.5e-08 in the fourth:
+a height on a flat room.
 
-**`NetRequestData`** is one byte, `RequestDataID`, and names the message it wants;
-`OpcManager._RequestNetDataCallback` is an `Action<byte>`. **`NetDataIsMatchWaitData`** is the console
+`NetRequestData` is one byte, `RequestDataID`, and names the message it wants;
+`OpcManager._RequestNetDataCallback` is an `Action<byte>`. `NetDataIsMatchWaitData` is the console
 answering its own request: `{isMatchWait = 0}`, "I am not waiting to be matched".
 
 The console asks for two different things:
@@ -124,19 +121,17 @@ The console asks for two different things:
 | `NetDataIsMatchWaitData` (0x23) | 4333 | all nineteen |
 | `NetCharacterStateData` (0x04) | 55 | four runs |
 
-Those four are exactly the runs where an avatar appeared on the console's screen. Every run that sent
-game messages and drew nothing asked for 0x04 zero times, across 265 sends, and in all four positive
-runs the first 0x04 arrives after the client's first send. **When the game creates a character from a
-join, it asks the station that sent it for that character's state**, so a request for 0x04 in the
-capture is a second signal that a character exists — the screen having been the only trustworthy one.
-`bin/bdsp_connect.py` prints it as a verdict.
+Those four are the runs where an avatar appeared on the console's screen. Every run that sent game
+messages and drew nothing asked for 0x04 zero times, across 265 sends, and in all four positive runs
+the first 0x04 arrives after the client's first send. When the game creates a character from a
+join, it asks the station that sent it for that character's state; a request for 0x04 in the capture
+is a signal that a character exists. `bin/bdsp_connect.py` prints it as a verdict.
 
 The match-wait request stops being asked at t = 9.4 in every run that acknowledges the reliable
-window, answered or not; the run that did not acknowledge it was asked 487 times in 75 seconds. It is
-the acknowledgement that stops the asking.
+window, answered or not; the run that did not acknowledge it was asked 487 times in 75 seconds.
 
-**What a request can fetch.** The Union Room's receive handler, `UnionRoomManager$$SetNetData`
-[1.3.0 main 0x01e50700], answers a `NetRequestData` for six ids and ignores every other:
+The Union Room's receive handler, `UnionRoomManager$$SetNetData` [1.3.0 main 0x01e50700], answers a
+`NetRequestData` for six ids and ignores every other:
 
 | requested | the console sends | by |
 |---|---|---|
@@ -148,8 +143,8 @@ the acknowledgement that stops the asking.
 | 0x23 `NetDataIsMatchWaitData` | whether it is waiting to be matched | `UnionRoomManager$$SendIsMatchWait` |
 
 Sent one after another from a station whose character is in the room, five of the six are answered
-on the reliable stream 30-130 ms after the request lands; 0x13 is not, because `SendPokeData` returns
-without sending when no Pokemon is selected. The base game's handler [base main 0x01fd4600] answers
+on the reliable stream 30-130 ms after the request lands; 0x13 is not (`SendPokeData` returns
+without sending when no Pokemon is selected). The base game's handler [base main 0x01fd4600] answers
 the same six ids, with 0x22 then named `NetDataTradeStandbyData`.
 
 One 0x22 answer is the only message in the archive carrying the reliable header's zlib flag
@@ -158,8 +153,8 @@ they parse as a `NetBonusStart` with an impossible length. The same message with
 in, and the 20-byte join, arrived uncompressed. What decides the flag is unknown.
 `bin/bdsp_connect.py` and `scratchpad/bdsp_opaque.py` inflate on the flag.
 
-**Where the other opaque messages are spoken**, from the callers of each `ANetData<T>.SendReliableData`
-in 1.3.0:
+Senders of the other opaque messages, from the callers of each `ANetData<T>.SendReliableData` in
+1.3.0:
 
 | id | class | sent by |
 |---|---|---|
@@ -175,45 +170,43 @@ Three belong to Union Room activities other than trading (record mixing, ball ca
 the `Ug*` ones to the Grand Underground, where `NetPlayerNameData` is sent to a player who joins and
 requests for the secret base and dig lists are answered. No Underground session has been captured.
 
-**The stream decides the reply's stream.** All 4333 requests for `NetDataIsMatchWaitData` arrived on
-the reliable protocol and all 55 for `NetCharacterStateData` on the unreliable one, with no crossover
-in nineteen runs, and each is where the console puts its own answer.
+The request's stream is the reply's stream. All 4333 requests for `NetDataIsMatchWaitData` arrived
+on the reliable protocol and all 55 for `NetCharacterStateData` on the unreliable one, with no
+crossover in nineteen runs; each is where the console puts its own answer.
 
 The unreliable stream carries three messages and nothing else:
 
 | bytes | times | message |
 |---|---|---|
 | `04 0002 00 00` | 853 | `NetCharacterStateData{state: NONE, isRecruiment: 0}`, every two seconds |
-| `12 0001 04` | 55 | `NetRequestData` — "send me your `NetCharacterStateData`" |
+| `12 0001 04` | 55 | `NetRequestData`: "send me your `NetCharacterStateData`" |
 | `02 0048 <72 B>` | 60 | `NetPosData`, twelve points, while the console's avatar walks |
 
 The console retransmits a reliable message five times a second until the receiver's ack covers
 it; an ack two beyond its last sequence is ignored. `bin/bdsp_connect.py` acks every arrival at
 the last sequence plus one from the moment the console first acknowledges the client's own data.
 
-`room.build_state()` produces the exact five bytes the console broadcasts and
-`room.build_match_wait(False)` the exact four it answers itself with, so neither reply invents
-anything.
+`room.build_state()` produces the five bytes the console broadcasts and `room.build_match_wait(False)`
+the four it answers itself with.
 
 ## Sending messages the game acts on
 
-**The reliable sequence id is shared with the console's own sends, and anything below the number its
-acknowledgement names is discarded in silence.** One run's ack sat at 13, twenty messages went out
-numbered 1 to 20, and exactly the eight from 13 up became avatars. Read the id fresh immediately
-before each send.
+The reliable sequence id is shared with the console's own sends, and anything below the number its
+acknowledgement names is discarded in silence. One run's ack sat at 13, twenty messages went out
+numbered 1 to 20, and exactly the eight from 13 up became avatars. Read the id immediately before
+each send.
 
-**A join the transport acknowledges is not a join the game acts on.** Four runs sent exactly one join
-each and all four were acknowledged on the first try; one produced a character and three produced
-nothing. Fifteen joins in one run produced two characters, so a single join is roughly a one-in-eight
-shot and a comparison cannot rest on one. `--room-pattern fixed` bursts them.
+A join the transport acknowledges is not always a join the game acts on. Four runs sent one join
+each, all acknowledged on the first try; one produced a character. Fifteen joins in one run produced
+two characters; a single join is roughly a one-in-eight shot. `--room-pattern fixed` bursts them.
 
-**One avatar appears per join message**, because `UnionOpcManager` calls `CreateCharacter(joinData)`
-on each one. Forty joins are forty arrivals.
+One avatar appears per join message: `UnionOpcManager` calls `CreateCharacter(joinData)` on each.
+Forty joins are forty arrivals.
 
-Avatars created this way **survive the scene**: the player walked out of the Union Room, down to the
-Poke Center floor and into a shop, and the whole crowd came along, through the walls. Only restarting
-the game cleared them. A remote player created without a session behind it is never cleaned up. A
-character that has been *moved* is cleaned up when the station that moved it leaves the mesh.
+Avatars created this way survive the scene: the player walked out of the Union Room, down to the
+Poke Center floor and into a shop, and the crowd came along, through the walls. Only restarting the
+game cleared them. A remote player created without a session behind it is never cleaned up. A
+character that has been moved is cleaned up when the station that moved it leaves the mesh.
 
 ## The character record
 
@@ -235,8 +228,8 @@ from.
 in a blue cap, with the sex changed as the binary predicts. `bin/bdsp_connect.py --join-avatar N`.
 
 `NetDataTranerCardData` (0x05) is 75 blittable bytes whose first fields are `fashionId`, `bodyType`
-and `genderid`, which reads like appearance and is not: `UnionOpcManager.CreateTranerCard()` builds
-the trainer-card UI. Sending one is acknowledged and changes nothing on screen.
+and `genderid`; `UnionOpcManager.CreateTranerCard()` builds the trainer-card UI from it. Sending one
+is acknowledged and changes nothing on screen.
 
 ### The state byte
 
@@ -255,39 +248,35 @@ the trainer-card UI. Sending one is acknowledged and changes nothing on screen.
 the console's standing request with `StateData{RECRUITMENT_TRADE, 1}` puts a trade bubble on a retail
 console's screen.
 
-Two earlier runs answered the same request with `StateData{NONE, 0}` and nothing happened. The
-message, the stream and the bytes were all correct and the payload meant "I am doing nothing": a
-negative result measured with a no-op payload is not a negative result.
+Answering with `StateData{NONE, 0}` changes nothing on screen.
 
 ### Walking
 
-Over 80 of the console's own `NetPosData`: one message every 0.410 s spanning 0.935 units, which is
-**2.28 units per second**. `room.POS_PERIOD` and `room.POS_STRIDE` are those numbers;
-`--room-walk-stride` and `--room-walk-period` override them. Sending 0.1 units every 0.35 s — an
-eighth of that — renders as a stutter: twelve points crossing a tiny distance, then a pause.
+Over 80 of the console's own `NetPosData`: one message every 0.410 s spanning 0.935 units, 2.28
+units per second. `room.POS_PERIOD` and `room.POS_STRIDE` are those numbers; `--room-walk-stride` and
+`--room-walk-period` override them. 0.1 units every 0.35 s renders as a stutter: twelve points
+crossing a tiny distance, then a pause.
 
-A walk has to be bounded. Sixty messages at the console's own speed is 55.8 units and crosses the
-whole room: the character hits a wall, is pushed back by the game's own collision, keeps its facing
-at the angle sent while the position moves, and leaves through the far wall. `--room-walk-steps 8`
-stops inside the room. Two properties fall out: the game applies collision to a remote character's
-movement, and it takes `rot_y` literally rather than deriving facing from the direction of travel.
-The player has no collision against a remote character.
+A walk must be bounded. Sixty messages at the console's speed is 55.8 units and crosses the whole
+room: the character hits a wall, is pushed back by the game's collision, keeps its facing at the
+angle sent while the position moves, and leaves through the far wall. `--room-walk-steps 8` stops
+inside the room. The game applies collision to a remote character's movement and takes `rot_y`
+literally. The player has no collision against a remote character.
 
-`PosData` is `{ushort posX, ushort posZ, short rotY}` with the game's own conversion
-`pos = (-posX * 0.05, posZ * 0.05)` — a twentieth of a unit, with **x negated**. A captured trail
-decodes to the same place its join message named.
+`PosData` is `{ushort posX, ushort posZ, short rotY}` with the game's conversion
+`pos = (-posX * 0.05, posZ * 0.05)`: a twentieth of a unit, x negated. A captured trail decodes to
+the place its join message named.
 
 ## Being talked to
 
-An emote **locks a player in place waiting to be interacted with**, so a console showing a trade
-emote cannot start anything: someone has to walk up to it. The console broadcasts its own state, so
-the moment the emote goes up is visible on the wire:
+An emote locks a player in place waiting to be interacted with; a console showing a trade emote
+cannot start anything. The console broadcasts its own state, so the emote is visible on the wire:
 
     NetCharacterStateData{state: 4, isRecruiment: 1}     the trade emote, up
     NetCharacterStateData{state: 0, isRecruiment: 0}     and down again
 
-`isRecruiment` is the flag to gate on rather than "state is non-zero": state 18 is a console already
-inside a trade, and approaching that is refused.
+Gate on `isRecruiment`: state 18 is a console already inside a trade, and approaching that is
+refused.
 
 The approach is `NetDataTalkReserveData` (0x63), `63 00 01 00`, byte-for-byte what the console sends
 when its own player walks up to someone. `bin/bdsp_connect.py --initiate-talk` sends it; it was
@@ -299,13 +288,13 @@ The exchange, with the client approaching:
     t=37.67  con ->  06 0005 00 01000000  NetDataTalkData{talkOpcSexId: 0, talkState: GREETING}
     t=80.68  con ->  10 0002 01 04      NetDataTalkCancelEndData{IsRecruitment: 1, emoticonStateType: 4}
 
-**The talk is a request/response and the console blocks on the answer.** Unanswered, the player's own
-character freezes until the game is rebooted. Answered with `NetDataTalkReserveResultData` (0x64), the
-game runs its whole greeting: a greeting line, a name and an offer to trade, ending in "one second!"
-while it waits. The player can leave that with B.
+The talk is a request/response and the console blocks on the answer. Unanswered, the player's own
+character freezes until the game is rebooted. Answered with `NetDataTalkReserveResultData` (0x64),
+the game runs its whole greeting (a greeting line, a name and an offer to trade) and parks on "one
+second!". The player can leave that with B.
 
-**`IsCanTalk` reads backwards from its name: 0 keeps the conversation alive, 1 makes the character
-decline.** Four runs, one variable each:
+`IsCanTalk` 0 keeps the conversation alive; 1 makes the character decline. Four runs, one variable
+each:
 
 | `IsCanTalk` | what followed | what the screen did |
 |---|---|---|
@@ -314,11 +303,11 @@ decline.** Four runs, one variable each:
 | 1 | `NetDataSelectData{0}` | the same refusal |
 | 1 | `NetDataSelectData{1}` | the same refusal |
 
-The two runs that swept the select index were therefore refusing before the index could matter.
+The two runs that swept the select index were refusing before the index could matter.
 
-**A parked conversation is not reliably escapable.** B released the player in one run and did nothing
-in another; killing the run — dropping the station — is the lever to try first and a reboot is the
-fallback. Say so before a run that parks the talk.
+A parked conversation is not reliably escapable. B released the player in one run and did nothing
+in another; killing the run (dropping the station) is the first lever and a reboot the fallback.
+Say so before a run that parks the talk.
 
 ### talkState, and the value that crashes the game
 
@@ -335,11 +324,10 @@ one branch:
     0x1fd5ec0  ldr  x20, [x19, #0x10]   dereferences it. No guard anywhere.
 
 CHECK is only meaningful to a console that already has a message window open. A player standing with
-an emote up has none, so sending CHECK takes the game down — twice, before the handler was read.
-GREETING takes the branch that opens the window. `pokeldn/bdsp/room.py` refuses to send CHECK at all.
+an emote up has none; sending CHECK crashes the game. GREETING takes the branch that opens the
+window. `pokeldn/bdsp/room.py` refuses to send CHECK.
 
-**A state value read out of a sender is not safe to send until the receiver's handler has been
-read.** CHECK really is what the initiator sends, in a state the console was not in.
+A state value read out of a sender is not safe to send until the receiver's handler has been read.
 
 The messages that advance a parked greeting are `NetDataSelectData{index}` (0x08) and
 `NetDataTransitionData{transitionType, isRecruitment}` (0x07). Both are sent by the game as tail
@@ -359,8 +347,8 @@ under its `RECRUITMENT_*` value and its `NOW_*` value:
 | 7, 21 | ball capsules | `BallDecoMatching$$Open` |
 
 8 to 16 do nothing. `RecodeMatching$$Open` and `BallDecoMatching$$Open` each open a message window
-and send the console's own record at once — `NetDataRecodeData` (0x14, 694 bytes) and
-`NetDataAttachSealNetData` (0x15, 143 bytes) — then wait for the partner's, and only on receiving
+and send the console's own record at once (`NetDataRecodeData`, 0x14, 694 bytes, and
+`NetDataAttachSealNetData`, 0x15, 143 bytes), then wait for the partner's, and only on receiving
 it (`StartRecodeTradeFlow`, `StartBallDecoTradeFlow`) apply the exchange and write the save. A
 partner that never answers puts nothing in the console's save.
 
@@ -400,7 +388,7 @@ console waits on the joiner at every rung. Measured with the client as joiner:
 | `NetDataSelectData{0}` (0x08) | shows "PkCamp est en train de choisir quoi faire..." and waits |
 | `NetDataBattleTypeData{0}` (0x09, `BattleModeID.Single`) | asks its player "voulez-vous faire un combat selon ces règles ?"; on yes sends `NetDataTransitionData{17, 0}`, state byte 17, and opens the solo lobby at "connexion en cours" |
 | `NetDataBattleMatchingJoin` (0x30) `{uint id, byte stationIndex, index, language, colorId, avatarId, sexId, cassetVersion}` | answers with its own join (`id` its trainer id, station 0, index 0) and relays the joiner's back; the joiner's character appears in the lobby's second slot |
-| `NetDataBattleMatchingReady` (0x32, empty) | `BattleMatchingManager$$ReceiveReadyData`: when every member is ready, `NetDataBattleMatchingState{0, 6}` (0x33) — `MatchingState.SelectBattleTeam`, 4 and 5 skipped for a solo battle — and its player gets the team-selection button |
+| `NetDataBattleMatchingReady` (0x32, empty) | `BattleMatchingManager$$ReceiveReadyData`: when every member is ready, `NetDataBattleMatchingState{0, 6}` (0x33), `MatchingState.SelectBattleTeam` (4 and 5 skipped for a solo battle), and its player gets the team-selection button |
 | nothing | on the player's team choice, six `NetDataBattleMatchingSelectPokemon` (0x38, 481 bytes), then "en attente d'autres personnes" |
 
 The 0x38 body is the layout in the table above: a 328-byte encrypted PB8 whose checksum verifies
@@ -456,8 +444,7 @@ not answered; the same request later is.
 sends it, and a request for it or for 0x42 draws nothing.
 
 `--inject-file PATH` on `bin/bdsp_connect.py` sends each new `ID:HEX` line of the file on the
-reliable window while the association stands, which is how a ladder like this is climbed in one
-association.
+reliable window while the association stands.
 
 `RECORD_HEAD.sex` read 0 and `RANDOM_SEED.sex` 1 in the same record. The record is 1.3.0's
 `RECORD`, `RANDOM_SEED` and `RECORD_HEAD` from the `DPData` namespace marshalled at pack 4, and the

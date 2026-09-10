@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Answer the console. Take the LDN seat in a BDSP session and send Pia's update-session ack.
 
-The whole sp4 capture is one Shining Pearl host rebroadcasting a Local Protocol *update session*
+A capture of an idle Shining Pearl host is one Local Protocol *update session*, rebroadcast
 every 100 ms - 674 of them, sequence id 4 in every one, with us already listed at seat 1. A host
 repeats that until every station acknowledges it, so it is one console asking the same question
 674 times and never being answered. This sends the answer.
@@ -32,7 +32,7 @@ broadcasts its ack the way the host broadcasts the question, or unicasts it to t
 host's variable id in the packet header. Each phase is timestamped and the rebroadcast either
 stops during one of them or it does not, so a single run separates them.
 
-docs/bdsp_session.md, NOTES.local.md sp24. Never pass --verbose to a live run; use --capture.
+docs/bdsp_session.md. Never pass --verbose to a live run; use --capture.
 """
 import argparse, json, os, socket, struct, sys, time
 

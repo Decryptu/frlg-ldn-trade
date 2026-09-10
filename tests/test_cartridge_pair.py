@@ -1,6 +1,6 @@
 """Pairing the two cartridges' copies of one window, and the delta map that comes out of it.
 
-lg169 made this measurement without naming it: a POINTER dumped off both consoles is a delta point
+A run made this measurement without naming it: a POINTER dumped off both consoles is a delta point
 at wherever it points. `tools/frlg/cartridge_pair.py` reads both kinds out of a window held on both
 cartridges - the literal-pool words, which sessions 40 and 41 paired by hand, and the `bl` targets,
 which nothing had. A `bl` is a RELATIVE call, so the same instruction resolves to a different
@@ -12,8 +12,8 @@ tool computed the LeafGreen offsets off the FireRed base and answered with 64 de
 which is what a misplaced window looks like and why the count is checked.
 
 TWO INDEPENDENT CONFIRMATIONS, from runs that knew nothing about this: the pairing puts LeafGreen's
-`AddBagItem` at 0x0809DA44, which is where lg189 measured it, and `Random` at 0x080486B0, which is
-where lg162 did.
+`AddBagItem` at 0x0809DA44 and `Random` at 0x080486B0, both where they were measured
+independently.
 """
 
 import os
@@ -103,7 +103,7 @@ def test_a_boundary_is_the_span_between_two_segments_in_rom_order():
 # --- what it measured ---------------------------------------------------------------------------
 
 def test_the_pairing_puts_leafgreen_where_two_runs_of_its_own_had_measured_it():
-    # Neither run knew about this method: lg189 needled AddBagItem and lg162 read Random out of a
+    # Neither run knew about this method: one needled AddBagItem and the other read Random out of a
     # literal pool, and the paired call sites land on both.
     assert leafgreen_twins.TWINS[0x0809DA70] == rom_map.LEAFGREEN_ADD_BAG_ITEM
     assert leafgreen_twins.TWINS[0x080486B0] == rom_map.LEAFGREEN["Random"][0]

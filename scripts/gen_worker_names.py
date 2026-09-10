@@ -3,14 +3,12 @@
 
     ./.venv/bin/python scripts/gen_worker_names.py [~/pokefirered] [--report] [--check]
 
-THE METHOD, which is bs84's and bs111's and bs121's, mechanised. A table entry is a function this
-project can name from the decomp's table order; its body, dumped off the cartridge, makes `bl` calls
-in the order agbcc emits them; the decomp's source for that same function gives the same calls in
-the same order. Zipping the two names every worker the body reaches. bs112 got VarSet that way and
-bs121 corrected StopScript that way, both by eye, one body at a time. This does it over every body
-in the four tables at once.
+The method, mechanised. A table entry is a function nameable from the decomp's table order; its
+body, dumped off the cartridge, makes `bl` calls in the order agbcc emits them; the decomp's source
+for that same function gives the same calls in the same order. Zipping the two names every worker
+the body reaches, over every body in the four tables at once.
 
-WHAT MAKES IT EVIDENCE RATHER THAN A GUESS - four checks, and a name that fails any one is dropped:
+Four checks, and a name that fails any one is dropped:
 
   LENGTH. The measured list and the source list must be the same length. agbcc inlines, emits
   `__divsi3` for a division nobody wrote, and expands macros the parser reads as calls; every one of
@@ -18,19 +16,19 @@ WHAT MAKES IT EVIDENCE RATHER THAN A GUESS - four checks, and a name that fails 
   here and are simply not named.
 
   ANCHOR. Every measured target this project has ALREADY measured must land back on its own name.
-  One mismatch and the whole body is dropped - that is what caught the cartridge mixing (session 42)
+  One mismatch and the whole body is dropped - that is what caught the cartridge mixing
   before it could name anything: FireRed's ScrCmd_additem read out of the LeafGreen dump appeared to
   call an AddBagItem 0x2C below the measured one.
 
   AGREEMENT. Two callers of the same address must propose the same name for it, and one name must
   come back at one address. `HideFieldMessageBox` is reached from seven bodies; seven agreeing
-  callers is the check bs121 did by counting how many commands the decomp says should call it.
+  callers is the check, against how many commands the decomp says should call it.
 
   ORDER. agbcc emits a translation unit's functions in the order the file defines them, so the
   names proposed out of one .c file must come back with ascending addresses - together with every
   address this project measured in that file, which is what makes the check bite. That is the check
-  that cost no run in session 41 (event_data.c defines GetVarPointer, VarGet, VarSet, and
-  0x08071CC8 < 0x08071DDC < 0x08071DF8) applied to all of them.
+  that named VarSet without a run (event_data.c defines GetVarPointer, VarGet, VarSet, and
+  0x08071CC8 < 0x08071DDC < 0x08071DF8), applied to all of them.
 
 ONE CARTRIDGE. FireRed's dumps only - `script_read.every_dump` defaults to it now. The two
 cartridges hold the same code a segment delta apart and an image of both answers with whichever it
@@ -48,10 +46,8 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# tools/frlg, not tools/: session 44 moved the tools one directory deeper and this line kept
-# pointing at the parent, so `from rom_functions import ...` raised ModuleNotFoundError and the
-# generator could not be run at all. conftest.py hides that from the suite - the guard is
-# test_documentation's standalone check, which now covers scripts/ too.
+# tools/frlg, not tools/. conftest.py hides a wrong path from the suite; the guard is
+# test_documentation's standalone check over scripts/.
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                                 "tools", "frlg"))
 
@@ -64,9 +60,9 @@ OUT = ROOT / "pokeldn" / "frlg" / "rom" / "worker_names.py"
 ROM_START, ROM_END = 0x08000000, 0x0A000000
 ADDRESS = 2
 
-# rom_map constants that are a LIMIT rather than a name for the code at that address. Session 42's
-# paired call sites put SHARED_WITH_LEAFGREEN_THROUGH on 0x0807AF04, which is also the highest call
-# target that did not move between the cartridges - a function, and one this method can name.
+# rom_map constants that are a limit rather than a name for the code at that address.
+# SHARED_WITH_LEAFGREEN_THROUGH sits on 0x0807AF04, which is also the highest call target that did
+# not move between the cartridges: a function, and one this method can name.
 MARKERS = frozenset({"SHARED_WITH_LEAFGREEN_THROUGH"})                     # where the address sits in a link-order point
 
 

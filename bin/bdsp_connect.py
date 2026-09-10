@@ -1,25 +1,19 @@
 #!/usr/bin/env python3
-"""Ask a BDSP console to let us into its mesh - and make it answer even when it will not.
+"""Join a BDSP console's mesh: the Mesh Station Protocol (0x14) connection request and what
+follows it.
 
-Session 46 got the console to accept a packet: answering the Local Protocol's update session made
-it stop asking. That is bookkeeping, and the game saw nothing. The layer a station actually JOINS
-on is the Mesh Station Protocol (0x14), and this sends its connection request.
+The console's parser (main.bin 0x0154ebd0; pokeldn/ldn/station_protocol.py has the field-by-field
+reading) checks in this order:
 
-THE RUN IS A SWEEP, and the reason is worth stating because it is what makes it cheap. The
-console's parser (main.bin 0x0154ebd0, see pokeldn/ldn/station_protocol.py for the field-by-field
-reading) checks things in this order:
+    the target constant id and variable id must be the console's own   -> else silence
+    the protocol count at [0xF] must equal the console's own count     -> else silence
+    each protocol's version must match what the console registers      -> else a reply
 
-    the target constant id and variable id must be the console's own   -> else SILENCE
-    the protocol count at [0xF] must equal the console's own count     -> else SILENCE
-    each protocol's version must match what the console registers      -> else A REPLY
+An id the console does not register has an expected version of 0, so a request carrying N entries
+of (id 0xFF, version 1) draws "version too high" exactly when N is the console's protocol count and
+silence otherwise. Sweeping N measures that count without knowing any of its protocols.
 
-and an id the console does NOT register has an expected version of 0. So a request carrying N
-entries of (id 0xFF, version 1) is a guaranteed "version is too high" the moment N is right, and
-silence every other time. **Sweeping N therefore measures the console's protocol count**, without
-knowing a single one of its protocols, and the first reply this project has ever had from a native
-Switch title is the pass signal.
-
-The ack goes first, so the console falls silent and ANY packet afterwards is unambiguously an
+The Local Protocol ack goes first, so the console falls silent and any packet afterwards is an
 answer to us. docs/bdsp_session.md. Never pass --verbose to a live run; use --capture.
 """
 import argparse, json, os, pathlib, socket, struct, sys, time, zlib
@@ -65,7 +59,7 @@ def make_socket(ifname):
 
 def wrap(keys, our_mac, src_var, dst_var, nonce8, payload, protocol, port=0,
          destination=lp.BROADCAST, message_flags=lp.MESSAGE_FLAGS, packet_id=0):
-    """A Pia message in a Pia packet, in the framing session 46 proved the console accepts."""
+    """A Pia message in a Pia packet, in the framing the console accepts."""
     body = pad_payload(build_message(payload, protocol=protocol, port=port,
                                      message_flags=message_flags, destination=destination))
     iv = gcm_iv(ldn_nonce_crc(keys.network_id_le, our_mac), src_var, nonce8)
@@ -145,9 +139,8 @@ async def main_async(args):
               "their_ready_ok": None, "ready_oks_sent": 0, "their_security_state": None,
               "our_security_state": 0, "our_next_seq": 0, "return_selects": 0}
 
-        # BUILD WHAT WE WILL OFFER BEFORE THE RADIO IS TOUCHED. A template that will not load, or
-        # a nickname that will not fit, must fail here and not halfway through a trade on a real
-        # console's screen.
+        # Build the offer before the radio is touched: a template that will not load, or a
+        # nickname that will not fit, must fail here and not mid-trade.
         if args.trade_template:
             edits = {k: v for k, v in (("species", args.trade_species),
                                        ("nickname", args.trade_nickname),
@@ -168,8 +161,8 @@ async def main_async(args):
         def decode(data, addr, now):
             h = PiaHeader5.parse(data)
             iv = gcm_iv(ldn_nonce_crc(keys.network_id_le, host_mac), h.src_var, h.nonce8)
-            # the footer - one halfword per recipient - is NOT covered by the tag, and leaving it
-            # in is what made 111 of sp36's packets look undecryptable
+            # the footer (one halfword per recipient) is not covered by the tag; leaving it in
+            # makes the packet fail to authenticate with no other symptom
             pt = decrypt_payload(keys.session_key, iv, ciphertext(data, h.footer_size), h.tag)
             if pt is None:
                 record(rec="rx_undecrypted", t=now, src=addr[0], raw=data[:48].hex())
@@ -219,11 +212,11 @@ async def main_async(args):
                         print(f"\n[rx] t={now:6.2f} *** MESH PROTOCOL {name} "
                               f"({len(m.payload)} B), phase {st['phase']} ***")
                         if kind == mp.JOIN_RESPONSE:
-                            # the host repeats this every 500 ms until it is acknowledged, so the
-                            # count and the time of the last one are the pass signal for the ack.
-                            # Ack from HERE, not from the sender: sp36's sender broke out of the
-                            # join loop on the station ack for our join REQUEST, which arrives
-                            # first, and had no join response in hand when it looked.
+                            # the host repeats this every 500 ms until acknowledged, so the count
+                            # and the time of the last one are the ack's pass signal. Ack from
+                            # here, not from the sender: the station ack for our join request
+                            # arrives first, so a sender that breaks on any reply holds no join
+                            # response.
                             st["join_responses"] += 1
                             st["last_join_response"] = now
                             st["join_response"] = m.payload
@@ -277,8 +270,7 @@ async def main_async(args):
                                   f"#{st['rtt_requests']}"
                                   + (f" -> answered {st['rtt_answers']}" if reply else ""))
                     elif m.protocol == rl.PROTOCOL:
-                        # THE RELIABLE PROTOCOL, and its payload is the game. Read it; nothing
-                        # acknowledges it yet, which is why the console repeats each message.
+                        # the reliable protocol; its payload is the game
                         st["reliable"] += 1
                         try:
                             d = rl.parse(m.payload)
@@ -296,10 +288,10 @@ async def main_async(args):
                         if d["flags"] & rl.FLAG_APPLICATION_DATA:
                             st["rel_max_seq"] = max(st["rel_max_seq"], d["sequence_id"])
                             st["rel_streams"].add(d["stream_id"])
-                            # A MESSAGE MAY SPAN PACKETS. Every game message captured so far
-                            # (331 bytes at most) arrived START|END in one packet; a 697-byte
-                            # record may not. Fragments are joined per stream, in sequence
-                            # order, and a repeat of a seen sequence is dropped.
+                            # A message may span packets: every one captured so far (331 bytes at
+                            # most) arrived START|END in one, but a 697-byte record need not.
+                            # Fragments are joined per stream in sequence order; a repeat of a seen
+                            # sequence is dropped.
                             frag = st["rel_fragments"].setdefault(d["stream_id"], {})
                             if d["flags"] & rl.FLAG_MESSAGE_START:
                                 frag.clear()
@@ -351,18 +343,15 @@ async def main_async(args):
                                 record(rec="requested_answer", t=now, data_id=g["data_id"],
                                        payload=d["payload"].hex())
                             if g and g["data_id"] == room.REQUEST and g.get("fields"):
-                                # THE CONSOLE HAS BEEN ASKING US FOR A MESSAGE SINCE THE FIRST JOIN.
-                                # `RequestData.RequestDataID` names a data id, and 0x23 is the one
-                                # it answers itself. Nothing this project sent had ever answered it.
+                                # `RequestData.RequestDataID` names a data id; 0x23 is the one the
+                                # console answers itself.
                                 st["requests"] += 1
                                 st["last_request"] = g["fields"]["RequestDataID"]
                                 if g["fields"]["RequestDataID"] == room.STATE:
-                                    # A REQUEST FOR NetCharacterStateData IS THE GAME SAYING IT
-                                    # CREATED A CHARACTER FROM US. Across thirteen runs that sent
-                                    # anything, the four where an avatar appeared on the screen all
-                                    # asked for it and the six where nothing appeared never did,
-                                    # over 265 sends. It is the first signal in the CAPTURE that
-                                    # says what previously only the screen could.
+                                    # A request for NetCharacterStateData means the game made a
+                                    # character out of us. It has matched the screen in every run:
+                                    # non-zero when an avatar appeared, zero across 265 sends when
+                                    # none did.
                                     if not st["state_requests"]:
                                         print(f"\n[rx] t={now:6.2f} *** IT ASKED FOR "
                                               f"NetCharacterStateData - THE GAME HAS CREATED A "
@@ -373,28 +362,24 @@ async def main_async(args):
                             if g and g["data_id"] in (room.TRADE_TRANER, room.TRADE_POKE,
                                                       room.TRADE_POKE_CHECK_OK,
                                                       room.TRADE_READY_OK, room.RETURN_SELECT):
-                                # d["payload"] IS the game message here. `m.payload` still has the
-                                # reliable header on the front of it - sp83 passed that, the parser
-                                # was handed 41 bytes where 32 were expected, and the exception took
-                                # the whole station down mid-trade. The console called that a cancel.
+                                # d["payload"] is the game message; `m.payload` still carries the
+                                # reliable header, and passing that hands the parser nine bytes too
+                                # many and takes the station down mid-trade.
                                 await answer_the_trade(g, d["payload"], now)
                             if g and g["data_id"] == room.STATE and g.get("fields"):
                                 note_their_state(g["fields"], now)
                             if g and g["data_id"] == room.TALK_RESERVE_RESULT and g.get("fields"):
                                 st["reserve_results"] += 1
-                                # IsCanTalk READS BACKWARDS: 0 accepts, 1 declines. sp79 was
-                                # answered 0 and sp80 answered 1, and sp80 sent its follow-up
-                                # anyway - two seconds later the game crashed.
+                                # IsCanTalk: 0 accepts, 1 declines.
                                 st["reserve_accepted"] = g["fields"].get("IsCanTalk") == 0
                                 print(f"\n[rx] t={now:6.2f} *** IT ANSWERED OUR APPROACH - "
                                       f"NetDataTalkReserveResultData {g['fields']} ***\n")
                                 record(rec="reserve_result", t=now, fields=g["fields"])
                             if (g and g["data_id"] == room.TALK_RESERVE
                                     and args.answer_talk):
-                                # THE PLAYER PRESSED A ON OUR CHARACTER. sp70 got this message for
-                                # the first time and answered nothing, and the player's own
-                                # character froze until the game was rebooted - the talk is a
-                                # request/response and the console blocks on ours.
+                                # The player pressed A on our character. The talk is a
+                                # request/response and the console blocks on the answer: unanswered,
+                                # the player's own character freezes until the game is rebooted.
                                 await answer_the_talk(now)
                             if args.reliable_auto_ack and st["rel_handshaken"]:
                                 ack = rl.build_ack_message(st["rel_max_seq"] + 1,
@@ -404,8 +389,7 @@ async def main_async(args):
                                             (st["dst_ip"], PIA_PORT))
                                 st["rel_acks"] += 1
                         else:
-                            # a control message - reset, reset ack or a bulk ack. THIS is the
-                            # positive signal: an answer, not the absence of one
+                            # a control message: reset, reset ack or a bulk ack
                             st["rel_control"].append((now, d["flags"], m.payload.hex()))
                             if len(d["payload"]) >= 2:
                                 try:
@@ -425,16 +409,14 @@ async def main_async(args):
                                is_ack=d["is_ack"],
                                ack={"count": body["count"]} if body else None)
                     elif m.protocol == UNRELIABLE_PROTOCOL:
-                        # THE GAME'S LIVE STATE. These are the packets sp36 could not read: they
-                        # carry a footer and the footer is not covered by the GCM tag.
+                        # the game's live state; these packets carry a footer, which the GCM tag
+                        # does not cover
                         st["unreliable"] += 1
                         record(rec="unreliable", t=now, phase=st["phase"], port=m.port,
                                dest=m.destination, payload=m.payload.hex())
-                        # EVERY unreliable payload in the archive is a whole game message - 968 of
-                        # them, three types, no exceptions - and the five-byte one this project
-                        # called a keepalive is NetCharacterStateData. So parse them here as well,
-                        # which is where the 0x04 request lives: all 55 of them came in on THIS
-                        # protocol and none on the reliable one.
+                        # Every unreliable payload is a whole game message (968 in the archive,
+                        # three types). The 0x04 request arrives here and never on the reliable
+                        # protocol.
                         g = room.parse(m.payload) if len(m.payload) >= room.HEADER_SIZE else None
                         if g and not g["truncated"] and g["length"] + room.HEADER_SIZE == len(m.payload):
                             record(rec="game_message", t=now, via="unreliable",
@@ -482,11 +464,9 @@ async def main_async(args):
                 return
             ack_id, streams = st["rel_max_seq"], sorted(st["rel_streams"]) or [0]
 
-            # sp40 swept the two unread bytes and sp41/sp42 swept five framings, all refused. The
-            # binary says why, and it is neither: on a RESET the byte at offset 1 is a COUNTER, and
-            # 0x0159fa24 rejects it outright when it EQUALS the value the console holds for us,
-            # 0x0159fa4c when it is not exactly one more. Every reset we sent carried 0. So sweep
-            # that byte, in the framing everything else already works in.
+            # On a RESET the byte at offset 1 is a counter: `0x0159fa24` rejects it when it
+            # equals the value the console holds for us and `0x0159fa4c` when it is not exactly
+            # one more. Sweep that byte, in the framing everything else already works in.
             def send(msg, label):
                 st["phase"] = label
                 sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
@@ -495,12 +475,10 @@ async def main_async(args):
             def state():
                 return (st["reliable"], len(st["rel_control"]), st["rel_max_seq"])
 
-            # THE PROBE WITH A POSITIVE SIGNAL: send DATA, not an ack. A sliding window that
-            # accepts an application message has to acknowledge it, and that acknowledgement is a
-            # reliable message with the application-data flag clear - something we can see. An ack
-            # of our own, by contrast, is only ever judged on silence, and silence is what every
-            # sweep so far has produced. Sequence ids sweep because the console's receive window
-            # expects one particular next id and we have never been told which.
+            # Probe with data, not with an ack: a window that accepts an application message has
+            # to acknowledge it, and that acknowledgement is visible. An ack of our own can only be
+            # judged on silence. Sweep sequence ids because the receive window expects one
+            # particular next id.
             print(f"\n[tx] --- application data, sweeping the sequence id. The console must "
                   f"acknowledge one it accepts, so the answer is a REPLY and not a silence.")
             for seq in range(args.reliable_sweep):
@@ -526,11 +504,10 @@ async def main_async(args):
                         if d["is_ack"] and len(d["payload"]) >= 2:
                             print(f"[cx]     {rl.parse_ack_payload(d['payload'])}")
                     print("\n[tx] --- and now its own data, acked back in the same shape")
-                    # The window is known from here on, so every later arrival is acked at
-                    # rel_max_seq + 1 by the receiver whatever the sweep below concludes: its
-                    # verdict is "the console went quiet", which a console that keeps asking for
-                    # something (the Underground's NetNaminoriData request, 5 a second, ug04)
-                    # never satisfies, and an ack two beyond its last sequence is ignored.
+                    # The window is known from here on, so the receiver acks every later arrival
+                    # at rel_max_seq + 1 whatever the sweep concludes. The sweep's verdict is "the
+                    # console went quiet", which a console still asking for something never
+                    # satisfies, and an ack two beyond its last sequence is ignored.
                     st["rel_handshaken"] = True
                     ok = await ack_the_console()
                     if ok and args.room_walk:
@@ -557,10 +534,9 @@ async def main_async(args):
             print(f"\n[tx] t={now:6.2f} *** IT ASKED TO TALK - answered "
                   f"NetDataTalkReserveResultData at seq {seq}: {reply.hex(' ')} ***\n")
             record(rec="talk_answered", t=now, seq=seq, reply=reply.hex())
-            # AND WHATEVER THE RUN WANTS TO SAY NEXT. The console parks in TalkState GREETING and
-            # waits to be advanced; which message does it is not decided by anything readable, so
-            # this is the sweep handle. One --after-talk is one message, in order, on the reliable
-            # stream, at the sequence id the console is asking for at the time.
+            # The console parks in TalkState GREETING and waits to be advanced. One --after-talk
+            # is one message, in order, on the reliable stream, at the sequence id the console is
+            # asking for at the time.
             for spec in args.after_talk:
                 await trio.sleep(args.after_talk_gap)
                 data_id, _, body_hex = spec.partition(":")
@@ -585,10 +561,10 @@ async def main_async(args):
             THE STREAM DECIDES THE STREAM. All 4333 requests for 0x23 came in on the reliable
             protocol and all 55 for 0x04 on the unreliable one, with no crossover in nineteen runs,
             and each is where the console puts its own answer - so replying on the other one would
-            be a framing mistake of exactly the kind sp40-sp43 spent four runs on.
+            be a framing mistake.
 
             On the reliable stream the sequence id is taken FRESH: the window is shared with the
-            console's own sends and anything below its ack id is discarded in silence (sp53). One
+            console's own sends and anything below its ack id is discarded in silence. One
             send, no retransmission - the console repeats the request, so a lost answer costs
             nothing and the next request is another chance.
             """
@@ -636,29 +612,22 @@ async def main_async(args):
             here = st["their_position"] or {"x": 0.0, "z": 0.0}
             print(f"\n[tx] --- WALKING: {args.room_walk} positions around "
                   f"({here['x']:.2f}, {here['z']:.2f}). WATCH THE CONSOLE'S SCREEN.")
-            # sp47 put four avatars in the room from four distinct positions, so the next question
-            # is what the game thinks the IDENTITY is. A LINE answers it: one avatar walking says
-            # the identity is the station, a trail of them says it is the position.
+            # A line separates the two readings of a character's identity: one avatar walking
+            # means the identity is the station, a trail of them means it is the position.
             async def send_reliable(payload, seq, label, tries=12):
                 """Send one reliable message and RETRANSMIT until the console's ack covers it.
 
-                sp50 sent a single join and nothing appeared; sp47 and sp48 sent twenty-odd and the
+                A single join often draws nothing; twenty-odd of them and the
                 room filled up. One message gets one chance, and this project had never retransmitted
                 anything - which is the entire point of a sliding window. The console's ack id is a
                 positive signal, so this says whether the join LANDED, separately from whether the
                 game drew it.
                 """
-                # THE ACK ID IS THE SEQUENCE THE CONSOLE WANTS NEXT, and anything below it is
-                # discarded in silence. sp53 is the proof: its ack sat at 13, we sent 1 through 20,
-                # and EXACTLY EIGHT avatars appeared - 13 through 20. sp47 and sp48 filled a room by
-                # spanning the number without knowing it; sp50 to sp52 sent one message below it and
-                # got nothing at all. So take the sequence id from the ack, every time.
-                # THE SEQUENCE SPACE IS SHARED WITH THE CONSOLE'S OWN SENDS. Its ack id is the
-                # next number in the whole window, not a count of what we have sent: sp53's ack sat
-                # at 13 while its own data was at 12, we sent 1 through 20, and exactly the eight
-                # from 13 up became avatars. So take the id FRESH on every attempt - a value read
-                # before its last message is already stale, which is how sp55 sent a join at 1 into
-                # a window that wanted 16.
+                # The ack id is the sequence the console wants next; anything below it is
+                # discarded in silence. The space is shared with the console's own sends, so the
+                # id is the next number in the whole window and not a count of what we have sent.
+                # Read it fresh on every attempt: a value read before the console's last message
+                # is already stale.
                 for attempt in range(tries):
                     seq = st["their_ack_id"]
                     if not seq:
@@ -685,21 +654,19 @@ async def main_async(args):
                 return False
 
             if args.room_pattern == "fixed":
-                # A BURST OF JOINS, ALL AT ONE SPOT, each at the sequence id the console is asking
-                # for. Whatever lands stacks in one place, so the screen shows one avatar rather
-                # than a crowd - and then the movement updates have something unambiguous to move.
+                # A burst of joins at one spot, each at the sequence id the console is asking
+                # for. Whatever lands stacks in one place, so the movement updates have one
+                # character to move.
                 x0, z0 = here["x"] + args.join_offset_x, here["z"] + args.join_offset_z
-                # AND WHERE, WHICH IS NOT FREE. The offset has always been +2.0 on x, which is one
-                # side of the player - so a player standing against the wall on that side gets a
-                # character spawned THROUGH it. sp80: the user watched ours appear out of bounds
-                # and the game crashed shortly after. There is no collision for us and no map here,
-                # so the offset is the run's to choose and the player should stand clear.
-                # WHO SHE IS, not where. `OpcManager.CreateCharaData(ANetData<JoinData>)` builds a
-                # CharaData{stationIndex, assetName, colorId, avatarId, sexId} out of THIS message:
+                # The spawn offset is one side of the player, with no collision and no map, so a
+                # player standing against the wall on that side gets a character spawned through
+                # it. Have them stand clear.
+                #
+                # `OpcManager.CreateCharaData(ANetData<JoinData>)` builds a
+                # CharaData{stationIndex, assetName, colorId, avatarId, sexId} out of this message.
                 # avatarId indexes `UnionCharacterTable.SheetSheet1{ID, AssetName}` and the asset
-                # name is what `OpLoadCharacter` loads from "persons/field/". GetSexId and
-                # GetNpcColorId hang off the same value. Every run this project has ever done sent
-                # avatar 8, which is why every character has been the same girl.
+                # name is what `OpLoadCharacter` loads from "persons/field/"; GetSexId and
+                # GetNpcColorId read the same value.
                 join = room.build_join(x0, 0.0, z0, rot_y=90,
                                        avatar_id=args.join_avatar, color_id=args.join_color)
                 print(f"[tx]   {args.room_walk} joins, ALL at ({x0:.2f}, {z0:.2f}), "
@@ -721,15 +688,12 @@ async def main_async(args):
                         print(f"[tx]     join {i} at seq {seq}")
                     await trio.sleep(0.4)
                 print(f"\n[tx]   --- now moving whatever is standing there, to the RIGHT")
-                # sp66 WALKED OUT OF THE ROOM. Sixty steps of 0.93 is 55.8 units, so the character
-                # crossed the floor, was pushed back by the game's own collision, moonwalked and
-                # left through the far wall - all of it off the only instrument there is, the
-                # screen. A walk has to END INSIDE THE ROOM to be watched.
+                # A walk has to end inside the room to be watched. Sixty steps of 0.93 is 55.8
+                # units: the character crosses the floor, is pushed back by the game's collision
+                # and leaves through the far wall.
                 for i in range(args.room_walk_steps):
-                    # AT THE CONSOLE'S OWN SPEED. Measured over 80 of its NetPosData messages, a
-                    # real player covers 0.93 units per message every 0.41 s; this used to send
-                    # 0.1 units every 0.35 s with the twelve points 0.008 apart, which is a ninth
-                    # of walking pace and is the whole of what the screen showed as a stutter.
+                    # The console's own speed, over 80 of its NetPosData messages: 0.93 units per
+                    # message every 0.41 s. A ninth of that renders as a stutter.
                     stride = args.room_walk_stride
                     x, x_next = x0 + stride * i, x0 + stride * (i + 1)
                     body = room.build_pos(room.pos_span((x, z0), (x_next, z0), 90))
@@ -743,14 +707,10 @@ async def main_async(args):
                     await trio.sleep(args.room_walk_period)
 
                 if args.send_card:
-                    # THE PROBE: the game draws a BODY for us and has no record to hang on it -
-                    # no name, no dialogue, the default model. `NetDataTranerCardData` is the
-                    # message that carries what a player LOOKS like (fashionId, bodyType,
-                    # genderid) and no console in this project's 42 captures has ever sent one,
-                    # so there is no template and the layout is opendpr's alone. It goes on the
-                    # RELIABLE stream, which is where a join goes, and it is retransmitted until
-                    # the console's ack covers it - so the capture says whether it LANDED
-                    # separately from whether the screen changed.
+                    # `NetDataTranerCardData` carries fashionId, bodyType and genderid. No
+                    # console has been captured sending one, so the layout rests on opendpr alone.
+                    # It goes on the reliable stream and is retransmitted until acked, so the
+                    # capture says whether it landed separately from what the screen did.
                     card = room.build_trainer_card(fashion_id=args.card_fashion,
                                                    body_type=args.card_body,
                                                    gender_id=args.card_gender,
@@ -763,9 +723,8 @@ async def main_async(args):
                 return
 
             if args.room_pattern == "move":
-                # ONE join, then NetPosData on the UNRELIABLE stream - which is how the game moves a
-                # player it already knows about. sp47/sp48 spawned a crowd because every message we
-                # sent was a JOIN.
+                # One join, then NetPosData on the unreliable stream: that is how the game moves
+                # a player it already knows about. Every join spawns another character.
                 x0, z0 = here["x"] + 1.5, here["z"]
                 print(f"[tx]   ONE join at ({x0:.2f}, {z0:.2f}), retransmitted until it is acked")
                 landed = await send_reliable(room.build_join(x0, 0.0, z0, rot_y=90), seq, "join")
@@ -775,10 +734,9 @@ async def main_async(args):
                 print(f"[tx]   ONE avatar should be standing at ({x0:.2f}, {z0:.2f}) now")
                 # and now move it, batched the way the console batches: twelve points a message
                 for i in range(args.room_walk):
-                    # THE TWELVE POINTS SPAN THE STRIDE. sp57 sent them 0.012 apart inside a 0.15
-                    # step, so the avatar crept through a twelfth of the way and then jumped the
-                    # rest when the next message arrived. A message describes where the player HAS
-                    # BEEN since the last one, so its points have to reach the next one's first.
+                    # The twelve points span the stride. A message describes where the player has
+                    # been since the last one, so its points have to reach the next message's
+                    # first; points packed tighter make the avatar creep and then jump.
                     stride = args.room_walk_stride
                     x, x_next = x0 + stride * i, x0 + stride * (i + 1)
                     pts = room.pos_span((x, z0), (x_next, z0), 90)
@@ -815,7 +773,7 @@ async def main_async(args):
                 await trio.sleep(args.room_walk_gap)
 
         async def ack_the_console(stream_id=0):
-            """Ack the console's own reliable data, in the shape it acked ours with (sp44)."""
+            """Ack the console's own reliable data, in the shape it acks ours with."""
             for delta in (1, 0, 2):
                 ack_id = st["rel_max_seq"] + delta
                 msg = rl.build_ack_message(ack_id, stream_id=stream_id)
@@ -847,10 +805,8 @@ async def main_async(args):
                 sock.sendto(pkt, (dst_ip, PIA_PORT))
                 record(rec="tx_request", t=time.monotonic() - t0, label=label, dst=dst_ip,
                        size=len(payload), request=payload.hex())
-                # KEEP WAITING PAST AN ACK. The console acknowledges our request before it answers
-                # it, and returning on the first reply reads that ack as "something else" and throws
-                # a real acceptance away - which is what sp54 did, twice, to a console that had said
-                # yes both times.
+                # Keep waiting past an ack: the console acknowledges the request before it
+                # answers it, so returning on the first reply throws a real acceptance away.
                 deadline = time.monotonic() + (timeout or args.gap)
                 while True:
                     with trio.move_on_at(trio.current_time()
@@ -921,18 +877,16 @@ async def main_async(args):
             print(f"\n[cx] the console registers {count} protocols")
             record(rec="protocol_count", count=count)
             if args.connect:
-                # THE MINIMAL VALID REQUEST, and it needs no knowledge of the console's protocols:
-                # an id it does not register expects version 0, so `count` entries of (0xFF, 0)
-                # pass the whole version loop. sp29 proved the pass; what refuses it afterwards is
-                # the second stage, 0x0154fcfc.
+                # The minimal valid request, needing no knowledge of the console's protocols: an
+                # id it does not register expects version 0, so `count` entries of (0xFF, 0) pass
+                # the whole version loop. What refuses afterwards is the second stage, 0x0154fcfc.
                 print(f"\n[tx] --- one well-formed connection request, {count} x (0xff, 0)")
                 for attempt in range(args.connect):
                     payload = stp.build_connection_request(
                         target_constant, target_var, [stp.FILLER] * count, location,
                         network_id=0, player_infos=infos, ack_id=attempt + 1)
-                    # 4 s, not 2: sp38 caught the console taking over three seconds to accept when
-                    # it had a stale station of ours to time out first, and a 2 s wait walked past
-                    # the acceptance and left it repeating unanswered
+                    # 4 s, not 2: the console takes over three seconds to accept when it has a
+                    # stale station of ours to time out first
                     got = await ask(payload, stp.PROTOCOL, f"connect#{attempt}",
                                     timeout=args.connect_timeout)
                     name = ("silence" if got is None
@@ -965,8 +919,8 @@ async def main_async(args):
                         if not args.join:
                             print("[cx] listening for what the mesh says next")
                             break
-                        # THE MESH JOIN. Six bytes, station index 253 - "not in a mesh yet" -
-                        # retransmitted every 500 ms; Pia gives up after ten seconds.
+                        # The mesh join: six bytes, station index 253 ("not in a mesh yet"),
+                        # retransmitted every 500 ms. Pia gives up after ten seconds.
                         print(f"\n[tx] --- mesh join request (protocol {mp.PROTOCOL:#04x} v3)")
                         for attempt in range(args.join):
                             st["phase"] = f"join#{attempt}"
@@ -976,9 +930,8 @@ async def main_async(args):
                                         (dst_ip, PIA_PORT))
                             record(rec="tx_join", t=time.monotonic() - t0, attempt=attempt,
                                    request=req.hex())
-                            # WAIT FOR THE JOIN RESPONSE, not for any reply. The console acks our
-                            # join REQUEST on the station protocol and that arrives first, which is
-                            # what sp36's join loop mistook for the answer.
+                            # Wait for the join response, not for any reply: the console acks our
+                            # join request on the station protocol and that arrives first.
                             deadline = time.monotonic() + 2.0
                             while (st["join_response"] is None
                                    and time.monotonic() < deadline):
@@ -989,10 +942,10 @@ async def main_async(args):
                             print(f"[tx]   join {attempt}: answered")
                             break
                         st["phase"] = "joined"
-                        # ACK THE JOIN RESPONSE. It is NOT acked with a mesh message - BDSP's mesh
-                        # handlers read the ack id and hand it to a MeshStationProtocol method
-                        # (0x0154b984 -> 0x01550324), so what goes out is the station protocol's
-                        # eight-byte type-5 ack on 0x14. mesh_protocol.ack_for() is that rule.
+                        # A mesh message is acked on the station protocol: BDSP's mesh handlers
+                        # read the ack id and hand it to a MeshStationProtocol method
+                        # (0x0154b984 -> 0x01550324), so the eight-byte type-5 ack goes out on
+                        # 0x14. mesh_protocol.ack_for() is that rule.
                         # the receiver acks every copy as it arrives; watch for them stopping
                         st["phase"] = "join-ack"
                         quiet_for = max(args.quiet_for, 1.5)   # two missed 500 ms repeats
@@ -1024,7 +977,7 @@ async def main_async(args):
 
             async def probe(pid, version, var_id=None, src_var=None, tries=3):
                 """One version probe. A reply is guaranteed now, so silence is a lost packet and
-                gets retried rather than read as a match (sp28)."""
+                gets retried rather than read as a match."""
                 loc = location
                 if var_id is not None:
                     loc = stp.station_location(our_ip, PIA_PORT, our_constant, var_id, our_service)
@@ -1086,8 +1039,8 @@ async def main_async(args):
                 record(rec="confirm", pid=pid, version=v, below=below, above=above, ok=ok)
 
             if args.vary_var and registered:
-                # result 7 is the SECOND stage refusing (0x0154fcfc -> 0x11c0f), and what it tests
-                # is whether our variable id is already in an array at session+0x3b8. So vary it.
+                # result 7 is the second stage refusing (0x0154fcfc -> 0x11c0f): our variable id
+                # is already in the array at session+0x3b8. Use a fresh one.
                 pid, v = sorted((k, x) for k, x in registered.items() if x)[0]
                 print(f"\n[cx] --- what the second stage refuses: {pid:#04x} v{v}, "
                       f"varying the variable id")
@@ -1108,9 +1061,8 @@ async def main_async(args):
             try:
                 await _answer_the_trade(g, payload, now)
             except Exception as exc:                                  # noqa: BLE001
-                # A HANDLER THAT RAISES DROPS OUR STATION, and the console reads a station that
-                # vanishes mid-trade as a cancellation - which is what the player sees on their own
-                # screen (sp83). Nothing read off the wire is worth ending a run for.
+                # A handler that raises drops our station, and the console reads a station that
+                # vanishes mid-trade as a cancellation.
                 print(f"\n[cx] *** the trade answer failed and the run is CARRYING ON: "
                       f"{type(exc).__name__}: {exc} ***\n")
                 record(rec="trade_answer_error", t=now, error=f"{type(exc).__name__}: {exc}")
@@ -1118,7 +1070,7 @@ async def main_async(args):
         async def _answer_the_trade(g, payload, now):
             """Answer the console's own half of a trade with ours.
 
-            It sends WHO IT IS and then WHAT IT IS OFFERING, and waits. sp82 reached both and was
+            It sends who it is and then what it is offering, and waits. A run that reached both was
             answered with nothing, so the player sat on "En attente d'une reponse".
 
             NOTHING HERE COMPLETES A TRADE. The exchange itself is further down the flow - the
@@ -1129,11 +1081,10 @@ async def main_async(args):
             if not args.trade_reply:
                 return
             if g["data_id"] == room.TRADE_POKE_CHECK_OK:
-                # IT LOOKED AT OUR POKEMON AND SAID YES. sp85 received `46 00 01 01` after sending
-                # one - the console checked something we assembled and accepted it. The same
-                # acknowledgement goes back, and NOTHING BEYOND IT: the next message in the flow is
-                # NetDataTradeReadyOkData, which leads to the exchange and to the console writing
-                # its save. That is the user's call and there is no flag here that makes it.
+                # `46 00 01 01` is the console reporting that it looked at our Pokemon and found
+                # it acceptable. The same acknowledgement goes back and nothing beyond it: the next
+                # message, NetDataTradeReadyOkData, leads to the exchange and to the console
+                # writing its save, which is the user's call.
                 st["check_oks"] += 1
                 print(f"\n[rx] t={now:6.2f} *** IT ACCEPTED OUR POKEMON - "
                       f"NetDataTradePokeCheckOkData {payload.hex(' ')} ***")
@@ -1141,17 +1092,13 @@ async def main_async(args):
                 reply = room.build_fields(room.TRADE_POKE_CHECK_OK, 1)
                 label = "our check-ok"
             elif g["data_id"] == room.RETURN_SELECT:
-                # THE QUESTION A COMPLETED TRADE ENDS ON, and two runs have walked away from it.
-                # It arrives once a second and does not stop, so answering EVERY one would put 50+
-                # messages in the window for no reason; one answer is the experiment, and what the
-                # console does after it is the result.
-                # A COMPLETED TRADE ENDS THE SECURITY PHASE, AND THE REPEATER HAS TO KNOW.
-                # sp96: our_security_state was still SEND_READYOK after the first trade, so the
-                # repeater kept putting a 0x21 on the wire once a second - and in SELECT_WINDOW a
-                # 0x21 goes to TradeSelectPokeModel$$ReciveReadyOk, which writes targetTradeState.
-                # WaitBoxWindowComplete needs that to be WAIT(2); we held it at SEND_READYOK(5)
-                # for sixty seconds, the second trade could never leave the box window, and the
-                # console told the player WE had cancelled. This message is the end of the phase.
+                # A completed trade ends on this question. It arrives once a second and does not
+                # stop, so only the first is answered.
+                # A completed trade ends the security phase and the repeater has to be cleared.
+                # In SELECT_WINDOW a 0x21 goes to `TradeSelectPokeModel$$ReciveReadyOk`, which
+                # writes targetTradeState; `WaitBoxWindowComplete` needs it to be WAIT(2), so a
+                # repeater still sending SEND_READYOK(5) holds the next trade in the box window
+                # until the console reports the cancellation as ours.
                 if st["our_security_state"] or st["their_security_state"] is not None:
                     print(f"[cx]   trade complete - security phase over, repeater quiet")
                     record(rec="security_phase_end", t=now)
@@ -1169,10 +1116,9 @@ async def main_async(args):
                 reply = room.build_fields(room.RETURN_SELECT, args.return_select_value)
                 label = f"our return-select {args.return_select_value}"
             elif g["data_id"] == room.TRADE_READY_OK and (g.get("fields") or {}).get("isTradeOk"):
-                # THE SECURITY PHASE, AND IT IS A DIFFERENT MACHINE FROM THE HANDSHAKE ABOVE.
+                # The security phase is a different machine from the handshake above.
                 # `TradeSecurityController$$ReciveState` [0x1cd2ff0] drops anything whose isTradeOk
-                # is not 1, so the console only ever hears an answer that sets that byte - sp88 sent
-                # three with a zero in it and the player sat waiting for all of them.
+                # is not 1.
                 their = (g.get("fields") or {})["tradeState"]
                 st["their_security_state"] = their
                 print(f"\n[rx] t={now:6.2f} *** SECURITY PHASE: their state "
@@ -1187,8 +1133,8 @@ async def main_async(args):
                 label = (f"our state {room.TRADE_STATE_NAMES.get(st['our_security_state'])} "
                          f"(theirs {room.TRADE_STATE_NAMES.get(their)})")
             elif g["data_id"] == room.TRADE_READY_OK:
-                # THE LAST MESSAGE, AND THE ONE THAT LETS THE CONSOLE WRITE ITS SAVE. Answering it
-                # with tradeState=WAIT satisfies the second half of
+                # The last message before the console writes its save. Answering it with
+                # tradeState=WAIT satisfies the second half of
                 # `<WaitBoxWindowComplete>d__24`'s condition, the manager moves to SECURIY_TRADE,
                 # and `TradeStateModel$$InitState` calls `PlayerSave`. Off unless --complete-trade.
                 st["their_ready_ok"] = g.get("fields")
@@ -1232,11 +1178,9 @@ async def main_async(args):
         def send_trade_message(reply, label, now):
             """Put one game message into the console's reliable window. Shared by the answers and
             by the repeater, which needs the sequence id as it stands at the moment it fires."""
-            # OUR OWN SEQUENCE, NOT THEIRS. `their_ack_id` is the console's "next id I expect from
-            # you", so it only moves when it ACKS something - and two messages sent before that ack
-            # both carry it. sp89 sent our state and our Pokemon at seq 42 within the same 10 ms and
-            # the console kept the first and discarded the second as a retransmit, then sat in
-            # WAIT_POKE for 250 s while 250 repeats all went out at seq 343. One id per message.
+            # One sequence id per message. `their_ack_id` is the console's "next id I expect from
+            # you" and only moves when it acks something, so two messages sent before that ack both
+            # carry it and the second is discarded as a retransmit.
             seq = max(st["their_ack_id"], st["our_next_seq"])
             if not seq:
                 record(rec="trade_reply_no_seq", t=now, label=label)
@@ -1276,16 +1220,14 @@ async def main_async(args):
         def note_their_state(fields, now):
             """The console broadcasts its OWN OpcState, and an emote is visible in it.
 
-            sp78: state 0 until the player opened the Y menu, `state 4 isRecruiment 1` while the
+            Measured: state 0 until the player opened the Y menu, `state 4 isRecruiment 1` while the
             trade emote was up (t=74 and t=124), back to 0 when it came down. So the run can SEE
             the console become approachable instead of being told.
             """
             was = st["their_state"]
             st["their_state"] = fields
-            # `isRecruiment` IS THE FLAG, NOT "state is non-zero". sp86 saw state 18 - the console
-            # still sitting in the trade flow from the previous run - read it as an invitation,
-            # spent its one approach on it at t=26 and was declined; the real emote went up at
-            # t=48 with nothing left to send. state 4 carries isRecruiment 1, state 18 carries 0.
+            # Gate on `isRecruiment`, not on "state is non-zero": state 4 carries isRecruiment 1
+            # and state 18, a console already inside a trade, carries 0.
             if fields.get("isRecruiment") and fields != was:
                 st["their_recruiting"] += 1
                 print(f"\n[rx] t={now:6.2f} *** THE PLAYER IS ADVERTISING: {fields} - "
@@ -1300,20 +1242,18 @@ async def main_async(args):
 
             Picking an emote locks the player in place waiting to be interacted with, so when the
             console is the recruiter nothing can happen until someone approaches it - and every run
-            to sp78 had us waiting to be approached instead. `UnionStateController$$SwitchTalkStateMine`
+            earlier runs waited to be approached instead. `UnionStateController$$SwitchTalkStateMine`
             is the approacher's path and it is the one whose messages we have read.
 
             Sent only once their broadcast state says they are advertising, so the run cannot spend
             its approach on a player who is still walking around.
             """
-            # OUR CHARACTER MUST EXIST FIRST. sp80 approached at t=11.02, while the fifteen
-            # joins were still going out, and was DECLINED - sp79 approached at t=57.21, after the
-            # walk, and was accepted. An approach from a station the game has not drawn yet is not
-            # the experiment.
+            # Our character must exist first: an approach from a station the game has not drawn
+            # yet is declined.
             while not st["room_done"]:
                 await trio.sleep(0.5)
-            # AND EVERY INVITATION GETS AN ATTEMPT, not just the first. sp86 spent its only
-            # approach on a stale state and had nothing left when the emote actually went up.
+            # Every invitation gets an attempt, not just the first: a stale state would
+            # otherwise spend the only approach.
             seen = st["their_recruiting"]
             while True:
                 while st["their_recruiting"] == seen:
@@ -1369,9 +1309,9 @@ async def main_async(args):
             record(rec="ug_join_sent", t=time.monotonic() - t0, zone=z["zoneID"])
             await send_on_the_window(payload, "underground join")
             st["room_done"] = True
-            # and walk, on the unreliable stream, in the room's own encoding: the console's
-            # Underground NetPosData at (-79, 67.24) read posX 1577, posZ 1345 (ug05), which is
-            # -x / 0.05 and z / 0.05, the room's POS_SCALE.
+            # and walk, on the unreliable stream, in the room's own encoding: an Underground
+            # NetPosData at (-79, 67.24) reads posX 1577, posZ 1345, which is -x / 0.05 and
+            # z / 0.05, the room's POS_SCALE.
             await trio.sleep(2.0)
             x0, z0 = x + args.join_offset_x, zz + args.join_offset_z
             for i in range(args.room_walk_steps):
@@ -1468,31 +1408,27 @@ async def main_async(args):
                 if st["reserve_results"]:
                     print("[cx] they answered our approach")
                     if not st["reserve_accepted"]:
-                        # A REFUSAL IS AN ANSWER, AND IT IS NOT A GO-AHEAD. IsCanTalk 1 is the
-                        # console declining; sp80 pushed a TalkData into a declined conversation
-                        # and the game crashed. Whatever else was wrong in that run, this path
-                        # must not be taken again.
+                        # IsCanTalk 1 is the console declining. Never push a TalkData into a
+                        # declined conversation.
                         print("[cx] *** THEY DECLINED (IsCanTalk 1). Sending NOTHING further. ***")
                         record(rec="approach_declined", t=time.monotonic() - t0)
                         st["reserve_results"] = 0
                         return False
-                    # AND NOW THE INITIATOR'S OWN NEXT MESSAGE, if the run was given one.
-                    # sp76 sent TalkData{CHECK} as the RESPONDER and the console cancelled; CHECK
-                    # is what `UnionStateController$$SwitchTalkStateMine` builds, and that is the
-                    # path of the player who WALKED UP. sp79 put us in that role for the first
-                    # time, so the same message is now being sent by the side that sends it.
+                    # The initiator's own next message. CHECK is what
+                    # `UnionStateController$$SwitchTalkStateMine` builds, and that is the path of
+                    # the player who walked up; sent as the responder, the console cancels.
                     for spec in args.after_approach:
                         await trio.sleep(args.after_approach_gap)
                         data_id, _, body_hex = spec.partition(":")
                         payload = room.build(int(data_id, 0), bytes.fromhex(body_hex))
-                        # NetDataTalkData{talkState: CHECK} CRASHES THE CONSOLE. Its handler
+                        # NetDataTalkData{talkState: CHECK} crashes the console. Its handler
                         # `UnionStateController$$SwitchSpokenStateMine` sends talkState 0 down a
-                        # branch that reads systemController->msgWindow and, when that is null -
-                        # which it is for a player standing with an emote up - sets x19 = 0 and
-                        # dereferences it at 0x1fd5ec0 with no guard. sp80 and sp81 both died on it.
+                        # branch that reads systemController->msgWindow and, when that is null
+                        # (which it is for a player standing with an emote up), sets x19 = 0 and
+                        # dereferences it at 0x1fd5ec0 with no guard.
                         if payload[0] == room.TALK and payload[3 + 1:3 + 5] == b"\x00\x00\x00\x00":
                             print("[cx] *** REFUSING to send NetDataTalkData{talkState: CHECK} - "
-                                  "it is a null dereference in SwitchSpokenStateMine (sp80, sp81). "
+                                  "it is a null dereference in SwitchSpokenStateMine. "
                                   "Use talkState GREETING (1). ***")
                             record(rec="after_approach_refused", spec=spec, reason="talkstate_check")
                             continue
@@ -1516,7 +1452,7 @@ async def main_async(args):
         async def keep_saying_match_wait():
             """Repeat NetDataIsMatchWaitData{1} for the whole hold.
 
-            sp77 answered the console's REQUEST for 0x23 and that request comes once, between
+            Answering the console's request for 0x23 works, but that request comes once, between
             t=8.4 and t=9.4, and never again. The player reaches the trade option in the Y menu
             around a minute in, by which time an answer-only run is silent - and the flag the game
             reads is a piece of live state, not a one-off reply. `StartMatch` is gated on
@@ -1563,7 +1499,7 @@ async def main_async(args):
               f"reply/replies")
         # the three signals this run exists to read, each a count and not a story
         print(f"[cx] mesh join responses {st['join_responses']}, acked {st['join_acks']} "
-              f"(a couple is an ack that landed; eighteen is sp36, unacked)")
+              f"(a couple is an ack that landed; eighteen means unacked)")
         print(f"[cx] RTT requests {st['rtt_requests']}, answered {st['rtt_answers']}")
         print(f"[cx] isMatchWait=1 repeats sent {st.get('match_wait_sent', 0)}")
         print(f"[cx] their advertising state seen {st['their_recruiting']} time(s), "
@@ -1573,7 +1509,7 @@ async def main_async(args):
         print(f"[cx] unreliable messages {st['unreliable']} - the game's live state")
         print(f"[cx] reliable acks sent {st['rel_acks']}, their last position "
               f"{st['their_position']}")
-        # A REQUEST IS A QUESTION ADDRESSED TO US. If it stops being asked, we answered it.
+        # A request that stops being asked has been answered.
         print(f"[cx] NetRequestData received {st['requests']}"
               + (f" (last for {room.name(st['last_request'])})" if st["last_request"] else "")
               + f", answered {st['request_answers']}")
@@ -1646,11 +1582,11 @@ def main():
     ap.add_argument("--room-walk-gap", type=float, default=1.0)
     ap.add_argument("--room-walk-steps", type=int, default=60, metavar="N",
                     help="position messages in the burst pattern's walk. At the console's own "
-                         "stride, 60 is 55.8 units and leaves the Union Room entirely (sp66); "
+                         "stride, 60 is 55.8 units and leaves the Union Room entirely; "
                          "pass 8 for a walk that ends where the screen can still see it")
     ap.add_argument("--room-walk-period", type=float, default=room.POS_PERIOD,
                     help="seconds between position messages in the burst pattern. The default is "
-                         "the console's own median gap; pass sp63's 0.35 to reproduce that run")
+                         "the console's own median gap")
     ap.add_argument("--room-walk-stride", type=float, default=room.POS_STRIDE,
                     help="units one position message spans. The default is what a console's own "
                          "walk measures (0.93 units every 0.41 s, over 80 of its messages); our "
@@ -1664,11 +1600,11 @@ def main():
                     help="answer the console's request for NetDataIsMatchWaitData (0x23) with "
                          "isMatchWait=1 instead of 0. ONE comparison in UnionRoomManager$$SetNetData "
                          "gates the trade on it (`cmp w23, #1` at main.bin 0x01fd56e4, then "
-                         "UnionFrontDeskTradeController$$StartMatch); every run since session 46 has "
+                         "UnionFrontDeskTradeController$$StartMatch); every run has "
                          "answered 0, which is a station declining to be matched")
     ap.add_argument("--trade-reply", action=argparse.BooleanOptionalAction, default=False,
                     help="answer the console's trade messages with ours. It sends a trainer record "
-                         "and then a Pokemon and WAITS; sp82 answered neither and the player sat on "
+                         "and then a Pokemon and waits; with neither answered the player sits on "
                          "\"En attente d'une reponse\". THIS DOES NOT COMPLETE A TRADE - the player "
                          "still confirms on their own screen, and declining there leaves the save "
                          "untouched")
@@ -1704,7 +1640,7 @@ def main():
     ap.add_argument("--join-offset-x", type=float, default=2.0, metavar="U",
                     help="where our character spawns relative to the console's own, on x. The "
                          "default +2.0 is one fixed side, and a player standing against the wall "
-                         "on that side gets a character spawned out of bounds (sp80, followed by a "
+                         "on that side gets a character spawned out of bounds (followed by a "
                          "crash). Negative puts it on the other side")
     ap.add_argument("--join-offset-z", type=float, default=0.0, metavar="U",
                     help="the same on z")
@@ -1728,7 +1664,7 @@ def main():
                     help="seconds between approach retransmissions")
     ap.add_argument("--match-wait-period", type=float, default=2.0, metavar="S",
                     help="with --match-wait, ALSO send NetDataIsMatchWaitData{1} every S seconds "
-                         "for the whole hold (0 disables, leaving the answer-on-request of sp77). "
+                         "for the whole hold (0 disables, leaving the answer-on-request). "
                          "The console requests 0x23 once, at t=8.4-9.4, and the player reaches the "
                          "trade option in the Y menu long after that")
     ap.add_argument("--after-talk", action="append", default=[], metavar="ID:HEX",
@@ -1741,14 +1677,14 @@ def main():
                     help="seconds between the talk answer and each --after-talk message")
     ap.add_argument("--answer-talk", action=argparse.BooleanOptionalAction, default=False,
                     help="answer a NetDataTalkReserveData with a NetDataTalkReserveResultData. "
-                         "sp70 left it unanswered and the player's character froze")
+                         "unanswered, the player's character freezes")
     ap.add_argument("--can-talk", type=int, default=1, metavar="N",
                     help="NetDataTalkReserveResultData.IsCanTalk - 1 accepts the talk, 0 refuses "
                          "it. A refusal is the SAFE probe: it should release the player rather "
                          "than open a flow we cannot hold up")
     ap.add_argument("--state", type=int, default=room.STATE_NONE, metavar="N",
                     help="the OpcState.OnlineState our character reports when the console asks "
-                         "for NetCharacterStateData. 0 NONE is what sp63/sp64 answered with and is "
+                         "for NetCharacterStateData. 0 NONE means \"doing nothing\" and is "
                          "a character doing nothing; 3 RECRUITMENT_BATTLE, 4 RECRUITMENT_TRADE, "
                          "5 RECRUITMENT_RECORD, 6 RECRUITMENT_GREETINGS, 8 COMMUNICATE")
     ap.add_argument("--recruiting", type=int, default=0, metavar="N",
@@ -1756,7 +1692,7 @@ def main():
     ap.add_argument("--join-avatar", type=int, default=8, metavar="N",
                     help="NetJoinData.avatarId, which is what picks the MODEL: it indexes "
                          "UnionCharacterTable and OpLoadCharacter loads that asset name. 8 is what "
-                         "every run before sp69 sent, and is the girl the screen keeps showing")
+                         "the default, the girl the screen shows")
     ap.add_argument("--join-color", type=int, default=0, metavar="N",
                     help="NetJoinData.colorId. The game also derives one from the avatar id "
                          "(OpcManager.GetNpcColorId), so this may not be the deciding field")
@@ -1835,9 +1771,8 @@ def main():
     if os.geteuid() != 0:
         ap.error("must run as root")
     if args.complete_trade and not args.trade_reply:
-        # --complete-trade answers the LAST trade message; without --trade-reply the console never
-        # gets the trainer record or the Pokemon that come before it, so there is nothing to be
-        # ready for. Failing here costs nothing; failing at the console costs a join and an A press.
+        # --complete-trade answers the last trade message; without --trade-reply the console
+        # never gets the trainer record or the Pokemon that come before it.
         ap.error("--complete-trade needs --trade-reply")
     if args.complete_trade:
         print("[cx] *** --complete-trade IS ON: the console will WRITE ITS SAVE and the Pokemon "

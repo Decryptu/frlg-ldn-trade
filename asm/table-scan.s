@@ -2,8 +2,8 @@
 @
 @ memory-scan answers "where is this word", which needs the word first. Every address this
 @ project has found that way rested on a constant only one function could hold - RAND_MULT in
-@ Random's literal pool [bs13], 0x00450045 in sEasyChatGroups [bs16], 0x64646464 in gSpeciesInfo
-@ [bs38]. A table of POINTERS carries no such constant: gSpecialVars is 21 words that are the
+@ Random's literal pool, 0x00450045 in sEasyChatGroups, 0x64646464 in gSpeciesInfo. A table of
+@ POINTERS carries no such constant: gSpecialVars is 21 words that are the
 @ addresses of the special script variables [decomp:data/event_scripts.s:51], and the only way to
 @ recognise it is that its first twelve entries are the consecutive u16s gSpecialVar_0x8000 ..
 @ gSpecialVar_0x800B [decomp:src/event_data.c:16], so each word is EXACTLY 2 more than the one

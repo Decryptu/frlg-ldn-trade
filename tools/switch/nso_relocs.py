@@ -3,7 +3,7 @@
 
 An NSO's vtables are empty in the static image - each slot is filled at load time from a RELATIVE
 relocation whose ADDEND is the function address. So "who points at this function" is a question for
-the relocation table, not a pointer scan (session 43: the GCM pair had no pointers and no BL
+the relocation table, not a pointer scan (the GCM pair had no pointers and no BL
 callers, which is what sent us here).
 """
 import struct, sys

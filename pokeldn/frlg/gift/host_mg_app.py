@@ -234,7 +234,7 @@ class MysteryGiftHostApplication(HostApplication):
         try:
             previous = game_data_log.read(path) if os.path.exists(path) else ()
             capture = getattr(self.config.ldn, "capture_path", None)
-            # The run tag: every launcher names its capture after it (mev25.pcap).
+            # The run tag: every launcher names its capture after it.
             tag = os.path.splitext(os.path.basename(capture))[0] if capture else None
             _, entry = game_data_log.append(path, data, tag=tag)
         except OSError as exc:

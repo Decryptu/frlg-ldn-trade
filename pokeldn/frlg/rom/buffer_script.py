@@ -187,8 +187,8 @@ SAVE_SCRATCH = {
 DUMP_TARGET_OFFSET = 0x18
 DUMP_SIZE_OFFSET = 0x1C
 
-# --- memory-dump-multi: several blocks in ONE session ---------------------------------------------
-# MG_LINK_BUFFER_SIZE caps a MESSAGE, not a session. The client runs a script of commands, and
+# --- memory-dump-multi: several blocks in one session ---------------------------------------------
+# MG_LINK_BUFFER_SIZE caps a message, not a session. The client runs a script of commands, and
 # CLI_LOAD_TOSS_RESPONSE -> CLI_RUN_BUFFER_SCRIPT -> CLI_SEND_LOADED can appear in it repeatedly
 # [decomp:src/mystery_gift_client.c:140]; each pass sends another block. The payload cannot keep the
 # block index itself, because CLI_RUN_BUFFER_SCRIPT memcpys recvBuffer over gDecompressionBuffer on
@@ -585,10 +585,10 @@ def describe_gather(dump, src=None, stride=None, count=None):
 
 
 # --- rng-trace: a word sampled once a frame, and the first call into the ROM ---------------------
-# bs13 found RAND_MULT in the cartridge and bs14's dump named gRngValue at 0x03004220 from Random's
-# own literal pool [rom_map.py]. A word that changes proves nothing, though, and at the Mystery Gift
-# menu the game may not call Random at all - so this payload proves the address by the LCG's own
-# recurrence: read the word, call the function, read it again, and check
+# gRngValue is at 0x03004220, from Random's own literal pool [rom_map.py]. A word that changes
+# proves nothing, and at the Mystery Gift menu the game may not call Random at all, so this payload
+# proves the address by the LCG's own recurrence: read the word, call the function, read it again,
+# and check
 #     after == before * RAND_MULT + RAND_ADD   [decomp:include/random.h:18-19]
 # which settles the address, the ROM call and what was called, in one run.
 RNG_TRACE = "rng-trace"
@@ -719,8 +719,8 @@ def describe_rng_trace(dump):
 # The general form of what rng-trace and create-mon each do specially: an address, up to eight
 # argument words, the r0 that comes back, and one address watched either side of the call.
 #
-# The convention is bs42's disassembly of CreateMon's prologue, proven on hardware by bs43/bs44:
-# r0..r3 then [sp+0..12] at the moment of the call, and the callee does not pop them. asm/call.s
+# The convention is CreateMon's own prologue, proven on hardware: r0..r3 then [sp+0..12] at the
+# moment of the call, and the callee does not pop them. asm/call.s
 # pushes the sixteen bytes for every call; a function taking fewer never reads them.
 #
 # `watch` is what makes an answer evidence: SeedRng returns nothing at all [decomp:src/random.c:15],
@@ -746,8 +746,8 @@ def build_call(function, args=(), watch=0):
     args = [int(a) & 0xFFFFFFFF for a in args]
     if len(args) > CALL_MAX_ARGS:
         raise BufferScriptError(
-            f"the call passes at most {CALL_MAX_ARGS} arguments - four in r0..r3 and four on the "
-            f"stack, which is what bs43/bs44 proved - got {len(args)}")
+            f"the call passes at most {CALL_MAX_ARGS} arguments: four in r0..r3 and four on the "
+            f"stack. Got {len(args)}")
     if function:
         if not function & 1:
             raise BufferScriptError(
@@ -817,7 +817,7 @@ def describe_call(dump, expected=None):
 # --- call-chain: a list of calls and memory accesses, in one frame -------------------------------
 # `call` makes one call. This makes up to CHAIN_MAX_STEPS, in order, in a single frame, and sends
 # back one word per step. The reason is not convenience: every question about the console's game
-# state is read-change-read, and bs84 named twenty-four workers to ask them of. A run is the
+# state is read-change-read, and twenty-four named workers are there to ask them of. A run is the
 # expensive thing, not a call.
 #
 # The one new mechanism is PREV - a step can take its target or its first argument from the
@@ -1138,7 +1138,7 @@ def describe_call_chain(dump, steps=None):
 #                  u8 hasFixedPersonality, u32 fixedPersonality, u8 otIdType, u32 fixedOtId)
 #
 # Four in r0..r3 and four at entry sp + 0, 4, 8 and 12, which is where the console's own prologue
-# reads them [bs42's dump: push of five registers, then r8, then `sub sp,#28`, then [sp,#52..64]].
+# reads them [its prologue: push of five registers, then r8, then `sub sp,#28`, then [sp,#52..64]].
 #
 # The mon is always built inside our own 1024 bytes, where nothing but the payload can be hurt, and
 # read back from there. `destination` copies the finished 100 bytes on afterwards and is a live-save
@@ -1164,13 +1164,13 @@ CREATE_MON_PARTY_OFFSET = 0xA8
 PARTY_MON_SIZE = 100
 PARTY_SIZE = 6                      # [decomp:include/constants/party_menu.h]
 CREATE_MON_HEADER_SIZE = 16
-# The first 116 bytes are exactly what bs43 and bs44 returned - header then mon - and the party
-# word is an addendum past them, so those dumps still read.
+# The first 116 bytes are header then mon; the party word is an addendum past them, so an older
+# 116-byte answer still reads.
 CREATE_MON_ANSWER_SIZE = CREATE_MON_HEADER_SIZE + PARTY_MON_SIZE + 4
 
-# struct SaveBlock1 [decomp:include/global.h:772]. THIS IS NOT WHERE A PARTY WRITE GOES: it is
-# only where SavePlayerParty copies TO [decomp:src/load_save.c:160], so bs46's append here was
-# erased by the console's own save seconds later. The offsets stay for reading it.
+# struct SaveBlock1 [decomp:include/global.h:772]. A party write does not go here: this is only
+# where SavePlayerParty copies to [decomp:src/load_save.c:160], so an append here is erased by the
+# console's own save seconds later. The offsets stay for reading it.
 SAV1_PARTY_COUNT = 0x34
 SAV1_PARTY = 0x38
 SAV1_VARS = 0x1000                  # u16 vars[VARS_COUNT], indexed by (id - VARS_START)
@@ -1203,9 +1203,8 @@ PARTY_WRITE_DRY_RUN = 3             # nothing written, and the 100 bytes are the
 # What an EMPTY party slot actually looks like, which is NOT a hundred zero bytes. ZeroMonData
 # zeroes everything and then ends `arg = MAIL_NONE; SetMonData(mon, MON_DATA_MAIL, &arg)`
 # [decomp:src/pokemon.c:1737], and mail is at offset 0x55 of struct Pokemon. So byte 85 is 0xFF and
-# every other byte is 0. bs45 read exactly that off the console, and it is BETTER evidence than a
-# hundred zeros would have been: unclaimed memory does not look like this, a slot the game itself
-# zeroed does.
+# every other byte is 0, which is what the console reads back. Unclaimed memory does not look like
+# this; a slot the game itself zeroed does.
 EMPTY_PARTY_SLOT = bytes(85) + b"\xFF" + bytes(PARTY_MON_SIZE - 86)
 
 
@@ -1252,8 +1251,8 @@ def is_shiny(ot_id, personality):
 def shiny_personality(tid, sid, low=0):
     """A personality that is shiny for this trainer, with `low` as its bottom half.
 
-    The check is symmetric in the two halves, so the top half is simply whatever makes the four
-    XOR to zero - which is why bs01's SECRET id matters: without it there is no way to aim this.
+    The check is symmetric in the two halves, so the top half is whatever makes the four XOR to
+    zero. The secret id is required: without it there is no way to aim this.
     """
     ot_id = (int(sid) << 16 | int(tid)) & 0xFFFFFFFF
     low = int(low) & 0xFFFF
@@ -1272,8 +1271,8 @@ def build_create_mon(function, species, level, *, fixed_iv=USE_RANDOM_IVS,
     `party_append` APPENDS the finished mon to gPlayerParty - the array the GAME uses - at slot ==
     the current gPlayerPartyCount, and raises the count, which is what the game does when a mon is
     caught, so an occupied slot is never touched. NOT the save block's party: SavePlayerParty
-    copies gPlayerParty over that when the console saves [decomp:src/load_save.c:160], which is
-    what erased bs46. `party_base` and `party_count` default to the addresses bs47 measured.
+    copies gPlayerParty over that when the console saves [decomp:src/load_save.c:160].
+    `party_base` and `party_count` default to the measured addresses.
 
     `destination` is the general form: an absolute address, which touches no count. Either one is
     a write to the console's live memory and the config layer gates both behind the same override
@@ -1384,8 +1383,8 @@ def create_mon_parameters(code):
 def read_create_mon(dump):
     """-> what the call left, from the bytes it sent back.
 
-    An answer of only header + mon is bs43's and bs44's shape, from before the party word existed;
-    it reads the same and reports `party` as None rather than inventing one.
+    An answer of only header + mon predates the party word; it reads the same and reports `party`
+    as None rather than inventing one.
     """
     dump = bytes(dump)
     body = CREATE_MON_HEADER_SIZE + PARTY_MON_SIZE
@@ -1675,11 +1674,11 @@ def build_save_write(data, block=SAVE_BLOCK_2, offset=0xB20, *, unsafe=False):
     return bytes(code)
 
 
-# A DUMPED REGION MUST NOT CHANGE WHILE THE BLOCK IS BEING SENT, and lg172/lg173 paid for it.
-# MGL_Send takes the header CRC in one frame, sends the payload in the next and re-checks the CRC in
-# the one after [decomp:src/mystery_gift_link.c:155], so a region that changes in between produces a
-# header CRC the payload cannot match and the console calls LinkRfu_FatalError - which the player
-# reads as "erreur de connexion" mid transmission.
+# A dumped region must not change while the block is being sent. MGL_Send takes the header CRC in
+# one frame, sends the payload in the next and re-checks the CRC in the one after
+# [decomp:src/mystery_gift_link.c:155], so a region that changes in between produces a header CRC
+# the payload cannot match and the console calls LinkRfu_FatalError, which the player reads as
+# "erreur de connexion" mid transmission.
 #
 # gRngValue is the only address guaranteed to move every frame, so it is the only one named here.
 # Anything else volatile has to be found the way this was. docs/frlg_leafgreen.md.
@@ -1695,9 +1694,9 @@ def _refuse_a_moving_region(address, size):
                 f"0x{address:X}..0x{address + size - 1:X} overlaps {what}. MGL_Send takes the "
                 "header CRC one frame and sends the bytes the next "
                 "[decomp:src/mystery_gift_link.c:155], so a region that moves between them makes "
-                "the console call LinkRfu_FatalError - 'erreur de connexion' mid transmission "
-                "(lg172, lg173). Dump around it, or read it with rng-trace, which returns it "
-                "through the 4-byte channel instead of the block.")
+                "the console call LinkRfu_FatalError, 'erreur de connexion' mid transmission. "
+                "Dump around it, or read it with rng-trace, which returns it through the 4-byte "
+                "channel instead of the block.")
 
 
 def build_memory_dump_multi(address, size=MAX_BUFFER_SCRIPT_SIZE, blocks=1):
@@ -1796,9 +1795,8 @@ def script_choices():
 
 # Which payloads answer with BYTES on ident 19 rather than the 4-byte channel, and which of those
 # have a structure the log can decode rather than a region to hex-dump. These live here, beside the
-# payloads, because they were duplicated as two hand-maintained tuples in config.py and bs56 was
-# lost to exactly that: table-scan ran on the console and found its table, and the host asked for
-# 4 bytes because a new payload had been added to neither list. A new payload goes in here.
+# payloads. Duplicated as hand-maintained tuples elsewhere they go stale, and a payload missing
+# from them runs on the console while the host asks for 4 bytes. A new payload goes in here.
 DUMP_SCRIPTS = frozenset({
     MEMORY_DUMP, MEMORY_DUMP_MULTI, MEMORY_DUMP_SCATTER, SAVE_DUMP, ANCHORS, SAVE_WRITE,
     MEMORY_SCAN, TABLE_SCAN, RNG_TRACE, STRING_GATHER, CREATE_MON, CALL, CALL_CHAIN,
@@ -1990,8 +1988,8 @@ _DEFAULT_ROM_HEADER = (b"\x00" * 0xA0
 # the zeros. These two THUMB stubs stand in for CreateMon at whatever address the payload was built
 # to call, placed with `memory={address: stub}`.
 #
-# CREATE_MON_ARG_MODEL answers "did eight arguments arrive, in the order the console's own prologue
-# reads them?" by writing r0..r3 and the four stack arguments into the destination as eight words.
+# CREATE_MON_ARG_MODEL checks that eight arguments arrive in the order the console's own prologue
+# reads them, by writing r0..r3 and the four stack arguments into the destination as eight words.
 # It pushes nothing, so [sp,#0] IS the caller's first stack argument. Assembled from:
 #
 #     str r1,[r0,#4]   str r2,[r0,#8]   str r3,[r0,#12]

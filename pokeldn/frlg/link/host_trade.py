@@ -484,7 +484,7 @@ class HostTradeEngine:
         parks in case 3 until ours lands, so ours goes out on receipt, as at the entry.
 
         Armed from the trainer-card standby, not from a finished seat: the colosseum has no
-        post-seat standby rounds of its own (cc1). The READY key still goes out from the spot
+        post-seat standby rounds of its own. The READY key still goes out from the spot
         route, and GetCableClubPartnersReady reads nothing else [overworld.c:2989]."""
         self._set_state(H_CC_BATTLE_ENTRY)
         self._expected = "cc_link_player"
@@ -754,7 +754,7 @@ class HostTradeEngine:
             self._maybe_finish_entry()
         elif key == LINK_KEY_EXIT_ROOM and self.state in (H_RETURN_FIELD, H_CC_BATTLE_ENTRY,
                                                           H_UROOM_BATTLE_LINK):
-            # cc2/cc3: after a colosseum battle the console returns to the map and walking into the
+            # After a colosseum battle the console returns to the map and walking into the
             # door runs QueueExitLinkRoomKey, which then waits for EVERY player to reach
             # PLAYER_LINK_STATE_EXITING_ROOM [KeyInterCB_WaitForPlayersToExit, overworld.c:2977].
             # With no answer from us it sits on "veuillez patienter" until the link errors. There is
@@ -863,10 +863,9 @@ class HostTradeEngine:
 
     def _on_child_block(self, count, data):
         self._child_blocks_landed += 1
-        # u17: a battle link buffer record with a 4-byte payload is 16 bytes, which is exactly
-        # COUNT_LINKCMD, so every ack and every short command was being read as a trade LINKCMD and
-        # silently dropped. There are no trade LINKCMDs inside a battle: let the state decide, not
-        # the size. It cost the first battle run at the very first GETMONDATA.
+        # A battle link buffer record with a 4-byte payload is 16 bytes, exactly COUNT_LINKCMD,
+        # so routing on size alone reads every ack and every short command as a trade LINKCMD and
+        # drops it. There are no trade LINKCMDs inside a battle: the state decides, not the size.
         if count == trade.COUNT_LINKCMD and self.state != H_UROOM_BATTLE_LINK:
             self._on_child_linkcmd(int.from_bytes(data[:2], "little"),
                                    int.from_bytes(data[2:4], "little"))
@@ -894,7 +893,7 @@ class HostTradeEngine:
             self._begin_card_exchange()
         elif self.state == H_ENTRY_CARD and self._expected == "warp1":
             if self.colosseum:
-                # cc1: the colosseum does NOT produce the trade centre's post-seat standby rounds,
+                # The colosseum does not produce the trade centre's post-seat standby rounds,
                 # so the entry can only be finished by the console's own next block. It fades to
                 # black on its spot and parks in Task_StartWirelessCableClubBattle case 3
                 # [cable_club.c:706] waiting for our record, which is why gating on standbys here

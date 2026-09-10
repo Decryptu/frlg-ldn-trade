@@ -11,7 +11,7 @@ from pokeldn import gen8
 
 
 def test_the_five_payloads_this_project_measured_are_built_exactly():
-    """sw70's capture, via scratchpad/sw_app_payloads.py: these five and no others."""
+    """A run's capture, via scratchpad/sw_app_payloads.py: these five and no others."""
     assert trade.sync(trade.SYNC_PING, trade.PING).hex() == "610000000a00"
     assert trade.sync(trade.SYNC_PING, trade.PING_REPLY).hex() == "610000001200"
     assert trade.sync(trade.SYNC_PING, trade.PING_SYNCED).hex() == "610000001a00"
@@ -77,7 +77,7 @@ def test_the_sync_answers_are_keyed_and_valued_by_whole_payloads():
 
 
 def test_the_ping_answer_is_the_one_the_hardware_confirmed():
-    """sw64: answering the ping walks the game forward; sw62: sending pingReply first stops it."""
+    """answering the ping walks the game forward; sending pingReply first stops it."""
     replies = trade.answers_for(bytes.fromhex("610000000a00"))
     assert [r.hex() for r in replies] == ["610000001200", "610000000a00"]
     assert trade.answers_for(bytes.fromhex("610000001a00"))[1] == trade.result()
@@ -90,12 +90,12 @@ def test_a_payload_with_no_rule_answers_nothing_and_is_reported():
     assert trade.unanswered([bytes.fromhex("610000000a00")]) == []
 
 
-# the four distinct payloads sw70's console sent on 0x7C, in the order it first sent them
+# the four distinct payloads the console sent on 0x7C, in the order it first sent them
 SW70_ON_7C = ["610000000a00", "610000001200", "610000001a00", "60ea00000a00"]
 
 
 def test_the_answer_policy_never_falls_silent_where_the_mirror_spoke():
-    """sw68 and sw70 reached the snapshot by echoing. A table that answered less would lose that."""
+    """Two runs reached the snapshot by echoing. A table that answered less would lose that."""
     for hexed in SW70_ON_7C:
         said = bytes.fromhex(hexed)
         payload, queue = trade.next_answer(said)
@@ -122,7 +122,7 @@ def test_the_policy_changes_exactly_two_things_against_sw70s_mirror():
 
     Precisely: the FIRST thing we say changes only for `ping`, where the mirror echoed ping and the
     rule answers pingReply. For `pingSynced` the first reply is still the echo and the rule adds a
-    `result{}` behind it. The other two payloads sw70 saw are untouched.
+    `result{}` behind it. The other two payloads are untouched.
     """
     first_differs = [h for h in SW70_ON_7C
                      if trade.next_answer(bytes.fromhex(h))[0] != bytes.fromhex(h)]
@@ -134,7 +134,7 @@ def test_the_policy_changes_exactly_two_things_against_sw70s_mirror():
     assert follow_ups["610000001200"] == [] and follow_ups["60ea00000a00"] == []
 
 
-# sw75, off the wire: the two members of the trade RPC pair the console sent when the trade screen
+# off the wire: the two members of the trade RPC pair the console sent when the trade screen
 # opened. The station id in them is the console's own, and our seat record holds the same number.
 SW75_RPC_10000 = bytes.fromhex(
     "5e9c00000a19081e10904e188080a08a8fc4c8cdeb0120c0502a0400000000")
@@ -194,7 +194,7 @@ def test_the_policy_answers_a_trade_rpc_by_rebuilding_it_not_by_echoing_it():
 
 
 def test_an_offer_is_read_and_rebuilt_from_the_record_it_carries():
-    """sw76's own message: 20030, PokemonTradeDataHolder{pokemon{serializePokemonParam}}."""
+    """A run's own message: 20030, PokemonTradeDataHolder{pokemon{serializePokemonParam}}."""
     from pokeldn import gen8
     plain = bytearray(bytes(range(256)) * 2)[:gen8.SIZE_PARTY]
     plain[0x04:0x06] = b"\x00\x00"
@@ -233,7 +233,7 @@ def test_something_that_is_not_an_offer_yields_no_pokemon():
 
 
 def test_no_reader_raises_on_a_short_message():
-    """sw81 died here. The console sent three bytes at the confirmation prompt, this module raised,
+    """A run died here. The console sent three bytes at the confirmation prompt, this module raised,
     and the run stopped transmitting mid-trade - so the console was right to report the
     communication as interrupted. A reader on a live run returns None; it does not raise."""
     for payload in (b"", b"\x00", b"\x3e\x4e\x00", b"\x5e\x9c\x00"):
@@ -340,7 +340,7 @@ def test_the_content_fifty_offer_carries_our_owner_id():
 
 
 def test_the_mirror_offer_has_the_consoles_own_field_set():
-    """sx36, off its own bytes: `729c00000ae002083220e2202ad802<344 bytes>` decodes to fields 1, 4
+    """off its own bytes: `729c00000ae002083220e2202ad802<344 bytes>` decodes to fields 1, 4
     and 5 - no elementId, no ownerId. Ours carried all five, every sequence of it was acknowledged,
     and the console did nothing with it. The identity is not the reason: our ownerId that run was
     0x1249a221d8580000, the id the console addressed a reliable ack TO in the same capture.
@@ -354,7 +354,7 @@ def test_the_mirror_offer_has_the_consoles_own_field_set():
 
 def test_the_high_base_offer_is_the_box_phases_own_shape_one_content_over():
     """The box Pokemon rides 20030 - `3e4e00000adb020ad802<344>` - and this is the same message
-    with the content offset moved to 50. sx34/sx36/sx37 tried 10050 and both 40050 shapes.
+    with the content offset moved to 50. Earlier runs tried 10050 and both 40050 shapes.
     """
     pk8 = bytes(0x158)
     m = trade.pokemon_offer_high(trade.SELECTION_OFFSET, pk8)
@@ -370,7 +370,7 @@ def test_a_content_fifty_envelope_refuses_anything_that_is_not_a_pk8():
 
 
 def test_answer_rpc_refuses_a_member_with_no_base():
-    """sx25: the console's Pokemon rides a 40050 envelope with no base field, and its echo of ours
+    """the console's Pokemon rides a 40050 envelope with no base field, and its echo of ours
     carries base 1. Both reached `answer_rpc` once the parser accepted the whole 40000 band, and
     `varint(None)` killed the sender mid-trade. Answering is optional; raising is not allowed."""
     no_base = bytes.fromhex("729c00000a0a08322a0400000000")
@@ -396,7 +396,7 @@ def test_the_confirmation_content_takes_a_command_and_not_a_pokemon():
 
 def test_the_confirmation_command_shares_the_openers_id_and_differs_in_the_body():
     """The opener and the command ride the SAME holder - `382700000a00` and `382700000a020801` -
-    which is the whole point: sx49b proved an empty body on a content's 10000-base holder is
+    which is the whole point: An empty body on a content's 10000-base holder is
     accepted as that content's record, so the command goes where the ping went."""
     opener = trade.open_content(trade.CONFIRMATION_OFFSET)
     command = trade.sync_command(trade.CONFIRMATION_OFFSET, 1)
@@ -427,7 +427,7 @@ def test_the_ladder_needs_every_command_and_the_fourth_one_ends_it():
 
 
 def test_the_three_steps_sx52e_and_sx53_measured_read_as_a_phase_and_an_announcement():
-    """The console's own elementId-20000 bodies, verbatim off those two runs. The low u16 is the
+    """The console's own elementId-20000 bodies, verbatim off the console. The low u16 is the
     phase the element adopts (`element+0xac` = `content+0x17c`) and the high u16 is the phase its
     last command announced, so the three read as: it had sent 0; our command let the phase catch up
     to 1; it committed and sent 1, announcing 2. Every announced value is a rung of the ladder."""
@@ -445,7 +445,7 @@ def test_the_phase_answer_writes_the_low_half_and_keeps_the_high_one():
     """`--confirm-phase` is the first send this project has made that puts a value of its own in a
     step body. It must change the LOW u16 only: the high half is the sender's announcement, which
     `0x006d3690` publishes and `0x006d3980` carries over untouched, and overwriting it would change
-    two variables in one run. Built off sx53's own last step."""
+    two variables in one run. Built off the console's own last step."""
     measured = bytes.fromhex("01000200")                       # phase 1, announced 2
     payload = trade.build_rpc(trade.CONFIRMATION_OFFSET, trade.RPC_BASES[1],
                               0x1249A221D8580000, 0x25A0, measured)
@@ -460,7 +460,7 @@ def test_the_phase_answer_writes_the_low_half_and_keeps_the_high_one():
 
 
 def test_the_phase_answer_refuses_anything_that_is_not_a_four_byte_step():
-    """A live run's reader must not raise, and a two-byte body is real: sx53's own capture carries
+    """A live run's reader must not raise, and a two-byte body is real: a real capture carries
     `0000` and `0100` on the confirmation content's elementId 20000, which the console's own
     handler drops at `cmp x2, #4`."""
     short = trade.build_rpc(trade.CONFIRMATION_OFFSET, trade.RPC_BASES[1], 1, 2,
@@ -471,7 +471,7 @@ def test_the_phase_answer_refuses_anything_that_is_not_a_four_byte_step():
 
 
 def test_a_step_reader_takes_only_four_bytes_and_never_raises():
-    """A reader on a live run must not raise on anything the console sends - the trap sw81 set."""
+    """A reader on a live run must not raise on anything the console sends - the trap a three-byte message sets."""
     assert trade.parse_sync_step(None) is None
     assert trade.parse_sync_step(b"") is None
     assert trade.parse_sync_step(b"\x00\x00\x01") is None
@@ -494,7 +494,7 @@ def test_a_negative_command_is_refused_rather_than_encoded():
 
 def test_the_command_reader_takes_any_content_and_no_reader_raises():
     """The holder shape is the content's, not content 40's alone - and a reader on a live run must
-    not raise, which is the trap sw81 set (see `_maybe_parse`)."""
+    not raise, which is the trap a three-byte message sets (see `_maybe_parse`)."""
     assert trade.parse_sync_command(trade.sync_command(trade.SELECTION_OFFSET, 2)) == 2
     assert trade.parse_sync_command(trade.open_content(trade.CONFIRMATION_OFFSET)) is None
     assert trade.parse_sync_command(trade.im_ready()) is None

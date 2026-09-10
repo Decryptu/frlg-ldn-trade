@@ -1,6 +1,6 @@
 """A Sword/Shield Pokemon on the wire: the 0x158-byte PK8, and the party of six it arrives in.
 
-sw68 and sw70. Once `imReady` is answered the console opens
+Measured on the air. Once `imReady` is answered the console opens
 `nn::pia::transport::ReliableBroadcastProtocol` - protocol 0x84, which had never spoken in this
 project - and sends 2965 bytes in three fragments. **The first 0x810 of that is the player's party:
 six PK8 records at a 0x158 stride**, and 6 * 0x158 IS 0x810 exactly, so the stride and the count
@@ -13,7 +13,7 @@ with one extra field each. What is true of Sword and of nothing else is HERE:
     0x10 is the battle stats, encrypted with the LCG RESTARTED and never permuted.
   - the party arrives as a fixed six slots, empty ones zero-filled, not a counted list.
 
-**THE LEVEL IS IN THAT TAIL AND IT IS WHAT SETTLED THE BLOCK ORDER.** sw70's party first read out
+The level is in that tail, and it is what settles the block order. A party first read out
 at levels 110 and 118 - impossible ones - from a tail nothing had decrypted, behind a body whose
 block order was inverted. With both fixed the same bytes give Ectoplasma 100, Jungko 75 and
 Dracolosse 73: **the player's own team, in party order, at the levels they named**, and the levels
@@ -62,7 +62,7 @@ def party(blob, slots=PARTY_SLOTS):
     """-> one entry per party slot of a 0x84 payload: the read fields, or None for an empty slot.
 
     An empty slot is an encryption constant of ZERO, which is how slots 4-6 arrive from a player
-    carrying three Pokemon. Do not read emptiness out of a species of 0 instead: sw70's first
+    carrying three Pokemon. Do not read emptiness out of a species of 0 instead: a first
     reading called slot 3 empty when it held a Dracolosse, because a wrong block order had put the
     species word somewhere else and the checksum could not see it.
     """

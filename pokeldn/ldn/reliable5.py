@@ -1,6 +1,6 @@
 """Pia 5.29-5.43's reliable sliding window - protocol 0x7c, and where BDSP's game data is.
 
-**AND IT PARSES VERSION 4 WITH NO CHANGE.** Session 57, sw29: a retail Sword's own reliable
+It parses version 4 with no change: a retail Sword's own reliable
 messages read field for field through `parse()` - flags 0x0F on the first and 0x07 after it, stream
 0, payload size 6, sequence 1..20, lowest-pending stuck at 1, zero destination bits, a 9-byte
 header and a six-byte game payload `61 00 00 00 0a 00`. It sent 1637 messages of 20 distinct
@@ -25,7 +25,7 @@ THE MESSAGE HEADER (parse main.bin 0x0159756c, build 0x01597364, size 0x015977f0
 **The header is 9 or 13 bytes, not the 8 or 12 the wiki says** - the wiki's own field list runs
 through offset 0x8, and `GetSize` is `9 + (((N + 0x1f) >> 3) & 0x3c)`. And N must be **strictly
 less than 32**, where the wiki says "not higher than 32": both the parser and the builder branch on
-`cmp #0x20 / b.lo`. Session 43's rule, applied to a reference: the binary wins.
+`cmp #0x20 / b.lo`. Against a published reference, the binary wins.
 
 THE ACK PAYLOAD, sent when FLAG_APPLICATION_DATA is clear (parse 0x01596fa4, build 0x0159718c,
 size 0x0159716c = `2 + 21 * n`):
@@ -47,11 +47,11 @@ explicit count and one more halfword per entry.
 (main.bin 0x0159f9b4) reads it as a reset COUNTER and requires it to be exactly one more than the
 value it holds for that station: `stream_id == record[0x1e]` is rejected outright at 0x0159fa24 and
 `stream_id != record[0x1e] + 1` at 0x0159fa4c. A reset numbered 0 against a stored 0 is therefore
-thrown away in silence - which is what sp41 and sp42 sent, five framings each, while the framing was
+thrown away in silence, which is what five swept framings each did while the framing was
 never the thing being measured. Before any of that the handler needs `record[0x1f]` non-zero, an
 active-station flag we do not set.
 
-**THE ACK, MEASURED OFF THE CONSOLE (sp44).** Sending the console application data made it answer,
+**THE ACK, MEASURED OFF THE CONSOLE.** Sending the console application data made it answer,
 and its answer is the shape no amount of reading the builder had settled:
 
     00 00 0017 ffff 0003 00   00 01   00 0002 0001  00 * 16
@@ -173,7 +173,7 @@ def contiguous_through(sequence_ids, start=0):
 
     A bulk ack names ONE id and a mask; the id is one past the end of the contiguous run, so a gap
     stops the run rather than being skipped over. Keeping this separate from the receive loop is
-    what lets a capture replay it - sw29's own 1637 messages go through it offline.
+    what lets a capture replay it: 1637 captured messages go through it offline.
     """
     have = set(sequence_ids)
     through = start
@@ -184,7 +184,7 @@ def contiguous_through(sequence_ids, start=0):
 
 def build_ack_message(ack_id, stream_id=0, field_0x50=None, mask=b"", lowest_pending=None,
                       unknown0=0):
-    """A whole bulk-acknowledgement message, header and payload, as sp44 caught the console send it.
+    """A whole bulk-acknowledgement message, header and payload, as the console sends it.
 
     `ack_id` is one MORE than the highest sequence id received - the console answered our sequence 0
     and 1 with an ack id of 2. The halfword before the mask carried `ack_id - 1` in that same

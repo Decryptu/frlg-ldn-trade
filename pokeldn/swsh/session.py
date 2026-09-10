@@ -12,7 +12,7 @@ addresses behind each value. Two of these differ from BDSP in a way that matters
     speak to a console until a version-4 header exists, so this module deliberately stops at the
     constants and the one derivation that IS shared.
 
-BOTH OF THE OPEN ITEMS ARE CLOSED, on hardware, session 55. The local communication id is
+BOTH OF THE OPEN ITEMS ARE CLOSED, on hardware. The local communication id is
 0x0100ABF008968000, read off a Sword's own advertisement - SWORD, so the id here is not the Shield
 cartridge the binary was read from. And the value that seeds the session key is where BDSP keeps
 it, twelve bytes into the application data, little-endian: 484 packets, all authenticated.
@@ -66,12 +66,12 @@ def session_key(seed, game_key=GAME_KEY):
     return ldn_session_key(game_key, seed)
 
 
-# Sword's local communication id, read off its advertisement (session 55). Shield's will differ -
+# Sword's local communication id, read off its advertisement. Shield's will differ -
 # this is the SWORD title id, and the cartridge the binary was read from is Shield.
 COMM_ID = 0x0100ABF008968000
 
 # Where the advertisement keeps what the derivation needs. The SAME offsets as BDSP, which is not
-# an assumption: the seed at 12 is what authenticated all 484 packets of sw01, and the network id at
+# an assumption: the seed at 12 authenticated all 484 packets of a capture, and the network id at
 # 0 is what makes their IVs come out right.
 NETWORK_ID_OFF = 0
 SESSION_PARAM_OFF = 12

@@ -1,7 +1,7 @@
 @ FIELD STUB: asm/field/mon-seek.s, run FROM THE RAM SCRIPT BODY instead of from staged bytes,
 @ with a check that the far end of that body arrived.
 @
-@ WHY A SEPARATE FILE. mon-seek.s is PROVEN ON HARDWARE (mev19 + bs62: shiny, Jolly, Speed 28) and
+@ A separate file: mon-seek.s is proven on hardware (shiny, Jolly, Speed 28) and
 @ stays exactly as it is, staged the old way, as the control. This file changes ONE thing - where
 @ the code lives - and adds the measurement that makes the change worth a run.
 @
@@ -153,7 +153,7 @@ _start:
 
     .align 2
     .global p_rng, p_mult, p_add, p_sav2ptr, p_cap, p_nature, p_ivmin, p_padlen, p_padsum
-p_rng:  .word 0x03004220            @ gRngValue [rom_map.GRNG_VALUE, bs14/bs15]
+p_rng:  .word 0x03004220            @ gRngValue [rom_map.GRNG_VALUE]
 p_mult: .word 0x41C64E6D            @ RAND_MULT [decomp:include/random.h:18]
 p_add:  .word 0x00006073            @ RAND_ADD  [:19]
 p_sav2ptr: .word 0x0300422C         @ &gSaveBlock2Ptr [rom_map.GSAVEBLOCK2PTR]

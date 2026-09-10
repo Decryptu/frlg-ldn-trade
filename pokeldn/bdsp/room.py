@@ -17,27 +17,26 @@ THE FRAMING, and it fits every payload ever captured:
     12 0001 23                          NetRequestData     "send me your data id 0x23"
     23 0001 00                          NetDataIsMatchWaitData  "I am not waiting for a match"
 
-PACKED IS MEASURED, NOT ASSUMED. `JoinData` is byte, byte, byte, short, Vector3, which is 17 bytes
-packed and 20 aligned - and the console's own message is 17, with the short at offset 3. Every
-payload in every capture agrees with the packed reading, so the whole table decodes on it.
+The layout is packed, and measured. `JoinData` is byte, byte, byte, short, Vector3: 17 bytes
+packed and 20 aligned, and the console's own message is 17, with the short at offset 3. Every
+payload in every capture agrees with the packed reading.
 
-**NetJoinData (id 1) IS THE TWENTY-BYTE MESSAGE**, not a position update, and sending it repeatedly
-is what put a crowd of avatars in a real console's Union Room (sp47, sp48): every one is a fresh
-player arriving. A real console sends avatar 8, colour 0, casset 0x31.
+NetJoinData (id 1) is a player arriving, not a position update, so sending it repeatedly puts a
+crowd of avatars in the room. A real console sends avatar 8, colour 0, casset 0x31.
 
-**NetPosData (id 2) is how a player MOVES**, and it is much cheaper: `ushort posX, ushort posZ,
-short rotY` per point, several points to a message, on the unreliable stream. The game's own
-conversion is `pos = (-posX * 0.05, posZ * 0.05)`, so a coordinate is a twentieth of a unit and X is
-NEGATED. THE TWELVE POINTS ARE A SPAN, not a burst: they are where the player HAS BEEN since the
-last message, so a walk is one message per stride with the strides interpolated across it. sp57 sent
-twelve points 0.008 apart and the avatar crept and then jumped, which is what `pos_span` fixes.
+NetPosData (id 2) is how a player moves, and it is cheaper: `ushort posX, ushort posZ, short rotY`
+per point, several points to a message, on the unreliable stream. The game's own conversion is
+`pos = (-posX * 0.05, posZ * 0.05)`, so a coordinate is a twentieth of a unit and x is negated. The
+twelve points are a span, not a burst: they are where the player has been since the last message,
+so a walk is one message per stride with the strides interpolated across it. Points packed tighter
+than the stride make the avatar creep and then jump; `pos_span` fixes that.
 
-**THE STREAM DECIDES THE STREAM.** All 4333 requests for 0x23 arrived on the RELIABLE protocol and
-all 55 requests for 0x04 on the UNRELIABLE one, with no crossover in nineteen runs - so a request is
-answered on the protocol it came in on, which is also where the console puts its own answer.
+A request is answered on the protocol it came in on, which is where the console puts its own
+answer: all 4333 requests for 0x23 arrived on the reliable protocol and all 55 for 0x04 on the
+unreliable one, with no crossover in nineteen runs.
 
-**THE TWO MESSAGES THE CONSOLE HAS BEEN REPEATING SINCE THE FIRST JOIN ARE A QUESTION AND ITS OWN
-ANSWER.** `12 0001 23` is `NetRequestData{RequestDataID = 0x23}` and 0x23 is itself a data id -
+The two messages the console repeats from the first join are a question and its own answer:
+`12 0001 23` is `NetRequestData{RequestDataID = 0x23}` and 0x23 is itself a data id,
 `OpcManager._RequestNetDataCallback` is an `Action<byte>`, so a request names the message it wants -
 and `23 0001 00` is the console answering its own: `NetDataIsMatchWaitData{isMatchWait = 0}`, "I am
 not waiting to be matched". Nothing this project has sent has ever answered a request.
@@ -95,33 +94,31 @@ STATE = 0x04                      # NetCharacterStateData
 TRAINER_CARD = 0x05               # NetDataTranerCardData
 REQUEST = 0x12                    # NetRequestData - "send me your <data id>"
 MATCH_WAIT = 0x23                 # NetDataIsMatchWaitData
-TALK = 0x06                       # NetDataTalkData{talkOpcSexId, talkState} - and talkState
-                                  # CHECK (0) is a NULL DEREFERENCE in the receiver unless a
-                                  # message window is already open. sp80/sp81 crashed on it.
-TALK_RESERVE = 0x63               # NetDataTalkReserveData - "I want to talk to your character"
-TALK_RESERVE_RESULT = 0x64        # NetDataTalkReserveResultData - and the answer that unblocks it
+TALK = 0x06                       # NetDataTalkData{talkOpcSexId, talkState}. talkState CHECK (0)
+                                  # is a null dereference in the receiver unless a message window
+                                  # is already open.
+TALK_RESERVE = 0x63               # NetDataTalkReserveData: "I want to talk to your character"
+TALK_RESERVE_RESULT = 0x64        # NetDataTalkReserveResultData, the answer that unblocks it
 PLAYER_NAME = 0x42                # NetPlayerNameData - a string, so the layout is NOT known
 
 JOIN_BODY_SIZE = 17
 POS_POINT_SIZE = 6
 POS_POINTS = 12                   # what a console puts in one message; 12 * 6 is the 0x48 captured
 
-# HOW A REAL PLAYER WALKS, measured over 80 of the console's own NetPosData messages. Our first
-# walks moved 0.15 units every 0.6 s - a ninth of this - which is the whole of sp57's and sp59's
-# "stutter": twelve points crossing a sixth of a step and then a pause. Match the console.
+# How a real player walks, measured over 80 of the console's own NetPosData messages. A ninth of
+# this renders as a stutter: twelve points crossing a sixth of a step, then a pause.
 POS_PERIOD = 0.41                 # seconds between messages; median gap, min 0.20 max 1.59
 POS_STRIDE = 0.93                 # units one message spans; median, max 2.60
 POS_SCALE = 0.05                  # PosData.pos: -posX * 0.05, posZ * 0.05
-POS_UNIT = 20.0                   # and the setter MULTIPLIES by 20 rather than dividing by 0.05 -
+POS_UNIT = 20.0                   # the setter multiplies by 20 rather than dividing by 0.05:
                                   # 10.35 / 0.05 truncates to 206 where 10.35 * 20 gives 207
-# WHAT THIS PROJECT CALLED A KEEPALIVE IS A MESSAGE. `04 00 02 00 00` is data id 4, big-endian
-# length 2, body `00 00` - `NetCharacterStateData{state: NONE, isRecruiment: 0}`, the console
-# broadcasting its own character's state every two seconds. It was named before the table existed.
-# Every one of the 968 unreliable payloads in the archive is a whole game message and 853 are this.
+# `04 00 02 00 00` is data id 4, big-endian length 2, body `00 00`:
+# `NetCharacterStateData{state: NONE, isRecruiment: 0}`, the console broadcasting its own
+# character's state every two seconds. 853 of the 968 unreliable payloads in the archive are this.
 STATE_NONE_MESSAGE = bytes.fromhex("0400020000")
-KEEPALIVE = STATE_NONE_MESSAGE            # the old name, kept so an old log still reads
+KEEPALIVE = STATE_NONE_MESSAGE            # an alias, kept so an old log still reads
 
-# The name this project used before opendpr named them, kept so an old log still reads.
+# The names used before opendpr's, kept so an old log still reads.
 DATA_ID_NAMES = {ident: name for ident, (name, _) in NAMES.items()}
 
 
@@ -288,10 +285,9 @@ def build_pos(points):
 def pos_span(start, end, rot_y, points=POS_POINTS):
     """-> the points for ONE NetPosData covering a whole stride, endpoint included.
 
-    THE TWELVE POINTS SPAN THE MOVEMENT SINCE THE LAST MESSAGE. sp57 sent twelve points 0.008 apart
-    and then jumped 0.1 to the next message's first point, so the avatar crept and stuttered across
-    the room; the fix is not to send more messages but to make each one describe the stride it
-    covers. `start` and `end` are (x, z).
+    The twelve points span the movement since the last message. Points packed tighter than the
+    stride make the avatar creep and then jump to the next message's first point; each message has
+    to describe the stride it covers. `start` and `end` are (x, z).
     """
     if points < 1:
         raise ValueError("a NetPosData carries at least one point")
@@ -328,27 +324,21 @@ def build_request(requested_id):
     return build_fields(REQUEST, requested_id & 0xFF)
 
 
-TRADE_POKE_CHECK_OK = 0x46        # NetDataTradePokeCheckOkData - "I have looked at yours and
-                                  # it is fine". sp85 got `46 00 01 01` after sending a Pokemon:
-                                  # the first message in this project's history that no capture had
-                                  # ever held AND that says the console ACCEPTED something we made.
-TRADE_READY_OK = 0x21             # NetDataTradeReadyOkData - the step after, and the one that
-                                  # leads to the exchange itself. IT IS THE LINE: past it the
-                                  # console writes its save. `build_trade_ready_ok` below.
-TRADE_TRANER = 0x24               # NetDataTradeTranerData - who the player trading with us IS
-TRADE_POKE = 0x13                 # NetTradePokeData - and a whole Pokemon, 328 bytes
-RETURN_SELECT = 0x45              # NetDataReturnSelectData - THE MESSAGE ON THE FAR SIDE OF A
-                                  # COMPLETED TRADE. sp92 and sp93 both ended with the console
-                                  # sending `45 00 01 00` once a second (78 and 50 times) until our
-                                  # station left. `build_fields(RETURN_SELECT, 1)` answers it.
+TRADE_POKE_CHECK_OK = 0x46        # NetDataTradePokeCheckOkData: "I have looked at yours and it
+                                  # is fine". `46 00 01 01` comes back after a Pokemon we built.
+TRADE_READY_OK = 0x21             # NetDataTradeReadyOkData: past this the console writes its
+                                  # save. `build_trade_ready_ok` below.
+TRADE_TRANER = 0x24               # NetDataTradeTranerData: who the player trading with us is
+TRADE_POKE = 0x13                 # NetTradePokeData: a whole Pokemon, 328 bytes
+RETURN_SELECT = 0x45              # NetDataReturnSelectData, sent only after a completed trade:
+                                  # `45 00 01 00` once a second until our station leaves.
+                                  # `build_fields(RETURN_SELECT, 1)` answers it.
                                   #
-                                  # NOTHING IN dump_base EXPLAINS IT. The base game has no such
-                                  # type, no such method and not even the string - it is one of the
-                                  # 41 messages 1.3.0 added, and the console runs 1.3.0. The only
-                                  # reading available is opendpr's signature,
-                                  # `TradeSelectPokeModel$$SendReturnSelectPoke(bool received)`,
-                                  # which makes the byte "received" and 1 the answer. HYPOTHESIS,
-                                  # from a parameter name; there is no code to check it against.
+                                  # The base game has no such type, method or string; it is one of
+                                  # the 41 messages 1.3.0 added. The byte's meaning rests on
+                                  # opendpr's signature
+                                  # `TradeSelectPokeModel$$SendReturnSelectPoke(bool received)`
+                                  # alone, which makes 1 the answer. Not checked against code.
 
 
 def parse_trade_traner(body):
@@ -369,12 +359,11 @@ def parse_trade_traner(body):
     44466 and secret id 4080; 0x1e is 49, its `version`; 0x1f is 3, its `language`. Two independent
     messages agreeing on four fields.
 
-    THE TEN BYTES PAST THE STRING'S TERMINATOR CARRY NOTHING. `AllocHGlobal` does not clear its
+    The ten bytes past the string's terminator carry nothing. `AllocHGlobal` does not clear its
     block and marshalling a string into a fixed field writes the characters and one terminator, so
-    what follows is whatever was in the heap - which is why 0x14 was 107540 in nine runs, 44 in
-    sp88 and 60 in sp94 while every declared field held still. `slack` is those bytes as hex, and
-    a record we build sends the console's own so that ours differs from a real one only where we
-    meant it to.
+    what follows is heap residue: 0x14 read 107540 in nine runs, 44 and 60 in two others, while
+    every declared field held still. `slack` is those bytes as hex; a record we build sends the
+    console's own so ours differs from a real one only where intended.
     """
     if len(body) != TRADE_TRANER_SIZE:
         raise ValueError(f"{len(body)} bytes, expected {TRADE_TRANER_SIZE}")
@@ -479,14 +468,13 @@ def mirror_trade_state(their_state):
 def build_trade_ready_ok(trade_state=TRADE_STATE_WAIT, is_trade_ok=0):
     """"I am ready" - AND IT IS THE MESSAGE THAT LETS THE CONSOLE WRITE ITS SAVE.
 
-    ONE BYTE OF IT IS READ. `TradeSelectPokeModel$$ReciveReadyOk` [main.bin 0x1cd4860] is three
-    instructions - `ldrb w8, [x1, #0x11]; str w8, [x0, #0x78]; ret` - so the SECOND field,
-    `tradeState`, becomes `targetTradeState` and `isTradeOk` is never looked at. The console's own,
-    in sp87, was `{isTradeOk 0, tradeState 2}`, and 0 is kept as the default for the field the game
-    ignores so that ours is byte-identical to it: sp87's message is `21 00 02 00 02` in
-    `scratchpad/sp87_pia.jsonl` and `build_trade_ready_ok()` produces those five bytes.
+    One byte of it is read. `TradeSelectPokeModel$$ReciveReadyOk` [main.bin 0x1cd4860] is three
+    instructions (`ldrb w8, [x1, #0x11]; str w8, [x0, #0x78]; ret`), so the second field
+    `tradeState` becomes `targetTradeState` and `isTradeOk` is never looked at. The console's own
+    is `{isTradeOk 0, tradeState 2}`, `21 00 02 00 02`, and 0 is kept as the default for the field
+    the game ignores so `build_trade_ready_ok()` produces those five bytes exactly.
 
-    WHAT IT DOES. `UnionTradeManager.<WaitBoxWindowComplete>d__24$$MoveNext` [0x1dd3780] waits for
+    `UnionTradeManager.<WaitBoxWindowComplete>d__24$$MoveNext` [0x1dd3780] waits for
     `myTradeState == WAIT` (the player's own `MyReadyOk` sets that) AND `targetTradeState == WAIT`,
     which has no other writer in the image. Both at WAIT and it sets
     `UnionTradeManager.currentState = SECURIY_TRADE`, clears the select model and sends its own
@@ -503,14 +491,12 @@ def build_trade_ready_ok(trade_state=TRADE_STATE_WAIT, is_trade_ok=0):
 def build_talk_reserve(body_byte=0):
     """"I want to talk to your character" - the message the player who WALKS UP sends.
 
-    Every run to sp78 had our character advertising and the console's player approaching it, which
-    makes us the responder. The roles are the other way round when the CONSOLE puts an emote up:
-    picking one locks the player in place waiting to be interacted with, so the approach has to
-    come from us. This is that approach.
+    When the console puts an emote up, picking one locks its player in place waiting to be
+    interacted with, so the approach has to come from us.
 
-    The console's own is `63 00 01 00` in sp70-sp76 - one body byte, zero - and `NetDataTalkReserveData`
-    is not in the generated FIELDS table (opendpr declares no layout for it), so this builds the
-    console's own bytes rather than packing a struct.
+    The console's own is `63 00 01 00`, one body byte, zero. `NetDataTalkReserveData` is not in the
+    generated FIELDS table (opendpr declares no layout for it), so this builds the console's own
+    bytes rather than packing a struct.
     """
     return build(TALK_RESERVE, bytes([body_byte & 0xFF]))
 
@@ -518,17 +504,16 @@ def build_talk_reserve(body_byte=0):
 def build_match_wait(is_waiting=False):
     """The console's own repeated answer is 0 - "I am not waiting to be matched".
 
-    AND 1 IS THE ONLY VALUE THAT STARTS A TRADE. `UnionRoomManager$$SetNetData`'s branch for this
-    id ends in one comparison [main.bin 0x01fd56e4]:
+    1 is the only value that starts a trade. `UnionRoomManager$$SetNetData`'s branch for this id
+    ends in one comparison [main.bin 0x01fd56e4]:
 
         ldrb w23, [x19, #0x10]      isMatchWait, off the received message
         cmp  w23, #1
         b.ne 0x1fd5704              anything but 1 skips the rest
         bl   UnionFrontDeskTradeController$$StartMatch
 
-    The console has requested this id since the first join of session 46 and every run has answered
-    0 - a station saying it does not want to be matched. That is the `StateData{NONE, 0}` mistake
-    again: the right question, answered with a no-op. `docs/bdsp.md`.
+    0 is a station saying it does not want to be matched: the right message answered with a no-op.
+    `docs/bdsp_protocol.md`.
     """
     return build_fields(MATCH_WAIT, 1 if is_waiting else 0)
 
@@ -565,11 +550,10 @@ def build_state(state=STATE_NONE, is_recruitment=0):
 def build_talk_reserve_result(can_talk=1, is_recruitment=1, emoticon_state=STATE_NONE):
     """`NetDataTalkReserveResultData`: the answer to a console asking to talk to our character.
 
-    sp70 IS WHERE THIS CAME FROM. A character reporting `StateData{RECRUITMENT_TRADE, 1}` showed a
-    speech bubble, the player pressed A on him, and the console sent `63 00 01 00` - a
-    `NetDataTalkReserveData`, a message no capture in this project had ever held. Nothing answered
-    it and THE PLAYER'S OWN CHARACTER FROZE until the game was rebooted: the talk is a
-    request/response and the console waits on ours.
+    A character reporting `StateData{RECRUITMENT_TRADE, 1}` shows a speech bubble; the player
+    presses A on it and the console sends `63 00 01 00`, a `NetDataTalkReserveData`. The talk is a
+    request/response and the console blocks on the answer: unanswered, the player's own character
+    freezes until the game is rebooted.
 
     `IsCanTalk` is the field that decides it. `emoticonStateType` is an `OpcState.OnlineState`,
     the same enum `build_state` takes.
@@ -589,12 +573,10 @@ def answer(message, state=STATE_NONE, is_recruitment=0, match_wait=False):
     answer is buildable whenever the requested id has a layout; a request for an OPAQUE one is
     named in the return so a caller can say what it could not answer.
 
-    THE STATE IS THE PART THAT MEANS SOMETHING. sp63 and sp64 answered the console's request for
-    0x04 and NOTHING CHANGED on screen, which was written down as "answering does nothing" - but
-    both answered `StateData{NONE, 0}`, which is the character saying it is doing nothing. `state`
-    is `OpcState.OnlineState`, and the RECRUITMENT_* values are what a Union Room player showing a
-    speech bubble is in: `OpcController.ShowEmoticon(OnlineState)` and `GetEmoticonType(state)`
-    both read it. A negative result measured with a no-op payload is not a negative result.
+    The state is what the console acts on. `StateData{NONE, 0}` is the character saying it is
+    doing nothing and changes nothing on screen. `state` is `OpcState.OnlineState`, and the
+    RECRUITMENT_* values are what a Union Room player showing a speech bubble is in:
+    `OpcController.ShowEmoticon(OnlineState)` and `GetEmoticonType(state)` both read it.
     """
     if message.get("data_id") != REQUEST or not message.get("fields"):
         return None

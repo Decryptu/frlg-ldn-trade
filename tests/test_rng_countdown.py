@@ -7,7 +7,7 @@ import pytest
 
 from pokeldn.frlg.rom import lcg, rng_countdown, rng_script
 
-# mev11's own reading, and the mon bs58 dumped out of gPlayerParty afterwards.
+# A run's own reading, and the mon a run dumped out of gPlayerParty afterwards.
 MEV11_BEFORE = 0x9A4F5DAA
 MEV11_PID = 0x0BF87DD1
 MEV11_IVS = (25, 10, 28, 9, 19, 3)
@@ -15,7 +15,7 @@ CONSOLE_TID, CONSOLE_SID = 57189, 58811
 
 
 def test_the_mon_it_computes_is_the_one_the_console_actually_built():
-    """The whole tool rests on this: frame 0 of a scan must reproduce mev11/bs58 exactly."""
+    """The whole tool rests on this: frame 0 of a scan must reproduce the measured samples exactly."""
     mon = rng_countdown._mon_from(MEV11_BEFORE, CONSOLE_TID, CONSOLE_SID)
 
     assert mon["personality"] == MEV11_PID
@@ -25,7 +25,7 @@ def test_the_mon_it_computes_is_the_one_the_console_actually_built():
 
 
 def test_a_press_lands_only_on_even_turns_because_the_rate_is_two_per_frame():
-    """mev09 and mev10 measured exactly 2 turns a frame, so the states a press can reach are
+    """Two runs measured exactly 2 turns a frame, so the states a press can reach are
     advance(S, 2k) and nothing between them."""
     hits = rng_countdown.scan(MEV11_BEFORE, CONSOLE_TID, CONSOLE_SID, frames=200)
     assert rng_countdown.TURNS_PER_FRAME == 2

@@ -201,7 +201,7 @@ class MysteryEventScript:
         """InitRamScript bound to any map and object, not just the Mystery Gift delivery man
         [decomp:src/mystery_event_script.c:200].
 
-        TRAP, confirmed on hardware (mev03): this makes the console's Wonder Card read as ABSENT.
+        TRAP, confirmed on hardware: this makes the console's Wonder Card read as ABSENT.
         `ValidateSavedWonderCard` requires `ValidateRamScript` [decomp:src/mystery_gift.c:186],
         which insists the single RAM script slot is bound to MAP_UNDEFINED / object 0xFF
         [`src/script.c:539`] - the coordinates `CLI_SAVE_RAM_SCRIPT` writes. Bind real coordinates

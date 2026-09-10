@@ -193,13 +193,13 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
         "--call-address", type=lambda v: int(v, 0), default=None, metavar="ADDR",
         help=("with --buffer-script call: the ROM function to call, as a THUMB pointer (bit 0 "
               "set). 0x%08X is SeedRng and 0x%08X is Random [rom_map.py, read off this console in "
-              "bs14]. 0 calls nothing, which checks the send path with the ROM left out"
+              "0x080486B0]. 0 calls nothing, which checks the send path with the ROM left out"
               % (rom_map.thumb(rom_map.SEED_RNG), rom_map.thumb(rom_map.RANDOM))))
     parser.add_argument(
         "--call-arg", type=lambda v: int(v, 0), action="append", default=None, metavar="VALUE",
         help=("with --buffer-script call: one argument word, repeatable, up to eight. The first "
-              "four go in r0..r3 and the rest on the stack at [sp+0..12], which is where bs42 "
-              "read CreateMon's own prologue taking them and what bs43/bs44 proved on hardware"))
+              "four go in r0..r3 and the rest on the stack at [sp+0..12], where CreateMon's own "
+              "prologue reads them"))
     parser.add_argument(
         "--call-watch", type=lambda v: int(v, 0), default=0, metavar="ADDR",
         help=("with --buffer-script call: one word read immediately before and immediately after "
@@ -223,7 +223,7 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser.add_argument(
         "--create-mon-call", type=lambda v: int(v, 0), default=None, metavar="ADDR",
         help=("with --buffer-script create-mon: the ROM function to call with eight arguments, a "
-              "THUMB pointer. The default is CreateMon at 0x%08X, read off this console in bs42; "
+              "THUMB pointer. The default is CreateMon at 0x%08X, read off this console; "
               "0 calls nothing, which checks the send path with the ROM left out"
               % rom_map.thumb(rom_map.CREATE_MON)))
     parser.add_argument(
@@ -242,7 +242,7 @@ def build_parser(file_config=None, *, shared_path=None, local_path=None):
     parser.add_argument(
         "--create-mon-personality", type=lambda v: int(v, 0), default=None, metavar="VALUE",
         help=("with --buffer-script create-mon: the 32-bit personality value, which fixes the "
-              "nature, the gender, the ability slot and - with the trainer ids bs01 read - "
+              "nature, the gender, the ability slot and, with the trainer ids, "
               "whether the mon is shiny. Omitted, the console rolls one with Random32"))
     parser.add_argument(
         "--create-mon-ot-id-type", type=int, default=buffer_script.OT_ID_PLAYER_ID,

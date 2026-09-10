@@ -5,7 +5,7 @@
     ./.venv/bin/python tools/frlg/rom_functions.py --table field --dump scratchpad/bs84_dump.bin@0x0806F800
     ./.venv/bin/python tools/frlg/rom_functions.py --table specials --plan --window 1024
 
-bs84's method, generalised to every table this project has read off a cartridge. A table entry is an
+The worker-naming method, generalised to every table read off a cartridge. A table entry is an
 address; the code at it makes `bl` calls, in the decomp's own call order, and keeps the globals it
 touches in its literal pool. So ONE 1 KB window turns a dozen table entries into a dozen named
 bodies plus every worker behind them, which is what makes another window cost nothing to interpret.

@@ -104,7 +104,7 @@ def test_the_colosseum_cannot_be_hosted_from_the_union_room():
 
 
 def test_the_card_standby_arms_the_battle_entry_without_waiting_for_a_seat():
-    """cc1: the console fades to black on its spot and parks in Task_StartWirelessCableClubBattle
+    """the console fades to black on its spot and parks in Task_StartWirelessCableClubBattle
     case 3 waiting for our record. The trade centre's post-seat standby rounds never come, so
     gating on them deadlocked both sides."""
     from pokeldn.frlg.link.host_trade import H_ENTRY_CARD
@@ -305,7 +305,7 @@ def test_the_engine_plays_the_colosseum_route_at_the_seat():
 
 
 def test_the_console_leaving_the_colosseum_is_answered_with_our_own_exit_key():
-    """cc2/cc3: the console's door script waits for every player to reach
+    """the console's door script waits for every player to reach
     PLAYER_LINK_STATE_EXITING_ROOM [overworld.c:2977]; unanswered, it sits on "veuillez patienter"
     until the link errors."""
     from pokeldn.frlg.link.host_trade import H_EXIT, H_UROOM_BATTLE_LINK, LINK_KEY_EXIT_ROOM

@@ -98,13 +98,12 @@ def dumps(directory):
 def every_dump(directory, console="firered"):
     """-> [(base, data)] for the dumps of ONE cartridge; `console=None` for all of them.
 
-    ONE CARTRIDGE AT A TIME, and it is not a preference. lg191 dumped 16 KB of LeafGreen at
-    0x08081C9C, which is FireRed's 0x08081CC8 shifted by that segment's -0x2C, and folding it into
-    the same image as the FireRed dumps put LeafGreen bodies at FireRed addresses: gSpecials[54] is
-    Script_HasTrainerBeenFought at 0x08083C08 on FireRed and the mixed image answered 0x08083C34,
-    the +0x2C twin, whose body calls FlagSet where the decomp calls FlagGet. Every call target read
-    out of the wrong cartridge's copy is that cartridge's address, which is where a good part of
-    "127 call targets with no name" came from. Session 42."""
+    One cartridge at a time. A LeafGreen dump at 0x08081C9C is FireRed's 0x08081CC8 shifted by
+    that segment's -0x2C, and folding it into the same image as the FireRed dumps puts LeafGreen
+    bodies at FireRed addresses: gSpecials[54] is Script_HasTrainerBeenFought at 0x08083C08 on
+    FireRed, and a mixed image answers 0x08083C34, the +0x2C twin, whose body calls FlagSet where
+    the decomp calls FlagGet. Every call target read out of the wrong cartridge's copy is that
+    cartridge's address."""
     return [(base, data) for _tag, its_console, base, data in dumps(directory)
             if console is None or its_console == console]
 

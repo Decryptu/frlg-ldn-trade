@@ -1,6 +1,6 @@
 """The 3456-byte trade snapshot a Sword sends on protocol 0x84.
 
-sw68 and sw70 are captures and stay out of the repository (CLAUDE.md rule 6), so the payload here is
+Two runs are captures and stay out of the repository (CLAUDE.md rule 6), so the payload here is
 synthetic. What the real ones proved - and what these reproduce - is that the third fragment is
 compressed, that a concatenation which skips that is short and must be refused, and that the party
 records and the trainer block agree on one trainer.
@@ -161,13 +161,13 @@ def test_a_short_session_58_payload_is_repaired_and_anything_else_is_refused():
 
 # --- The fourth copy of the name, session 60 ---------------------------------------------------
 #
-# sw70's payload carries the trainer name a FOURTH time, at 0xB14, between two copies of an
+# A run's payload carries the trainer name a FOURTH time, at 0xB14, between two copies of an
 # eight-byte account token - the shape of a player record - inside the 660-byte tail this project
 # had never read. Every snapshot sent before session 60 therefore said PkCamp in MyStatus, the
 # trainer card and all six Pokemon, and Gurvan in the tail. `party_matches_trainer` cannot see it:
 # it only compares the party against MyStatus.
 
-TAIL_NAME_AT = 0xB14                  # where it lands in sw70's payload; searched for, not assumed
+TAIL_NAME_AT = 0xB14                  # where it lands in one run's payload; searched for, not assumed
 
 
 def a_payload_with_a_tail_name(name="Gurvan", **kw):
@@ -237,10 +237,10 @@ def test_the_record_holds_one_eight_byte_id_at_both_offsets():
 
 
 def test_replacing_it_touches_only_the_two_id_fields():
-    """sw94's ten-byte replacement took the end of the account UID and of the name field with it.
+    """A run's ten-byte replacement took the end of the account UID and of the name field with it.
 
     The two bytes before each copy match by coincidence - the UID's tail at +0x0E and the name
-    field's uninitialised slack at +0x36 are both `6a 95` in sw70's payload - so the longest
+    field's uninitialised slack at +0x36 are both `6a 95` in one run's payload - so the longest
     repeated run is ten bytes and the FIELD is eight.
     """
     payload = a_payload_with_a_player_record()
