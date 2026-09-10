@@ -65,6 +65,10 @@ MEASURED = {
     0x24: "26-byte name, u32 tranerId, byte cassetVersion, byte langId",
     0x38: "481 bytes: a 328-byte PB8, 20 x SealParam, u32 attachPokemonId, u32 attachPersonalRnd, "
           "byte index, num, is3DEditMode, isAppliedTemplate, affixSealCount",
+    0x42: "26-byte name, byte genderid, byte languageId",
+    0x54: "616 bytes: short zoneID, posX, posY; byte direction, expansionStatus; int goodCount; "
+          "30 x UgStoneStatue{int statueId, pedestalId, posX, posY, dir}; bool isEnable (4)",
+    0x61: "8 bytes of dig-fossil ids, one per station",
 }
 
 RECODE = 0x14                     # NetDataRecodeData - the record-mixing payload

@@ -408,6 +408,27 @@ None 0, Initialize 1, Load 2, RecruitmentMember 3, SelectTeamMember 4, SelectRul
 SelectBattleTeam 6, SelectPokemon 7, GoBattle 8, Result 9, Resume 10, Closing 11,
 LeavedOtherMembers 12.
 
+### The Grand Underground
+
+The Underground advertises the same `local_communication_id` under scene id 12608 and the same
+session line associates with it, with no join record needed: the walk is `--room-walk 0`.
+`UgNetworkManager` is the Underground's twin of `UnionRoomManager`, and on a station's arrival the
+console sends three messages at once:
+
+| id | class | bytes | content |
+|---|---|---|---|
+| 0x17 | `NetZoneData` | 16 | `Vector3 pos`, `int zoneID` (519 measured) |
+| 0x42 | `NetPlayerNameData` | 28 | 13 UTF-16 chars, byte genderid, byte languageId (3, French) |
+| 0x50 | `NetKousekiCount` | 4 | `int Value` |
+
+`UgNetworkManager$$OnReceiveRequestData` answers a `NetRequestData` for two ids and no other:
+0x61 `NetDigTableData`, eight bytes of dig-fossil ids (`01 06 04 02 05 03 00 07`), and 0x54
+`NetSecretBaseUpdate`, the 616-byte `UgSecretBase` (all zero from a player with no secret base).
+0x18 `NetSecretBaseData` is sent by `UgNetworkManager$$SendMySecretBaseData` and 0x29
+`NetDigGroupIdData` has no caller of its constructor or its id anywhere in 1.3.0, so nothing sends
+it. A request for 0x18, 0x29 or 0x42 draws nothing; the dispatcher also answers 0x01, 0x04, 0x19
+`NetDigData` and 0x55 `NetNaminoriData`, which have layouts the source decides.
+
 `--inject-file PATH` on `bin/bdsp_connect.py` sends each new `ID:HEX` line of the file on the
 reliable window while the association stands, which is how a ladder like this is climbed in one
 association.

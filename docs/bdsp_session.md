@@ -9,7 +9,7 @@ nav_order: 1
 ## The advertisement
 
     local_communication_id  0100000011d90000
-    scene_id                4352  (0x1100)
+    scene_id                4352  (0x1100) in the Union Room; 12608 (0x3140) in the Grand Underground
     version                 4
     channel                 6, band 2 (2.4 GHz)
     accept_policy           ALL
