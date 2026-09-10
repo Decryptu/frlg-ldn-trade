@@ -1503,12 +1503,26 @@ async def main_async(args):
                                             trainer_id=args.snapshot_tid,
                                             secret_id=args.snapshot_sid)
             edits = offer_edits(args)
-            if edits:
+            if args.offer_file:
+                # A WHOLE RECORD FROM DISK, e.g. a PKHeX .pk8, replaces the slot. Its original
+                # trainer follows the snapshot's identity like every other record in the payload
+                # unless --offer-file-as-is keeps the file's own; the --offer-* edits apply on top.
+                if not args.offer_slot:
+                    raise ValueError("--offer-file needs --offer-slot")
+                identity = {} if args.offer_file_as_is else dict(
+                    ot_name=args.snapshot_name, trainer_id=args.snapshot_tid,
+                    secret_id=args.snapshot_sid)
+                edits = {**identity, **edits}
+            if edits or args.offer_file:
                 at = (args.offer_slot - 1) * swsh_pokemon.SIZE_PARTY
-                raw = payload[at:at + swsh_pokemon.SIZE_PARTY]
+                if args.offer_file:
+                    raw = swsh_pokemon.encrypt(gen8.load(open(args.offer_file, "rb").read()))
+                    print(f"[tx] slot {args.offer_slot} is {args.offer_file}")
+                else:
+                    raw = payload[at:at + swsh_pokemon.SIZE_PARTY]
                 if struct.unpack_from("<I", raw, 0)[0] == 0:
                     raise ValueError(f"slot {args.offer_slot} of the snapshot is empty")
-                built = swsh_pokemon.build_from(raw, **edits)
+                built = swsh_pokemon.build_from(raw, **edits) if edits else raw
                 payload = payload[:at] + built + payload[at + swsh_pokemon.SIZE_PARTY:]
                 before, after = swsh_pokemon.read(raw), swsh_pokemon.read(built)
                 print(f"[tx] slot {args.offer_slot} built: species {before['species']} -> "
@@ -2348,6 +2362,12 @@ def build_parser():
     ap.add_argument("--offer-slot", type=lambda s: int(s, 0), default=0,
                     help="which party slot of --send-snapshot to offer back, 1-6; 0 offers "
                          "nothing and only records what the console offers us")
+    ap.add_argument("--offer-file", default=None, metavar="FILE",
+                    help="a .pk8 to put in --offer-slot in place of the snapshot's record: stored "
+                         "or party form, encrypted or PKHeX's decrypted export. Its OT name and "
+                         "ids become the snapshot's unless --offer-file-as-is")
+    ap.add_argument("--offer-file-as-is", action="store_true",
+                    help="keep the file's own OT name and trainer ids")
     ap.add_argument("--offer-species", type=lambda s: int(s, 0), default=None,
                     help="build the record in --offer-slot instead of sending it as it came: this "
                          "national dex number, in the party record the snapshot advertises AND in "

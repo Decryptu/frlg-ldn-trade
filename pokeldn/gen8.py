@@ -183,6 +183,25 @@ def decrypt(raw):
     return plain
 
 
+def is_plain(raw):
+    """-> whether a record on disk is already decrypted: PKHeX's plain export keeps the
+    checksum in the header, so the sum over the raw body matches it only when nothing is
+    encrypted. An encrypted body matching by chance is a 1-in-65536 event."""
+    if len(raw) not in (SIZE_STORED, SIZE_PARTY):
+        return False
+    return checksum(raw) == struct.unpack_from("<H", raw, 6)[0]
+
+
+def load(raw):
+    """-> a plain PARTY record from a file in any of the four shapes a .pk8 comes in: stored or
+    party, encrypted or PKHeX's decrypted export. A stored record gets a zero party tail; the
+    receiving game rebuilds the tail from the body (docs/swsh_trade.md)."""
+    plain = bytes(raw) if is_plain(raw) else decrypt(raw)
+    if len(plain) == SIZE_STORED:
+        plain += bytes(SIZE_PARTY - SIZE_STORED)
+    return plain
+
+
 def encrypt(plain):
     """-> the bytes to put on the wire, with the checksum written from the body itself."""
     if len(plain) not in (SIZE_STORED, SIZE_PARTY):

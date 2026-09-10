@@ -531,3 +531,20 @@ def test_the_offer_message_carries_the_built_record_back():
     built = swsh_pokemon.build_from(swsh_pokemon.encrypt(gen8.write(
         bytes(gen8.SIZE_PARTY), species=94, nickname="Ectoplasma")), nickname="PKCAMP")
     assert swsh_trade.offered_pokemon(swsh_trade.pokemon_trade(built)) == built
+
+
+def test_a_record_loads_from_any_of_the_four_shapes_a_pk8_file_takes():
+    """Stored or party, encrypted or PKHeX's plain export, all become one plain party record."""
+    from pokeldn import gen8
+    plain = bytearray(gen8.SIZE_PARTY)
+    struct.pack_into("<I", plain, 0, 0x8580A635)
+    struct.pack_into("<H", plain, gen8.OFF_SPECIES, 841)
+    plain[gen8.OFF_NICKNAME:gen8.OFF_NICKNAME + 4] = "Po".encode("utf-16-le")
+    struct.pack_into("<H", plain, 6, gen8.checksum(plain))
+    plain = bytes(plain)
+    party_plain, stored_plain = plain, plain[:gen8.SIZE_STORED]
+    for shape in (party_plain, stored_plain, gen8.encrypt(party_plain), gen8.encrypt(stored_plain)):
+        loaded = gen8.load(shape)
+        assert len(loaded) == gen8.SIZE_PARTY
+        assert gen8.read(loaded)["species"] == 841
+    assert gen8.load(stored_plain)[:gen8.SIZE_STORED] == stored_plain

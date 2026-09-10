@@ -353,7 +353,10 @@ sets the nicknamed flag as a side effect; without it the console draws the speci
 experience and the met data stay the template's. `--offer-ability ID` and `--offer-moves A,B,C,D`
 move the two fields the species most obviously owns; PP and the relearn moves stay as they were.
 `--offer-level N` sets the level byte at 0x148 and `--offer-experience N` the experience word at
-0x10, independently.
+0x10, independently. `--offer-file FILE` puts a record from disk in the slot instead: a `.pk8` in
+any of its four shapes (stored or party, encrypted or PKHeX's decrypted export, told apart by
+whether the checksum in the header matches the raw body). Its OT name and ids are moved to the
+snapshot's trainer like every other record in the payload; `--offer-file-as-is` keeps the file's.
 `--save-offer FILE` writes the built record before the radio is touched.
 
 A record built this way is accepted. A Gengar with the nickname `PKCAMP` and six IVs of 31 written
@@ -383,6 +386,19 @@ is discarded on receipt and rebuilt from the stored record. The
 summary showed the ability as Cursed Body, the held item as Black Sludge and the moves as
 Substitute, Shadow Ball, Sludge Wave and Focus Blast: the ability, item and move fields are kept
 as sent, with no check against the species.
+
+A whole record from PKHeX is accepted. A plain party-form export of a level-18 Flapple, with only
+the OT name and ids moved to the snapshot's trainer (PkCamp, 12345/54321), was drawn as a level-18
+Flapple, traded, and the summary read OT PkCamp, ID 993401 — `(54321 << 16 | 12345) mod 1000000`,
+the six-digit form Gen 7 and later display — and 9564 experience points. Nothing in the record
+had to come from the console's own save.
+
+The same file sent with its own OT kept — Gurvan, 56909/48474, the receiving player's own ids —
+under a MyStatus that says PkCamp was accepted and traded too. The summary read OT Gurvan,
+ID 848973, and the met line as a catch of the player's own: met at level 18 on 26/11/2019 on
+Route 5, the record's met date (2019-11-26), met level and met location 40. The game does not
+compare the offered record's OT ids with the partner's MyStatus, and a record with the player's
+own ids arrives as the player's own Pokemon.
 
 A record the console offers can be one an earlier run gave it. The 20030 offer in that run carried
 the client's own trainer ids, `PkCamp` as the original trainer and the slot-1 template's unedited
