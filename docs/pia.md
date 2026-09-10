@@ -108,6 +108,10 @@ A message's payload may be a zlib stream, flagged in the message flags:
 | 5.27–5.45 | 0x20 |
 | 4 | 0x10 |
 
+The version-5 reliable stream has a flag of its own, 0x10 in its own header; BDSP has set it on one
+23-byte game message, sent as a 20-byte zlib stream with a 4 KB window
+([BDSP's protocol](bdsp_protocol.md)).
+
 It is not negotiated and not per-protocol: BDSP switches it on mid-session the moment there is
 anything worth compressing. Read raw, a compressed 31-byte message parses into a header claiming a
 payload of 0x6260 — well-formed-looking and meaningless. Over 2835 version-4 messages in two

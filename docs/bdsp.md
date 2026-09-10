@@ -38,9 +38,10 @@ Proven on retail hardware, end to end:
 
 - **`NetPlayerNameData`'s framing**, and eight others. Twelve of the 65 message structs hold a C#
   string, an array or a list, and the source decides no layout for them; `netdata.OPAQUE` names all
-  twelve. Three are decided from the wire and listed in `room.MEASURED`, and they are the only three
-  any capture holds — the remaining nine have never been on the air, so there is nothing to measure
-  them against.
+  twelve. Four are decided from the wire and listed in `room.MEASURED`, and they are the only four
+  any capture holds; `NetDataStandbyWaitListData` (0x22) came from asking for it with a
+  `NetRequestData`. The other eight are spoken only by record mixing, ball capsules, a Union Room
+  battle, or the Grand Underground ([the protocol page](bdsp_protocol.md)).
 - **The Session Protocol (0x94)**, which sits above the reliable transport and has never carried a
   byte in any capture.
 - **Whether the console reads a `NetCharacterStateData` answer at all.** The answers are accepted by

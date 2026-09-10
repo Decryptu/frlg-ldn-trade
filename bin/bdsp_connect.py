@@ -22,7 +22,7 @@ Switch title is the pass signal.
 The ack goes first, so the console falls silent and ANY packet afterwards is unambiguously an
 answer to us. docs/bdsp_session.md. Never pass --verbose to a live run; use --capture.
 """
-import argparse, json, os, pathlib, socket, struct, sys, time
+import argparse, json, os, pathlib, socket, struct, sys, time, zlib
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
@@ -140,6 +140,7 @@ async def main_async(args):
               "state_requests": 0, "their_state": None, "their_recruiting": 0,
               "reserves_sent": 0, "reserve_results": 0, "match_wait_sent": 0,
               "reserve_accepted": False, "room_done": False, "their_traner": None,
+              "requests_sent": 0, "requested_answers": {}, "rel_fragments": {},
               "their_poke": None, "our_poke": None, "trade_replies": 0, "check_oks": 0,
               "their_ready_ok": None, "ready_oks_sent": 0, "their_security_state": None,
               "our_security_state": 0, "our_next_seq": 0, "return_selects": 0}
@@ -295,6 +296,35 @@ async def main_async(args):
                         if d["flags"] & rl.FLAG_APPLICATION_DATA:
                             st["rel_max_seq"] = max(st["rel_max_seq"], d["sequence_id"])
                             st["rel_streams"].add(d["stream_id"])
+                            # A MESSAGE MAY SPAN PACKETS. Every game message captured so far
+                            # (331 bytes at most) arrived START|END in one packet; a 697-byte
+                            # record may not. Fragments are joined per stream, in sequence
+                            # order, and a repeat of a seen sequence is dropped.
+                            frag = st["rel_fragments"].setdefault(d["stream_id"], {})
+                            if d["flags"] & rl.FLAG_MESSAGE_START:
+                                frag.clear()
+                            if d["sequence_id"] in frag:
+                                record(rec="reliable_repeat", t=now, seq=d["sequence_id"])
+                            frag[d["sequence_id"]] = d["payload"]
+                            if not d["flags"] & rl.FLAG_MESSAGE_END:
+                                record(rec="reliable_fragment", t=now, seq=d["sequence_id"],
+                                       flags=d["flags"], stream=d["stream_id"],
+                                       payload=d["payload"].hex())
+                                continue
+                            if len(frag) > 1:
+                                d["payload"] = b"".join(frag[k] for k in sorted(frag))
+                                print(f"[rx] t={now:6.2f} reassembled {len(frag)} fragments, "
+                                      f"{len(d['payload'])} B")
+                            frag.clear()
+                            if d["flags"] & rl.FLAG_ZLIB:
+                                # the reliable header's own compression: the 23-byte standby list
+                                # arrives as a 20-byte zlib stream and read raw it is a 0x48
+                                # "NetBonusStart" with an impossible length
+                                try:
+                                    d["payload"] = zlib.decompress(d["payload"])
+                                except zlib.error as e:
+                                    print(f"[rx] t={now:6.2f} zlib-flagged payload did not "
+                                          f"inflate ({e}): {d['payload'].hex()}")
                             g = room.parse(d["payload"]) if len(d["payload"]) >= 3 else None
                             if g:
                                 record(rec="game_message", t=now, data_id=g["data_id"],
@@ -311,6 +341,13 @@ async def main_async(args):
                             elif g:
                                 print(f"[rx] t={now:6.2f} {g['name']}, "
                                       f"{g['length']} B{' (opaque)' if g['opaque'] else ''}")
+                            if g and g["data_id"] in args.request_ids:
+                                st["requested_answers"].setdefault(g["data_id"], []).append(
+                                    d["payload"].hex())
+                                print(f"[rx] t={now:6.2f} *** {g['name']} - AN ANSWER TO OUR "
+                                      f"REQUEST: {d['payload'].hex(' ')} ***")
+                                record(rec="requested_answer", t=now, data_id=g["data_id"],
+                                       payload=d["payload"].hex())
                             if g and g["data_id"] == room.REQUEST and g.get("fields"):
                                 # THE CONSOLE HAS BEEN ASKING US FOR A MESSAGE SINCE THE FIRST JOIN.
                                 # `RequestData.RequestDataID` names a data id, and 0x23 is the one
@@ -1281,6 +1318,58 @@ async def main_async(args):
                 print("\n[cx] --- that approach came to nothing; waiting for them to advertise "
                       "again\n")
 
+        async def send_on_the_window(payload, label, tries=12):
+            """One reliable message, retransmitted until the console's ack covers it. -> landed?
+
+            The sequence id is read fresh on every try: the console's ack id is the next number it
+            wants and anything below it is dropped in silence.
+            """
+            for attempt in range(tries):
+                seq = st["their_ack_id"]
+                if not seq:
+                    await trio.sleep(0.4)
+                    continue
+                msg = (rl.build_header(rl.FLAG_APPLICATION_DATA | rl.FLAG_MESSAGE_START
+                                       | rl.FLAG_MESSAGE_END | rl.FLAG_IS_INITIALIZED,
+                                       seq, len(payload), lowest_pending=seq) + payload)
+                sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(), msg,
+                                 rl.PROTOCOL, port=rl.PORT), (st["dst_ip"], PIA_PORT))
+                record(rec="tx_reliable_data", t=time.monotonic() - t0, label=label, seq=seq,
+                       attempt=attempt, message=msg.hex())
+                await trio.sleep(0.4)
+                if st["their_ack_id"] > seq:
+                    print(f"[tx]   {label} landed at seq {seq} on try {attempt + 1}")
+                    return True
+            print(f"[tx]   {label} never acked in {tries} tries")
+            return False
+
+        async def request_sweep():
+            """Send each --pre-request message, then ask for each --request-ids message, once our
+            character exists.
+
+            The Union Room handler answers a NetRequestData for six ids and ignores the rest
+            (docs/bdsp_protocol.md, "What a request can fetch"); the reply comes back on the
+            reliable stream to the station that asked. The next message waits --request-gap
+            seconds so an answer can be told from the request after it.
+            """
+            while not st["room_done"]:
+                await trio.sleep(0.5)
+            await trio.sleep(args.request_delay)
+            for spec in args.pre_request:
+                data_id, _, body_hex = spec.partition(":")
+                payload = room.build(int(data_id, 0), bytes.fromhex(body_hex))
+                print(f"\n[tx] --- SENDING {room.name(payload[0])}: {payload.hex(' ')}")
+                record(rec="pre_request_sent", t=time.monotonic() - t0, spec=spec)
+                await send_on_the_window(payload, f"pre-request {room.name(payload[0])}")
+                await trio.sleep(args.request_gap)
+            for wanted in args.request_ids:
+                payload = room.build_request(wanted)
+                print(f"\n[tx] --- REQUESTING {room.name(wanted)}: {payload.hex(' ')}")
+                st["requests_sent"] += 1
+                record(rec="request_sent", t=time.monotonic() - t0, requested=wanted)
+                await send_on_the_window(payload, f"request {room.name(wanted)}")
+                await trio.sleep(args.request_gap)
+
         async def one_approach():
             """-> True if they accepted and the follow-up was sent, False to try again later."""
             payload = room.build_talk_reserve()
@@ -1386,6 +1475,8 @@ async def main_async(args):
                     nursery.start_soon(keep_saying_match_wait)
                 if args.initiate_talk:
                     nursery.start_soon(initiate_the_talk)
+                if args.request_ids or args.pre_request:
+                    nursery.start_soon(request_sweep)
                 if args.complete_trade:
                     nursery.start_soon(repeat_the_security_state)
 
@@ -1411,6 +1502,10 @@ async def main_async(args):
               f"their ready-oks {'yes' if st['their_ready_ok'] else 'none'}, "
               f"our ready-oks {st['ready_oks_sent']}"
               + (" - and it entered the security phase" if st["their_security_state"] else ""))
+        if args.request_ids:
+            got = ", ".join(f"{room.name(i)} x{len(v)}" for i, v in st["requested_answers"].items())
+            print(f"[cx] our requests sent {st['requests_sent']} of {len(args.request_ids)}, "
+                  f"answered: {got or 'none'}")
         # the verdict a capture can give on its own, without asking anyone to watch the screen
         print(f"[cx] requests for NetCharacterStateData {st['state_requests']} - "
               + ("THE GAME CREATED A CHARACTER FROM US" if st["state_requests"]
@@ -1586,6 +1681,19 @@ def main():
     ap.add_argument("--join-color", type=int, default=0, metavar="N",
                     help="NetJoinData.colorId. The game also derives one from the avatar id "
                          "(OpcManager.GetNpcColorId), so this may not be the deciding field")
+    ap.add_argument("--request-ids", type=lambda v: [int(x, 0) for x in v.split(",") if x],
+                    default=[], metavar="ID,ID",
+                    help="after the walk, send a NetRequestData for each of these data ids, one "
+                         "at a time on the reliable stream, and print what comes back. The Union "
+                         "Room answers six ids (docs/bdsp_protocol.md); 0x22 is the opaque one")
+    ap.add_argument("--pre-request", action="append", default=[], metavar="ID:HEX",
+                    help="a game message to put on the reliable stream before the first "
+                         "--request-ids request, e.g. 0x59:01000100 to add station 1 to the "
+                         "console's match-wait list. Repeatable, sent in order")
+    ap.add_argument("--request-gap", type=float, default=3.0, metavar="S",
+                    help="seconds between one request landing and the next going out")
+    ap.add_argument("--request-delay", type=float, default=2.0, metavar="S",
+                    help="seconds after the walk before the first request")
     ap.add_argument("--send-card", action=argparse.BooleanOptionalAction, default=False,
                     help="after the walk, send a NetDataTranerCardData for our own station. It is "
                          "the message that says what a player LOOKS like, and the probe is whether "

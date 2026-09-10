@@ -24,18 +24,48 @@ every capture agrees with the packed reading.
 
 `NetDataParser` registers **65** messages and `pokeldn/bdsp/netdata.py` holds all of them, generated
 from an `opendpr` checkout by `scripts/gen_bdsp_netdata.py`. 53 have a layout the source decides; the
-other twelve carry a C# string, an array or a list, are listed in `netdata.OPAQUE`, and have no
-layout, because the source does not decide one.
+other twelve carry a C# string, an array or a list and are listed in `netdata.OPAQUE`, because the
+source does not decide their layout.
 
-Three of the twelve have a layout anyway, measured from the wire and named in `room.MEASURED`, and
-they are the only three of the twelve that any capture holds. What decides them is that a payload is
-the **marshalled** struct: `ANetData<T>.ConvertStructToBytes` [main.bin 0x27bb0e0] goes through
-`Marshal.SizeOf`, `Marshal.AllocHGlobal` and `Marshal.StructureToPtr`, so a string and an array
-become fixed-size fields rather than references.
+The binary does. A payload is the **marshalled** struct: `ANetData<T>.ConvertStructToBytes`
+[main.bin 0x27bb0e0] goes through `Marshal.SizeOf`, `Marshal.AllocHGlobal` and
+`Marshal.StructureToPtr`, so a string and an array become fixed-size fields rather than references,
+and the size of every struct is its `native_size` in the executable's `Il2CppTypeDefinitionSizes`
+table (`MetadataRegistration.typeDefinitionsSizes`, one entry per type definition). A string's
+character count is in `global-metadata.dat`'s `fieldMarshaledSizes`; an array's count is derived by
+subtracting the other fields from the native size. Every struct is packed, and the four payloads a
+capture holds match the layout read this way byte for byte. `scratchpad/bdsp_native_layout.py`
+prints them; `room.NATIVE_SIZES` holds the twelve sizes.
 
-    0x02  NetPosData             72 B   twelve PosData, no count
-    0x13  NetTradePokeData      328 B   one encrypted PB8 at stored size, no length prefix
-    0x24  NetDataTradeTranerData 32 B   a 26-byte name, then uint, byte, byte
+| id | payload | bytes | layout |
+|---|---|---|---|
+| 0x02 | `PosListData` | 72 | 12 x `PosData` (ushort posX, ushort posZ, short rotY) |
+| 0x13 | `TradePokeData` | 328 | one encrypted PB8 at stored size |
+| 0x14 | `NetRecodeData` | 694 | `RECORD` 120, `RANDOM_SEED` 132, `TvRecodeData` 204, 4 x `TV_STR_DATA` 36, `RECORD_HEAD` 48, ten ints, six bytes |
+| 0x15 | `BallDecoData` | 143 | affixSealCount, Is3DEditMode, IsAppliedTemplate, then `AttachSealData` 140 (20 x `SealParam` 7) |
+| 0x18, 0x54 | `UgSecretBase` | 616 | short zoneID, posX, posY; byte direction, expansionStatus; int goodCount; 30 x `UgStoneStatue` 20; bool isEnable (4) |
+| 0x22 | `StanbyListData` | 20 | 5 x `StandbyData` (isAddPlayer, hostIndex, myIndex, langId) |
+| 0x24 | `TradeTranerData` | 32 | 13 UTF-16 chars, uint tranerId, byte cassetVersion, byte langId |
+| 0x29, 0x61 | `UgStationID_to_DigFossilIDList` | 8 | 8 bytes of dig-fossil ids |
+| 0x38 | `BattleMatchingPokeData` | 481 | a 328-byte PB8, 20 x `SealParam` 7, uint attachPokemonId, uint attachPersonalRnd, byte index, num, is3DEditMode, isAppliedTemplate, affixSealCount |
+| 0x42 | `NetPlayerName` | 28 | 13 UTF-16 chars, byte genderid, byte languageId |
+
+`BattleMatchingPokeData` holds two arrays, so its 328 is taken from `TradePokeData` and the 20 seals
+from `AttachSealData`; the two together are the only split of 468 that matches both. The four
+measured layouts are also in `room.MEASURED`.
+
+`StandbyData` is four bytes, `isAddPlayer, hostIndex, myIndex, langId`, and the sender allocates
+five of them [1.3.0 main 0x01e52fa0, `UnionRoomManager$$SendStandbyPlayerData`], filling slot *i*
+from the *i*-th entry of its match-wait list (`UnionStateController.unionMatchWaitDataList`) with
+`isAddPlayer = 1` and `hostIndex` left 0. A console standing in the room with an empty list answers
+twenty zero bytes.
+
+A station puts itself on that list with `NetDataStandbyWaitData` (0x59), the same four bytes:
+`59 0004 01 00 01 03` from station 1 with language 3 (French) is accepted by
+`UnionStateController$$ReciveMatchWaitData` [1.3.0 main 0x01e539b0], which takes the station's name
+from `NetworkManager.GetGamerData(myIndex)`, and the next answer to a 0x22 request is
+`22 0014 01 00 01 03` followed by sixteen zero bytes. `isAddPlayer = 0` takes the removal branch.
+Nothing changed on the console's screen when the record was added.
 
 The marshaller does not clear what it allocates, so a fixed field carries heap residue past the
 value it holds — ten bytes of it in `NetDataTradeTranerData`, on
@@ -46,8 +76,8 @@ reaching 0xA — so a gap in the numbering is the grouping rather than a missing
 
 ## What has been on the air
 
-Four of the 65 have appeared in a capture. The receiver drops looped-back broadcasts before
-recording, so all of these are the console talking:
+Four of the 65 appear in a capture of a console left alone in the room. The receiver drops
+looped-back broadcasts before recording, so all of these are the console talking:
 
 | id | class | reliable | unreliable | size | runs |
 |---|---|---|---|---|---|
@@ -55,6 +85,10 @@ recording, so all of these are the console talking:
 | 0x02 | `NetPosData` | 0 | 60 | 72 | 5 |
 | 0x12 | `NetRequestData` | 4333 | 55 | 1 | 19 |
 | 0x23 | `NetDataIsMatchWaitData` | 229 | 0 | 1 | 13 |
+
+Two more come only when asked for (below): `NetDataBattleTypeData` (0x09), one byte, 0 on a console
+with no battle set up, and `NetDataStandbyWaitListData` (0x22), twenty bytes. The trade messages are
+on [the trading page](bdsp_trade.md).
 
 Every payload in the archive is a well-formed game message declaring a length that exactly accounts
 for its bytes, over six thousand messages and nineteen runs.
@@ -99,6 +133,46 @@ capture is a second signal that a character exists — the screen having been th
 The match-wait request stops being asked at t = 9.4 in every run that acknowledges the reliable
 window, answered or not; the run that did not acknowledge it was asked 487 times in 75 seconds. It is
 the acknowledgement that stops the asking.
+
+**What a request can fetch.** The Union Room's receive handler, `UnionRoomManager$$SetNetData`
+[1.3.0 main 0x01e50700], answers a `NetRequestData` for six ids and ignores every other:
+
+| requested | the console sends | by |
+|---|---|---|
+| 0x01 `NetJoinData` | its join record | `UnionRoomManager$$SendJoinData` |
+| 0x04 `NetCharacterStateData` | its character state | `UnionRoomManager$$SendOpcStateData` |
+| 0x09 `NetDataBattleTypeData` | its battle rule | `UnionRoomManager$$SendBattleRuleData` |
+| 0x13 `NetTradePokeData` | the Pokemon it is offering | `UnionRoomManager$$SendPokeData` |
+| 0x22 `NetDataStandbyWaitListData` | its standby list | `UnionRoomManager$$SendStandbyPlayerData` |
+| 0x23 `NetDataIsMatchWaitData` | whether it is waiting to be matched | `UnionRoomManager$$SendIsMatchWait` |
+
+Sent one after another from a station whose character is in the room, five of the six are answered
+on the reliable stream 30-130 ms after the request lands; 0x13 is not, because `SendPokeData` returns
+without sending when no Pokemon is selected. The base game's handler [base main 0x01fd4600] answers
+the same six ids, with 0x22 then named `NetDataTradeStandbyData`.
+
+One 0x22 answer is the only message in the archive carrying the reliable header's zlib flag
+(0x10): the 23 bytes of an all-zero list arrived as a 20-byte zlib stream (window 4 KB), and read raw
+they parse as a `NetBonusStart` with an impossible length. The same message with one record filled
+in, and the 20-byte join, arrived uncompressed. What decides the flag is unknown.
+`bin/bdsp_connect.py` and `scratchpad/bdsp_opaque.py` inflate on the flag.
+
+**Where the other opaque messages are spoken**, from the callers of each `ANetData<T>.SendReliableData`
+in 1.3.0:
+
+| id | class | sent by |
+|---|---|---|
+| 0x14 | `NetDataRecodeData` | `RecodeMatching$$SendRecodeData`, `UnionStateController$$SendRecodeData` |
+| 0x15 | `NetDataAttachSealNetData` | `BallDecoMatching$$SendBallDecoData` |
+| 0x18 | `NetSecretBaseData` | `UgNetworkManager$$SendMySecretBaseData`, and on request in `UgNetworkManager$$OnReceiveRequestData` |
+| 0x29, 0x61 | the dig-fossil lists | `UgNetworkManager$$OnReceiveRequestData` |
+| 0x38 | `NetDataBattleMatchingSelectPokemon` | `BattleMatchingManager$$SendSelectPokemonData` |
+| 0x42 | `NetPlayerNameData` | `UgNetworkManager$$SendOnJoinNewPlayer`, `UgNetworkManager$$SendPlayerNameData` |
+| 0x54 | `NetSecretBaseUpdate` | no reliable sender; `netdata.py` names it |
+
+Three belong to Union Room activities other than trading (record mixing, ball capsules, a battle) and
+the `Ug*` ones to the Grand Underground, where `NetPlayerNameData` is sent to a player who joins and
+requests for the secret base and dig lists are answered. No Underground session has been captured.
 
 **The stream decides the reply's stream.** All 4333 requests for `NetDataIsMatchWaitData` arrived on
 the reliable protocol and all 55 for `NetCharacterStateData` on the unreliable one, with no crossover
@@ -266,3 +340,21 @@ The messages that advance a parked greeting are `NetDataSelectData{index}` (0x08
 `NetDataTransitionData{transitionType, isRecruitment}` (0x07). Both are sent by the game as tail
 calls, so a BL-only caller scan reports them as never sent; see
 [finding callers](switch_re.md#finding-callers).
+
+`transitionType` is an `OpcState.OnlineState`, and `UnionStateTransitionController$$SwitchTransition`
+[1.3.0 main 0x01e5ba70] dispatches on it through a 19-entry table, the same activity reachable
+under its `RECRUITMENT_*` value and its `NOW_*` value:
+
+| transitionType | activity | entered through |
+|---|---|---|
+| 3, 17 | battle | `TransitionBattle` |
+| 4, 18 | trade | `TransitionTradePoke` |
+| 5, 19 | record mixing | `RecodeMatching$$Open` |
+| 6, 20 | trainer card | `TransitionShowTrainerCard` |
+| 7, 21 | ball capsules | `BallDecoMatching$$Open` |
+
+8 to 16 do nothing. `RecodeMatching$$Open` and `BallDecoMatching$$Open` each open a message window
+and send the console's own record at once — `NetDataRecodeData` (0x14, 694 bytes) and
+`NetDataAttachSealNetData` (0x15, 143 bytes) — then wait for the partner's, and only on receiving
+it (`StartRecodeTradeFlow`, `StartBallDecoTradeFlow`) apply the exchange and write the save. A
+partner that never answers puts nothing in the console's save.

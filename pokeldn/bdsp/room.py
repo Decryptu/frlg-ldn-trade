@@ -58,8 +58,20 @@ HEADER_SIZE = 3
 MEASURED = {
     0x02: "12 x PosData, 72 bytes: ushort posX, ushort posZ, short rotY",
     0x13: "one encrypted PB8 at stored size, 328 bytes, no length prefix",
+    0x22: "5 x StandbyData, 20 bytes: byte isAddPlayer, hostIndex, myIndex, langId",
     0x24: "26-byte name, u32 tranerId, byte cassetVersion, byte langId",
 }
+
+# The marshalled size of every OPAQUE payload, read from the 1.3.0 executable's
+# Il2CppTypeDefinitionSizes table (docs/bdsp_protocol.md "Framing"). Four are also on the wire.
+NATIVE_SIZES = {
+    0x02: 72, 0x13: 328, 0x14: 694, 0x15: 143, 0x18: 616, 0x22: 20, 0x24: 32, 0x29: 8,
+    0x38: 481, 0x42: 28, 0x54: 616, 0x61: 8,
+}
+
+STANDBY_LIST = 0x22               # NetDataStandbyWaitListData - answers a request for 0x22
+STANDBY_SLOTS = 5                 # UnionRoomManager$$SendStandbyPlayerData allocates the array
+STANDBY_SIZE = 4
 
 JOIN = 0x01                       # NetJoinData
 POS = 0x02                        # NetPosData
@@ -131,6 +143,8 @@ def parse(data):
         out["join"] = parse_join_body(body)
     elif data_id == POS:
         out["points"] = parse_pos_body(body)
+    elif data_id == STANDBY_LIST:
+        out["standby"] = parse_standby_list(body)
     elif data_id == TRADE_TRANER and len(body) == TRADE_TRANER_SIZE:
         out["traner"] = parse_trade_traner(body)
     return out
@@ -148,6 +162,17 @@ def parse_fields(data_id, body):
         out[field] = values[i] if count == 1 else values[i:i + count]
         i += count
     return out
+
+
+def parse_standby_list(body):
+    """`StanbyListData`: five StandbyData{isAddPlayer, hostIndex, myIndex, langId}, one byte each.
+
+    The sender fills slot i from the i-th entry of its standby list with isAddPlayer = 1 and
+    hostIndex left 0 [1.3.0 main 0x01e52fa0]; an empty list is twenty zero bytes.
+    """
+    return [{"is_add_player": body[i], "host_index": body[i + 1], "my_index": body[i + 2],
+             "lang_id": body[i + 3]}
+            for i in range(0, min(len(body), STANDBY_SLOTS * STANDBY_SIZE), STANDBY_SIZE)]
 
 
 def parse_join_body(body):

@@ -161,6 +161,14 @@ def parse_fs_header(fs):
     elif s["hash_type"] == 2:
         # pfs0_superblock_t: master_hash 0x20, block_size, always_2, hash tbl off/size, pfs0 off/size
         s["data_offset"], s["data_size"] = struct.unpack_from("<QQ", sb, 0x38)
+    if s["crypt"] == 4:
+        # bktr_superblock_t: the IVFC header (0xE0), 0x18 of padding, then two bktr_header_t
+        # {u64 offset, u64 size, "BKTR", u32, u32 num_entries, u32}: relocation, subsection.
+        # Both offsets are section-relative. tools/switch/bktr_read.py reads them.
+        for name, at in (("relocation", 0xF8), ("subsection", 0x118)):
+            off, size, magic, _v, count, _r = struct.unpack_from("<QQ4sIII", sb, at)
+            if magic == b"BKTR":
+                s[name] = {"offset": off, "size": size, "entries": count}
     return s
 
 
@@ -191,8 +199,21 @@ def nca_header(container, off, header_key):
     return h
 
 
-def section_key(h, keys):
-    """The body key: key area slot 2, under key_area_key_application_<keygen>."""
+def section_key(h, keys, tickets=None):
+    """The body key: key area slot 2 under key_area_key_application_<keygen>, or, for an NCA
+    with a rights id, the ticket's title key under titlekek_<keygen>.
+
+    The ticket is `<rights id>.tik` in the same container, its encrypted title key at +0x180
+    (hactool ticket.c). The rights id's last byte is the key generation and the titlekek index
+    is that minus one, which is the same number as `h["keygen"]`."""
+    rights = h["rights_id"]
+    if rights != bytes(16):
+        name = f"titlekek_{h['keygen']:02x}"
+        tik = (tickets or {}).get(rights.hex())
+        kek = keys.get(name)
+        if tik is None or kek is None:
+            return None, name if kek is None else f"ticket {rights.hex()}.tik"
+        return AES.new(kek, AES.MODE_ECB).decrypt(tik[0x180:0x190]), name
     name = f"key_area_key_application_{h['keygen']:02x}"
     kaek = keys.get(name)
     if kaek is None:
@@ -219,7 +240,10 @@ def main(argv=None):
         sys.exit(f"{args.keys}: no header_key")
 
     c = Container(args.container)
-    for name, off, size in c.partitions():
+    entries = list(c.partitions())
+    tickets = {name.split(":")[-1][:-4]: c.read(off, size)
+               for name, off, size in entries if name.endswith(".tik")}
+    for name, off, size in entries:
         if not name.endswith(".nca"):
             if not args.nca:
                 print(f"{name:64s} {off:#014x} {size:>16,}")
@@ -234,7 +258,7 @@ def main(argv=None):
         ctype = CONTENT_TYPES.get(h["content_type"], str(h["content_type"]))
         if args.type and ctype.lower() != args.type.lower():
             continue
-        key, keyname = section_key(h, keys)
+        key, keyname = section_key(h, keys, tickets)
         rights = h["rights_id"].hex()
         print(f"\n{name}  nca at {off:#014x}  {size:,} bytes")
         print(f"    {h['magic']}  {ctype}  title {h['title_id']:016x}  keygen {h['keygen']}"

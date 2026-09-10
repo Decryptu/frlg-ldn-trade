@@ -160,6 +160,29 @@ A **constant** does not need re-reading: BDSP's Pia key seed came out of the bas
 decrypts 674 of 674 packets from an updated console. Anything **structural** that a capture has not
 confirmed does.
 
+## Reading a game update's RomFS
+
+An update's Program NCA carries its executable in an ordinary CTR exefs and its RomFS as a BKTR
+section: a patch over the base game's RomFS rather than a copy of it. Two tables at the end of the
+update's section, both under the section's ordinary CTR, decide every byte of the virtual RomFS:
+
+- the relocation table maps a virtual range to a physical one, in the update's own section or in the
+  base game's RomFS section (`is_patch`);
+- the subsection table gives each physical range of the update's section its own counter value,
+  which replaces bytes 4..8 of the section counter.
+
+Entries sit in 0x4000-byte buckets keyed by offset (hactool `bktr.c`). `tools/switch/bktr_read.py`
+composes the two containers into one seekable section and hands it to the RomFS reader, so an
+update's `global-metadata.dat` comes out of the two NSPs in place:
+
+    ./.venv/bin/python tools/switch/bktr_read.py UPDATE.nsp --base BASE.nsp \
+        --extract /Data/Managed/Metadata/global-metadata.dat
+
+An NSP's Program NCA has a rights id, and `xci_read.py` reads its title key from the `<rights id>.tik`
+in the same container: the encrypted key is at ticket `+0x180` and decrypts under
+`titlekek_<keygen>`. BDSP 1.3.0's metadata is 12,496,504 bytes and carries `NetPlayerNameData`; the
+base game's does not.
+
 ## Finding callers
 
 Finding a known function's call sites in an ARM64 image needs no relocation table: `bl` is `100101`

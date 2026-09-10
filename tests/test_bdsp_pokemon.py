@@ -215,12 +215,29 @@ def test_the_trainer_record_we_build_is_the_console_s_own_bytes():
     assert parsed["traner"]["name"] == "Gurvan"
 
 
-def test_the_three_measured_layouts_are_no_longer_reported_opaque():
-    """0x02, 0x13 and 0x24 are the only OPAQUE ids any capture holds, and all three are decided."""
+def test_the_measured_layouts_are_no_longer_reported_opaque():
+    """0x02, 0x13, 0x22 and 0x24 are the OPAQUE ids a capture holds, and all four are decided."""
     for data_id in room.MEASURED:
         assert data_id in netdata.OPAQUE
         assert room.parse(room.build(data_id, b"\x00" * 32))["opaque"] is False
     assert room.parse(room.build(0x42, b"\x00" * 8))["opaque"] is True
+
+
+def test_every_opaque_payload_has_its_marshalled_size():
+    """The executable's Il2CppTypeDefinitionSizes decides all twelve, and the wire agrees on the
+    four it has carried: 72, 328, 20 and 32 bytes."""
+    assert set(room.NATIVE_SIZES) == set(netdata.OPAQUE)
+    assert room.NATIVE_SIZES[room.POS] == room.POS_POINTS * room.POS_POINT_SIZE
+    assert room.NATIVE_SIZES[room.TRADE_POKE] == 328
+    assert room.NATIVE_SIZES[room.STANDBY_LIST] == room.STANDBY_SLOTS * room.STANDBY_SIZE
+    assert room.NATIVE_SIZES[room.TRADE_TRANER] == room.TRADE_TRANER_SIZE
+
+
+def test_the_standby_list_reads_the_record_the_console_sent_back():
+    """`22 0014 01 00 01 03` + 16 zero bytes: station 1, French, in slot 0, after it was added."""
+    msg = room.parse(bytes.fromhex("2200140100010300000000000000000000000000000000"))
+    assert msg["standby"][0] == {"is_add_player": 1, "host_index": 0, "my_index": 1, "lang_id": 3}
+    assert msg["standby"][1]["is_add_player"] == 0 and len(msg["standby"]) == 5
 
 
 def test_the_handler_block_is_readable_and_settable():
