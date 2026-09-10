@@ -187,6 +187,10 @@ The unreliable stream carries three messages and nothing else:
 | `12 0001 04` | 55 | `NetRequestData` — "send me your `NetCharacterStateData`" |
 | `02 0048 <72 B>` | 60 | `NetPosData`, twelve points, while the console's avatar walks |
 
+The console retransmits a reliable message five times a second until the receiver's ack covers
+it; an ack two beyond its last sequence is ignored. `bin/bdsp_connect.py` acks every arrival at
+the last sequence plus one from the moment the console first acknowledges the client's own data.
+
 `room.build_state()` produces the exact five bytes the console broadcasts and
 `room.build_match_wait(False)` the exact four it answers itself with, so neither reply invents
 anything.
@@ -424,6 +428,15 @@ console sends three messages at once:
 A player standing inside their secret base (zone 633) sends, on a station's arrival,
 `NetSecretBaseInfo` (0x41, `Vector3 pos`, `int zoneID`: the base's entrance on the floor above,
 zone 519) paired with the `NetPlayerNameData`.
+
+A station gets a character on the Underground floor with one `NetUgJoinData` (0x16, 18 bytes:
+`byte avatarId, colorId; short zoneID, InitRotY; Vector3 InitPos`) carrying the zone the console's
+`NetZoneData` named. `UgNetworkManager$$OnReceiveJoinData` [1.3.0 main 0x01f7bd80] records the
+sender's zone and, when it is the player's own, asks the sender for its `NetCharacterStateData`
+and its `NetNaminoriData` (0x55, a 4-byte bool); the character appears next to the player and
+the console starts sending it `NetPosData` every 0.41 s. Positions use the room's encoding:
+(-79.0, 67.24) is sent as `posX` 1577, `posZ` 1345, so `room.build_pos` walks a character there
+too (`--ug-join --room-walk-steps N`).
 
 `UgNetworkManager$$OnReceiveRequestData` [1.3.0 main 0x01f7c050] answers a `NetRequestData` for
 0x01, 0x04, 0x18, 0x19 `NetDigData`, 0x54, 0x55 `NetNaminoriData` and 0x61. The three opaque ones:

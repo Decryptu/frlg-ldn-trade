@@ -140,7 +140,7 @@ async def main_async(args):
               "state_requests": 0, "their_state": None, "their_recruiting": 0,
               "reserves_sent": 0, "reserve_results": 0, "match_wait_sent": 0,
               "reserve_accepted": False, "room_done": False, "their_traner": None,
-              "requests_sent": 0, "requested_answers": {}, "rel_fragments": {},
+              "requests_sent": 0, "requested_answers": {}, "rel_fragments": {}, "their_zone": None,
               "their_poke": None, "our_poke": None, "trade_replies": 0, "check_oks": 0,
               "their_ready_ok": None, "ready_oks_sent": 0, "their_security_state": None,
               "our_security_state": 0, "our_next_seq": 0, "return_selects": 0}
@@ -341,6 +341,8 @@ async def main_async(args):
                             elif g:
                                 print(f"[rx] t={now:6.2f} {g['name']}, "
                                       f"{g['length']} B{' (opaque)' if g['opaque'] else ''}")
+                            if g and g["data_id"] == room.ZONE and g.get("fields"):
+                                st["their_zone"] = g["fields"]
                             if g and g["data_id"] in args.request_ids:
                                 st["requested_answers"].setdefault(g["data_id"], []).append(
                                     d["payload"].hex())
@@ -524,8 +526,13 @@ async def main_async(args):
                         if d["is_ack"] and len(d["payload"]) >= 2:
                             print(f"[cx]     {rl.parse_ack_payload(d['payload'])}")
                     print("\n[tx] --- and now its own data, acked back in the same shape")
+                    # The window is known from here on, so every later arrival is acked at
+                    # rel_max_seq + 1 by the receiver whatever the sweep below concludes: its
+                    # verdict is "the console went quiet", which a console that keeps asking for
+                    # something (the Underground's NetNaminoriData request, 5 a second, ug04)
+                    # never satisfies, and an ack two beyond its last sequence is ignored.
+                    st["rel_handshaken"] = True
                     ok = await ack_the_console()
-                    st["rel_handshaken"] = ok
                     if ok and args.room_walk:
                         await walk_the_room(seq + 1)
                     return
@@ -1343,6 +1350,43 @@ async def main_async(args):
             print(f"[tx]   {label} never acked in {tries} tries")
             return False
 
+        async def ug_join():
+            """Join the Grand Underground: one NetUgJoinData in the console's own zone, next to it.
+
+            The Underground's `OnReceiveData` makes a character from a NetUgJoinData the way the
+            room does from a NetJoinData; the zone comes from the NetZoneData the console sends on
+            our arrival. Nothing has measured what the Underground does with the join yet."""
+            while st["their_zone"] is None:
+                await trio.sleep(0.2)
+            await trio.sleep(args.ug_join_delay)
+            z = st["their_zone"]
+            x, y, zz = z["pos"]
+            payload = room.build_ug_join(x + args.join_offset_x, y, zz + args.join_offset_z,
+                                         z["zoneID"], rot_y=90, avatar_id=args.join_avatar,
+                                         color_id=args.join_color)
+            print(f"\n[tx] --- UNDERGROUND JOIN in zone {z['zoneID']} at "
+                  f"({x + args.join_offset_x:.2f}, {zz + args.join_offset_z:.2f}): {payload.hex(' ')}")
+            record(rec="ug_join_sent", t=time.monotonic() - t0, zone=z["zoneID"])
+            await send_on_the_window(payload, "underground join")
+            st["room_done"] = True
+            # and walk, on the unreliable stream, in the room's own encoding: the console's
+            # Underground NetPosData at (-79, 67.24) read posX 1577, posZ 1345 (ug05), which is
+            # -x / 0.05 and z / 0.05, the room's POS_SCALE.
+            await trio.sleep(2.0)
+            x0, z0 = x + args.join_offset_x, zz + args.join_offset_z
+            for i in range(args.room_walk_steps):
+                stride = args.room_walk_stride
+                xa, xb = x0 + stride * i, x0 + stride * (i + 1)
+                body = room.build_pos(room.pos_span((xa, z0), (xb, z0), 90))
+                sock.sendto(wrap(keys, our_mac, args.src_var, st["dst_var"], next_nonce(),
+                                 body, UNRELIABLE_PROTOCOL, port=0,
+                                 destination=0xFFFFFFFF, message_flags=rl.MESSAGE_FLAGS),
+                            (st["dst_ip"], PIA_PORT))
+                record(rec="tx_pos", t=time.monotonic() - t0, x=xa, z=z0, message=body.hex())
+                await trio.sleep(args.room_walk_period)
+            if args.room_walk_steps:
+                print(f"[tx]   walked {args.room_walk_steps} steps to ({xb:.2f}, {z0:.2f})")
+
         async def inject_from_file():
             """Send whatever --inject-file gains, one `ID:HEX` game message per line, on the
             reliable window, so a flow that waits on us can be driven while the console waits
@@ -1510,6 +1554,8 @@ async def main_async(args):
                     nursery.start_soon(request_sweep)
                 if args.inject_file:
                     nursery.start_soon(inject_from_file)
+                if args.ug_join:
+                    nursery.start_soon(ug_join)
                 if args.complete_trade:
                     nursery.start_soon(repeat_the_security_state)
 
@@ -1723,6 +1769,11 @@ def main():
                     help="a game message to put on the reliable stream before the first "
                          "--request-ids request, e.g. 0x59:01000100 to add station 1 to the "
                          "console's match-wait list. Repeatable, sent in order")
+    ap.add_argument("--ug-join", action=argparse.BooleanOptionalAction, default=False,
+                    help="Grand Underground: once the console's NetZoneData arrives, send a "
+                         "NetUgJoinData in its zone at its position plus --join-offset-x/z")
+    ap.add_argument("--ug-join-delay", type=float, default=2.0, metavar="S",
+                    help="seconds after the console's NetZoneData before the Underground join")
     ap.add_argument("--inject-file", metavar="PATH",
                     help="poll this file and send each new `ID:HEX` line as a game message on the "
                          "reliable window, retransmitted until acked. Lines are sent once, in "

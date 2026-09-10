@@ -10,7 +10,8 @@ Brilliant Diamond and Shining Pearl are native Switch titles built in Unity by I
 and no emulator: Pia is the game's own transport and IL2CPP game code sits directly on it.
 
 Measured against a **French Shining Pearl, version 1.3.0**, in the Union Room (Pokemon Center 2F,
-the left attendant, the plain "yes" — not the password or group options).
+the left attendant, the plain "yes" — not the password or group options) and in the Grand
+Underground.
 
 ## Status
 
@@ -25,6 +26,9 @@ Proven on retail hardware, end to end:
   running the game's own greeting dialogue with the player.
 - A complete trade: the console opened its trade screen for that character, offered a Pokemon,
   accepted one pokeldn assembled, wrote its save, and offered the select window again.
+- Record mixing, ball capsules and a battle lobby driven to the point where the console sends its
+  record, its capsule and its six chosen Pokemon.
+- A character walking on the Grand Underground floor, and the console's secret base read out.
 
 ## Pages
 

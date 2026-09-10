@@ -259,6 +259,18 @@ def build_fields(data_id, *values):
     return build(data_id, struct.pack(fmt, *values))
 
 
+UG_JOIN = 0x16                    # NetUgJoinData - the Grand Underground's join record
+ZONE = 0x17                       # NetZoneData - a station's zone and position, sent on arrival
+
+
+def build_ug_join(x, y, z, zone_id, rot_y=0, avatar_id=0, color_id=0):
+    """`UgJoinData`: avatarId, colorId, short zoneID, short InitRotY, Vector3 InitPos - 18 bytes,
+    the fields `UgNetworkManager$$MakeJoinData` [1.3.0 main 0x01f79580] fills."""
+    body = (bytes([avatar_id & 0xFF, color_id & 0xFF]) + struct.pack("<hh", int(zone_id), int(rot_y))
+            + struct.pack("<fff", float(x), float(y), float(z)))
+    return build(UG_JOIN, body)
+
+
 def build_join(x, y, z, rot_y=0, avatar_id=8, color_id=0, casset_version=0x31):
     """"A player has joined, here." The defaults are what a real console sends."""
     body = (bytes([avatar_id & 0xFF, color_id & 0xFF, casset_version & 0xFF])
