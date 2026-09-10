@@ -7,8 +7,9 @@ nav_order: 4
 # The local-wireless branch of the Mystery Gift menu
 
 Sword and Shield's Mystery Gift menu has a local-wireless branch — the same shape of target as
-FireRed's Wonder Card, one hardware generation later. Nothing on this page has been spoken to a
-console; it is read out of Shield 1.3.2's `main` and its RomFS.
+FireRed's Wonder Card, one hardware generation later. The menu and gift-format sections are read out
+of Shield 1.3.2's `main` and its RomFS; the sections on what the console does on the air are measured
+against a retail console sitting on that screen.
 
 ## The menu
 
@@ -67,9 +68,8 @@ Both sit in the game's own data, which starts at 0x18 of the advertisement. What
 unread. The password CRC is zero on both, so neither session is password-gated.
 
 A 70-second monitor capture of the console's own channel while it sat on that screen holds 339
-beacons and 435 LDN advertisement action frames from it and no probe request at all. It is not
-scanning the channel it hosts on. A scan of the other channels would not appear in a capture parked
-on one, so this does not exclude one.
+beacons and 435 LDN advertisement action frames from it and no probe request at all. It does not
+scan the channel it hosts on, and it does not scan the other two either — see below.
 
 ## The session accepts and the mesh refuses
 
