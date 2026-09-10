@@ -118,9 +118,88 @@ the global `0x04c4b848` points to, tail-calls it, and returns 1 — approve — 
     0x0157fd0c  cbz  x1, #0x157fd14      ; null -> mov w0, #1 ; ret
     0x0157fd10  br   x1
 
-A refusal therefore means that field holds a function on the gift scene. Which function, and what it
-inspects, is unread. The two-instruction setter `0x0157fcf4` (`str x1, [x0, #0xb0] ; ret`) has no
-call site anywhere in the image, so the field is written by some other route.
+A refusal therefore means that field holds a function on the gift scene.
+
+## The callback is the game's participant filter
+
+The field is written by the game's own network code, and the whole chain reads out of Shield 1.3.2
+(`scratchpad/swsh/main.bin`). The Shield addresses for the Sword ones above are `CheckApprovalJoin`
+`0x017cc450`, its reason-1 store `0x017cc59c` (`strb w9, [x19, #0xba]`), and the Pia trampoline
+`0x018414b0`, which reads offset `0xb0` of the object the global `0x02616a30` points to:
+
+    0x018414b0  adrp x8, #0x2616000 ; ldr x8, [x8, #0xa30] ; ldr x8, [x8]
+    0x018414bc  ldr  x1, [x8, #0xb0]
+    0x018414c0  cbz  x1, #0x18414c8      ; null -> mov w0, #1 ; ret
+    0x018414c4  br   x1
+
+Two one-line accessors sit beside it: `0x01841490` (`str x1, [x0, #0xb0] ; ret`) installs a callback
+and `0x018414a0` (`str xzr, [x0, #0xb0] ; ret`) clears it. Both have call sites in the game:
+
+| address | what it does |
+|---|---|
+| `0x006b47b0` | installs the callback, `bl 0x01841490` with the constant `0x006b41c0` out of the pointer slot `0x02616a38` |
+| `0x006b5340` | clears the field, `bl 0x018414a0`, leaving Pia to approve every join |
+
+Both are reached from the mode switch `0x006a9af0`, whose byte argument selects between them, so the
+game turns its own join filter on and off per activity. That is the difference the two scenes show on
+the air.
+
+The installed callback is `0x006b41c0`. It takes the joining station's identity — 16 bytes, staged to
+two stack slots from the request — and refuses unless the identity clears both of these:
+
+| gate | fields | refuses when |
+|---|---|---|
+| a block list | enabled by `[manager+0x21c]`, list at `[manager+0x1c0]`, walked by `0x006be4a0` in 16-byte entries | the identity is in the list |
+| a participant allow list | enabled by the flag `[session+0x4f5]`, list at `[session+0x4c0]` with the count at `[session+0x4c8]`, walked by `0x006b8230` | the flag is set and the identity is **not** in the list |
+
+`manager` is the object at `[0x02610000 + 0x4b0]` and `session` is `[manager+0x58]`. `0x006b8230`
+also refuses when the station count `[session+0x1a8]` has reached the maximum `[session+0x1f0]`, and
+approves outright when the allow-list flag is clear — an empty list is only a refusal once the flag
+is set. A match in either walk, or a clear flag, returns 1 and Pia sends the join response.
+
+The flag at `[session+0x4f5]` is set by `0x006b86c4` and `0x006cc7bc`; entries are appended through
+`0x006b5c80` -> `0x006b9920` and the list is emptied by `0x006b5c70` -> `0x006b9910`.
+
+A third gate follows the other two. The callback reads the halfword at offset 0x10 of the identity
+and **approves outright when it is zero** (`0x006b4248`, `cbz w8`); otherwise it looks for it in a
+list at `[manager+0x2b0]` with the count at `[manager+0x2b8]`, and compares it against the halfword
+`[manager+0x220]`.
+
+### What the identity is
+
+The object the callback receives is built by `0x0177b7b0` and filled by `0x017b1bd0`, which finds the
+mesh station-location table entry for the joining station — the one whose `+0x448` is that station
+and whose `+0x440` is 3 — and copies **32 bytes from that entry's `+0x10`** to the identity's offset
+zero:
+
+    0x017b1c50  add x1, x23, #0x10 ; mov w2, #0x20 ; mov x0, x20 ; bl 0x18fde50
+
+Those 32 bytes are the station location as the joiner sent it, so every field the callback filters on
+is a field the connection request carries. The three qwords the callback reads are the entry's
+`+0x10`, `+0x18` and `+0x20`.
+
+Version 4's location deserializer stores the identifying fields well past that window — `0x0185eff8`
+onward writes the relay port to `this+0x60`, the constant id to `+0x68`, the variable id to `+0x70`,
+the service variable id to `+0x74` and the nat quad to `+0x78`..`+0x7b`, which is the same layout the
+5.11-5.45 reading gives. The copied 32 bytes are therefore the location's **address region**, not its
+ids, so the lists the callback walks are keyed on the joiner's address rather than on its constant or
+variable id. That agrees with the same constant id being accepted on one scene and refused on the
+other. Which field the halfword at identity `+0x10` is has not been read.
+
+### What the refusal is not
+
+The same constant id `0x1249a221d8580000` is refused on the gift scene and accepted on the trade
+scene, so the refusal is not keyed on the joiner's identity and the block-list branch does not
+explain it. The variable id is fresh per run and both readings were refused alike.
+
+The participant maximum is a second candidate — `0x006b8230` refuses when the station count
+`[session+0x1a8]` has reached `[session+0x1f0]` — and the two sites that lock that maximum to the
+current count (`0x00bd9b30` and `0x01031c74`, both `SetMax(GetCount())`) belong to the raid den and
+the rental-multi matching paths, not to Mystery Gift. Nothing arms it on the gift scene.
+
+Which gate produces the refusal is still not measured. All three return the same zero to
+`CheckApprovalJoin` and the reason byte is 1 in every case, so the wire cannot tell them apart, and
+the objects they read are runtime state that no static search reaches.
 
 ## A gift is a multiple of 0x2D0 bytes
 

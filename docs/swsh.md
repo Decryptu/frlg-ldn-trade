@@ -50,8 +50,11 @@ covered by any of them, and none of them handles Pia host migration.
   identical ones; within a run the byte decrements by one down the three. Two captures 19 minutes
   apart differ by 19 in that byte, which is consistent with a minute counter and rests on one data
   point.
-- **What `StateReceiveLocal` speaks**, and whether the console hosts or scans on the Mystery Gift
-  local-wireless screen.
+- **What `StateReceiveLocal` speaks.** The console hosts on the Mystery Gift local-wireless screen
+  and does not scan its own channel, so the distributor joins.
+- **Which gate refuses the Mystery Gift mesh join.** The game's approval callback filters the joining
+  station's identity through a block list and a participant allow list, and both produce reason 1, so
+  the wire does not say which fired. [The Mystery Gift menu](swsh_gift.md).
 - **How a partner's command reaches a sub-element's body word.** The receive handler `0x010dbc90`
   does not write it; that a command arriving is what lets the shared value move is inferred from a
   per-station flag and from every run so far.
