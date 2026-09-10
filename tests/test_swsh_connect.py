@@ -464,6 +464,7 @@ class _OfferArgs:
     def __init__(self, **over):
         self.offer_slot = 1
         self.offer_species = self.offer_nickname = self.offer_ot = self.offer_ivs = None
+        self.offer_ability = self.offer_moves = self.offer_level = self.offer_experience = None
         self.__dict__.update(over)
 
 
@@ -476,6 +477,23 @@ def test_the_offer_flags_become_gen8_write_fields():
                       offer_ivs="31,31,31,31,31,31")
     assert swsh_connect.offer_edits(args) == {"species": 25, "nickname": "PKCAMP",
                                               "ot_name": "PkCamp", "ivs": [31] * 6}
+
+
+def test_an_ability_and_four_moves_ride_with_the_species():
+    args = _OfferArgs(offer_species=93, offer_ability=26, offer_moves="164,247,0,0")
+    assert swsh_connect.offer_edits(args) == {"species": 93, "ability": 26,
+                                              "moves": [164, 247, 0, 0]}
+    for bad in ("164,247,482", "164,247,482,411,1", "70000,0,0,0"):
+        with pytest.raises(ValueError):
+            swsh_connect.offer_edits(_OfferArgs(offer_moves=bad))
+
+
+def test_the_level_byte_and_the_experience_word_are_separate_edits():
+    args = _OfferArgs(offer_level=50, offer_experience=1059860)
+    assert swsh_connect.offer_edits(args) == {"level": 50, "experience": 1059860}
+    for bad in (0, 101):
+        with pytest.raises(ValueError):
+            swsh_connect.offer_edits(_OfferArgs(offer_level=bad))
 
 
 def test_a_built_record_without_a_slot_is_refused_before_the_radio():

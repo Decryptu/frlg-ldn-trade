@@ -334,8 +334,8 @@ kind, whose owning element field is unknown.
 ## The record we offer
 
 The Pokemon offered on 20030 is a party record out of the 0x84 snapshot the client sends, selected by
-`--offer-slot`. `--offer-species`, `--offer-nickname`, `--offer-ot` and `--offer-ivs` change named
-fields of that record before it goes, through `pokeldn.swsh.pokemon.build_from`: the checksum is
+`--offer-slot`. `--offer-species`, `--offer-ability`, `--offer-moves`, `--offer-nickname`,
+`--offer-ot` and `--offer-ivs` change named fields of that record before it goes, through `pokeldn.swsh.pokemon.build_from`: the checksum is
 rewritten, the four blocks are reshuffled under the new encryption constant, and every byte no flag
 names stays the byte the console's own save held. The 0x158 party form carries ribbons, memories, met
 data and handler records that nothing here reads, and a record built from nothing would have to invent
@@ -349,6 +349,11 @@ identity rewrite runs first and the offer flags do not touch the trainer ids.
 
 The names are 26-byte UTF-16 fields, so a nickname or OT of at most 12 characters fits. A nickname
 sets the nicknamed flag as a side effect; without it the console draws the species name.
+`--offer-species` changes the species word alone: the ability, the four moves, the party stats, the
+experience and the met data stay the template's. `--offer-ability ID` and `--offer-moves A,B,C,D`
+move the two fields the species most obviously owns; PP and the relearn moves stay as they were.
+`--offer-level N` sets the level byte at 0x148 and `--offer-experience N` the experience word at
+0x10, independently.
 `--save-offer FILE` writes the built record before the radio is touched.
 
 A record built this way is accepted. A Gengar with the nickname `PKCAMP` and six IVs of 31 written
@@ -356,6 +361,28 @@ into the slot-1 template climbed the confirmation ladder to phase 4, the console
 player's own screen read the nickname, level 100, and `Potentiel exceptionnel` from the judge. The
 fields no flag named came through as the template's bytes and the game drew them: female, ball 9,
 held item 281 (Boue Noire), met level 59, language 3, version 44.
+
+A species change alone is accepted. The slot-1 Gengar template with the species word set to 93
+(Haunter), nickname `PKCAMP`, and every other field the Gengar's — ability 130 (Cursed Body, which
+Haunter does not have), the moves 164, 247, 482, 411, the level-100 stats, the met data — climbed to
+phase 4 and the console saved. The player's screen drew a Haunter named PKCAMP, and the game then ran
+the trade evolution, so the Pokemon in the save is a Gengar. The receiving side checks neither the
+ability against the species nor the moves against it. The species word is enough to change what the
+game draws and what evolution rule it applies.
+
+A species outside the template's line is accepted too, and the receiving game rebuilds the party
+stats. The same template with the species word set to 25 (Pikachu) and nothing else changed went
+through, and the player's summary read level 100 with HP 211, Atk 131, Def 116, SpA 199, SpD 137,
+Spe 306. Those are Pikachu's level-100 stats from the record's own IVs (31, 31, 19, 6, 31, 31 in
+HP, Atk, Def, Spe, SpA, SpD order), EVs (0, 0, 0, 252, 252, 6), Timid nature, and the hyper-training
+byte 0x24 at 0x126, which marks Def and Spe and makes the game compute those two as IV 31. The twelve
+stat bytes at 0x14A, still the Gengar's 261/149/156/350/359/187, were discarded. The level comes from the
+experience word at 0x10: the same Pikachu sent with the level byte at 0x148 set to 50 and the
+experience left at 1059860 was drawn and received at level 100. The party tail (level and stats)
+is discarded on receipt and rebuilt from the stored record. The
+summary showed the ability as Cursed Body, the held item as Black Sludge and the moves as
+Substitute, Shadow Ball, Sludge Wave and Focus Blast: the ability, item and move fields are kept
+as sent, with no check against the species.
 
 A record the console offers can be one an earlier run gave it. The 20030 offer in that run carried
 the client's own trainer ids, `PkCamp` as the original trainer and the slot-1 template's unedited

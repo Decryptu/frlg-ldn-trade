@@ -1963,6 +1963,9 @@ def offer_edits(args):
     named fails before the radio is touched instead of halfway up the confirmation ladder.
     """
     edits = {k: v for k, v in (("species", args.offer_species),
+                               ("ability", args.offer_ability),
+                               ("level", args.offer_level),
+                               ("experience", args.offer_experience),
                                ("nickname", args.offer_nickname),
                                ("ot_name", args.offer_ot)) if v is not None}
     for key in ("nickname", "ot_name"):
@@ -1973,8 +1976,16 @@ def offer_edits(args):
         if len(ivs) != 6 or not all(0 <= iv <= 31 for iv in ivs):
             raise ValueError(f"--offer-ivs wants six values 0..31, got {args.offer_ivs!r}")
         edits["ivs"] = ivs
+    if args.offer_level is not None and not 1 <= args.offer_level <= 100:
+        raise ValueError(f"--offer-level wants 1..100, got {args.offer_level}")
+    if args.offer_moves is not None:
+        moves = [int(x, 0) for x in args.offer_moves.split(",")]
+        if len(moves) != 4 or not all(0 <= m <= 0xFFFF for m in moves):
+            raise ValueError(f"--offer-moves wants four move ids, got {args.offer_moves!r}")
+        edits["moves"] = moves
     if edits and not args.offer_slot:
-        raise ValueError("--offer-species, --offer-nickname, --offer-ot and --offer-ivs edit the "
+        raise ValueError("--offer-species, --offer-ability, --offer-level, --offer-experience, "
+                         "--offer-moves, --offer-nickname, --offer-ot and --offer-ivs edit the "
                          "record in --offer-slot, and no slot was named")
     return edits
 
@@ -2341,6 +2352,17 @@ def build_parser():
                     help="build the record in --offer-slot instead of sending it as it came: this "
                          "national dex number, in the party record the snapshot advertises AND in "
                          "the offer, so the two still tell one story")
+    ap.add_argument("--offer-ability", type=lambda s: int(s, 0), default=None,
+                    help="the ability id of the built record; --offer-species leaves the "
+                         "template's ability where it was")
+    ap.add_argument("--offer-level", type=lambda s: int(s, 0), default=None,
+                    help="the level byte at 0x148 of the built record, 1..100; the experience "
+                         "word is left alone unless --offer-experience is given")
+    ap.add_argument("--offer-experience", type=lambda s: int(s, 0), default=None,
+                    help="the experience word at 0x10 of the built record")
+    ap.add_argument("--offer-moves", default=None,
+                    help="four move ids, comma-separated; 0 empties a slot. PP is left as the "
+                         "template had it")
     ap.add_argument("--offer-nickname", default=None,
                     help="the nickname of the built record; sets the nicknamed flag")
     ap.add_argument("--offer-ot", default=None,

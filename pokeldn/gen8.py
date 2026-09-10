@@ -110,6 +110,7 @@ OFF_EGG_LOCATION = 0x120
 OFF_MET_LOCATION = 0x122
 OFF_BALL = 0x124
 OFF_MET_LEVEL = 0x125                 # low 7 bits; bit 7 is the OT's gender
+OFF_HYPER_TRAIN = 0x126               # one bit per stat, bit 0 = HP .. bit 5 = SPE, PKHeX's HT_* order
 
 # THE PARTY STATS, past SIZE_STORED. Present only in the 0x158 form, outside the four blocks and
 # so never permuted - which is why a level reads correctly even when the block order is wrong, and
@@ -244,6 +245,8 @@ def read(plain):
         "ball": plain[OFF_BALL],
         "met_level": plain[OFF_MET_LEVEL] & 0x7F,
         "ot_gender": plain[OFF_MET_LEVEL] >> 7,
+        # a hyper-trained stat is computed as IV 31 whatever the IV word says
+        "hyper_trained": tuple(bool(plain[OFF_HYPER_TRAIN] >> b & 1) for b in (0, 1, 2, 5, 3, 4)),
     }
     if len(plain) == SIZE_PARTY:
         fields["level"] = plain[OFF_STAT_LEVEL]
