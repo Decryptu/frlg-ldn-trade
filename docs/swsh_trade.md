@@ -400,6 +400,28 @@ Route 5, the record's met date (2019-11-26), met level and met location 40. The 
 compare the offered record's OT ids with the partner's MyStatus, and a record with the player's
 own ids arrives as the player's own Pokemon.
 
+Shininess is read from the record. The Flapple with its PID rewritten so that
+`TID ^ SID ^ (PID >> 16) ^ (PID & 0xFFFF)` is 0 against the snapshot's 12345/54321 was drawn shiny
+on the offer screen and carried the shiny star on the summary after the trade. The PID's low half
+was kept and the high half set to `low ^ TID ^ SID`, which leaves the gender and nature bytes,
+stored on their own in Gen 8, untouched.
+
+A species the game does not contain is accepted and saved. The Flapple file with the species word
+set to 152 went through the whole ladder and landed in the PC. The offer screen drew it with
+Pikachu's model under the name Pomdrapi (the record's name field, with the nicknamed flag clear);
+in the box its icon is a black Poke Ball and its summary reads level 21. 9564 experience is level
+21 on the Medium Fast curve (21^3 = 9261, 22^3 = 10648), level 18 on Erratic (the file's own, a
+Flapple's) and level 23 on Medium Slow, so the level was rebuilt with the Medium Fast table for
+this species. Traded back, the record returned with the party tail the game had rebuilt: level 21 and stats
+33/6/8/8/8/10, which are base stats of zero at level 21 with the file's IVs (14, 7, 18, 17, 21, 24)
+and Adamant nature — HP `floor(14 * 21 / 100) + 31`, the rest `floor(IV * 21 / 100) + 5` with the
+nature applied. The species entry the game holds for 152 is empty: zero base stats and growth
+group 0, Medium Fast. Everything else in the record came back byte for byte except the current HP
+word at 0x8A (55 to 33, the new maximum) and the handler block: name Gurvan at 0xA8, gender at
+0xC2, language 3 at 0xC3, friendship 0 at 0xC8 and two memory bytes at 0xCB–0xCC. Which model and
+name the game draws for other absent species, and whether the name shown came from the record's
+name field or from a failed species-name lookup, are unmeasured beyond this one species.
+
 A record the console offers can be one an earlier run gave it. The 20030 offer in that run carried
 the client's own trainer ids, `PkCamp` as the original trainer and the slot-1 template's unedited
 nickname and IVs, because it was the Pokemon an earlier run had traded to that save. Its handler
