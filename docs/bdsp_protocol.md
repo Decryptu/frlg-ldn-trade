@@ -42,7 +42,7 @@ prints them; `room.NATIVE_SIZES` holds the twelve sizes.
 | 0x02 | `PosListData` | 72 | 12 x `PosData` (ushort posX, ushort posZ, short rotY) |
 | 0x13 | `TradePokeData` | 328 | one encrypted PB8 at stored size |
 | 0x14 | `NetRecodeData` | 694 | `RECORD` 120, `RANDOM_SEED` 132, `TvRecodeData` 204, 4 x `TV_STR_DATA` 36, `RECORD_HEAD` 48, ten ints, six bytes |
-| 0x15 | `BallDecoData` | 143 | affixSealCount, Is3DEditMode, IsAppliedTemplate, then `AttachSealData` 140 (20 x `SealParam` 7) |
+| 0x15 | `BallDecoData` | 143 | affixSealCount, Is3DEditMode, IsAppliedTemplate, then `AttachSealData` 140 (20 x `SealParam{short x, y, z; byte id}`) |
 | 0x18, 0x54 | `UgSecretBase` | 616 | short zoneID, posX, posY; byte direction, expansionStatus; int goodCount; 30 x `UgStoneStatue` 20; bool isEnable (4) |
 | 0x22 | `StanbyListData` | 20 | 5 x `StandbyData` (isAddPlayer, hostIndex, myIndex, langId) |
 | 0x24 | `TradeTranerData` | 32 | 13 UTF-16 chars, uint tranerId, byte cassetVersion, byte langId |
@@ -87,8 +87,9 @@ looped-back broadcasts before recording, so all of these are the console talking
 | 0x23 | `NetDataIsMatchWaitData` | 229 | 0 | 1 | 13 |
 
 Two more come only when asked for (below): `NetDataBattleTypeData` (0x09), one byte, 0 on a console
-with no battle set up, and `NetDataStandbyWaitListData` (0x22), twenty bytes. The trade messages are
-on [the trading page](bdsp_trade.md).
+with no battle set up, and `NetDataStandbyWaitListData` (0x22), twenty bytes. Two come when the
+player picks the activity (the transitionType table below): `NetDataRecodeData` (0x14) and
+`NetDataAttachSealNetData` (0x15). The trade messages are on [the trading page](bdsp_trade.md).
 
 Every payload in the archive is a well-formed game message declaring a length that exactly accounts
 for its bytes, over six thousand messages and nineteen runs.
@@ -358,3 +359,42 @@ and send the console's own record at once — `NetDataRecodeData` (0x14, 694 byt
 `NetDataAttachSealNetData` (0x15, 143 bytes) — then wait for the partner's, and only on receiving
 it (`StartRecodeTradeFlow`, `StartBallDecoTradeFlow`) apply the exchange and write the save. A
 partner that never answers puts nothing in the console's save.
+
+Measured for record mixing, with the console recruiting ("Échanger des données" in the Y menu,
+state byte 5) and the client walking up: the console asks its player "voulez-vous faire un échange
+de données ?", and on yes sends `NetDataTransitionData{5, 0}`, then 1.5 s later the 694-byte
+`NetDataRecodeData` as a 205-byte zlib stream under the reliable header's flag 0x10. Its state byte
+reads 19 (`NOW_RECORD`) while it waits; 44 s without an answer it shows "un des participants n'est
+plus disponible" and returns to the room. The record carries the player's name, a group name, the
+trainer id and 64-bit heap pointers in the unwritten fields, as the trainer record does.
+
+`scratchpad/bdsp_native_layout.py --decode NetRecodeData FILE` prints one against the layout;
+`room.parse` returns the head of it as `recode`. What one French Shining Pearl sent:
+
+    RECORD.record[30]        thirty uint counters indexed by RECORD_ID: CLEAR_TIME 20240726,
+                             DENDOU_CNT 1, CAPTURE_POKE 78, FISHING_SUCCESS 12, TAMAGO_HATCHING 3,
+                             BEAT_DOWN_POKE 1034, ..., CONTEST_RATE_SINGLE 100
+    RANDOM_SEED              group_name (16 chars), name (32 chars), int sex, int region_code (3),
+                             ulong seed, ulong random, long time_stmp (a Windows FILETIME:
+                             0x1d7dcd164934199 is 2021-11-18 23:09:52 UTC), int user_id (the
+                             trainer id)
+    TvRecodeData             five TV records (personality, ball decoration, fossil digging,
+                             statue, fashion), each `bool isEmpty` (4 bytes), ints, and a
+                             TV_STR_DATA name
+    4 x TV_STR_DATA          {16-char value, byte language, genderId, two reserved}
+    RECORD_HEAD              13-char username, int language, byte sex, int body_type,
+                             uint uniqueID (the trainer id again)
+    ten ints, six bytes      the per-TV branch values, then myVersion (0x31) and five
+                             *IsNotEmpty flags
+
+`RECORD_HEAD.sex` read 0 and `RANDOM_SEED.sex` 1 in the same record. The record is 1.3.0's
+`RECORD`, `RANDOM_SEED` and `RECORD_HEAD` from the `DPData` namespace marshalled at pack 4, and the
+`TvRecode*` structs at pack 8; no padding results at these field sizes.
+
+Ball capsules run the same way ("Déco Capsule", state byte 7 while recruiting):
+`NetDataTransitionData{7, 0}`, state 21 (`NOW_BALL_DECORATION`), then 1.8 s later the 143-byte
+`NetDataAttachSealNetData` as a 116-byte zlib stream. Its first three bytes are the seal count, the
+3D-edit flag and the template flag; then twenty `SealParam{short x, short y, short z, byte id}`.
+A capsule with 19 stickers placed them all at a distance of 100 from the origin, slot 19 empty.
+45 s without an answer the console shows "quelqu'un a mis fin à la communication" and returns to
+the room.

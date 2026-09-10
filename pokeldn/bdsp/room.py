@@ -58,9 +58,17 @@ HEADER_SIZE = 3
 MEASURED = {
     0x02: "12 x PosData, 72 bytes: ushort posX, ushort posZ, short rotY",
     0x13: "one encrypted PB8 at stored size, 328 bytes, no length prefix",
+    0x14: "694 bytes: RECORD 120, RANDOM_SEED 132, TvRecodeData 204, 4 x TV_STR_DATA 36, "
+          "RECORD_HEAD 48, ten ints, six bytes",
+    0x15: "143 bytes: byte count, is3D, template, then 20 x SealParam{short x, y, z; byte id}",
     0x22: "5 x StandbyData, 20 bytes: byte isAddPlayer, hostIndex, myIndex, langId",
     0x24: "26-byte name, u32 tranerId, byte cassetVersion, byte langId",
 }
+
+RECODE = 0x14                     # NetDataRecodeData - the record-mixing payload
+BALL_DECO = 0x15                  # NetDataAttachSealNetData - the ball-capsule payload
+SEAL_SLOTS = 20
+SEAL_SIZE = 7
 
 # The marshalled size of every OPAQUE payload, read from the 1.3.0 executable's
 # Il2CppTypeDefinitionSizes table (docs/bdsp_protocol.md "Framing"). Four are also on the wire.
@@ -145,6 +153,10 @@ def parse(data):
         out["points"] = parse_pos_body(body)
     elif data_id == STANDBY_LIST:
         out["standby"] = parse_standby_list(body)
+    elif data_id == BALL_DECO and len(body) >= 3 + SEAL_SIZE:
+        out["ball_deco"] = parse_ball_deco(body)
+    elif data_id == RECODE and len(body) >= NATIVE_SIZES[RECODE]:
+        out["recode"] = parse_recode_head(body)
     elif data_id == TRADE_TRANER and len(body) == TRADE_TRANER_SIZE:
         out["traner"] = parse_trade_traner(body)
     return out
@@ -173,6 +185,26 @@ def parse_standby_list(body):
     return [{"is_add_player": body[i], "host_index": body[i + 1], "my_index": body[i + 2],
              "lang_id": body[i + 3]}
             for i in range(0, min(len(body), STANDBY_SLOTS * STANDBY_SIZE), STANDBY_SIZE)]
+
+
+def parse_ball_deco(body):
+    """`BallDecoData`: count, is3DEditMode, isAppliedTemplate, then twenty SealParam."""
+    seals = [dict(zip(("x", "y", "z", "seal_id"), struct.unpack_from("<hhhB", body, 3 + i * SEAL_SIZE)))
+             for i in range(min(SEAL_SLOTS, (len(body) - 3) // SEAL_SIZE))]
+    return {"count": body[0], "is_3d_edit": body[1], "is_template": body[2], "seals": seals}
+
+
+def parse_recode_head(body):
+    """The named fields of a `NetRecodeData` a reader wants first: the thirty RECORD counters,
+    the names, the trainer id, the version. The full layout is on docs/bdsp_protocol.md."""
+    counters = struct.unpack_from("<30I", body, 0)
+    group = body[0x78:0x98].decode("utf-16-le", "replace").split("\0")[0]
+    name = body[0x98:0xd8].decode("utf-16-le", "replace").split("\0")[0]
+    sex, region, seed, random, stamp, user_id = struct.unpack_from("<iiQQqI", body, 0xd8)
+    return {"counters": counters, "group_name": group, "name": name, "sex": sex,
+            "region_code": region, "seed": seed, "random": random, "time_stamp": stamp,
+            "user_id": user_id, "language": struct.unpack_from("<i", body, 0x274)[0],
+            "unique_id": struct.unpack_from("<I", body, 0x280)[0], "version": body[0x2b0]}
 
 
 def parse_join_body(body):

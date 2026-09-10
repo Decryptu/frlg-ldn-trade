@@ -233,6 +233,29 @@ def test_every_opaque_payload_has_its_marshalled_size():
     assert room.NATIVE_SIZES[room.TRADE_TRANER] == room.TRADE_TRANER_SIZE
 
 
+def test_the_ball_capsule_and_the_record_read_off_the_wire():
+    """A capsule with 19 stickers: every one at distance 100 from the origin; slot 19 empty.
+    A record: thirty counters, the group and player names, the trainer id twice, version 0x31."""
+    deco = room.parse(room.build(room.BALL_DECO, bytes.fromhex(
+        "130000d7ff2f004e001c29002f004e001c0000d1ff58001c00000000640003d1ff000058000d2f00000058"
+        "000d00002f0058000d000063000a0023a8ffd1ff0900235800d1ff090023d2ff53001f00252e0053001f00"
+        "2500009dff0a0025b7ff2f0031002b49002f0031002b0000adff38002bb7ffd1ff3100354900d1ff310035"
+        "000053003800370000000000000000")))["ball_deco"]
+    assert deco["count"] == 19 and len(deco["seals"]) == 20
+    for seal in deco["seals"][:19]:
+        assert seal["seal_id"] and round((seal["x"] ** 2 + seal["y"] ** 2 + seal["z"] ** 2) ** 0.5) in (99, 100)
+    assert deco["seals"][19] == {"x": 0, "y": 0, "z": 0, "seal_id": 0}
+    body = bytearray(694)
+    body[0x78:0x78 + 16] = "Ape Gang".encode("utf-16-le")
+    body[0x98:0x98 + 12] = "Gurvan".encode("utf-16-le")
+    struct.pack_into("<I", body, 0xf8, 0x0ff0adb2)
+    struct.pack_into("<I", body, 0x280, 0x0ff0adb2)
+    body[0x2b0] = 0x31
+    rec = room.parse(room.build(room.RECODE, bytes(body)))["recode"]
+    assert rec["group_name"] == "Ape Gang" and rec["name"] == "Gurvan"
+    assert rec["user_id"] == rec["unique_id"] == 0x0ff0adb2 and rec["version"] == 0x31
+
+
 def test_the_standby_list_reads_the_record_the_console_sent_back():
     """`22 0014 01 00 01 03` + 16 zero bytes: station 1, French, in slot 0, after it was added."""
     msg = room.parse(bytes.fromhex("2200140100010300000000000000000000000000000000"))
