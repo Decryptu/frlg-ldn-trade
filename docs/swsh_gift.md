@@ -242,6 +242,17 @@ So the console is announcing itself across the band rather than searching. A dis
 without scanning and joins it, which fixes the direction of the link: on this screen the console
 hosts and the distributor is the joiner.
 
+## The mesh join is the only way in
+
+Held on the gift scene with no join request sent, the console runs the whole station handshake on
+0x14 — its connection request, a result-0 response, its type-5 ack, its 840-byte type-2 acceptance —
+and then sends nothing. Over the hold that followed: no message on 0x18, no RTT, nothing on the
+reliable window, nothing on 0x80, no application data. It went on broadcasting its update session
+throughout, listing the joiner as seat 1 with `allow_participating` set.
+
+So no layer below the mesh carries the gift, and the refusal is not something that can be stepped
+around by staying out of the mesh.
+
 ## Unresolved
 
 Which gate refuses is not settled. All three return the same zero to `CheckApprovalJoin` and the
