@@ -180,7 +180,9 @@ def test_a_payload_whose_struct_is_not_blittable_has_no_layout_and_says_so():
         assert room.layout(data_id) is None
         with pytest.raises(ValueError):
             room.build_fields(data_id, 0)
-    assert room.parse(room.build(room.PLAYER_NAME, b"\x00"))["opaque"] is True
+    # ... and only the one id no capture holds is still reported opaque
+    assert room.parse(room.build(0x29, b"\x00"))["opaque"] is True
+    assert room.parse(room.build(room.PLAYER_NAME, b"\x00"))["opaque"] is False
 
 
 def test_the_generic_packer_agrees_with_the_hand_written_builders():
