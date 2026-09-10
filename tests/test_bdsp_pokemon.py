@@ -256,6 +256,15 @@ def test_the_ball_capsule_and_the_record_read_off_the_wire():
     assert rec["user_id"] == rec["unique_id"] == 0x0ff0adb2 and rec["version"] == 0x31
 
 
+def test_a_selected_team_member_reads_its_slot_and_its_pokemon():
+    """Six of these came off a console, index 0..5 of num 6, each a PB8 with a good checksum."""
+    body = bytearray(481)
+    body[:328] = pokemon.encrypt(pokemon.build(species=484)) if hasattr(pokemon, "build") else bytes(328)
+    struct.pack_into("<IIBBBBB", body, 0x1d4, 0, 0, 2, 6, 0, 0, 0)
+    sel = room.parse(room.build(room.SELECT_POKEMON, bytes(body)))["select_pokemon"]
+    assert sel["index"] == 2 and sel["num"] == 6 and len(sel["pb8"]) == 328 and len(sel["seals"]) == 20
+
+
 def test_the_standby_list_reads_the_record_the_console_sent_back():
     """`22 0014 01 00 01 03` + 16 zero bytes: station 1, French, in slot 0, after it was added."""
     msg = room.parse(bytes.fromhex("2200140100010300000000000000000000000000000000"))

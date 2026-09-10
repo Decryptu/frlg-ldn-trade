@@ -63,6 +63,8 @@ MEASURED = {
     0x15: "143 bytes: byte count, is3D, template, then 20 x SealParam{short x, y, z; byte id}",
     0x22: "5 x StandbyData, 20 bytes: byte isAddPlayer, hostIndex, myIndex, langId",
     0x24: "26-byte name, u32 tranerId, byte cassetVersion, byte langId",
+    0x38: "481 bytes: a 328-byte PB8, 20 x SealParam, u32 attachPokemonId, u32 attachPersonalRnd, "
+          "byte index, num, is3DEditMode, isAppliedTemplate, affixSealCount",
 }
 
 RECODE = 0x14                     # NetDataRecodeData - the record-mixing payload
@@ -157,6 +159,8 @@ def parse(data):
         out["ball_deco"] = parse_ball_deco(body)
     elif data_id == RECODE and len(body) >= NATIVE_SIZES[RECODE]:
         out["recode"] = parse_recode_head(body)
+    elif data_id == SELECT_POKEMON and len(body) >= NATIVE_SIZES[SELECT_POKEMON]:
+        out["select_pokemon"] = parse_select_pokemon(body)
     elif data_id == TRADE_TRANER and len(body) == TRADE_TRANER_SIZE:
         out["traner"] = parse_trade_traner(body)
     return out
@@ -205,6 +209,17 @@ def parse_recode_head(body):
             "region_code": region, "seed": seed, "random": random, "time_stamp": stamp,
             "user_id": user_id, "language": struct.unpack_from("<i", body, 0x274)[0],
             "unique_id": struct.unpack_from("<I", body, 0x280)[0], "version": body[0x2b0]}
+
+
+SELECT_POKEMON = 0x38             # NetDataBattleMatchingSelectPokemon - one per team member
+
+
+def parse_select_pokemon(body):
+    """`BattleMatchingPokeData`: the encrypted PB8, then the seals, then the ids and the slot."""
+    attach_id, attach_rnd, index, num, is_3d, template, count = struct.unpack_from("<IIBBBBB", body, 0x1d4)
+    return {"pb8": body[:328], "seals": parse_ball_deco(b"\0\0\0" + body[0x148:0x1d4])["seals"],
+            "attach_pokemon_id": attach_id, "attach_personal_rnd": attach_rnd, "index": index,
+            "num": num, "is_3d_edit": is_3d, "is_template": template, "seal_count": count}
 
 
 def parse_join_body(body):

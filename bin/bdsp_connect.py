@@ -1343,6 +1343,37 @@ async def main_async(args):
             print(f"[tx]   {label} never acked in {tries} tries")
             return False
 
+        async def inject_from_file():
+            """Send whatever --inject-file gains, one `ID:HEX` game message per line, on the
+            reliable window, so a flow that waits on us can be driven while the console waits
+            instead of relaunching the whole association for every next message."""
+            path = pathlib.Path(args.inject_file)
+            seen = 0
+            while True:
+                await trio.sleep(0.5)
+                try:
+                    lines = path.read_text().splitlines()
+                except OSError:
+                    continue
+                for spec in lines[seen:]:
+                    seen += 1
+                    spec = spec.strip()
+                    if not spec or spec.startswith("#"):
+                        continue
+                    data_id, _, body_hex = spec.partition(":")
+                    try:
+                        payload = room.build(int(data_id, 0), bytes.fromhex(body_hex))
+                    except ValueError as exc:
+                        print(f"[inject] bad line {spec!r}: {exc}")
+                        continue
+                    if payload[0] == room.TALK and payload[3 + 1:3 + 5] == b"\x00\x00\x00\x00":
+                        print("[inject] refusing NetDataTalkData{CHECK} (a null dereference)")
+                        continue
+                    now = time.monotonic() - t0
+                    print(f"\n[inject] t={now:6.2f} {room.name(payload[0])}: {payload.hex(' ')}")
+                    record(rec="inject_sent", t=now, spec=spec)
+                    await send_on_the_window(payload, f"inject {room.name(payload[0])}")
+
         async def request_sweep():
             """Send each --pre-request message, then ask for each --request-ids message, once our
             character exists.
@@ -1477,6 +1508,8 @@ async def main_async(args):
                     nursery.start_soon(initiate_the_talk)
                 if args.request_ids or args.pre_request:
                     nursery.start_soon(request_sweep)
+                if args.inject_file:
+                    nursery.start_soon(inject_from_file)
                 if args.complete_trade:
                     nursery.start_soon(repeat_the_security_state)
 
@@ -1690,6 +1723,10 @@ def main():
                     help="a game message to put on the reliable stream before the first "
                          "--request-ids request, e.g. 0x59:01000100 to add station 1 to the "
                          "console's match-wait list. Repeatable, sent in order")
+    ap.add_argument("--inject-file", metavar="PATH",
+                    help="poll this file and send each new `ID:HEX` line as a game message on the "
+                         "reliable window, retransmitted until acked. Lines are sent once, in "
+                         "order; `#` starts a comment")
     ap.add_argument("--request-gap", type=float, default=3.0, metavar="S",
                     help="seconds between one request landing and the next going out")
     ap.add_argument("--request-delay", type=float, default=2.0, metavar="S",

@@ -387,6 +387,31 @@ trainer id and 64-bit heap pointers in the unwritten fields, as the trainer reco
     ten ints, six bytes      the per-TV branch values, then myVersion (0x31) and five
                              *IsNotEmpty flags
 
+A battle ("Combattre", state byte 3 while recruiting) runs a longer ladder, and the recruiting
+console waits on the joiner at every rung. Measured with the client as joiner:
+
+| the joiner sends | the console does |
+|---|---|
+| `NetDataTalkData{GREETING}` | shows "Un combat ? OK ! Donne-moi juste une minute !" and waits |
+| `NetDataSelectData{0}` (0x08) | shows "PkCamp est en train de choisir quoi faire..." and waits |
+| `NetDataBattleTypeData{0}` (0x09, `BattleModeID.Single`) | asks its player "voulez-vous faire un combat selon ces règles ?"; on yes sends `NetDataTransitionData{17, 0}`, state byte 17, and opens the solo lobby at "connexion en cours" |
+| `NetDataBattleMatchingJoin` (0x30) `{uint id, byte stationIndex, index, language, colorId, avatarId, sexId, cassetVersion}` | answers with its own join (`id` its trainer id, station 0, index 0) and relays the joiner's back; the joiner's character appears in the lobby's second slot |
+| `NetDataBattleMatchingReady` (0x32, empty) | `BattleMatchingManager$$ReceiveReadyData`: when every member is ready, `NetDataBattleMatchingState{0, 6}` (0x33) — `MatchingState.SelectBattleTeam`, 4 and 5 skipped for a solo battle — and its player gets the team-selection button |
+| nothing | on the player's team choice, six `NetDataBattleMatchingSelectPokemon` (0x38, 481 bytes), then "en attente d'autres personnes" |
+
+The 0x38 body is the layout in the table above: a 328-byte encrypted PB8 whose checksum verifies
+and whose species read back the team the player picked, in order,
+twenty `SealParam` slots holding the same unwritten heap bytes in all six with `affixSealCount` 0,
+`attachPokemonId` and `attachPersonalRnd` 0, `index` 0 to 5 and `num` 6. The joiner's `id` in 0x30
+is not checked against anything: 0x0badc0de was accepted. `BattleMatchingManager.MatchingState` is
+None 0, Initialize 1, Load 2, RecruitmentMember 3, SelectTeamMember 4, SelectRule 5,
+SelectBattleTeam 6, SelectPokemon 7, GoBattle 8, Result 9, Resume 10, Closing 11,
+LeavedOtherMembers 12.
+
+`--inject-file PATH` on `bin/bdsp_connect.py` sends each new `ID:HEX` line of the file on the
+reliable window while the association stands, which is how a ladder like this is climbed in one
+association.
+
 `RECORD_HEAD.sex` read 0 and `RANDOM_SEED.sex` 1 in the same record. The record is 1.3.0's
 `RECORD`, `RANDOM_SEED` and `RECORD_HEAD` from the `DPData` namespace marshalled at pack 4, and the
 `TvRecode*` structs at pack 8; no padding results at these field sizes.
