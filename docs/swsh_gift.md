@@ -218,6 +218,17 @@ beacons only on the channel it hosts, and sends its LDN advertisement (the same 
 SSID) on the two channels it does not. It sends no probe request on any channel. On this screen the
 console hosts and the distributor is the joiner.
 
+Sending no probe request is not the same as not scanning. Shield 1.3.2 read live in an emulator
+calls `nn::ldn::Scan` about forty times a minute on this screen, and passes an advertisement of its
+own with `SetAdvertiseData` at the same cadence, on top of a single access point it created once at
+boot. The network is the game's always-on local-play network (`LocalCommunicationId`
+`0x0100ABF008968000`, shared by both titles; `NodeCountMax` 2, accept-all), not one the gift screen
+creates: entering or leaving Mystery Gift adds no LDN call and never tears the network down. The
+gift screen only sets its advertise data and installs the Pia join filter. The console never calls
+`Connect` while no peer network is present, so whether it would join a distributor it found in a
+scan is open. The scan is passive at the 802.11 layer, which is why the air capture above records no
+probe request.
+
 ## The mesh join is the only way in
 
 Held on the gift scene with no join request sent, the console runs the whole station handshake on
@@ -226,15 +237,61 @@ and then sends nothing: no message on 0x18, no RTT, nothing on the reliable wind
 no application data. It broadcasts its update session throughout, listing the joiner as seat 1 with
 `allow_participating` set. No layer below the mesh carries the gift.
 
-## Unresolved
+## The participant maximum is zero on this screen
 
-Which gate refuses is not settled. All three return the same zero to `CheckApprovalJoin` and the
-reason byte is 1 in every case.
+Read live from Shield 1.3.2 held on the Mystery Gift search screen, the participant maximum
+`session+0x1F0` is 0, the allow-list flag `session+0x4F5` is 0, its count is 0, and the block list
+is enabled over an empty list. The join filter is armed (`MeshProtocol+0xB0` holds `0x006b41c0`).
+The recruiting predicate the filter calls, the game session's vtable slot at `+0xB0`, is
+`0x006ccb00`, which is `ldrb w0, [x0, #0x4f5]; ret`: it returns the allow-list flag, 0, which
+approves.
 
-The static reading points at the participant maximum; a maximum of zero would refuse the real
-distributor too. Either the field is non-zero from construction, or the gift session is built by the
-path whose allow-list flag state has not been read: `0x006ca848` clears that flag ahead of one of
-the two `LdnCreateSessionSetting` sites, and which of the two the gift screen uses is unknown.
+In the static reading `0x006b8230` compares the Pia station count against `session+0x1F0` with an
+unsigned `b.lo`, so a count fails `count < 0` and the recruiting predicate and allow list are never
+reached. That predicted a maximum of 2 would let the join through, and it is wrong. A mesh join
+driven end to end at the emulator, with `session+0x1F0` and `+0x1F4` patched to 2 and verified live,
+is refused with a response byte-identical to the unpatched one. `session+0x1F0` is the game's session
+configuration, not what governs Pia's mesh seat allocation. The `0xFA0` reading was also the wrong
+construction path (`0xFA0` is the setting `0x006c3bd4` builds, not the gift session's), but the field
+itself is a dead end for the join.
+
+The live refusal is not the application callback. A join over the bridge draws `JOIN_RESPONSE`
+`02 00 ff ff 00`: the short five-byte "no station index" form, reason 0, where a seated two-station
+response is 148 bytes. Reason 0 is the transport check `0x0154806c`, not the application callback
+that returns reason 1 on retail hardware. So the emulated console refuses the seat one layer below
+the callback, at the mesh station table, before the maximum this section measured is ever consulted.
+Where the mesh's seat capacity lives is unread; it is a Pia field the `MeshProtocol` object reaches,
+not `game_session`. This is not yet attributable to the gift screen's policy: the same joiner does
+not complete a station handshake against a link-trade host that genuinely accepts joiners (the
+console floods connection requests and never answers), so there is no positive control that any
+session seats this joiner. The keys and framing are proven (every packet authenticates across three
+sessions with three derived keys); the join handshake is not.
+
+The maximum scales with the local-play mode, read live in three sessions of the same running game:
+0 on the Mystery Gift search screen, 2 when hosting a link trade, 4 when hosting a Max Raid. The
+join filter callback is the same armed pointer in all three, and the raid host admits four joiners
+through it, so the callback is not the discriminator. The raid host also propagates its 4 into the
+LDN advertisement's `NodeCountMax`, while the gift screen advertises `NodeCountMax` 2 at the LDN
+layer with a Pia maximum of 0: the two counts are decoupled there, so the console tells the network
+it has slots and then refuses internally.
+
+One `game_session` byte tracks accept-versus-refuse alongside the maximum: `+0x3F8` is 1 on the gift
+screen and 0 on both accepting sessions. Other bytes that looked like accept markers, `+0x365`,
+`+0x33D` and advertisement `+0xF9`, are mode residue: after a raid they stay at their raid values
+when the game returns to the gift screen, and the console advertises `+0xF9` set to 1 while refusing
+every join, so `+0xF9` does not mark an accepting session. The `manager` object is byte-identical
+between the gift screen and the trade host, so none of its state gates accepting. These bytes track
+the game's session mode; they are not proven to gate Pia's mesh seat, which the join test above
+refused one layer lower regardless of `session+0x1F0`.
+
+A synthesised distributor does not move the console. A network carrying the Sword/Shield
+communication id and a genuine accepting session's advertisement, served into the console's scan
+while it sits on the gift screen, is received, parsed and filed in the Pia scan slot (`pia_obj+0x3C0`,
+empty until then) and then ignored: no `Connect`, no `OpenStation`, no accept-policy call, no change
+to the maximum or `+0x3F8`, against a no-beacon control. The console neither admits a joiner nor joins
+a distributor here. This is measured only against advertisements synthesised from the console's own
+sessions; a genuine distribution beacon was never in hand, so it bounds what a self-derived beacon
+can do, not what any beacon could.
 
 ## A gift is a multiple of 0x2D0 bytes
 
