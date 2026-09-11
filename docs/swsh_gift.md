@@ -746,6 +746,29 @@ every bit below the count is set.
 `0x010f7550` decides whether an arriving fragment belongs to a context by comparing exactly those four
 header fields. The index is not among them, which is what lets the fragments of one message meet.
 
+## A context accepts two fragments and no more
+
+Fragments do accumulate. Watching the arrival bitmap, which is the low bits of the byte behind the
+pointer at `context+0x58`, a context was seen going from `001` to `011`, from `100` to `101` and from
+`010` to `110` on a three-fragment message, the second fragment's bit being set without the 0x88
+context being rebuilt.
+
+No context has reached `111`. Whichever two fragments arrive first are taken and every later one is
+refused, at a two-second offer cycle and at a third of a second alike. The refusal is not a race or a
+lifetime: one context stood at `101`, wanting only fragment 1, for 11.1 seconds while that fragment
+was offered about 44 times, and was then discarded still at `101`.
+
+Nothing downstream runs. A breakpoint on the sink `0x01005bc0` was not reached in 25 seconds with all
+three fragments offered about four times a second, while the same session's controls on the beacon
+builder and on the update were reached in 0.027 s. The importer's result at `bound+0x2C0`, where
+`bound` is `job+0x80`, held 3 throughout, which is the value the importer's error path leaves.
+
+What refuses the third fragment is unresolved, and it is not in `0x010f7430`: that function's four
+field comparisons pass for fragments that differ only in their index, the index is checked only
+against the count, and the bitmap test only rejects an index already received. `0x010f7100` drops a
+fragment whose index is not below the buffer's capacity in 300-byte units, which for a 720-byte buffer
+is three.
+
 The body of a fragment starts at `payload+11`: `0x010f7c60` returns the message pointer advanced by
 the ten header bytes. A payload holds 355 bytes, so the 300-byte fragment and its header fit with room
 to spare.
