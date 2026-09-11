@@ -126,7 +126,15 @@ memory without sending anything:
     count   = read_u64(manager + 0xD8)                  0x006db3dc
     array   = read_u64(manager + 0xD0)                  0x006db3e0
     entry i = array + i * 0x10                          the shift at 0x006db3e4
-    id      = read_u16(holder + 0x160)
+    id      = holder's vtable slot 7, called at 0x006db740 as `ldr x8, [x8, #0x38]`
+
+The id comes from a virtual call, so where it is stored depends on the holder's class and
+`holder+0x160` holds it only for the classes this page documents. Read the slot-7 function's address
+out of the holder's vtable and decode its `ldrh` immediate to get that class's offset.
+
+The array is empty on an idle screen. Entries appear only once a station is seated: a link trade
+seated adds two within two seconds and keeps them across leaving the scene, and the Mystery Gift
+scene adds none at all.
 
 ### The three dispatch gates
 

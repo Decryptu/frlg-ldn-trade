@@ -263,6 +263,45 @@ opens on two ports, and mesh updates. Above the transport it says nothing: no ap
 ping. Nothing ever opens on 0x84. The scene does accept application data, acking 96 pings on 0x7C in
 sequence. It is a receiver that waits to be pushed at.
 
+## On this screen the console is looking, not waiting
+
+Four measurements put the console on the joining side of a distribution, not the hosting side:
+
+- it calls `Scan` continuously on the gift screen, 33 times in one 40-second IPC trace, interleaved
+  with `SetAdvertiseData` and `GetNetworkInfo` and never with `Connect` or `CreateNetwork`;
+- the network it advertises there is the always-on local-play one it creates about 16 seconds after
+  boot, carrying scene id 65535 where a link trade carries 60001;
+- its participant maximum is 0, so it offers no seat to anybody;
+- forced into its mesh with that maximum patched, it registers no message listener and sends no
+  application data.
+
+Zero probe requests over the air, which this page previously read as "it hosts and does not scan",
+is what a passive scan looks like and does not decide the question.
+
+Its scan filter asks only for the local communication id and network type, both `SessionId` and
+`SceneId` unfiltered, so a network carrying `0x0100ABF008968000` is returned to the game whatever
+else it holds. Six advertisement variants built from the console's own sessions were each returned by
+the scan and none drew a `Connect`, so what the game requires is above the filter, in the
+advertisement's own contents.
+
+## The scene ids a session can carry
+
+One selector (`0x01096730`) turns a mode into a scene id and a participant count, through a jump
+table at `0x02066C14`:
+
+| mode | scene id | participants |
+|---|---|---|
+| 1 | 60021 | 2 |
+| 2 | 60001 | 2 |
+| 3 | 60002 | 2 |
+| 4 | 60003 | 2 |
+| 5 | 60004 | 4 |
+| anything else | 60005 | 2 |
+
+60001 is the link trade, measured on the wire, and 60004's count of four matches the maximum a Max
+Raid host advertises. 60021 is 60005 with bit 4 set, a relation the compare at `0x010fc7f0` uses.
+Which of them a distribution carries is unmeasured; 65535 is none of them.
+
 The image carries no Mystery Gift protocol-buffer module. Every `.pb.cc` path in it belongs to
 `gflnet3`'s own p2p framework or to one of the game's features: trade, the three battle modules, the
 raid dens, the underground, the camp, `comp_organize` and `btl_spot`. The card is therefore not
