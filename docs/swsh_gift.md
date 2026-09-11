@@ -764,6 +764,21 @@ tested against the region bit the importer derives at entry (`0x00ff2358`), and 
 intersect it is skipped, so four records with a zero region mask and one with a mask that matches
 leave exactly one card.
 
+The region bit is one of two. The importer calls `0x007d4270` at entry and forms `1 << 1` when the
+byte it returns is `0x2D` and `1 << 0` otherwise (`0x00ff2330`), so a record whose mask has both low
+bits set, `0xFFFF` among them, intersects either console.
+
+A record that passes the mask is filtered again when its byte at `+0x13` is non-zero: `0x01449820`
+walks fifty four-byte entries in the save from `0x1660`, each a halfword card id and a byte, and
+reports a match when the id equals the record's halfword at `+8` and the byte equals the record's
+`+0x13`. So `+8` is the card id, `+0x13` selects both whether the duplicate check runs and which
+table entry it matches, and a record with `+0x13` zero is imported every time.
+
+An accepted record is copied into a `0x338`-byte structure whose leading `0x68` bytes the importer
+zeroes, the record following at `+0x68` (`0x00ff2380`), and that structure and the record are handed
+with the length `0x2D0` to `0x010b5de0`. The card object it builds is `0x3A8` bytes and keeps the
+structure at its own `+0x70`.
+
 ## The store is not drained on the Mystery Gift screen
 
 Nothing above runs there. `0x010f65a0` is the gfl net manager's per-frame update, reached with the
