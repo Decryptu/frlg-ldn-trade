@@ -746,10 +746,23 @@ calls the callback at `job+0xE0`. On completion it takes the reassembled buffer 
 whose length (`0x010f7060`) is the whole vector, the fragment count multiplied by 300, and passes it
 to the sink.
 
-The importer downstream requires a whole multiple of `0x2D0`, and 300 does not divide 720, so a
-fragment count that satisfies both is a multiple of twelve: twelve fragments carry 3600 bytes, which
-is five records. Whether a distribution sends twelve fragments, or an intermediate step between the
-sink and `0x00ff2170` trims the buffer, is unresolved.
+Nothing between the sink and the importer changes the buffer. The sink `0x01005bc0` reads the pointer
+and the length back out of the two references it is given and calls `0x00ff0e00`, which is two
+instructions, `ldr x0, [x0, #0x80]` and a branch to `0x00ff1fb0`, which calls `0x00ff2170` with the
+pointer and length untouched in `x2` and `x3`.
+
+The importer's gate is explicit (`0x00ff22c8`): the pointer must be non-null, the length at least
+`0x2D0`, and the length exactly divisible by `0x2D0`, or it takes the error path. The quotient is the
+record count.
+
+So the reassembled length, the fragment count multiplied by 300, must be a non-zero multiple of 720.
+The two agree only on multiples of 3600, so **a distribution sends a multiple of twelve fragments**,
+and twelve fragments deliver five records at once.
+
+Delivering one gift out of five is what the record filter is for. Each record's halfword at `+0x0E` is
+tested against the region bit the importer derives at entry (`0x00ff2358`), and a record that does not
+intersect it is skipped, so four records with a zero region mask and one with a mask that matches
+leave exactly one card.
 
 ## The store is not drained on the Mystery Gift screen
 
