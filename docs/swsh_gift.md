@@ -810,9 +810,11 @@ sub-object. Kind 1 goes to `0x010b58f0` and kinds 2 and 4 to routines of their o
 ## The Pokemon a kind-1 record carries
 
 `0x010b58f0` reads the gift out of the record. Two arrays of nine entries, one per language and
-`0x1C` bytes each, come first: the names at `0x030`, each `0x1A` bytes of UTF-16 with a language byte
-at `+0x1A`, and the nicknames at `0x12C`, each `0x1A` bytes of UTF-16. The language is chosen through
-the table at `0x02067650`, which maps the game's language to an index from 0 to 8.
+`0x1C` bytes each, come first: the nicknames at `0x030`, each `0x1A` bytes of UTF-16 with a language
+byte at `+0x1A`, and the original trainer names at `0x12C`, each `0x1A` bytes of UTF-16. The language
+is chosen through the table at `0x02067650`, which maps the game's language to an index from 0 to 8.
+A delivered Pokemon carried the string from `0x030` as its displayed name and the string from `0x12C`
+as its original trainer.
 
 The Pokemon itself follows:
 
@@ -826,12 +828,21 @@ The Pokemon itself follows:
 | `+0x240` | 2 | species |
 | `+0x242` | 1 | form |
 | `+0x243` | 1 | kept in header `+0x64` |
-| `+0x245` | 1 | level |
+| `+0x245` | 1 | kept in header `+0x12`, and not the level |
 | `+0x25C` | 1 | kept in header `+0x63` |
 | `+0x272` | 1 | language, used when it is 2 or more, otherwise the game's own |
 
 Run against the game's own parser under emulation, a record built to this map reads back with its
-species, level, four moves, nickname, card id and kind in the header the parser fills.
+species, four moves, nickname, card id and kind in the header the parser fills.
+
+A record carrying species 25 was delivered to a console and the Pokemon it produced was species 25, so
+the species field holds an ordinary Pokedex index.
+
+The level is not in the record. A card specifying nothing about it produced a Pokemon at level 20 with
+exactly 8000 experience, which is level 20 on the cube curve. The record the console held was
+byte-identical to the one sent, and it contains no byte equal to 20 and no halfword or word equal to
+8000, so the level was chosen by the game. The trainer id the Pokemon carries was not in the record
+either. What supplies them is unresolved.
 
 Run against the game's own validator under emulation, a record carrying the checksum is accepted and
 reaches the kind-3 path with the word from `+0x20` in place, while the same record with the checksum
