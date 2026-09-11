@@ -772,6 +772,72 @@ value its error path leaves. The number of fragments a context appeared to hold 
 the declared count, at counts of both two and three, which is the count-shaped signature of a context
 that completes and is thrown away rather than one that refuses a fragment.
 
+## What a record must carry
+
+The region bit is one of two. The importer calls `0x007d4270` at entry and forms `1 << 1` when the
+byte it returns is `0x2D` and `1 << 0` otherwise (`0x00ff2330`), so a record whose mask at `+0x0E` has
+both low bits set, `0xFFFF` among them, intersects either console, and a record whose mask is zero is
+skipped.
+
+A record that passes the mask is filtered again when its byte at `+0x13` is non-zero: `0x01449820`
+walks fifty four-byte entries in the save from `0x1660`, each a halfword card id and a byte, and
+reports a match when the id equals the record's halfword at `+8` and the byte equals the record's
+`+0x13`. So `+8` is the card id, `+0x13` selects both whether the duplicate check runs and which table
+entry it matches, and a record with `+0x13` zero is imported every time.
+
+An accepted record is copied into a `0x338`-byte structure whose leading `0x68` bytes the importer
+zeroes, the record following at `+0x68` (`0x00ff2380`), and that structure and the record are handed
+with the length `0x2D0` to `0x010b5de0`. The card object it builds is `0x3A8` bytes and keeps the
+structure at its own `+0x70`.
+
+`0x010b5de0` validates the record before anything is built from it. It copies the 0x2D0 bytes to its
+own stack, takes the halfword at `+0x2CC` and zeroes it, then runs a CRC-16/CCITT-FALSE over the whole
+record: the table is built MSB-first from polynomial `0x1021` (`0x010b5e60`), the running value starts
+at `0xFFFF`, and each byte updates it as `T[(byte ^ (crc >> 8)) & 0xFF] ^ (crc << 8)` (`0x010b5f54`).
+A record whose stored halfword differs returns `0x80000001`, which the importer recognises
+(`0x00ff23d0`) and reports as 1. **So `+0x2CC` is the record's own checksum over itself with that
+field zeroed.**
+
+Past the checksum the routine fills the `0x68`-byte header from the record: the card id at `+0x08`
+goes to header `+8`, the byte at `+0x15` to header `+0xa`, the byte at `+0x11` to header `+0xc`, and
+the byte at `+0x1C` to header `+0xf`.
+
+The byte at `+0x11` is the gift kind. One through five dispatch through the table at `0x02067620`;
+anything else returns success with nothing built. Kinds 3 and 5 take the shortest path
+(`0x010b5fd8`), which keeps the word at record `+0x20` in header `+0x30` and returns, building no
+sub-object. Kind 1 goes to `0x010b58f0` and kinds 2 and 4 to routines of their own.
+
+Run against the game's own validator under emulation, a record carrying the checksum is accepted and
+reaches the kind-3 path with the word from `+0x20` in place, while the same record with the checksum
+zeroed, and an all-zero record, both return `0x80000001`.
+
+## A card delivered by beacon, end to end
+
+A 720-byte record built here, split into three fragments and served from a synthesised beacon, reaches
+the importer on an unmodified console with no memory patch and no code patch. Two records differing
+only in their region mask produced two different verdicts, in the result at `bound+0x2C0` and on the
+screen:
+
+| region mask | result | the console's message |
+|---|---|---|
+| `0x0000` | 2 | a gift was received but cannot be obtained in this game |
+| `0xFFFF` | 1 | receiving the gift failed |
+
+Those match the two paths. `0x00ff1fb0` returns the importer's value when it is non-zero, and
+otherwise returns 2 when the card list is left empty. A record filtered out by the region mask is the
+second case: the importer ran and succeeded, and nothing was materialised. A record the mask accepts
+goes on to `0x010b5de0`, which refused to build a card from a record whose fields beyond the card id,
+the region mask and the flag at `+0x13` are all zero, and the importer passed that refusal back as 1.
+
+The refusal is clean. Nothing faulted, no crash, no save prompt and no new error line from the
+emulator, so the importer validates a record before materialising it and a malformed record is
+rejected rather than run. The remaining unknown between here and a card the game keeps is the layout
+of the 720-byte record itself.
+
+The receive job is rebuilt whenever the search screen is re-entered: both `manager+0x68` and the
+object the sink is bound to move. Anything holding those addresses across a screen exit is reading a
+dead object.
+
 ## The store is not drained on the Mystery Gift screen
 
 Nothing above runs there. `0x010f65a0` is the gfl net manager's per-frame update, reached with the
