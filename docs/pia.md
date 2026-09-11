@@ -370,8 +370,32 @@ trailing counter.
 A retail Sword closes that sequence with no ack of its own request. A Shield 1.3.2 under Ryujinx does
 not: without a type-5 ack of the console's connection request it answers a well-formed response with
 silence and re-issues its request on its own 10-second timer, never sending a connection response.
-With the ack, 3 of 22 otherwise identical attempts completed; the bytes out were identical in all 22
-and nothing sent correlates with the difference. `--ack-request` on the bridge driver sends it.
+`--ack-request` on the bridge driver sends it.
+
+### What a connection response must satisfy to be read
+
+Both message types reach one handler, `0x017c6e70`, with a flag distinguishing them (`0x017c60c0`
+sets it for a request, the type-2 dispatch entry clears it). A response whose result byte is not 2 is
+checked field by field, and every failure is a silent drop:
+
+| the handler reads | it requires | a failure gives |
+|---|---|---|
+| `[1]` the result byte | 2 takes a separate path | |
+| `[5]` a big-endian u64 | the receiver's own constant id | drop, `0x017c6f48` |
+| `[0xD]` a big-endian u32 | the receiver's own variable id | drop, `0x017c6f68` |
+| the sender's station location | resolves to a station it knows | drop, `0x017c6f04` |
+| `[0x37]` one byte, result 0 only | under 5 | drop, `0x017c6ff0` |
+
+The last one decides how long the message has to be. `RESPONSE_SIZE` is 17 bytes, the allocation the
+console's own short-form sender asks for (`mov w3, #0x11` at `0x017c6c30`), and 0x37 is 38 bytes past
+the end of it, so a 17-byte result-0 response puts the decision on whatever the receive buffer
+happens to hold there. An accepted response is long: the console's own is 840 bytes and carries 1 at
+`[0x37]`. `station4.build_connection_response(..., min_size=ACCEPTED_RESPONSE_SIZE)` pads to 0x38,
+the shortest size that answers the gate from inside the message, and writes 1 there.
+
+Read past the end, the byte is a lottery. An emulated Shield accepted 3 of 22 responses that were
+byte-identical on the wire, then 0 of 49 later the same morning across a game restart; a retail Sword
+accepted every one. Passing the gate byte ourselves is what makes the handshake repeatable.
 
 Three outcomes separate on the wire after our response goes out. Its connection response is
 acceptance. A retransmit of its request every 500 ms, carrying the same trailing counter, is

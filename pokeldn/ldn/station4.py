@@ -63,6 +63,7 @@ OFF_LOCATION = 0x11
 __all__ = ["PROTOCOL", "PLATFORM_SWITCH", "HEADER_SIZE", "OFF_NAT_FLAGS", "OFF_PLATFORM",
            "OFF_HAS_VARIABLE_ID", "OFF_CONSTANT_ID", "OFF_VARIABLE_ID", "OFF_NAT_LOCATION",
            "OFF_LOCATION", "CONNECTION_REQUEST", "CONNECTION_RESPONSE",
+           "OFF_RESPONSE_GATE", "RESPONSE_GATE_MAX", "ACCEPTED_RESPONSE_SIZE",
            "ACK", "ACK_SIZE", "build_ack", "ack_id_of",
            "RELAY_CONNECTION_REQUEST", "RESULT_NAMES", "RESPONSE_SIZE", "build_connection_request",
            "build_connection_response", "parse_connection_request", "parse_incoming_request",
@@ -109,9 +110,12 @@ RESPONSE_SIZE = 0x11              # 17 bytes, the allocation the sender asks for
 OFF_RESPONSE_RESULT = 1
 OFF_RESPONSE_CONSTANT_ID = 5
 OFF_RESPONSE_VARIABLE_ID = 0xD
+OFF_RESPONSE_GATE = 0x37          # the byte the receiver reads, which must be under GATE_MAX
+RESPONSE_GATE_MAX = 5
+ACCEPTED_RESPONSE_SIZE = 0x38     # the shortest response whose gate byte is inside the message
 
 
-def build_connection_response(result, constant_id, variable_id):
+def build_connection_response(result, constant_id, variable_id, min_size=None, gate=1):
     """The 17-byte answer, field for field off the sender at 0x017c6c30.
 
         [0]    2                      the message type
@@ -126,8 +130,18 @@ def build_connection_response(result, constant_id, variable_id):
     with x3 and w4 both xzr; a console reads back `0202090000...` byte for byte. Whose ids belong in the
     accepted case is a DEDUCTION: the only other caller passes them out of the peer's own station
     location, so they are read here as the station being answered.
+
+    `min_size` pads the message with zeroes. A result-0 response is read at [0x37] by the receiver
+    (`0x017c6ff0`), which drops the whole message when that byte is 5 or more, so a 17-byte response
+    puts the decision on whatever lies 38 bytes past its end. `ACCEPTED_RESPONSE_SIZE` is the
+    shortest size that answers the gate from inside the message. `gate` is the byte written there.
     """
-    out = bytearray(RESPONSE_SIZE)
+    if min_size is not None and min_size > RESPONSE_SIZE:
+        out = bytearray(min_size)
+        if min_size > OFF_RESPONSE_GATE:
+            out[OFF_RESPONSE_GATE] = gate & 0xFF
+    else:
+        out = bytearray(RESPONSE_SIZE)
     out[0] = CONNECTION_RESPONSE
     out[OFF_RESPONSE_RESULT] = result & 0xFF
     out[2] = PLATFORM_SWITCH

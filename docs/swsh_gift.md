@@ -292,9 +292,22 @@ A set bit is an occupied station. The count starts at 1 and adds one per set bit
 mesh holding only the host counts 1 and a mesh holding the host and one other station counts 2. The
 free-slot search returns the index of the first clear bit, or `0xFD` when every bit is set.
 
-Whether the ldn_mitm association sets the joiner's bit before its Pia join request arrives is unread.
-If it does, the count reaches the maximum of 2 before the request is parsed, and the bridge refuses
-every joiner on every screen for a reason the retail console never reaches.
+Read live on the emulator's link-trade screen, with no association and with one held and across 49
+attempts, these fields do not move: max 8, enable 1, sel 0, bits 0, `+0xC4` zero, `+0xC8` `0x00000001`.
+The count is 1 and the free-slot search returns slot 1, so both of the first two tests pass and the
+ldn_mitm association seats nobody. The maximum here is 8, where `nodeCountMax` and
+`game_session+0x1F0` both read 2.
+
+Three more exits of the same function also answer 0, and which one fires is unmeasured:
+
+| site | the test |
+|---|---|
+| `0x017bb380` | `count >= max`, or the free-slot search returns `0xFD`. Measured passing. |
+| `0x017bb498` | the table at `mesh_obj+0x370`: its size against a u16 at `read_u64(main + 0x02616710) + 0x70`, then against its own capacity at `table+0x48`. A joiner already in the table skips both (`0x017bb41c`). |
+| `0x017bb4d4` | the byte at `mesh_obj+0x132`, set by the handler at `mesh_obj+0x120` when the check hands it a type-0x18 event, and cleared as it is read. |
+
+The same function returns 2 when `+0xAA` is zero or a preliminary predicate holds, and 4 when
+`mesh_obj+0x131` is set by the type-0x19 event.
 
 The maximum scales with the local-play mode, read live in three sessions of the same running game:
 0 on the Mystery Gift search screen, 2 when hosting a link trade, 4 when hosting a Max Raid. The

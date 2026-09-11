@@ -81,3 +81,22 @@ def test_the_address_size_byte_counts_the_port():
         assert (1 << size) & 0x40044
     for size in (4, 8, 16):
         assert not (1 << size) & 0x40044
+
+
+def test_a_padded_response_answers_the_gate_byte_from_inside_the_message():
+    """A result-0 connection response is read at [0x37] by `0x017c6ff0`, which drops the whole
+    message when that byte is 5 or more. The 17-byte form leaves the byte 38 bytes past its end."""
+    short = s4.build_connection_response(0, 0x1122334455667788, 0xAABBCCDD)
+    padded = s4.build_connection_response(0, 0x1122334455667788, 0xAABBCCDD,
+                                          min_size=s4.ACCEPTED_RESPONSE_SIZE)
+    assert len(short) == s4.RESPONSE_SIZE == 0x11
+    assert len(short) <= s4.OFF_RESPONSE_GATE
+    assert len(padded) == 0x38 > s4.OFF_RESPONSE_GATE
+    assert padded[s4.OFF_RESPONSE_GATE] < s4.RESPONSE_GATE_MAX
+    assert padded[:len(short)] == short          # padding changes no field the short form carries
+
+
+def test_the_gate_byte_is_the_only_byte_padding_sets():
+    padded = s4.build_connection_response(0, 1, 2, min_size=0x38, gate=4)
+    assert padded[s4.OFF_RESPONSE_GATE] == 4
+    assert set(padded[s4.RESPONSE_SIZE:s4.OFF_RESPONSE_GATE]) == {0}
