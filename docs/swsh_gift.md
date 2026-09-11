@@ -675,6 +675,44 @@ there to the handler at `[gfl_job+0x68]` vtable `+0x38`.
 The station-information structure read out of a receiver's beacon is this payload, so its offsets sit
 5 bytes past the body and 0x1d bytes past the start of the advertise data.
 
+## What the payload carries
+
+The first byte of the payload is a message type. `0x010f6600` builds a typed view of the payload for
+each of the two types it knows and dispatches whichever one matches:
+
+| payload `+0` | view built by | goes to |
+|---|---|---|
+| 0 | `0x010f8730` | `0x0110f270`, with the object behind `0x02610958` |
+| 1 | `0x010f8830` | the job at `[manager+0x68]`, through its vtable slot `+0x38` |
+
+Each view holds a pointer to `payload+1`, so the message begins one byte past the type. A receiver's
+own beacon carries type 0, which is why the station-information structure starts there.
+
+On the Mystery Gift local-wireless screen the job at `manager+0x68` is the receive job, and its vtable
+slot `+0x38` is its poll `0x010b74d0` (the object's vtable pointer is the group address plus 0x10, so
+slot `+0x38` is `0x0257dd88+0x48`). A type-1 beacon payload is therefore delivered straight to the
+poll that feeds the Wonder Card importer.
+
+The poll reads a ten-byte header from `payload+1` through `0x010f7bf0`, which packs it as `{u32 at 0,
+u16 at 4, u8 at 6, u8 at 7}` in one register and returns the `u16 at 8` in another:
+
+| header offset | size | note |
+|---|---|---|
+| `+0` | 4 | the poll returns without doing anything when this is not zero |
+| `+4` | 2 | |
+| `+6` | 1 | |
+| `+7` | 1 | |
+| `+8` | 2 | |
+
+With the first field zero the poll walks the handler list between `job+0x160` and `job+0x168`, whose
+entries are 0x88 bytes, comparing each against the header with `0x010f7550`. When nothing matches it
+appends a new entry through `0x010f7360` and the list grows. So the list growing is the signal that a
+beacon payload was accepted as a message, and it does not depend on the payload carrying a usable
+card.
+
+A 0x2D0 Wonder Card record does not fit in one payload, which holds at most 355 bytes, so a card
+spans several beacons. How the header's `+6` and `+7` bytes index the pieces is unresolved.
+
 Unresolved: the layout of the payload a distributor sends, the gflnet3 message header inside it (10
 bytes at `0x010F7C08` on the send path: u32 id at 0, u16 at 4, u8 at 6, u8 at 7, u16 at 8), and how a
 720-byte record fragments across beacons when the payload holds at most 355 bytes. `0x136`, named a
