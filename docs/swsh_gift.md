@@ -257,6 +257,19 @@ Writing 8 into `game_session+0x1F0` on the search screen makes the scene accept 
 first attempt, with a 148-byte join response and the station count moving 1 to 2; reverting the field
 to 0 brings reason 1 back. The maximum is the whole gate.
 
+Its Pia is not silent. The moment a node joins at the LDN layer the console broadcasts a Local
+Protocol update session about six times a second, listing the joiner as seat 1; 238 of them decoded
+and authenticated in one run, against a control with no node joined that sends nothing on that port
+for five minutes. An earlier reading of silence here was a socket losing the race for broadcast
+delivery against the emulator's own wildcard socket on 12345, and only an external capture sees them.
+No run on this scene has yet acknowledged one, and a Pia host repeats its update session until every
+station does.
+
+Nothing else is on the wire. A capture of every port in both directions, a listener bound across
+48,123 UDP ports for ten minutes, and the emulator's own socket table agree: the only flows between
+the two nodes are Pia on 12345 and ldn_mitm's control channel on 11452. The transfer is not raw
+traffic between LDN nodes.
+
 Once seated, the scene's transport traffic matches the trade scene's: RTT probes, reliable-window
 opens on two ports, and mesh updates. Above the transport it says nothing: no application payload in
 180 seconds of holding the mesh, and none in a further 180 seconds while being sent the trade scene's
