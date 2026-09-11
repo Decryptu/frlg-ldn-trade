@@ -726,16 +726,25 @@ context's, so those fields are the message key:
 | header offset | size | meaning |
 |---|---|---|
 | `+0` | 4 | zero, or the poll returns at once |
-| `+4` | 2 | part of the message key |
+| `+4` | 2 | total message length in bytes |
 | `+6` | 1 | total fragment count |
 | `+7` | 1 | this fragment's index, refused unless below the count |
-| `+8` | 2 | part of the message key |
+| `+8` | 2 | message key |
 
-A context holds the fragments in a vector at `context+0x20` whose elements are `0x12C` bytes, so a
-fragment carries exactly 300 bytes of body, written at its index (`0x010f7100`). Arrival is recorded
-in a bitmap at `context+0x58` against the count at `context+0x60`, which caps a message at 256
-fragments; a fragment whose bit is already set is dropped, so a repeated beacon is harmless.
-`0x010f7610` reports the message complete when every bit below the count is set.
+The context constructor `0x010f7360` writes those fields to `context+0`, `+8`, `+0x10` and `+0x18`
+and sizes two things from them: the buffer at `context+0x20` from the length at `+4` (through
+`0x010f6fa0`) and the arrival bitmap behind the pointer at `context+0x58` from the count at `+6`. A
+message therefore holds at most 65535 bytes and 256 fragments.
+
+`0x010f7100` copies a fragment to `index * 300` in that buffer, 300 bytes for every fragment except
+the last, which takes only the remainder, and drops a fragment whose index is not below the buffer's
+capacity in 300-byte units. So the reassembled buffer is exactly the length the header declared, and
+a 720-byte Wonder Card is three fragments of 300, 300 and 120. A fragment whose bitmap bit is already
+set is dropped, so a repeated beacon is harmless, and `0x010f7610` reports the message complete when
+every bit below the count is set.
+
+`0x010f7550` decides whether an arriving fragment belongs to a context by comparing exactly those four
+header fields. The index is not among them, which is what lets the fragments of one message meet.
 
 The body of a fragment starts at `payload+11`: `0x010f7c60` returns the message pointer advanced by
 the ten header bytes. A payload holds 355 bytes, so the 300-byte fragment and its header fit with room
@@ -755,11 +764,10 @@ The importer's gate is explicit (`0x00ff22c8`): the pointer must be non-null, th
 `0x2D0`, and the length exactly divisible by `0x2D0`, or it takes the error path. The quotient is the
 record count.
 
-So the reassembled length, the fragment count multiplied by 300, must be a non-zero multiple of 720.
-The two agree only on multiples of 3600, so **a distribution sends a multiple of twelve fragments**,
-and twelve fragments deliver five records at once.
+Since the reassembled length is whatever the header declared, a distribution of one card declares 720
+and sends three fragments. Nothing has to divide evenly.
 
-Delivering one gift out of five is what the record filter is for. Each record's halfword at `+0x0E` is
+Delivering one gift out of several is what the record filter is for. Each record's halfword at `+0x0E` is
 tested against the region bit the importer derives at entry (`0x00ff2358`), and a record that does not
 intersect it is skipped, so four records with a zero region mask and one with a mask that matches
 leave exactly one card.
