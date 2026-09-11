@@ -746,69 +746,31 @@ every bit below the count is set.
 `0x010f7550` decides whether an arriving fragment belongs to a context by comparing exactly those four
 header fields. The index is not among them, which is what lets the fragments of one message meet.
 
-## A context accepts two fragments and no more
+## The message checksum, and why a context never looked complete
 
-Fragments do accumulate. Watching the arrival bitmap, which is the low bits of the byte behind the
-pointer at `context+0x58`, a context was seen going from `001` to `011`, from `100` to `101` and from
-`010` to `110` on a three-fragment message, the second fragment's bit being set without the 0x88
-context being rebuilt.
+The halfword at header `+8` is a CRC-16/ARC over the reassembled message, not a key. `0x010f7680`
+builds the message that goes to the sink: it walks the arrival bitmap, and when every bit below the
+count is set it takes `context+0x18`, the stored `+8`, computes `0x010f71e0` over the buffer at
+`context+0x20` and compares the two. `0x010f71e0` is the length of the buffer passed to `0x0065dcb0`,
+the same checksum the beacon body carries. On a mismatch the function returns null.
 
-No context has reached `111`. Whichever two fragments arrive first are taken and every later one is
-refused, at a two-second offer cycle and at a third of a second alike. The refusal is not a race or a
-lifetime: one context stood at `101`, wanting only fragment 1, for 11.1 seconds while that fragment
-was offered about 44 times, and was then discarded still at `101`.
+A null return skips the sink, because the poll loads the built message and branches past the call when
+it is zero (`0x010b77fc`), and the context is erased either way. All of that happens inside one poll,
+so a message whose checksum is wrong leaves no trace: the completing fragment is accepted, the bitmap
+briefly shows every bit, the message is discarded without reaching the importer, and the context
+disappears.
 
-Nothing downstream runs. A breakpoint on the sink `0x01005bc0` was not reached in 25 seconds with all
-three fragments offered about four times a second, while the same session's controls on the beacon
-builder and on the update were reached in 0.027 s. The importer's result at `bound+0x2C0`, where
-`bound` is `job+0x80`, held 3 throughout, which is the value the importer's error path leaves.
-
-What refuses the third fragment is unresolved, and it is not in `0x010f7430`: that function's four
-field comparisons pass for fragments that differ only in their index, the index is checked only
-against the count, and the bitmap test only rejects an index already received. `0x010f7100` drops a
-fragment whose index is not below the buffer's capacity in 300-byte units, which for a 720-byte buffer
-is three.
-
-The body of a fragment starts at `payload+11`: `0x010f7c60` returns the message pointer advanced by
-the ten header bytes. A payload holds 355 bytes, so the 300-byte fragment and its header fit with room
-to spare.
-
-On each accepted fragment the poll reads a pair of progress values (`0x010f7720`, `0x010f7730`) and
-calls the callback at `job+0xE0`. On completion it takes the reassembled buffer through `0x010f7680`,
-whose length (`0x010f7060`) is the whole vector, the fragment count multiplied by 300, and passes it
-to the sink.
-
-Nothing between the sink and the importer changes the buffer. The sink `0x01005bc0` reads the pointer
-and the length back out of the two references it is given and calls `0x00ff0e00`, which is two
-instructions, `ldr x0, [x0, #0x80]` and a branch to `0x00ff1fb0`, which calls `0x00ff2170` with the
-pointer and length untouched in `x2` and `x3`.
-
-The importer's gate is explicit (`0x00ff22c8`): the pointer must be non-null, the length at least
-`0x2D0`, and the length exactly divisible by `0x2D0`, or it takes the error path. The quotient is the
-record count.
-
-Since the reassembled length is whatever the header declared, a distribution of one card declares 720
-and sends three fragments. Nothing has to divide evenly.
-
-Delivering one gift out of several is what the record filter is for. Each record's halfword at `+0x0E` is
-tested against the region bit the importer derives at entry (`0x00ff2358`), and a record that does not
-intersect it is skipped, so four records with a zero region mask and one with a mask that matches
-leave exactly one card.
-
-The region bit is one of two. The importer calls `0x007d4270` at entry and forms `1 << 1` when the
-byte it returns is `0x2D` and `1 << 0` otherwise (`0x00ff2330`), so a record whose mask has both low
-bits set, `0xFFFF` among them, intersects either console.
-
-A record that passes the mask is filtered again when its byte at `+0x13` is non-zero: `0x01449820`
-walks fifty four-byte entries in the save from `0x1660`, each a halfword card id and a byte, and
-reports a match when the id equals the record's halfword at `+8` and the byte equals the record's
-`+0x13`. So `+8` is the card id, `+0x13` selects both whether the duplicate check runs and which
-table entry it matches, and a record with `+0x13` zero is imported every time.
-
-An accepted record is copied into a `0x338`-byte structure whose leading `0x68` bytes the importer
-zeroes, the record following at `+0x68` (`0x00ff2380`), and that structure and the record are handed
-with the length `0x2D0` to `0x010b5de0`. The card object it builds is `0x3A8` bytes and keeps the
-structure at its own `+0x70`.
+That is what a run with the wrong checksum looks like from outside, and it was measured before the
+cause was known. Fragments accumulate: watching the arrival bitmap, which is the low bits of the byte
+behind the pointer at `context+0x58`, a context was seen going from `001` to `011`, from `100` to
+`101` and from `010` to `110`. No context was ever sampled with every bit set, at a two-second offer
+cycle or at a third of a second; a context stood one fragment short for 11.1 seconds while the missing
+fragment was offered about 44 times, and was then discarded still one short. A breakpoint on the sink
+`0x01005bc0` was never reached in 25 seconds while the same session's controls were reached in
+0.027 s, and the importer's result at `bound+0x2C0`, `bound` being `job+0x80`, never moved off the
+value its error path leaves. The number of fragments a context appeared to hold was always one below
+the declared count, at counts of both two and three, which is the count-shaped signature of a context
+that completes and is thrown away rather than one that refuses a fragment.
 
 ## The store is not drained on the Mystery Gift screen
 
