@@ -371,6 +371,21 @@ The local-wireless path is 2 then 7: the search, then the screen that picks from
 offers. What advances 2 to 7 is unread; `StateReceiveLocal` sets no next state itself, and the sites
 that do are in the shared base.
 
+The state can be forced. `0x00FE700C` is `mov w8, w21`, the register the dispatcher indexes its jump
+table with, and writing `mov w8, #N` there makes the next transition build state N whatever the app
+asked for. Done for state 7 on a running console, it draws that screen's furniture with no list and
+an empty bar, and **touches the network in no way at all**: the participant maximum stays 0 with
+nothing patched, the registration table stays empty, the advertisement byte does not move, and the
+LDN trace shows no `Connect`, no `OpenStation` and no session creation. Seated inside that state with
+the maximum patched and held for 100 seconds, it behaves exactly as the search screen does. The state
+expects its list to be in hand when it is entered, so whatever fills it runs earlier.
+
+There is no static path to the app object: the class's primary vtable is at `0x025737C8`, its group
+base `0x025737B8` is held only in `main+0x2624698`, and the constructor that loads it
+(`0x00FE5D60`) has no caller, the applet framework building the app through a vtable. Nothing in
+`main` holds a pointer to the app, so its fields are reachable only by scanning the heap for the
+vtable value.
+
 The image carries no Mystery Gift protocol-buffer module. Every `.pb.cc` path in it belongs to
 `gflnet3`'s own p2p framework or to one of the game's features: trade, the three battle modules, the
 raid dens, the underground, the camp, `comp_organize` and `btl_spot`. The card is therefore not
