@@ -505,13 +505,145 @@ takes the remainder with `msub`, and branches to the error path if it is non-zer
 A gift payload is *n* records of 0x2D0 bytes. The same app allocates a 0x2D0 object at
 `0x00feba7c`. PKHeX gives a Gen 8 Wonder Card the same size.
 
-## What `StateReceiveLocal` speaks
+## The card arrives as gflnet3 application data
 
-Unknown. There is no static call path from the Mystery Gift app to the LDN session setup, checked
-over the whole app to depth 10 with a function-level call graph (`scratchpad/swsh_reach.py`). The
-game reaches its network layer through vtables and delegates, and the same search finds no path from
-the Union Room's code either.
+The card transfer is a gflnet3 message flow, the same library that carries trade and battle. There
+is no bespoke Mystery Gift network module because the app reuses gflnet3, reached through the global
+gfl net manager at `0x0261CBA8` (`read_u64` of it is the manager; a null there is the no-session
+guard on every send stub). This resolves the earlier "no Mystery Gift protobuf module": the module
+is gflnet3.
 
-A walker that bounds each function by "the first 0x1000 bytes after its entry" walks through the
-`ret` into the next function's body and reports false edges; both hops such a walk produced here
-were refcounted-pointer setters that call nothing.
+`StateReceiveLocal`'s driver `0x01004C80` (a case machine on `state+0x2A0`) does two things when it
+enters the local-wireless case:
+
+- it builds a receive job through `0x010B7100` (job ctor `0x010B73E0`, vtable group `0x0257DD88`,
+  poll `0x010B74D0`) and links it into the gfl net manager's job list at `manager+0x68`;
+- it installs a receive delegate at `state+0xB0` (`0x0100504C` group) and a per-record sink whose
+  entry is `0x01005BC0`.
+
+The job's poll `0x010B74D0` reads each inbound gflnet3 packet's four-field header, `{u32 id @0,
+u16 @4, u8 @6, u16 @8}` (accessors `0x010F7A40..0x010F7A80`), and matches it against the handlers
+registered on the job at `job+0x160` (`0x010F7550`, all four fields must be equal). A match invokes
+the sink at `receiver+0x60`, which reaches `0x01005BC0`.
+
+`0x01005BC0` tail-calls `0x00FF0E00 -> 0x00FF1FB0 -> 0x00FF2170`, the card importer. `0x00FF2170`
+requires the body be a whole multiple of `0x2D0` (720, the Wonder Card size; the reciprocal-multiply
+gate above), then loops over the *n* records: it filters each through `0x01449820`, materialises it
+with `0x00FF3EC0`, and appends the result into the app's card list at `manager+0x80`. That list is
+the 720-byte buffer the consuming states read. Its writer is `0x00FF2170`; its source is a matching
+gflnet3 message.
+
+The send half hands the message to the gflnet3 core (`0x006C2840`, queue at `core+0xF8`); the core
+manager is `read_u64(read_u64(main+0x02616B80))`. A distributor is a joiner: it seats on the console's
+hosted gift network, then sends the card as a gflnet3 core message the receive job's drain picks up.
+
+Confirmed live. The receive job is the object at `manager+0x68` (vtable group `0x0257DD88`): it
+appears when the local-wireless search screen opens and is freed on leaving it, and its card list at
+`manager+0x80` is empty throughout a seated 200-second hold with no message sent. The manager is one
+dereference past the app global: `read_u64(main+0x0261CBA8)` is a static object whose first qword is
+the heap manager (vtable `0x025819A0`); the job hangs off that manager's `+0x68`.
+
+The job carries no pre-registered handler list: `job+0x160`/`job+0x168` (the poll's compare range) are
+zero, seated or not. The poll `0x010B74D0` builds a handler entry from each message it receives, adds
+it to that list, and dispatches, so the list is empty only because nothing has arrived. The job holds
+two `std::function` slots instead: the data sink at `job+0x60`, whose target is `0x01005BC0` (the
+importer path), and a progress callback at `job+0xE0` (`0x01005C70`).
+
+Each `0x2D0` record the importer walks (`0x00FF2354`) carries a region mask at record `+0x0E` (u16,
+tested against a region bit the game derives at entry; `0xFFFF` intersects any) and a flag at record
+`+0x13`. When `+0x13` is zero the importer imports the record unconditionally; when it is non-zero it
+first calls `0x01449820`, which walks the player's held-card table (0x1662-byte stride) and skips a
+duplicate. An accepted record is appended into the card list at `manager+0x80`.
+
+Confirmed from the consuming end. Forcing `StateConfirmGift` (12) crashes on entry reading `+0x1AC`
+of a null card object (`0x015C9230 ldrb w8,[x0,#0x1AC]`, x0 = 0, from the confirm controller
+`0x015BFFA0` reached via app `0x00FFA458`), and `StateReceiveComplete` (14) draws an empty panel:
+nothing is resident until a transfer runs `0x00FF2170`.
+
+The gift manager is a separate gflnet3 consumer, not the trade sync framework. The trade pump's
+registration array (`0x006db3b0`, manager `read_u64(read_u64(main+0x02616750))`) is empty on the gift
+screen, and the gift manager (`read_u64(read_u64(main+0x0261CBA8))`, vtable `0x025819A0`) has no entry
+array at `+0xD0`/`+0xD8`. The receive job's message source is the session object at `job+0x08` (vtable
+`0x0250DAE0`); the job's poll `0x010B74D0` reads a message the manager feeds it, so the Pia
+protocol/port binding lives in the manager's drain, not in the job.
+
+A `0x2D0` record sent on every Pia reliable channel a joiner can address, `0x7C` ports 0 and 1 and
+`0x80` ports 0 and 1, each with the driver's 4-byte `u16 id, u8 disc, u8 zero` header plus the record,
+is acknowledged by the console's reliable layer and reaches the job on none of them:
+`job+0x160`/`job+0x168` stay `0`, `manager+0x80` stays `0`, the job bytes are unchanged, no fault. The
+console sends no reliable data of its own on this screen, so there is no channel to mirror.
+
+The gift transfer rides the gflnet3 core, not the reliable windows the driver sends on. The core
+manager is `read_u64(read_u64(main+0x02616B80))`, separate from the trade sync pump
+(`main+0x02616750`); the trade completes because it uses the sync pump, which drains `0x7C`/`0x80`
+directly with a 4-byte header, while the gift is a core consumer. The core send `0x006C2840` queues to
+`core+0xF8` and its Pia protocol and port are runtime fields rather than constants, and the core
+message header is 10 bytes (`0x010F7C08`: u32 id at 0, u16 at 4, u8 at 6, u8 at 7, u16 at 8), not the
+4-byte header. So no send on a reliable window with the 4-byte header reaches the gift job.
+
+The core transport is not a Pia mesh at all. The core manager `read_u64(read_u64(main+0x02616B80))`
+names itself `BeaconCommunication` (the string is at `0x02068858`, and again in its connection object
+at `conn+0x278` and `conn+0x308`), and it drives `nn::ldn::Scan`, `nn::ldn::GetNetworkInfo`,
+`nn::ldn::SetAdvertiseData` and `nn::ldn::OpenAccessPoint` (the import wrappers at `0x017978F0`,
+`0x01794C3C`/`0x01799BE0`, `0x017961B0`, `0x01794CF0`). The connection object at `core+0x50` exists
+before any peer, its send gate `+0x2FA` never arms, and a Pia mesh join changes nothing in the core
+except the LDN node count it mirrors. The transfer rides the LDN beacon advertise data: the
+distributor advertises a network whose 0x180-byte advertise data carries the card, framed by the
+core's header, and the receiver's core reassembles it from `Scan` results. This is consistent with the
+console scanning and setting advertise data every ~1.5 s forever on this screen, and with its
+ingesting a synthesised beacon into `pia_obj+0x3C0` while never calling `Connect`.
+
+The whole Pia-mesh seating result, deterministic seating and the `game_session+0x1F0` gate, is the
+trade transport and the wrong layer for a Mystery Gift card. A distributor does not join; it
+advertises. This also removes the need for the emulator's `+0x1F0` patch on the gift path, so a
+beacon-borne card is a candidate against a retail console, not only the emulator.
+
+## The beacon body frame
+
+The 0x180 bytes of LDN advertise data are a 0x18-byte header and a 0x168-byte body. The body is
+framed by the beacon core; everything above it is opaque application payload.
+
+| offset in the body | size | field |
+|---|---|---|
+| `+0x00` | 2 | CRC-16/ARC over `body[2:0x168]`, init 0, no final xor |
+| `+0x02` | 12 bits | network id, low 8 bits in `body[2]`, high 4 in the low nibble of `body[3]` |
+| `+0x03` high nibble | 4 bits | zero on every capture |
+| `+0x04` | 1 | zero on every capture |
+| `+0x05` | up to 0x163 | application payload |
+
+The network id is `0xD70` on every captured beacon, on the Mystery Gift, link trade and Max Raid
+screens alike. The payload bound is the `cmp x2, #0x163` at `0x006c2174` guarding the `memcpy` whose
+destination is `body+5` (`add x0, x8, #5`, `0x006c2148`), and `0x005 + 0x163` is the whole 0x168 body.
+
+The checksum routine is `0x0065dcb0`, a table-driven CRC-16 whose 256-entry table is built lazily by
+`0x0065def0` behind the pointer at `0x02615fd8`. The table is the standard reflected CRC-16/ARC table
+for polynomial `0xA001`, and the update is `crc = T[(crc ^ byte) & 0xFF] ^ (crc >> 8)` from init 0.
+Forty advertise-data captures taken off the wire reproduce their own stored checksum under this
+definition, and each one rebuilds byte for byte from its decoded fields, so no byte of the frame is
+unaccounted for.
+
+The builder is `0x006c1fa0`: it zeroes the 0x168 body, writes the network id at `body+2` through the
+bit-packed field writer `0x006c1830`, copies the payload to `body+5`, then computes the checksum over
+`body+2` for `0x166` bytes and stores it at `body+0`. When the payload is missing or too long it
+stores `0xFFFF` there instead (`0x006c21d4`).
+
+The checksum is verified on the sending side. `0x006c1be0` reads the stored halfword, recomputes it
+over the same range and returns 0 on a mismatch, and each of its call sites runs it against a body the
+game has just built, before `SetAdvertiseData` (`0x006b5ba8` builds then validates at `0x006b5bb0`;
+`0x006c3de4` and `0x006c42c4` validate the advertise object at `conn+0x360` before the 0x168 copy at
+`0x017760e0`). No call site validates a body that arrived from a scan.
+
+The receive path reads the payload without checking the halfword. `0x010f6600` walks the scan results
+as an array of 0x180-byte objects, each a vtable pointer with the body at `+8`, taking the network id
+through `0x006c1d50`, then the payload pointer through `0x006c1f80`, the accessor that returns
+`body+5` and the only caller of which is `0x010f66c4`. The payload goes to `0x010f8cf0`, which stores
+the pointer in a message object, and from there to the handler at `[gfl_job+0x68]` vtable `+0x38`.
+
+The station-information structure read out of a receiver's beacon is this payload, so its offsets sit
+5 bytes past the body and 0x1d bytes past the start of the advertise data.
+
+Unresolved: the layout of the payload a distributor sends, the gflnet3 message header inside it (10
+bytes at `0x010F7C08` on the send path: u32 id at 0, u16 at 4, u8 at 6, u8 at 7, u16 at 8), and how a
+720-byte record fragments across beacons when the payload holds at most 355 bytes. `0x136`, named a
+channel in an earlier revision, is a `memset` length at `0x010F7E00`; the message id comes from the
+getter `0x010F7050`.
