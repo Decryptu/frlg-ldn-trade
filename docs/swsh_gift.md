@@ -707,6 +707,50 @@ With the first field zero the poll walks the handler list between `job+0x160` an
 entries are 0x88 bytes, comparing each against the header with `0x010f7550`. When nothing matches it
 appends a new entry through `0x010f7360` and the list grows.
 
+## The message the poll reassembles
+
+A type-1 payload reaches the poll only when the first header field is zero. Serving one beacon with
+that field set to 1 and then one with it zero, to a console that had received no beacon of any kind,
+left `job+0x160` null for the first and moved it from null to an allocated vector 1.77 s into the
+second, with `manager+0x80` taking its first clock stamp in the same sample. The field is causal.
+
+The poll treats the list between `job+0x160` and `job+0x168` as reassembly contexts of 0x88 bytes, one
+per message in flight, not as a registry of handlers. `0x010f7550` matches an arriving fragment to a
+context, `0x010f7430` accumulates it, and a second pass erases each context that has become complete
+and hands the reassembled bytes on. So an empty list after a beacon is what a message that completed
+in one pass leaves behind, and is not evidence that nothing was appended.
+
+`0x010f7430` accepts a fragment only when every field of its header except the index equals the
+context's, so those fields are the message key:
+
+| header offset | size | meaning |
+|---|---|---|
+| `+0` | 4 | zero, or the poll returns at once |
+| `+4` | 2 | part of the message key |
+| `+6` | 1 | total fragment count |
+| `+7` | 1 | this fragment's index, refused unless below the count |
+| `+8` | 2 | part of the message key |
+
+A context holds the fragments in a vector at `context+0x20` whose elements are `0x12C` bytes, so a
+fragment carries exactly 300 bytes of body, written at its index (`0x010f7100`). Arrival is recorded
+in a bitmap at `context+0x58` against the count at `context+0x60`, which caps a message at 256
+fragments; a fragment whose bit is already set is dropped, so a repeated beacon is harmless.
+`0x010f7610` reports the message complete when every bit below the count is set.
+
+The body of a fragment starts at `payload+11`: `0x010f7c60` returns the message pointer advanced by
+the ten header bytes. A payload holds 355 bytes, so the 300-byte fragment and its header fit with room
+to spare.
+
+On each accepted fragment the poll reads a pair of progress values (`0x010f7720`, `0x010f7730`) and
+calls the callback at `job+0xE0`. On completion it takes the reassembled buffer through `0x010f7680`,
+whose length (`0x010f7060`) is the whole vector, the fragment count multiplied by 300, and passes it
+to the sink.
+
+The importer downstream requires a whole multiple of `0x2D0`, and 300 does not divide 720, so a
+fragment count that satisfies both is a multiple of twelve: twelve fragments carry 3600 bytes, which
+is five records. Whether a distribution sends twelve fragments, or an intermediate step between the
+sink and `0x00ff2170` trims the buffer, is unresolved.
+
 ## The store is not drained on the Mystery Gift screen
 
 Nothing above runs there. `0x010f65a0` is the gfl net manager's per-frame update, reached with the
@@ -714,12 +758,13 @@ manager from `0x0261cba8` as its argument. It takes a steady-clock reading on en
 receiver at `manager+0x60` through the swap `0x006c5300`, walks the entries, and writes that reading
 to `manager+0x80` on every pass that finds a non-empty store.
 
-On the search screen it does neither. Three bodies accepted from three beacons sat in the store with
-its count climbing 1, 2, 3 and never falling, the first of them still in place 27 minutes and three
-beacons later, through 24,651 consecutive samples; `manager+0x80` held one constant value throughout;
-and `job+0x160` and `job+0x168` were both null rather than an allocated empty list. A store that is
-never drained means the payload type byte is never read, so a beacon carrying a well-formed message
-and one carrying a malformed one are indistinguishable from the handler list.
+A session can reach a state where it does neither. In one, three bodies accepted from three beacons
+sat in the store with its count climbing 1, 2, 3 and never falling, the first still in place 27
+minutes later through 24,651 consecutive samples, while `manager+0x80` held one constant value and
+`job+0x160` stayed null. Nothing measured on such a session says anything about the payload, since the
+type byte is never read there. Two later sessions drained normally, so the condition is a property of
+the session rather than of the screen, and what causes it is unresolved. Check that the update is live
+before reading any beacon result: `manager+0x80` advancing is the cheapest proof.
 
 This also settles what `manager+0x80` is. It is where the update stamps its clock reading, not the
 Wonder Card list an earlier revision of this page called it; the `+0x80` accesses around the importer
