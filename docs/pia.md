@@ -386,6 +386,13 @@ checked field by field, and every failure is a silent drop:
 | the sender's station location | resolves to a station it knows | drop, `0x017c6f04` |
 | `[0x37]` one byte, result 0 only | under 5 | drop, `0x017c6ff0` |
 
+A receiver's ack table is 32 entries of 19 bytes, `{u8 stream id, u16 ack id big-endian, 16-byte
+mask}`. Only the entry for the stream being acked carries a real ack id; a Shield leaves the slots it
+does not use holding stale bytes under stream id 0, so `22284`, `16`, `57080` and `2517` read as ack
+ids for slots 1, 2, 4 and 5 while slot 0 held 2. Taking the largest entry therefore reads a constant
+as an acknowledgement and overruns the sender's window: 401 messages went out against a window the
+console had advanced to 97, and it stopped acking. Read the one entry, never the maximum.
+
 The last one decides how long the message has to be. `RESPONSE_SIZE` is 17 bytes, the allocation the
 console's own short-form sender asks for (`mov w3, #0x11` at `0x017c6c30`), and 0x37 is 38 bytes past
 the end of it, so a 17-byte result-0 response puts the decision on whatever the receive buffer

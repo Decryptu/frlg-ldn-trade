@@ -258,7 +258,17 @@ first attempt, with a 148-byte join response and the station count moving 1 to 2
 to 0 brings reason 1 back. The maximum is the whole gate.
 
 Once seated, the scene's transport traffic matches the trade scene's: RTT probes, reliable-window
-opens on two ports, and mesh updates.
+opens on two ports, and mesh updates. Above the transport it says nothing: no application payload in
+180 seconds of holding the mesh, and none in a further 180 seconds while being sent the trade scene's
+ping. Nothing ever opens on 0x84. The scene does accept application data, acking 96 pings on 0x7C in
+sequence. It is a receiver that waits to be pushed at.
+
+The image carries no Mystery Gift protocol-buffer module. Every `.pb.cc` path in it belongs to
+`gflnet3`'s own p2p framework or to one of the game's features: trade, the three battle modules, the
+raid dens, the underground, the camp, `comp_organize` and `btl_spot`. The card is therefore not
+carried the way a traded Pokemon is. The Mystery Gift app is a state machine of ten states, named by
+the strings its constructors take, of which `StateReceiveLocal` (`0x01004938`) is local wireless; its
+own code references only its progress-bar layout, so the transfer is delegated.
 
 ## The participant maximum is zero on this screen
 

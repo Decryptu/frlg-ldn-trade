@@ -103,7 +103,9 @@ From the radio to a content's receive event:
 
 ### The application header
 
-`0x006db840` builds a message at `manager+0x240f0`:
+A payload is `struct.pack("<HBB", id, discriminator, 0)` then the body: id 97 with the body `0a00`
+assembles to `61 00 00 00 0a 00`, the ping the console repeats. `0x006db840` builds a message at
+`manager+0x240f0`:
 
     manager+0x240f0   u16   the message id            strh w3
     manager+0x240f2   u8    a discriminator           from manager+0x480f0
@@ -114,6 +116,17 @@ and `0x006db620` takes it apart the same way. The discriminator is a generation 
 `[content+0x370] = ([content+0x370] + 1) mod 255` (`0x008b6670`), pushed into `[manager+0x480f0]`.
 Every content's registrar sets it to zero on its way out (`0x010d53a0`). All 107 application
 payloads in one whole run carried zero there, on every id.
+
+### Reading the registrations live
+
+The poll walks the manager's entry array, so the ids a running scene accepts can be listed from
+memory without sending anything:
+
+    manager = read_u64(read_u64(main + 0x02616750))     0x006a9a70, the poll's caller
+    count   = read_u64(manager + 0xD8)                  0x006db3dc
+    array   = read_u64(manager + 0xD0)                  0x006db3e0
+    entry i = array + i * 0x10                          the shift at 0x006db3e4
+    id      = read_u16(holder + 0x160)
 
 ### The three dispatch gates
 
