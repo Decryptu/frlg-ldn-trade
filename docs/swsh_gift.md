@@ -807,6 +807,32 @@ anything else returns success with nothing built. Kinds 3 and 5 take the shortes
 (`0x010b5fd8`), which keeps the word at record `+0x20` in header `+0x30` and returns, building no
 sub-object. Kind 1 goes to `0x010b58f0` and kinds 2 and 4 to routines of their own.
 
+## The Pokemon a kind-1 record carries
+
+`0x010b58f0` reads the gift out of the record. Two arrays of nine entries, one per language and
+`0x1C` bytes each, come first: the names at `0x030`, each `0x1A` bytes of UTF-16 with a language byte
+at `+0x1A`, and the nicknames at `0x12C`, each `0x1A` bytes of UTF-16. The language is chosen through
+the table at `0x02067650`, which maps the game's language to an index from 0 to 8.
+
+The Pokemon itself follows:
+
+| record offset | size | field |
+|---|---|---|
+| `+0x22E` | 2 | kept in header `+0x10` |
+| `+0x230` | 2 | first move |
+| `+0x232` | 2 | second move |
+| `+0x234` | 2 | third move |
+| `+0x236` | 2 | fourth move |
+| `+0x240` | 2 | species |
+| `+0x242` | 1 | form |
+| `+0x243` | 1 | kept in header `+0x64` |
+| `+0x245` | 1 | level |
+| `+0x25C` | 1 | kept in header `+0x63` |
+| `+0x272` | 1 | language, used when it is 2 or more, otherwise the game's own |
+
+Run against the game's own parser under emulation, a record built to this map reads back with its
+species, level, four moves, nickname, card id and kind in the header the parser fills.
+
 Run against the game's own validator under emulation, a record carrying the checksum is accepted and
 reaches the kind-3 path with the word from `+0x20` in place, while the same record with the checksum
 zeroed, and an all-zero record, both return `0x80000001`.
@@ -837,6 +863,25 @@ of the 720-byte record itself.
 The receive job is rebuilt whenever the search screen is re-entered: both `manager+0x68` and the
 object the sink is bound to move. Anything holding those addresses across a screen exit is reading a
 dead object.
+
+## The first card the game kept
+
+A sealed record of kind 3 was accepted, shown in the gift list, confirmed, and written to the save.
+The whole envelope works: the beacon, the body checksum, the type byte, the fragmentation and its
+300-byte seams, the message checksum, the reassembly, the sink, the record checksum, the region mask,
+the gift kind, the importer, the gift list, the confirmation screen and the save write, from a beacon
+built here against an unmodified console.
+
+Three record fields were read back off the screen. The title came from the kind at `+0x11`, the
+quantity came from the word at `+0x20`, which was set to 1, and the date rendered as 1 January 2070,
+which is what the game's epoch makes of zeroed date fields.
+
+The card delivered nothing, which is what a kind-3 record with an empty payload should do: that path
+builds no sub-object, and the identifier of what to give was zero. The save nonetheless changed in 29
+regions totalling 671 bytes, clustered around `0x062000`, and gained a 789-byte `poke_trade` file.
+
+The album does not keep the wire record. Neither the 720 bytes nor any string in them appears in the
+save, so the card is re-encoded on the way in, and the stored form is its own question.
 
 ## The store is not drained on the Mystery Gift screen
 
