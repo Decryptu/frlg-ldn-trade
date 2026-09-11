@@ -262,8 +262,11 @@ Protocol update session about six times a second, listing the joiner as seat 1; 
 and authenticated in one run, against a control with no node joined that sends nothing on that port
 for five minutes. An earlier reading of silence here was a socket losing the race for broadcast
 delivery against the emulator's own wildcard socket on 12345, and only an external capture sees them.
-No run on this scene has yet acknowledged one, and a Pia host repeats its update session until every
-station does.
+The update session is acknowledged, and has been on every run. With the ack on, one arrives and the
+rebroadcast stops after 1.6 seconds; with `--no-ack-update` against the same screen and the same
+patch, 612 arrive and are still coming at six a second after 100 seconds. A run reporting one update
+session is the acknowledgement working, not a run that missed them. The six a second seen in a
+capture is the console calling an LDN node that has not taken the Pia seat.
 
 Nothing else is on the wire. A capture of every port in both directions, a listener bound across
 48,123 UDP ports for ten minutes, and the emulator's own socket table agree: the only flows between
@@ -343,6 +346,30 @@ and parking our network's communication id at `pia_obj+0x3C0` each time, and non
 The setter that would raise the maximum on a running session, `0x006b9900`
 (`str w1, [x0, #0x1f0]`), is reached only through the thunk `0x006b5c00`, which nothing calls and
 which no relocated data slot holds. The count comes from session creation, not from a setter.
+
+## The app's state machine
+
+The Mystery Gift app is one state machine of seventeen states. Its dispatcher (`0x00FE6F80`) reads a
+request object held at `app+0x718`: a ready flag at `+0x60`, the next state's id at `+0x64`. When the
+flag is set and the id is at most 16 it jumps through the table at `0x020641A4` and builds that
+state. `0x00FF0DE0` is the setter, `SetNextState(id)`, which writes the id and raises the flag; 63
+sites call it.
+
+| id | state | id | state |
+|---|---|---|---|
+| 0 | TopMenu | 9 | SelectReceiveDataSerial |
+| 1 | ReceiveMenu | 10 | SelectReceiveDataRankMatch |
+| 2 | **ReceiveLocal** | 11 | SelectReceiveDataFromBall |
+| 3 | ReceiveInternet | 12 | ConfirmGift |
+| 4 | ReceiveSerial | 13 | ReceiveNews |
+| 5 | ReceiveRankMatch | 14 | ReceiveComplete |
+| 6 | ReceiveFromBall | 15 | ConnectPalma |
+| 7 | **SelectReceiveDataLocal** | 16 | (default, TopMenu) |
+| 8 | SelectReceiveDataInternet | | |
+
+The local-wireless path is 2 then 7: the search, then the screen that picks from what a distributor
+offers. What advances 2 to 7 is unread; `StateReceiveLocal` sets no next state itself, and the sites
+that do are in the shared base.
 
 The image carries no Mystery Gift protocol-buffer module. Every `.pb.cc` path in it belongs to
 `gflnet3`'s own p2p framework or to one of the game's features: trade, the three battle modules, the
