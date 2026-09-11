@@ -367,6 +367,23 @@ The whole handshake, once [3] is cleared:
 and it repeats that response until acknowledged. The u32 in an ack is the acked message's own
 trailing counter.
 
+A retail Sword closes that sequence with no ack of its own request. A Shield 1.3.2 under Ryujinx does
+not: without a type-5 ack of the console's connection request it answers a well-formed response with
+silence and re-issues its request on its own 10-second timer, never sending a connection response.
+With the ack, 3 of 22 otherwise identical attempts completed; the bytes out were identical in all 22
+and nothing sent correlates with the difference. `--ack-request` on the bridge driver sends it.
+
+Three outcomes separate on the wire after our response goes out. Its connection response is
+acceptance. A retransmit of its request every 500 ms, carrying the same trailing counter, is
+rejection: putting our own constant and variable ids in the response instead of the ids read out of
+its request draws exactly that, 20 retransmits and then silence. Silence with no retransmit is
+neither, and the console re-requests 10 seconds later.
+
+The nat-flags byte at [1] of the console's own request varies run to run with nothing sent by the
+joiner to explain it, across 26 attempts and both readings of every byte the joiner controls. What
+writes it is unknown; the record it comes from is filled by the station-location parser
+`0x0185ee20`.
+
 ## The Mesh Protocol (0x18)
 
 The dispatcher is reached through `MeshProtocol::vfunc9` (the receive slot on every Pia protocol

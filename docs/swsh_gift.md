@@ -257,15 +257,44 @@ itself is a dead end for the join.
 
 The live refusal is not the application callback. A join over the bridge draws `JOIN_RESPONSE`
 `02 00 ff ff 00`: the short five-byte "no station index" form, reason 0, where a seated two-station
-response is 148 bytes. Reason 0 is the transport check `0x0154806c`, not the application callback
-that returns reason 1 on retail hardware. So the emulated console refuses the seat one layer below
-the callback, at the mesh station table, before the maximum this section measured is ever consulted.
-Where the mesh's seat capacity lives is unread; it is a Pia field the `MeshProtocol` object reaches,
-not `game_session`. This is not yet attributable to the gift screen's policy: the same joiner does
-not complete a station handshake against a link-trade host that genuinely accepts joiners (the
-console floods connection requests and never answers), so there is no positive control that any
-session seats this joiner. The keys and framing are proven (every packet authenticates across three
-sessions with three derived keys); the join handshake is not.
+response is 148 bytes. Reason 0 is the transport check, not the application callback that returns
+reason 1 on retail hardware. So the emulated console refuses the seat one layer below the callback,
+at the mesh station table, before the maximum this section measured is ever consulted. A link-trade
+host on the same emulator, which accepts joiners with a maximum of 2 and no patch, answers the same
+join request with the same five bytes, so the refusal is not a property of the gift scene. The keys
+and framing are proven, every packet authenticating across four sessions with four derived keys.
+
+## The transport check counts stations against a maximum
+
+The check the reason byte comes from is `0x017bb2e0`, called by `CheckApprovalJoin` before the
+application callback. It returns `0xFF` for no objection and otherwise the reason byte, unchanged, on
+the wire. Its first two tests both answer 0:
+
+    0x017bb358  bl   0x017bab70        the live station count
+    0x017bb35c  ldrh w9, [x19, #0xa8]  the maximum
+    0x017bb368  b.hs 0x017bb380        count >= max, reason 0
+    0x017bb370  bl   0x017bb5a0        the index of the first free station slot
+    0x017bb378  cmp  w8, #0xfd         no free slot, reason 0
+
+The object is `read_u64(read_u64(main + 0x0262F7B0))`, a third object beside `pia_obj`
+(`main + 0x02616A30`) and `game_session`, which is why patching `game_session+0x1F0` changed nothing.
+
+| field | width | what it holds |
+|---|---|---|
+| `+0xA8` | u16 | the maximum station count |
+| `+0xAA` | u8 | an enable byte; zero returns 2 before any other test |
+| `+0xAB` | u8 | selects which bitmask word the count reads |
+| `+0xAC` | u8 | how many bits of the bitmask the count walks |
+| `+0xC4` | u32 | the occupancy bitmask, read when `[0xAC] == [0xAB]` |
+| `+0xC8` | u32 | the occupancy bitmask otherwise, and the only one the free-slot search reads |
+
+A set bit is an occupied station. The count starts at 1 and adds one per set bit (`0x017bad94`), so a
+mesh holding only the host counts 1 and a mesh holding the host and one other station counts 2. The
+free-slot search returns the index of the first clear bit, or `0xFD` when every bit is set.
+
+Whether the ldn_mitm association sets the joiner's bit before its Pia join request arrives is unread.
+If it does, the count reaches the maximum of 2 before the request is parsed, and the bridge refuses
+every joiner on every screen for a reason the retail console never reaches.
 
 The maximum scales with the local-play mode, read live in three sessions of the same running game:
 0 on the Mystery Gift search screen, 2 when hosting a link trade, 4 when hosting a Max Raid. The
