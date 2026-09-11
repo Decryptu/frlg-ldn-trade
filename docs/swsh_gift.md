@@ -838,11 +838,20 @@ species, four moves, nickname, card id and kind in the header the parser fills.
 A record carrying species 25 was delivered to a console and the Pokemon it produced was species 25, so
 the species field holds an ordinary Pokedex index.
 
-The level is not in the record. A card specifying nothing about it produced a Pokemon at level 20 with
-exactly 8000 experience, which is level 20 on the cube curve. The record the console held was
-byte-identical to the one sent, and it contains no byte equal to 20 and no halfword or word equal to
-8000, so the level was chosen by the game. The trainer id the Pokemon carries was not in the record
-either. What supplies them is unresolved.
+The level is rolled at claim time. One record was claimed twice, from a byte-identical file, and
+produced level 20 once and level 35 the other time. A record differing only at `+0x245` produced level
+73, which looked like that byte mattering until the repeat showed both were draws, so `+0x245` has no
+demonstrated effect on the level. The experience always matches the species' own growth group: a
+cube-curve species arrived with 8000 at level 20, and a slower-curve species with 96 at level 4.
+
+Every record sent so far carries zero wherever the level belongs, and every claim reports the Pokemon
+as met at level 0, so the rolling is most likely the ordinary rule that a level of zero means choose
+one. Which field holds it is unresolved: nothing outside the parser reads the record's species, and
+the code that reads the parsed copy is the display path, so the routine that builds the Pokemon has
+not been located. The trainer id is not in the record either.
+
+Move legality is not checked. A record gave a species the four moves of an unrelated one, none of them
+learnable by it, and the game accepted all four.
 
 Run against the game's own validator under emulation, a record carrying the checksum is accepted and
 reaches the kind-3 path with the word from `+0x20` in place, while the same record with the checksum
