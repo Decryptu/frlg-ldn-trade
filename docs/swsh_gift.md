@@ -528,18 +528,17 @@ the sink at `receiver+0x60`, which reaches `0x01005BC0`.
 
 `0x01005BC0` tail-calls `0x00FF0E00 -> 0x00FF1FB0 -> 0x00FF2170`, the card importer. `0x00FF2170`
 requires the body be a whole multiple of `0x2D0` (720, the Wonder Card size; the reciprocal-multiply
-gate above), then loops over the *n* records: it filters each through `0x01449820`, materialises it
-with `0x00FF3EC0`, and appends the result into the app's card list at `manager+0x80`. That list is
-the 720-byte buffer the consuming states read. Its writer is `0x00FF2170`; its source is a matching
-gflnet3 message.
+gate above), then loops over the *n* records: it filters each through `0x01449820` and materialises it
+with `0x00FF3EC0`. Where the materialised card is kept is unresolved; `manager+0x80`, named here in an
+earlier revision, is the per-frame update's clock stamp.
 
 The send half hands the message to the gflnet3 core (`0x006C2840`, queue at `core+0xF8`); the core
 manager is `read_u64(read_u64(main+0x02616B80))`. A distributor is a joiner: it seats on the console's
 hosted gift network, then sends the card as a gflnet3 core message the receive job's drain picks up.
 
 Confirmed live. The receive job is the object at `manager+0x68` (vtable group `0x0257DD88`): it
-appears when the local-wireless search screen opens and is freed on leaving it, and its card list at
-`manager+0x80` is empty throughout a seated 200-second hold with no message sent. The manager is one
+appears when the local-wireless search screen opens and is freed on leaving it, and nothing in it
+moved through a seated 200-second hold with no message sent. The manager is one
 dereference past the app global: `read_u64(main+0x0261CBA8)` is a static object whose first qword is
 the heap manager (vtable `0x025819A0`); the job hangs off that manager's `+0x68`.
 
@@ -553,7 +552,7 @@ Each `0x2D0` record the importer walks (`0x00FF2354`) carries a region mask at r
 tested against a region bit the game derives at entry; `0xFFFF` intersects any) and a flag at record
 `+0x13`. When `+0x13` is zero the importer imports the record unconditionally; when it is non-zero it
 first calls `0x01449820`, which walks the player's held-card table (0x1662-byte stride) and skips a
-duplicate. An accepted record is appended into the card list at `manager+0x80`.
+duplicate. Where an accepted record is kept is unresolved.
 
 Confirmed from the consuming end. Forcing `StateConfirmGift` (12) crashes on entry reading `+0x1AC`
 of a null card object (`0x015C9230 ldrb w8,[x0,#0x1AC]`, x0 = 0, from the confirm controller
@@ -570,7 +569,7 @@ protocol/port binding lives in the manager's drain, not in the job.
 A `0x2D0` record sent on every Pia reliable channel a joiner can address, `0x7C` ports 0 and 1 and
 `0x80` ports 0 and 1, each with the driver's 4-byte `u16 id, u8 disc, u8 zero` header plus the record,
 is acknowledged by the console's reliable layer and reaches the job on none of them:
-`job+0x160`/`job+0x168` stay `0`, `manager+0x80` stays `0`, the job bytes are unchanged, no fault. The
+`job+0x160`/`job+0x168` stay `0`, the job bytes are unchanged, no fault. The
 console sends no reliable data of its own on this screen, so there is no channel to mirror.
 
 The gift transfer rides the gflnet3 core, not the reliable windows the driver sends on. The core
@@ -706,9 +705,30 @@ u16 at 4, u8 at 6, u8 at 7}` in one register and returns the `u16 at 8` in anoth
 
 With the first field zero the poll walks the handler list between `job+0x160` and `job+0x168`, whose
 entries are 0x88 bytes, comparing each against the header with `0x010f7550`. When nothing matches it
-appends a new entry through `0x010f7360` and the list grows. So the list growing is the signal that a
-beacon payload was accepted as a message, and it does not depend on the payload carrying a usable
-card.
+appends a new entry through `0x010f7360` and the list grows.
+
+## The store is not drained on the Mystery Gift screen
+
+Nothing above runs there. `0x010f65a0` is the gfl net manager's per-frame update, reached with the
+manager from `0x0261cba8` as its argument. It takes a steady-clock reading on entry, drains the
+receiver at `manager+0x60` through the swap `0x006c5300`, walks the entries, and writes that reading
+to `manager+0x80` on every pass that finds a non-empty store.
+
+On the search screen it does neither. Three bodies accepted from three beacons sat in the store with
+its count climbing 1, 2, 3 and never falling, the first of them still in place 27 minutes and three
+beacons later, through 24,651 consecutive samples; `manager+0x80` held one constant value throughout;
+and `job+0x160` and `job+0x168` were both null rather than an allocated empty list. A store that is
+never drained means the payload type byte is never read, so a beacon carrying a well-formed message
+and one carrying a malformed one are indistinguishable from the handler list.
+
+This also settles what `manager+0x80` is. It is where the update stamps its clock reading, not the
+Wonder Card list an earlier revision of this page called it; the `+0x80` accesses around the importer
+`0x00ff2170` are the thread-local guard stack that `nn::os::GetTlsValue` returns, the same push and
+pop that surrounds the store append at `0x006c54a4`.
+
+What ticks the update is unresolved. Its only caller is `0x01109240`, a sequence of per-subsystem
+updates, and the function holding that call, `0x00f1df30`, has neither a `bl` caller nor a vtable
+slot, so it is reached through a registered callback.
 
 A 0x2D0 Wonder Card record does not fit in one payload, which holds at most 355 bytes, so a card
 spans several beacons. How the header's `+6` and `+7` bytes index the pieces is unresolved.
