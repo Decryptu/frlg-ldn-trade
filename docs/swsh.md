@@ -48,11 +48,19 @@ covered by any of them, and none of them handles Pia host migration.
   bytes of it change between runs, one per 17-byte record in a run of three otherwise identical
   ones; within a run the byte decrements by one down the three. Two captures 19 minutes apart differ
   by 19 in that byte, consistent with a minute counter, on one data point.
-- What `StateReceiveLocal` speaks. The console hosts on the Mystery Gift local-wireless screen
-  and does not scan its own channel, so the distributor joins.
-- Which gate refuses the Mystery Gift mesh join. The game's approval callback filters the joining
-  station's identity through a block list and a participant allow list, and both produce reason 1, so
-  the wire does not say which fired. [The Mystery Gift menu](swsh_gift.md).
+- Whether a retail console accepts an advertisement built here. Mystery Gift is solved against an
+  emulator reached over ldn_mitm, which never exercised an advertisement's crypto, and the host that
+  serves a card over real LDN has not been run against a console. [The Mystery Gift
+  menu](swsh_gift.md).
+- What scene id a distributor advertises. The console's scan filter keys on the communication id, and
+  a distributor's own advertisement has never been observed.
+- Where a materialised Wonder Card is kept. The importer builds a `0x3A8` card object and the album
+  re-encodes it, since neither the 720-byte record nor any string in it appears in the save.
+- What supplies a gift Pokemon's trainer id. It is not in the record, and the routine that builds the
+  Pokemon has not been located: nothing outside the parser reads the record's species, and the code
+  that reads the parsed copy is the display path.
+- What the record's byte at `+0x245` does. The parser keeps it in the card header and no delivered
+  Pokemon has changed with it.
 - How a partner's command reaches a sub-element's body word. The receive handler `0x010dbc90` does
   not write it. That an arriving command lets the shared value move is inferred from a per-station
   flag and from every run so far.
