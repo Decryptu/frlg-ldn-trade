@@ -758,6 +758,7 @@ class HostTransport:
         self._ready = threading.Event()
         self._stop = threading.Event()
         self._err = None
+        self._pending_app_data = None
 
     def start(self, timeout=30, attempts=3, settle=1.5, preflight=True):
         """`preflight=False` skips the iw-phy AP-mode check."""
@@ -796,6 +797,16 @@ class HostTransport:
                 time.sleep(settle)
         light_cleanup(self.log)
         raise RuntimeError(f"LDN host bring-up failed after {attempts} attempt(s):\n{last_err}")
+
+    def set_app_data_later(self, data):
+        """Swap the advertisement's application data from another thread.
+
+        The host loop owns the trio task, so the new bytes are parked here and applied on its next
+        pass; advertisements go out every 0.1 s, so a swap is live within a frame or two. Used to walk
+        a gift's fragments across successive beacons (docs/swsh_gift.md).
+        """
+        self.app_data = bytes(data)
+        self._pending_app_data = self.app_data
 
     def _run_host(self):
         try:
@@ -854,6 +865,10 @@ class HostTransport:
                           f"(ssid={self.ssid.hex()[:8]}..., channel {info.channel}).")
                 self._ready.set()
                 while not self._stop.is_set():
+                    pending = self._pending_app_data
+                    if pending is not None:
+                        self._pending_app_data = None
+                        network.set_application_data(pending)
                     with trio.move_on_after(0.2):
                         event = await network.next_event()
                         self._on_event(event, network)
