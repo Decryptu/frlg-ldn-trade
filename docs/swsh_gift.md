@@ -284,23 +284,37 @@ else it holds. Six advertisement variants built from the console's own sessions 
 the scan and none drew a `Connect`, so what the game requires is above the filter, in the
 advertisement's own contents.
 
-## The scene ids a session can carry
+## The gift screen runs the mode that creates no session
 
-One selector (`0x01096730`) turns a mode into a scene id and a participant count, through a jump
-table at `0x02066C14`:
+One field is the mode, `session_config+0x70`, and it drives both the scene id and the advertisement.
+`0x01096730` turns it into a scene id and a participant count through a jump table at `0x02066C14`,
+and `0x010961a8` turns the same mode into the advertisement byte through a table at `0x02066C40`:
 
-| mode | scene id | participants |
-|---|---|---|
-| 1 | 60021 | 2 |
-| 2 | 60001 | 2 |
-| 3 | 60002 | 2 |
-| 4 | 60003 | 2 |
-| 5 | 60004 | 4 |
-| anything else | 60005 | 2 |
+| mode | scene id | participants | advertisement `0x97` |
+|---|---|---|---|
+| 0 | none, the creator returns false at `0x01096764` | | 0xFF |
+| 1 | 60021 | 2 | 0x01 |
+| 2 | 60001 | 2 | 0x0D |
+| 3 | 60002 | 2 | 0x0E |
+| 4 | 60003 | 2 | 0x0F |
+| 5 | 60004 | 4 | 0x10 |
+| 6 | 60005 | 2 | 0x1E |
 
-60001 is the link trade, measured on the wire, and 60004's count of four matches the maximum a Max
-Raid host advertises. 60021 is 60005 with bit 4 set, a relation the compare at `0x010fc7f0` uses.
-Which of them a distribution carries is unmeasured; 65535 is none of them.
+The last column is measured independently: the advertisement carries 0x0D on the link trade and 0xFF
+on the Mystery Gift search screen, which are the table's entries for modes 2 and 0. Mode 2 is
+therefore the link trade, its scene id 60001 matching the advertised one, and **the Mystery Gift
+search screen runs mode 0, which creates no session at all**. That is why its scene id is 65535,
+why its participant maximum is 0, and why a station seated in its mesh by force finds no listener.
+
+A beacon offered to that screen carrying any of 60001 through 60021 draws nothing: those scene ids
+belong to the game's other session modes, and none of them is a distribution. Six of them were swept
+one per run against a live gift screen, with the console answering about fifty of our scans per run
+and parking our network's communication id at `pia_obj+0x3C0` each time, and none produced a
+`Connect`, an `OpenStation`, or any movement in the maximum or the registration table.
+
+The setter that would raise the maximum on a running session, `0x006b9900`
+(`str w1, [x0, #0x1f0]`), is reached only through the thunk `0x006b5c00`, which nothing calls and
+which no relocated data slot holds. The count comes from session creation, not from a setter.
 
 The image carries no Mystery Gift protocol-buffer module. Every `.pb.cc` path in it belongs to
 `gflnet3`'s own p2p framework or to one of the game's features: trade, the three battle modules, the
