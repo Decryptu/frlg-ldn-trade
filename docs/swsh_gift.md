@@ -590,8 +590,8 @@ before any peer, its send gate `+0x2FA` never arms, and a Pia mesh join changes 
 except the LDN node count it mirrors. The transfer rides the LDN beacon advertise data: the
 distributor advertises a network whose 0x180-byte advertise data carries the card, framed by the
 core's header, and the receiver's core reassembles it from `Scan` results. This is consistent with the
-console scanning and setting advertise data every ~1.5 s forever on this screen, and with its
-ingesting a synthesised beacon into `pia_obj+0x3C0` while never calling `Connect`.
+console scanning and setting advertise data every ~1.5 s forever on this screen, and with a
+synthesised beacon reaching the beacon store while no `Connect` or `OpenStation` call is made.
 
 The whole Pia-mesh seating result, deterministic seating and the `game_session+0x1F0` gate, is the
 trade transport and the wrong layer for a Mystery Gift card. A distributor does not join; it
@@ -627,17 +627,50 @@ bit-packed field writer `0x006c1830`, copies the payload to `body+5`, then compu
 `body+2` for `0x166` bytes and stores it at `body+0`. When the payload is missing or too long it
 stores `0xFFFF` there instead (`0x006c21d4`).
 
-The checksum is verified on the sending side. `0x006c1be0` reads the stored halfword, recomputes it
-over the same range and returns 0 on a mismatch, and each of its call sites runs it against a body the
-game has just built, before `SetAdvertiseData` (`0x006b5ba8` builds then validates at `0x006b5bb0`;
-`0x006c3de4` and `0x006c42c4` validate the advertise object at `conn+0x360` before the 0x168 copy at
-`0x017760e0`). No call site validates a body that arrived from a scan.
+## The gate a received beacon passes
 
-The receive path reads the payload without checking the halfword. `0x010f6600` walks the scan results
-as an array of 0x180-byte objects, each a vtable pointer with the body at `+8`, taking the network id
-through `0x006c1d50`, then the payload pointer through `0x006c1f80`, the accessor that returns
-`body+5` and the only caller of which is `0x010f66c4`. The payload goes to `0x010f8cf0`, which stores
-the pointer in a message object, and from there to the handler at `[gfl_job+0x68]` vtable `+0x38`.
+`0x006c1be0` is the gate. It takes one entry object and returns 1 to accept it, and it runs on both
+sides of the core. On the build path it checks a body the game has just made, before
+`SetAdvertiseData` (`0x006b5ba8` builds then validates at `0x006b5bb0`; `0x006c3de4` and `0x006c42c4`
+validate the advertise object at `conn+0x360` before the 0x168 copy at `0x017760e0`). On the ingestion
+path it decides whether a received body is kept: `0x006bb9d4`, `0x006c4b38` and `0x006ca0dc` each copy
+the received advertisement into a stack entry object through `0x006c2360`, call the gate, and offer
+the entry to the store at `0x006c53b0` only when bit 0 of the result is set.
+
+The gate applies four tests in order, and any one of them rejects:
+
+1. the core object behind `0x02616b80` exists;
+2. the halfword at `body+0` equals the checksum recomputed over `body[2:0x168]`;
+3. the body's 12-bit network id differs from the halfword behind `0x02616b88`, the identifier the
+   builder falls back to when the core is absent;
+4. the body's network id agrees with the core's own, nibble by nibble (`0x006c1cf0`). The low nibble
+   must be equal or the entry is refused. If the second nibble differs the entry is accepted; failing
+   that, the third nibble must be equal.
+
+A wrong checksum therefore stops a body from ever being stored. Two beacons built from one capture,
+differing only in the two checksum bytes, were served to a console on the Mystery Gift local-wireless
+search screen. The body with the stale checksum was answered on 114 scans across two runs and never
+reached the store, whose count stayed 0 through 6,597 samples; the body with the correct checksum was
+in the store 0.21 s after the beacon started, and stayed.
+
+`0x006c53b0` takes an accepted entry, walks the entries already in the store comparing each with
+`0x006c1da0` (the 0x168 body and the id struct), and appends through `0x006c5460` only when the entry
+is new, so a repeated beacon does not grow the store.
+
+Reaching the store is not the same as being scanned. The 0x480-byte `NetworkInfo` scan-result slots,
+`pia_obj+0x3C0` among them, take a full 0x180 wire copy of either body, header included, whatever the
+checksum says. A marker in those slots measures only that a beacon was received.
+
+`0x006c5460` appends a received body to a store: array base at `+0x40`, count at `+0x48`, capacity at
+`+0x50` (0x32 entries), and the mutex at `+0x60`. Each entry is 0x180 bytes, a vtable pointer at `+0`
+with the body at `+8`; the vtable is the one that also sits at `conn+0x360`, 8 bytes before the
+console's own body at `conn+0x368`, so a station's own advertisement lives in an entry object of the
+same shape. Two stores are held together and the consumer swaps between them through `0x006c5300`.
+
+`0x010f6600` walks a store's entries, taking the network id through `0x006c1d50`, then the payload
+pointer through `0x006c1f80`, the accessor that returns `body+5` and the only caller of which is
+`0x010f66c4`. The payload goes to `0x010f8cf0`, which stores the pointer in a message object, and from
+there to the handler at `[gfl_job+0x68]` vtable `+0x38`.
 
 The station-information structure read out of a receiver's beacon is this payload, so its offsets sit
 5 bytes past the body and 0x1d bytes past the start of the advertise data.
