@@ -237,6 +237,29 @@ and then sends nothing: no message on 0x18, no RTT, nothing on the reliable wind
 no application data. It broadcasts its update session throughout, listing the joiner as seat 1 with
 `allow_participating` set. No layer below the mesh carries the gift.
 
+## The join is approved when the maximum is not zero
+
+The callback `0x006b41c0` runs four gates in order. Against the values read live on the Mystery Gift
+search screen, exactly one refuses:
+
+| order | site | what it tests | live value | verdict |
+|---|---|---|---|---|
+| 1 | `0x006b4204` | the block list is enabled (`manager+0x21C`) and non-empty (`+0x1C0`) | enabled, empty | passes |
+| 2 | `0x006b8260` | `pia_obj+0x1A8` against `game_session+0x1F0`, unsigned `b.lo` | count 1, max 0 | refuses |
+| 3 | `0x006b827c` | the recruiting predicate `session+0xB0`, `ldrb w0, [x0, #0x4F5]` | flag 0 | returns 0, which skips the allow-list walk and approves |
+| 4 | `0x006b4248` | the halfword at identity `+0x10` | 0 for any IPv4 station | approves |
+
+`count < 0` cannot hold, so gate 2 returns 0, `CheckApprovalJoin` stores 1, and that byte is the
+refusal reason on the wire. The allow-list walk at `0x006b8290` is reached only when the recruiting
+predicate returns non-zero, so an empty allow list refuses nobody while the flag is 0.
+
+Writing 8 into `game_session+0x1F0` on the search screen makes the scene accept a mesh join on the
+first attempt, with a 148-byte join response and the station count moving 1 to 2; reverting the field
+to 0 brings reason 1 back. The maximum is the whole gate.
+
+Once seated, the scene's transport traffic matches the trade scene's: RTT probes, reliable-window
+opens on two ports, and mesh updates.
+
 ## The participant maximum is zero on this screen
 
 Read live from Shield 1.3.2 held on the Mystery Gift search screen, the participant maximum
