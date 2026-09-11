@@ -828,27 +828,34 @@ The Pokemon itself follows:
 | `+0x240` | 2 | species |
 | `+0x242` | 1 | form |
 | `+0x243` | 1 | kept in header `+0x64` |
-| `+0x245` | 1 | kept in header `+0x12`, and not the level |
+| `+0x244` | 1 | level, and zero makes the game roll one |
+| `+0x245` | 1 | kept in header `+0x12`, with no observed effect |
+| `+0x249` | 1 | met level |
 | `+0x25C` | 1 | kept in header `+0x63` |
 | `+0x272` | 1 | language, used when it is 2 or more, otherwise the game's own |
 
 Run against the game's own parser under emulation, a record built to this map reads back with its
 species, four moves, nickname, card id and kind in the header the parser fills.
 
+Every field on this page has now been confirmed on a console: species, form, the four moves, the
+nickname, the original trainer, the gift kind, the region mask, the card id, both checksums, the level
+and the met level.
+
 A record carrying species 25 was delivered to a console and the Pokemon it produced was species 25, so
 the species field holds an ordinary Pokedex index.
 
-The level is rolled at claim time. One record was claimed twice, from a byte-identical file, and
-produced level 20 once and level 35 the other time. A record differing only at `+0x245` produced level
-73, which looked like that byte mattering until the repeat showed both were draws, so `+0x245` has no
-demonstrated effect on the level. The experience always matches the species' own growth group: a
+The level is at `+0x244` and the met level at `+0x249`, one and six bytes past the form. Neither is
+read by the parser, so both were found by claiming two cards in which every unknown byte between
+`0x238` and `0x272` carried a different plausible level, under two permutations: each field is the one
+offset whose value predicted both runs, 28 then 63 for the level and 32 then 59 for the met level. The
+two disagree in those cards, which is what separates them as independent fields.
+
+A record leaving `+0x244` at zero has its level rolled at claim time, and the same record claimed
+twice gave level 20 and then level 35. Such a Pokemon is reported as met at level 0, which is the
+empty `+0x249` showing through. The experience always matches the species' own growth group: a
 cube-curve species arrived with 8000 at level 20, and a slower-curve species with 96 at level 4.
 
-Every record sent so far carries zero wherever the level belongs, and every claim reports the Pokemon
-as met at level 0, so the rolling is most likely the ordinary rule that a level of zero means choose
-one. Which field holds it is unresolved: nothing outside the parser reads the record's species, and
-the code that reads the parsed copy is the display path, so the routine that builds the Pokemon has
-not been located. The trainer id is not in the record either.
+The trainer id is not in the record.
 
 Move legality is not checked. A record gave a species the four moves of an unrelated one, none of them
 learnable by it, and the game accepted all four.
