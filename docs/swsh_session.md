@@ -259,3 +259,11 @@ proven per-protocol echo everywhere else, and prints every distinct payload it h
 - The launcher prints the answer before the "no rule" line for the same received payload, so a `.out`
   file reads as if a transmission preceded the reception that caused it. Read the ownerId, not the
   order.
+
+
+## A size worth not chasing
+
+`0x2D0` appears as an allocation size in the network session module (`0x006a970c`, `0x006a9740`) and
+is the same number as a Wonder Card's 720 bytes. It is the session singleton's own object size: the
+allocation is constructed by `0x006b4410` and stored in the global `main+0x02616758`, which around
+seventy-five sites across the game read. It carries no card.

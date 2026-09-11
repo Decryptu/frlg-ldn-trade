@@ -301,10 +301,25 @@ and `0x010961a8` turns the same mode into the advertisement byte through a table
 | 6 | 60005 | 2 | 0x1E |
 
 The last column is measured independently: the advertisement carries 0x0D on the link trade and 0xFF
-on the Mystery Gift search screen, which are the table's entries for modes 2 and 0. Mode 2 is
+on the Mystery Gift search screen, which are the table's entries for modes 2 and 0. The byte sits at
+`0xAF` of the advertisement and `0x97` of the game's own data, which starts at `0x18` of it. A Max
+Raid host advertises `0x11` there, which is not one of the table's values; where that comes from is
+unread. Diffing every advertisement captured from this console, it is the only byte of the 384 that
+differs stably between screens. Mode 2 is
 therefore the link trade, its scene id 60001 matching the advertised one, and **the Mystery Gift
 search screen runs mode 0, which creates no session at all**. That is why its scene id is 65535,
 why its participant maximum is 0, and why a station seated in its mesh by force finds no listener.
+
+The Mystery Gift app does not merely fail to create a session, it suppresses one. Entering it reads
+the current mode with `0x01096d20`, saves it at `app+0xFE8`, and sets mode 0 (`0x01022f08`); leaving
+writes the saved value back (`0x01023198`). Mode 0 holds for the app's whole lifetime, and the
+advertisement byte was watched for 717 seconds across idle, leaving and re-entering the search, and
+never left `0xFF`. Leaving and re-entering touches LDN not at all: the network stays the one built 31
+seconds after the game loaded.
+
+The scene ids are Pia's own and never reach the air. The LDN `SceneId` field reads 0 on every network
+this console advertises, the link trade included, and no value of the 60001 family appears anywhere
+in the advertisement.
 
 A beacon offered to that screen carrying any of 60001 through 60021 draws nothing: those scene ids
 belong to the game's other session modes, and none of them is a distribution. Six of them were swept
