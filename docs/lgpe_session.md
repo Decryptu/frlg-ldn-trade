@@ -210,7 +210,17 @@ Read off the console's serializers. ClockRequestMessage (`0x51f9b0`), 18 bytes:
 
 ClockReplyMessage (`0x51fab0`), 22 bytes, the same fields plus an extra u32 at [0xA] before the
 clock. `pokeldn.ldn.clone` builds it. A reply that echoes the request's field A, count, participant
-and clock with the extra u32 zeroed is sent and reaches the console, but it keeps sending clock
-requests and the session still drops: echoing the host's clock is not what the reply must carry.
-The clock-reply semantics, and whether a clone participate (type 0x31) must precede the sync, are
-unread. The CloneProtocol receive vtable is at `0x158aa98`.
+and clock with the extra u32 zeroed is sent and reaches the console (the same send path the station
+handshake and mesh join used), but the console keeps sending clock requests and the session drops:
+echoing the host's clock is not what the reply must carry.
+
+The clone protocol is a synchronized-object system, not a request/reply pair. A participant
+announces itself with a participate message (type 0x31, 10 bytes, serializer `0x51fbd0`), a clock is
+agreed, and clone elements are retransmitted on that clock. The handlers to read:
+
+    0x51ab20  CloneProtocol::vfunc9, the receive dispatch (splits the 0xAB type byte)
+    0x51b010  the reply/ack state machine, a jump table at 0xf76674 on (type - 0x21)
+    0x51b1d0  the clock-driven element retransmit scheduler (the 0x11 request side)
+
+`pokeldn.ldn.clone` builds the clock reply and the participate message; the participate field values
+and the clock-reply semantics are the next reads. The CloneProtocol receive vtable is `0x158aa98`.

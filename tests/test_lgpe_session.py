@@ -117,3 +117,11 @@ def test_clone_clock_reply_matches_the_serializer():
     assert rep[8:10] == (2).to_bytes(2, "big") and rep[0xA:0xE] == b"\x00\x00\x00\x00"
     assert rep[0xE:0x16] == (0x3647).to_bytes(8, "big")
     assert clone.parse_clock_request(b"\x03\x21" + b"\x00" * 16) is None
+
+
+def test_clone_participate_is_ten_bytes():
+    from pokeldn.ldn import clone
+    p = clone.build_participate(field_a=0xC235, value=1, participant=2)
+    assert len(p) == 10 and p[0] == 3 and p[1] == clone.PARTICIPATE
+    assert p[2:4] == b"\xc2\x35" and p[4:8] == (1).to_bytes(4, "big")
+    assert p[8:10] == (2).to_bytes(2, "big")

@@ -42,8 +42,19 @@ CLOCK_REPLY = 0x21
 PARTICIPATE = 0x31
 EXIT_ACK = 0x41
 
-__all__ = ["PROTOCOL", "VERSION", "CLOCK_REQUEST", "CLOCK_REPLY", "parse_clock_request",
-           "build_clock_reply"]
+# The handlers in Let's Go Pikachu's main, for the reverse engineering that remains:
+#   0x51ab20  CloneProtocol::vfunc9, the receive dispatch (splits the 0xAB type byte)
+#   0x51b010  the reply/ack state machine, a jump table at 0xf76674 on (type - 0x21)
+#   0x51b1d0  the clock-driven element retransmit scheduler (handles the 0x11 request side)
+#   0x51f9b0  ClockRequestMessage serialize (18 bytes)
+#   0x51fab0  ClockReplyMessage serialize (22 bytes)
+#   0x51fbd0  ParticipateMessage serialize (10 bytes)
+# The clone protocol is a synchronized-object system: a participant announces itself with a
+# participate message, a clock is agreed, and clone elements are retransmitted on that clock. Full
+# participation is unread; echoing a clock reply alone did not advance the host.
+
+__all__ = ["PROTOCOL", "VERSION", "CLOCK_REQUEST", "CLOCK_REPLY", "PARTICIPATE", "EXIT_ACK",
+           "parse_clock_request", "build_clock_reply", "reply_to", "build_participate"]
 
 
 def parse_clock_request(payload):
@@ -69,3 +80,12 @@ def reply_to(request_payload, extra=0):
     if r is None:
         return None
     return build_clock_reply(r["field_a"], r["count"], r["participant"], r["clock"], extra)
+
+
+def build_participate(field_a=0, value=0, participant=0):
+    """The 10-byte participate message (type 0x31), fields in the order 0x51fbd0 writes them:
+    version 3, type, a 2-byte field A, a u32, a 2-byte participant bitmap, all big-endian. What
+    field A and the u32 carry is unread; a participant announces itself with this before the clock
+    sync."""
+    return (bytes([VERSION, PARTICIPATE]) + struct.pack(">HIH", field_a & 0xFFFF,
+            value & 0xFFFFFFFF, participant & 0xFFFF))
