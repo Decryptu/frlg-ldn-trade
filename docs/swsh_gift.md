@@ -808,7 +808,9 @@ id matches the one being received: `0x00ff2f50` reads the u32 at record `+0x08` 
 `+0x0A` or `+0x0B` matches no id, the collected list stays empty, and the importer reports 2, which
 the console shows as a gift it cannot obtain in this game. Measured on a retail console: `+0x0A` set
 to `80 06` was refused with that message; the same record with `+0x0A` zero and `+0x0C` set to
-`a5 6a` was received. Nothing read so far touches `+0x0C` or `+0x0D`. Every one of the 161 SwSh
+`a5 6a` was received, and a record with title index 0 and `0b 00` at `+0x0C` was listed as
+"Pikachu", the species name, so the halfword is inert even when it holds a real title index.
+Nothing read so far touches `+0x0C` or `+0x0D`. Every one of the 161 SwSh
 cards in projectpokemon's EventsGallery carries zero at `+0x0A` and, at `+0x0C`, either 3 or the
 card's own title index (`0x0B`, `0x28`, `0x29` on eleven of them).
 
@@ -886,7 +888,8 @@ nickname, the original trainer, the gift kind, the region mask, the card id, bot
 and the met level.
 
 A record carrying species 25 was delivered to a console and the Pokemon it produced was species 25, so
-the species field holds an ordinary Pokedex index.
+the species field holds an ordinary Pokedex index. A record carrying species 77 with 1 at `+0x242`
+produced a Galarian Ponyta on a retail console, so the form field is the ordinary form index.
 
 The level is at `+0x244` and the met level at `+0x249`, one and six bytes past the form. Neither is
 read by the parser, so both were found by claiming two cards in which every unknown byte between
@@ -962,6 +965,9 @@ and title index 1 was listed as "Oeuf de Pokemon" and an egg went to the party.
 
 A kind-2 record built here needs only the kind at `+0x11`, the item id at `+0x20` and the quantity
 at `+0x22`: `01 00 03 00` with title index 3 was listed as "Master Ball" and put three in the bag.
+The pairs repeat every four bytes: `01 00 03 00 32 00 02 00 c0 05 05 00` was received as three lines,
+"Master Ball x 3", "Super Bonbon x 2" and " x 5". The third id, 1472, is beyond the item table; the
+console lists it with an empty name and the receive completes.
 
 The flag byte `+0x10` bit 0 marks a card as once-only. `0x00ff1a30` tests the bit at the card id in
 the save's bitmap at `+0x1450` and, when set, the console answers "Vous avez deja recu ce cadeau"
@@ -973,7 +979,9 @@ trainer is the player. The summary screen draws neither the trainer's gender nor
 the byte is readable only off the PK8, which the console sends whole in its trade party snapshot
 ([the trade](swsh_trade.md)). Read that way on a retail Sword: a record with 1 there gives a female
 original trainer, and a record with 2 gives a male one, the player's own; the PK8's language byte
-is the console's own (3, French) whatever the record carries. The same read confirmed PKHeX's map
+is the console's own (3, French) whatever the record carries. A record with 3 there and every
+trainer-name slot empty is received with the player's own name and trainer id as the original
+trainer, shown on the summary screen. The same read confirmed PKHeX's map
 for the met location `+0x22A`, the egg location `+0x228`, the six EVs from `+0x273` (HP, Attack,
 Defense, Speed, Sp. Attack, Sp. Defense on the wire) and the four relearn moves from `+0x238`.
 
