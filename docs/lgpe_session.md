@@ -382,6 +382,28 @@ The full decode of a real session is `scratchpad/037_clone_parsed.txt`, its data
 `scratchpad/lgpe_clone_data.py`. The decoders: `scratchpad/lgpe_pcap_decode.py` for an ldn_mitm
 pcap, `scratchpad/lgpe_jsonl_clone.py` for a `--capture` log.
 
+### What gates the game's own first message
+
+The game's link-trade object runs a per-frame state machine (`0x349200`, jump table `0xf4e994` on
+the state word at +0x68). State 6 sends the first game message, and nothing from the network
+reaches it: two stations send the same message 18 ms apart, before either has received anything.
+The only gate is state 4, `0x11b080`, which asks whether the Pia channel is ready:
+
+- a SendClone at the object's +0x90 reports ready (`0x5221b0`): its element's participating
+  stations, `element+0x3C`, must all be in the clone's acknowledged set, `clone+0xA8`;
+- a SharingClone at +0x1258 reports ready the same way (`0x522610`);
+- every station's entry at +0x250, one per 0x118 bytes, has 1 in its first word and a non-zero
+  byte at +0xD8;
+- the byte at +0x1430 is 0xFD.
+
+A station's bit reaches `clone+0xA8` in one place: receiving an 0xa2 on **clone type 2** from that
+station (`0x51c52c`'s jump table `0xf76c38`, entry for 0xa2, into `0x522350`). No other clone type
+and no other message sets it.
+
+The receiving side stores each arriving message at `this + node * 0x1C8 + 0xC0` and counts them at
+`this+0x470`; at two it advances and goes quiet. The barrier is two because the sender delivers its
+own message to itself, so a partner that never sends leaves the count at one.
+
 ### What a host does with a joiner that holds no clone data
 
 Measured against the retail Let's Go Pikachu, with a 0x3C-byte connection response that carries no
