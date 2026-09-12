@@ -30,6 +30,16 @@ LDN_PROTOCOL = 1        # the retail gift screen advertises protocol 1 (AES-CTR)
 
 
 def build_record(args):
+    rec = _base_record(args)
+    for item in args.patch or ():
+        off, _, data = item.partition("=")
+        rec = bytearray(rec)
+        rec[int(off, 0):int(off, 0) + len(data) // 2] = bytes.fromhex(data)
+        rec = wc8.seal(rec)
+    return bytes(rec)
+
+
+def _base_record(args):
     if args.record:
         rec = open(args.record, "rb").read()
         if len(rec) != wc8.RECORD:
@@ -66,6 +76,9 @@ def main():
                         "gender=1, nature=10, ability_type=2, iv_hp=31, dynamax_level=10, "
                         "gigantamax=1, tid=12345, sid=54321 ...")
     p.add_argument("--ribbon", action="append", type=int, help="a ribbon index; repeatable")
+    p.add_argument("--patch", action="append", metavar="OFFSET=HEX",
+                   help="bytes written over the record at OFFSET before sealing, for the fields "
+                        "no name covers (0x15=0b for the title index); repeatable")
     p.add_argument("--card-id", type=lambda s: int(s, 0), default=0x270F)
     p.add_argument("--region-mask", type=lambda s: int(s, 0), default=0xFFFF)
     p.add_argument("--dwell", type=float, default=0.5,

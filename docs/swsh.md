@@ -50,13 +50,8 @@ covered by any of them, and none of them handles Pia host migration.
   by 19 in that byte, consistent with a minute counter, on one data point.
 - Where a materialised Wonder Card is kept. The importer builds a `0x3A8` card object and the album
   re-encodes it, since neither the 720-byte record nor any string in it appears in the save.
-- Which of the record's bytes `0x0A` to `0x0D` makes the importer skip a card. A card with a
-  timestamp planted over them was listed and then refused as one that cannot be obtained in this
-  game; the same bytes untouched delivered. PKHeX's map names nothing there.
-- What the record's byte at `+0x272` is. PKHeX's map calls it the original trainer's gender; the
-  parser trace read it as a language selector used when 2 or more. Every delivered card carried 2.
-- The card title index at `+0x15` and the gift kinds 2, 3 and 4 (item, BP, clothing, laid out at
-  `+0x20` in PKHeX's map): none has been sent to a console. [The Mystery Gift menu](swsh_gift.md).
+- What the record's halfword at `+0x0C` is. Real cards carry 3 or the card's title index; a console
+  received a card carrying `0x6AA5` there. `+0x0A` is the high half of the card id and must be zero.
 - How a partner's command reaches a sub-element's body word. The receive handler `0x010dbc90` does
   not write it. That an arriving command lets the shared value move is inferred from a per-station
   flag and from every run so far.

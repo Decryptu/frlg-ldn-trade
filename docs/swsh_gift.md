@@ -802,6 +802,22 @@ Past the checksum the routine fills the `0x68`-byte header from the record: the 
 goes to header `+8`, the byte at `+0x15` to header `+0xa`, the byte at `+0x11` to header `+0xc`, and
 the byte at `+0x1C` to header `+0xf`.
 
+The word at `+0x08` is compared whole. After the import loop, `0x00ff2760` collects the cards whose
+id matches the one being received: `0x00ff2f50` reads the u32 at record `+0x08` (`0x00ff30c0`,
+`ldr w8,[card+0xe0]`) and compares it with the 16-bit id, so a record with anything non-zero at
+`+0x0A` or `+0x0B` matches no id, the collected list stays empty, and the importer reports 2, which
+the console shows as a gift it cannot obtain in this game. Measured on a retail console: `+0x0A` set
+to `80 06` was refused with that message; the same record with `+0x0A` zero and `+0x0C` set to
+`a5 6a` was received. Nothing read so far touches `+0x0C` or `+0x0D`. Every one of the 161 SwSh
+cards in projectpokemon's EventsGallery carries zero at `+0x0A` and, at `+0x0C`, either 3 or the
+card's own title index (`0x0B`, `0x28`, `0x29` on eleven of them).
+
+The byte at `+0x15` is the card's title, an index into the game's title table, the one PKHeX ships
+as `text_wondercard8_<lang>.txt` (`scratchpad/text_wondercard8_fr.txt`). Index 0 is the species name
+alone; index 11 is "{species} de {original trainer}", and a card carrying 11 was listed and kept as
+"Pikachu de POKELDN" on a French console. The list on the search screen shows the title before the
+card is accepted.
+
 The byte at `+0x11` is the gift kind. One through five dispatch through the table at `0x02067620`;
 anything else returns success with nothing built. Kinds 3 and 5 take the shortest path
 (`0x010b5fd8`), which keeps the word at record `+0x20` in header `+0x30` and returns, building no
@@ -832,7 +848,7 @@ The Pokemon itself follows:
 | `+0x245` | 1 | kept in header `+0x12`; the egg flag in PKHeX's map |
 | `+0x249` | 1 | met level |
 | `+0x25C` | 1 | kept in header `+0x63` |
-| `+0x272` | 1 | language, used when it is 2 or more, otherwise the game's own |
+| `+0x272` | 1 | original trainer gender in PKHeX's map; the parser applies it when it is below 2 and otherwise takes the game's own |
 
 Run against the game's own parser under emulation, a record built to this map reads back with its
 species, four moves, nickname, card id and kind in the header the parser fills.
@@ -940,6 +956,46 @@ built on a template copied from the console's own advertise data, header include
 
 Scene id 0 and application version 4 were accepted. The console's own advertisement on that screen
 carries scene 65535 and application version 7, so neither is filtered on.
+
+A kind-1 record with `+0x245` set to 1 delivers an egg: a level-1 Pikachu record with that byte
+and title index 1 was listed as "Oeuf de Pokemon" and an egg went to the party.
+
+A kind-2 record built here needs only the kind at `+0x11`, the item id at `+0x20` and the quantity
+at `+0x22`: `01 00 03 00` with title index 3 was listed as "Master Ball" and put three in the bag.
+
+The flag byte `+0x10` bit 0 marks a card as once-only. `0x00ff1a30` tests the bit at the card id in
+the save's bitmap at `+0x1450` and, when set, the console answers "Vous avez deja recu ce cadeau"
+and no longer lists the card. A card served twice with that bit set was refused the second time.
+
+Of the 83 kind-1 cards in the EventsGallery, 71 carry 0 at `+0x272` with a trainer name, 3 carry 1
+with a trainer name, and 9 carry 3 with every trainer-name slot empty, the cards whose original
+trainer is the player. The summary screen draws neither the trainer's gender nor a name colour, so
+the byte is readable only off the PK8, which the console sends whole in its trade party snapshot
+([the trade](swsh_trade.md)). Read that way on a retail Sword: a record with 1 there gives a female
+original trainer, and a record with 2 gives a male one, the player's own; the PK8's language byte
+is the console's own (3, French) whatever the record carries. The same read confirmed PKHeX's map
+for the met location `+0x22A`, the egg location `+0x228`, the six EVs from `+0x273` (HP, Attack,
+Defense, Speed, Sp. Attack, Sp. Defense on the wire) and the four relearn moves from `+0x238`.
+
+An egg is rebuilt around the receiving player: its PK8 carries the player's name, gender and
+language as original trainer, a Poke Ball, friendship 8 and egg location 0, whatever the record's
+trainer-name slots say.
+
+## A published card served as it is
+
+A `.wc8` from projectpokemon's EventsGallery, served byte for byte with `--record`, is listed and
+received by a retail Sword: the records carry their own checksum and nothing in them is bound to
+the distributing console. Three of them, one per gift kind PKHeX names beside the Pokemon:
+
+| card | kind | what the console did |
+|---|---|---|
+| `0106 SWSH - Item Poke Ball x100` | 2, item | 100 Poke Balls in the bag |
+| `0104 SWSH - Battle Points x10` | 3, BP | 10 BP added |
+| `0105 SWSH - Casual Tee (Pokemon Quest)` | 4, clothing | the tee in the wardrobe |
+
+All three carry `0x0003` at `+0x0C` and `+0x0E`, flag byte `+0x10` of 1 (once only) or 0, and their
+payload at `+0x20`: item id and quantity as halfword pairs for kind 2, the BP count for kind 3, the
+clothing ids for kind 4, as PKHeX's `WC8.cs` lays them out.
 
 ## The card's date
 
