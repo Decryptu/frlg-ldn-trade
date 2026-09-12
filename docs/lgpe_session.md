@@ -189,5 +189,28 @@ not with a mesh message (`mesh_protocol.ack_for`). The joiner is then station in
 
 Once in the mesh the host streams, per second, its Local Protocol update-session (0x24, acked with a
 0x21), RTT requests (0x58; a silent station is not dropped, only left without a timing sample), and
-a protocol 0x73 above the mesh that is the game's own layer and is unread. A mesh with no traffic on
-0x73 ends with the console showing "la connexion avec votre partenaire a ete interrompue".
+the Pia Clone Protocol on 0x73.
+
+## The Clone Protocol (0x73)
+
+Protocol 0x73 is `nn::pia::clone::CloneProtocol` (GetProtocolId at `0x158aab8` returns 0x73). The
+game's partner sync runs on it. The message type byte is `0xAB`: the high nibble the structure, the
+low nibble a variant. The host streams clock requests (type 0x11) addressed to the joiner's station
+bitmap and expects clock replies (type 0x21); until the clock syncs the game drops the partner with
+"la connexion avec votre partenaire a ete interrompue".
+
+Read off the console's serializers. ClockRequestMessage (`0x51f9b0`), 18 bytes:
+
+    [0]   1  version 3
+    [1]   1  type 0x11
+    [2]   2  field A, big-endian        increments ~0xD per request
+    [4]   4  count, big-endian          +1 per request
+    [8]   2  participant bitmap, big-endian
+    [0xA] 8  clock, big-endian          a rising tick value
+
+ClockReplyMessage (`0x51fab0`), 22 bytes, the same fields plus an extra u32 at [0xA] before the
+clock. `pokeldn.ldn.clone` builds it. A reply that echoes the request's field A, count, participant
+and clock with the extra u32 zeroed is sent and reaches the console, but it keeps sending clock
+requests and the session still drops: echoing the host's clock is not what the reply must carry.
+The clock-reply semantics, and whether a clone participate (type 0x31) must precede the sync, are
+unread. The CloneProtocol receive vtable is at `0x158aa98`.

@@ -35,6 +35,7 @@ import trio
 import ldn
 from pokeldn.ldn import pia3, pia4, station9, station4
 from pokeldn.ldn import mesh_protocol as mp
+from pokeldn.ldn import clone
 from pokeldn.ldn import local_protocol as lp
 from pokeldn.ldn.station_protocol import ldn_constant_id, ldn_service_variable_id, station_location
 from pokeldn.ldn.transport import find_ap_phy
@@ -390,6 +391,13 @@ def main(argv=None):
                                           "mesh, acked on 0x14 ***")
                                 print(f"[lg] mesh 0x18 type={pl[0]:#x} {len(pl)}B "
                                       f"pl[:24]={pl[:24].hex()}")
+                            elif m["protocol"] == clone.PROTOCOL:
+                                rep = clone.reply_to(pl) if args.connect else None
+                                if rep is not None:
+                                    to_host(rep, clone.PROTOCOL)
+                                    state["clock_replies"] = state.get("clock_replies", 0) + 1
+                                    if state["clock_replies"] == 1:
+                                        print("[lg] answering clone clock requests (type 0x21)")
                             elif m["protocol"] == lp.PROTOCOL and pl and pl[1:2] == b"\x11":
                                 # Local Protocol update-session: ack it (type 0x21) so the host
                                 # knows the seat is alive. RTT (0x58) never drops a silent station.

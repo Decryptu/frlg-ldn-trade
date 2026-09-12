@@ -36,8 +36,8 @@ the host's mesh. The console then drives the Local Protocol, RTT, and a protocol
 - How the three-Pokemon link code becomes the password. Its CRC32 at application-data +4 was 0 on a
   session hosted with the code Pikachu, Pikachu, Pikachu, so the code does not reach the Pia
   password field. Where the game checks it is unread.
-- The protocol 0x73 game layer above the mesh. The console streams it once the mesh forms; it is
-  unread. A mesh that answers nothing on 0x73 ends with the game showing the partner-interrupted
-  message.
-- Holding the mesh open: the join response is now acked and the session updates answered, but
-  whether that alone keeps the seat until the game layer starts is not yet measured.
+- The Clone Protocol (0x73) clock sync. The console streams clock requests (type 0x11) and expects
+  clock replies (0x21); `pokeldn.ldn.clone` builds a reply, but echoing the host's clock is not
+  accepted and the game still drops the partner. The reply semantics and any prerequisite
+  participate message are the open frontier (`docs/lgpe_session.md`).
+- The game's trade layer above the synced clone protocol.

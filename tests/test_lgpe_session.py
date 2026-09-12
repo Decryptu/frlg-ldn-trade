@@ -103,3 +103,17 @@ def test_station9_connection_response_is_read_where_the_handler_looks():
     assert resp[station9.OFF_RESPONSE_VARIABLE_ID:station9.OFF_RESPONSE_VARIABLE_ID + 4] == \
         host_var.to_bytes(4, "big")
     assert resp[station9.OFF_RESPONSE_GATE] == 1 and resp[-4:] == (3).to_bytes(4, "big")
+
+
+def test_clone_clock_reply_matches_the_serializer():
+    from pokeldn.ldn import clone
+    req = bytes.fromhex("0311c2350000000100020000000000003647")
+    r = clone.parse_clock_request(req)
+    assert r["type"] == clone.CLOCK_REQUEST and r["field_a"] == 0xC235 and r["count"] == 1
+    assert r["participant"] == 2 and r["clock"] == 0x3647
+    rep = clone.reply_to(req)
+    assert len(rep) == 22 and rep[0] == 3 and rep[1] == clone.CLOCK_REPLY
+    assert rep[2:4] == b"\xc2\x35" and rep[4:8] == (1).to_bytes(4, "big")
+    assert rep[8:10] == (2).to_bytes(2, "big") and rep[0xA:0xE] == b"\x00\x00\x00\x00"
+    assert rep[0xE:0x16] == (0x3647).to_bytes(8, "big")
+    assert clone.parse_clock_request(b"\x03\x21" + b"\x00" * 16) is None
