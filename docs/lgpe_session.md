@@ -248,6 +248,29 @@ against something else releases the clone and leaves. `pokeldn.ldn.sync_clock`, 
 
 The keep-alive protocol is 0x08, a message with no body; each side answers one in kind.
 
+## The Reliable Protocol (0x7C), where the game's data is
+
+The game's own messages ride on protocol 0x7C. Pia 5.11's header is 24 bytes, not the 9 or 13 of
+5.29-5.43, and its sequence ids are 32 bits starting at 0xFFFFF82F on both stations.
+
+    0x00  1  flags
+    0x01  1  stream id, 3 for the game's stream and 0 on an acknowledgement
+    0x02  2  payload size, big-endian
+    0x04  4  zero
+    0x08  4  sequence id, big-endian
+    0x0C  4  the next sequence id expected from the peer, big-endian
+    0x10  8  zero
+    0x18     the payload
+
+An acknowledgement is the header alone with the stream and the size zero. `pokeldn.ldn.reliable3`.
+
+The payload is framed by the game: a u32 message id counting from 1, the body length as a u32, a
+u32 count, the constant 0x0000FF00, then a u32 that changes per message and the body. The first
+message a joiner sends is 376 bytes and carries the trainer name and the partner Pokemon's name in
+UTF-16, a sixteen-byte value, a 64-byte block that repeats one eight-byte group where the plaintext
+is constant, and 64 bytes that differ every session. A retail console acknowledges a replayed one
+and sends no message of its own, so what the game checks in it is unresolved.
+
 ## The Clone Protocol (0x73)
 
 Protocol 0x73 is `nn::pia::clone::CloneProtocol` (GetProtocolId at `0x158aab8` returns 0x73; the
