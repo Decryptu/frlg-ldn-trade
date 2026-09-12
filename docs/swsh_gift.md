@@ -965,45 +965,26 @@ and title index 1 was listed as "Oeuf de Pokemon" and an egg went to the party.
 
 A kind-2 record built here needs only the kind at `+0x11`, the item id at `+0x20` and the quantity
 at `+0x22`: `01 00 03 00` with title index 3 was listed as "Master Ball" and put three in the bag.
-The pairs repeat every four bytes: `01 00 03 00 32 00 02 00 c0 05 05 00` was received as three lines,
-"Master Ball x 3", "Super Bonbon x 2" and " x 5". The third id, 1472, is beyond the item table; the
-console lists it with an empty name and the receive completes.
+The pairs repeat every four bytes: `01 00 03 00 32 00 02 00 05 c0 05 00` was received as three lines,
+"Master Ball x 3", "Super Bonbon x 2" and " x 5". The third id, `0xC005` = 49157, is above the item
+table (1607 entries in 1.3.2); the console lists it with an empty name, the receive completes, and
+the bag keeps the low 15 bits, 16389, at count 5. Every screen that draws a bag row of it, the bag,
+the party's give screen, the Mart's sell screen and the battle bag, aborts the game
+(`nn::diag::detail::Abort`, error 2162-0001, raised from `0x007885f0` under the item lookup
+`0x00788c50(id, 14)`, which cannot resolve an id above 1607); the abort comes when the row is drawn,
+not when it is selected. The box's item mode survives because it draws held items only. Clearing the
+one u32 of the slot restores the bag; no in-game action reaches the slot. Never serve an item id
+above 1607, and never one whose name in `bin/message/<lang>/common/itemname.dat` starts with `★`
+(dummy entries, 1279 to 1578 among them).
 
-The flag byte `+0x10` bit 0 marks a card as once-only. `0x00ff1a30` tests the bit at the card id in
-the save's bitmap at `+0x1450` and, when set, the console answers "Vous avez deja recu ce cadeau"
-and no longer lists the card. A card served twice with that bit set was refused the second time.
-
-Of the 83 kind-1 cards in the EventsGallery, 71 carry 0 at `+0x272` with a trainer name, 3 carry 1
-with a trainer name, and 9 carry 3 with every trainer-name slot empty, the cards whose original
-trainer is the player. The summary screen draws neither the trainer's gender nor a name colour, so
-the byte is readable only off the PK8, which the console sends whole in its trade party snapshot
-([the trade](swsh_trade.md)). Read that way on a retail Sword: a record with 1 there gives a female
-original trainer, and a record with 2 gives a male one, the player's own; the PK8's language byte
-is the console's own (3, French) whatever the record carries. A record with 3 there and every
-trainer-name slot empty is received with the player's own name and trainer id as the original
-trainer, shown on the summary screen. The same read confirmed PKHeX's map
-for the met location `+0x22A`, the egg location `+0x228`, the six EVs from `+0x273` (HP, Attack,
-Defense, Speed, Sp. Attack, Sp. Defense on the wire) and the four relearn moves from `+0x238`.
-
-An egg is rebuilt around the receiving player: its PK8 carries the player's name, gender and
-language as original trainer, a Poke Ball, friendship 8 and egg location 0, whatever the record's
-trainer-name slots say.
-
-## A published card served as it is
-
-A `.wc8` from projectpokemon's EventsGallery, served byte for byte with `--record`, is listed and
-received by a retail Sword: the records carry their own checksum and nothing in them is bound to
-the distributing console. Three of them, one per gift kind PKHeX names beside the Pokemon:
-
-| card | kind | what the console did |
-|---|---|---|
-| `0106 SWSH - Item Poke Ball x100` | 2, item | 100 Poke Balls in the bag |
-| `0104 SWSH - Battle Points x10` | 3, BP | 10 BP added |
-| `0105 SWSH - Casual Tee (Pokemon Quest)` | 4, clothing | the tee in the wardrobe |
-
-All three carry `0x0003` at `+0x0C` and `+0x0E`, flag byte `+0x10` of 1 (once only) or 0, and their
-payload at `+0x20`: item id and quantity as halfword pairs for kind 2, the BP count for kind 3, the
-clothing ids for kind 4, as PKHeX's `WC8.cs` lays them out.
+A card cannot take an item back. `Bag::AddItem` (`0x01420790`, arguments bag, id, count, new-flag)
+takes the pocket from item field 14 (`0x00788c50(id, 14)`, record byte `+0x11 & 0xF`; 0 Medicine,
+1 Balls, 2 Battle, 3 Berries, 4 Items, 5 TMs, 6 Treasures, 7 Ingredients, 8 Key, with 60, 30, 20,
+80, 550, 210, 100, 100 and 64 slots at `bag+0x1358` onward; an id above 1607 gets 0, Medicine),
+finds the slot holding the id or the first empty one, and writes `id | min(count + n, 999) << 15`;
+a slot whose count is already 999 refuses. One u32 per slot: id in bits 0-14, count in bits 15-29,
+bit 30 the new-item flag. The save block is registered by `0x0141fae0`, key `0x1177C2C4`, `0x12F8`
+bytes.
 
 ## The card's date
 
