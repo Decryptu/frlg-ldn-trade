@@ -63,6 +63,32 @@ NETWORK_ID_OFF = 0
 PASSWORD_CRC_OFF = 4
 SESSION_PARAM_OFF = 12
 APP_HEADER_SIZE = 0x18
+SYSTEM_COMM_VERSION_OFF = 8         # a u8 version and a u8 header size, then two zero bytes
+SYSTEM_COMM_VERSION = 4
+
+# What a Let's Go trade session advertises, measured on a retail console and on two emulator
+# sessions: scene id 1 in every CreateNetworkPrivate (the advertised NetworkInfo reports 0), no
+# application version, two seats, and a fixed SSID.
+SCENE_ID = 1
+APPLICATION_VERSION = 0
+MAX_PARTICIPANTS = 2
+SSID = bytes.fromhex("01000000000000000000000000000000")
+
+
+def build_advertise_data(network_id, session_param, password_crc=0):
+    """The 24 bytes a Let's Go station advertises."""
+    return struct.pack("<IIBBHI", network_id & 0xFFFFFFFF, password_crc & 0xFFFFFFFF,
+                       SYSTEM_COMM_VERSION, APP_HEADER_SIZE, 0,
+                       session_param & 0xFFFFFFFF) + bytes(8)
+
+
+def parse_advertise_data(data):
+    """-> dict of the advertisement's fields, or None if it is shorter than the header."""
+    if len(data) < APP_HEADER_SIZE:
+        return None
+    network_id, crc, version, header_size, _, param = struct.unpack_from("<IIBBHI", data, 0)
+    return {"network_id": network_id, "password_crc": crc, "system_comm_version": version,
+            "header_size": header_size, "session_param": param}
 
 
 @dataclass

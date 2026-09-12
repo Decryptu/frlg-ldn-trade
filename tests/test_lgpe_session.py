@@ -322,3 +322,35 @@ def test_reliable_window_matches_the_captured_exchange():
     ack, = w.receive(host)
     assert ack.hex() == "000000000000000000000000fffff8300000000000000000"
     assert w.received == [b"\xaa" * 4] and w.receive(ack) == []
+
+
+def test_host_mesh_and_session_messages_rebuild_a_console_s_own():
+    """The host's join response, update mesh and update session, built from their fields, are the
+    bytes a retail Let's Go Pikachu sent while we were its joiner."""
+    from pokeldn.ldn import local_protocol as lp, mesh_protocol as mp
+    from pokeldn.lgpe import local_host, mesh_host
+    from pokeldn.lgpe import build_advertise_data, parse_advertise_data
+    assert build_advertise_data(0x3BB06B64, 0x0865493D).hex() == \
+        "646bb03b00000000041800003d4965080000000000000000"
+    assert parse_advertise_data(build_advertise_data(1, 2)) == \
+        {"network_id": 1, "password_crc": 0, "system_comm_version": 4, "header_size": 24,
+         "session_param": 2}
+    host_loc = bytes.fromhex("020600007f00000330390000000000007f0003000002000008386213"
+                             "565fe1d800000001")
+    entries = [(host_loc, 2), (host_loc, 0)]
+    jr = mesh_host.build_join_response(entries[:1], 0x1E26CEDF)
+    assert len(jr) == mp.JOIN_RESPONSE_TWO_STATIONS_V4 - mp.STATION_INFO_SIZE_V4
+    p = mp.parse_join_response(jr, version4=True)
+    assert p["host_index"] == 0 and p["our_index"] == 1 and p["max_total"] == 8
+    assert p["ack_id"] == 0x1E26CEDF and p["station_info"][0]["station_index"] == 2
+    um = mesh_host.build_update_mesh(entries, 1)
+    assert len(um) == mp.UPDATE_MESH_SIZE_V4
+    assert mp.parse_update_mesh(um, version4=True)["update_counter"] == 1
+    us = local_host.build_update_session(2, 0xE3DEF9C2, 0xCF897AE9, 0x597BC2A3,
+                                         bytes.fromhex("000048f120229beb"),
+                                         [("169.254.19.1", 12345, 0),
+                                          ("169.254.19.2", 12345, 1)])
+    assert len(us) == 121
+    back = lp.parse_update_session(us)
+    assert back.sequence_id == 2 and back.host_variable_id == 0xCF897AE9
+    assert [n.ip for n in back.occupied] == ["169.254.19.1", "169.254.19.2"]

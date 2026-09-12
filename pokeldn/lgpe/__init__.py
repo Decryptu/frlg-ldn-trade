@@ -9,10 +9,13 @@ Pia and LDN themselves are `pokeldn.ldn`. The header is `pokeldn.ldn.pia4` with 
 addresses behind every value are on `docs/lgpe_session.md`.
 """
 
-from pokeldn.lgpe.session import (CODE_POKEMON, COMM_ID_PIKACHU, GAME_KEY, PASSPHRASE,
-                                  PIA_HEADER_SIZE, PIA_PORT, PIA_TAG_SIZE, PIA_VERSION,
-                                  link_code, packet_iv, session_key, session_keys)
+from pokeldn.lgpe.session import (APPLICATION_VERSION, CODE_POKEMON, COMM_ID_PIKACHU, GAME_KEY,
+                                  MAX_PARTICIPANTS, PASSPHRASE, PIA_HEADER_SIZE, PIA_PORT,
+                                  PIA_TAG_SIZE, PIA_VERSION, SCENE_ID, SSID, build_advertise_data,
+                                  link_code, packet_iv, parse_advertise_data, session_key,
+                                  session_keys)
 
-__all__ = ["CODE_POKEMON", "COMM_ID_PIKACHU", "GAME_KEY", "PASSPHRASE", "PIA_HEADER_SIZE",
-           "PIA_PORT", "PIA_TAG_SIZE", "PIA_VERSION", "link_code", "packet_iv", "session_key",
-           "session_keys"]
+__all__ = ["APPLICATION_VERSION", "CODE_POKEMON", "COMM_ID_PIKACHU", "GAME_KEY",
+           "MAX_PARTICIPANTS", "PASSPHRASE", "PIA_HEADER_SIZE", "PIA_PORT", "PIA_TAG_SIZE",
+           "PIA_VERSION", "SCENE_ID", "SSID", "build_advertise_data", "link_code", "packet_iv",
+           "parse_advertise_data", "session_key", "session_keys"]
