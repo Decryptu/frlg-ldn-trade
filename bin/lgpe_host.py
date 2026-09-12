@@ -271,7 +271,7 @@ class Session:
             if (self.clone.participated and self.clone.peer_participated
                     and self.clone_0_announced and not self.clone_0_acked
                     and now >= self.next_clone_0):
-                self.next_clone_0 = now + 0.5
+                self.next_clone_0 = now + 0.25
                 record = clone.build_state_record(0, HOST_INDEX, 3, self.clone.ms(now),
                                                   bytes(self.clone_0_data))
                 self.send(clone.build_data_message(clone.STATE_DATA, 3, 0xFD, 0,
@@ -292,7 +292,11 @@ class Session:
                   clone.PROTOCOL)
         self.send(c._command(clone.CLOCK_AND_PARTICIPANT, 3, 0xFD, 0, now,
                              struct.pack(">II", ms, HOST_BIT | JOINER_BIT)), clone.PROTOCOL)
-        print("[lgh] clone: announced clone 0")
+        # a host publishes the empty record first and the filled one after it, which is the
+        # progression a working session shows
+        self.send(clone.build_data_message(clone.STATE_DATA, 3, 0xFD, 0, c.frame(now),
+                                           clone.build_empty_record(0), flags=1), clone.PROTOCOL)
+        print("[lgh] clone: announced clone 0 and published it empty")
 
     def announce_clone_1(self, now):
         """The second clone, the one both stations hold. A host announces it on clone type 2 and

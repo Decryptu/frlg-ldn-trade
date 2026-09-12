@@ -355,11 +355,17 @@ tokens report themselves (`SendClone::AnnounceCommandToken::vfunc0` at `0x522480
     0xeN  + a zlib stream at [0xD]                            the clone's state, acknowledging
     0xfN  + one byte at [0xD] and a zlib stream at [0xE]      the clone's state, with its data
 
-The zlib streams inflate to a record that starts with the tag 0x20 and its own length:
+The zlib streams inflate to a record that starts with the tag 0x20 and its own plaintext length,
+then a u16 clone id and a byte that is 1 while the copy is empty and 3 once it is full:
 
+    0x20 0x06 u16 clone id  0x01  0x00
+                                          a copy with nothing in it yet
     0x20 len  u16 clone id  0x03  u8 the station the data belongs to  u16 0
               u16 participant bitmap  u32 clock  then the clone's data
     0x20 0x0A u16 clone id  0x05  u8 the station being acknowledged   u32 clock
+
+A station publishes the six-byte form first and the filled one after it. The six-byte form is a
+publish being retried, not a heartbeat: a settled session builds no clone records at all.
 
 The deflate is one compress, a sync flush and a final empty block, at a level between 2 and 5:
 every captured stream is reproduced byte for byte by `clone.pack_record`. The 0xfN header's two
@@ -435,6 +441,14 @@ network id and no player. With the clock exchange and the sync clock both runnin
 answers the announcement of a clone, announces its own, and then releases it about five seconds
 after the mesh join and sends 0x32. It sends no 0xb1 and no clone data. A real joiner reaches the
 same point 1.1 seconds after its own participate and the host then sends the clone's data.
+
+Every clone message is built through one function, `0x51e3d0`, the protocol object's ninth vtable
+slot; its fourth returns 0x73. Thirteen call sites build the messages, eight with a literal type
+byte: the 0xa2 on clone type 2 at `0x51cbb8`, the 0x81 at `0x51e92c`, the 0xa2 on clone type 3 at
+`0x51cdd4`, the 0xc1 at `0x51c9e4`, the 0x82 at `0x51c60c` and `0x51cd5c`, the 0xe3 at `0x51ad2c`
+and the 0xf3 at `0x51ef18`. The game holds three clone objects over one element, two of type 1 at
+`game+0x90` and `game+0x1710` and one of type 4 at `game+0x1258`; the clone type in a message is a
+message field and does not map one to one onto them.
 
 The handlers in `main`: `0x51ab20` CloneProtocol::vfunc9, the per-element receive; `0x51c100` the
 protocol's receive dispatch, whose jump table `0xf7673c` on (type - 0x11) separates the clock

@@ -73,7 +73,8 @@ FRAME_HZ = 60
 __all__ = ["PROTOCOL", "VERSION", "CLOCK_REQUEST", "CLOCK_REPLY", "CLOCK_REPLY_SYNCED",
            "PARTICIPATE", "PARTICIPATE_ACK", "EXIT_ACK", "parse_clock_request", "parse_clock_reply",
            "build_clock_request", "build_clock_reply", "reply_to", "build_participate",
-           "build_command", "parse_command", "RECORD_EMPTY", "RECORD_STATE", "RECORD_ACK",
+           "build_command", "parse_command", "build_empty_record", "RECORD_EMPTY",
+           "RECORD_STATE", "RECORD_ACK",
            "Participant"]
 
 
@@ -132,6 +133,12 @@ def pack_record(record, level=5):
     Reproduces every captured stream byte for byte."""
     co = zlib.compressobj(level, zlib.DEFLATED, 15)
     return co.compress(record) + co.flush(zlib.Z_SYNC_FLUSH) + co.flush(zlib.Z_FINISH)
+
+
+def build_empty_record(clone_id, participants=1):
+    """The record a station publishes for a clone whose copy is still empty: six bytes. A host
+    publishes this before the filled one."""
+    return bytes([RECORD_TAG, 6]) + struct.pack(">HBB", clone_id & 0xFFFF, participants & 0xFF, 0)
 
 
 def build_state_record(clone_id, station, participants, clock, data=b""):
@@ -366,12 +373,14 @@ class Participant:
         if d is not None:
             r = d["record"]
             if d["type"] & 0xF0 == 0xF0 and r is not None and r["kind"] == RECORD_EMPTY:
-                # a clone the peer holds with no data yet: acknowledge it at our own clock
-                return [build_data_message(STATE_ACK, d["ctype"], d["station"], d["clone_id"],
-                                           self.frame(now),
-                                           build_ack_record(r["clone_id"], r["station"],
-                                                            self.ms(now)),
-                                           flags=r["station"])]
+                # a publish the peer is retrying because its copy is still empty. A station that
+                # is driving one answers the data with a clock-and-participant, not with an
+                # acknowledgement: an 0xe3 does not advance it.
+                return [self._command(CLOCK_COUNT_PARTICIPANT, d["ctype"], d["station"],
+                                      d["clone_id"], now,
+                                      struct.pack(">IBBHI", self.ms(now), 1, 0,
+                                                  self.element_ms(now) & 0xFFFF,
+                                                  self.own | self.dest))]
             if d["type"] & 0xF0 == 0xF0 and r is not None and r["kind"] == RECORD_STATE:
                 # the clone's data: acknowledge it at the clock it was true at
                 if d["ctype"] == 2 and d["station"] != self.station:
