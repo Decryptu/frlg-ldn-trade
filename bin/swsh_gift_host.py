@@ -18,30 +18,15 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scratchpad"))
 
 from pokeldn import config
 from pokeldn.ldn import transport
 from pokeldn.ldn.transport import HostTransport
-from pokeldn.swsh import COMM_ID, PASSPHRASE
-
-import swsh_beacon_message as message
-import swsh_wc8 as wc8
+from pokeldn.swsh import COMM_ID, PASSPHRASE, beacon, wc8
 
 SCENE_ID = 0            # the console's scan filter keys on the communication id, not the scene
 APP_VERSION = 4
 LDN_PROTOCOL = 1        # the retail gift screen advertises protocol 1 (AES-CTR); the GBA app uses 3
-
-
-PIA_HEADER_SIZE = 0x18
-
-
-def pia_header():
-    """The Pia header that opens the 0x180 advertise data (docs/swsh_session.md): a random network id,
-    a zero password CRC, system communication version 5, header size 0x18, a random session parameter
-    and eight zero bytes. Constant for the run, as a console's is for a boot."""
-    return (os.urandom(4) + bytes(4) + bytes((5, PIA_HEADER_SIZE)) + bytes(2)
-            + os.urandom(4) + bytes(8))
 
 
 def build_record(args):
@@ -50,11 +35,17 @@ def build_record(args):
         if len(rec) != wc8.RECORD:
             raise SystemExit(f"{args.record} is {len(rec)} bytes, not {wc8.RECORD}")
         return rec
+    fields = {"ot_gender": 2}            # every card a console has taken carried 2 at +0x272
+    for item in args.set or ():
+        name, _, value = item.partition("=")
+        if name not in wc8.POKEMON:
+            raise SystemExit(f"--set {name}: not a record field; one of {', '.join(wc8.POKEMON)}")
+        fields[name] = int(value, 0)
     return wc8.pokemon_card(
         species=args.species, level=args.level, form=args.form,
         moves=(args.move1, args.move2, args.move3, args.move4),
         nickname=args.nickname, ot=args.ot, card_id=args.card_id,
-        region_mask=args.region_mask, language=args.language)
+        region_mask=args.region_mask, ribbons=args.ribbon or (), **fields)
 
 
 def main():
@@ -70,7 +61,11 @@ def main():
     p.add_argument("--move4", type=int, default=0)
     p.add_argument("--nickname", default=None)
     p.add_argument("--ot", default=None)
-    p.add_argument("--language", type=int, default=2)
+    p.add_argument("--set", action="append", metavar="FIELD=VALUE",
+                   help="any other record field by name: shiny_type=3, ball=1, held_item=236, "
+                        "gender=1, nature=10, ability_type=2, iv_hp=31, dynamax_level=10, "
+                        "gigantamax=1, tid=12345, sid=54321 ...")
+    p.add_argument("--ribbon", action="append", type=int, help="a ribbon index; repeatable")
     p.add_argument("--card-id", type=lambda s: int(s, 0), default=0x270F)
     p.add_argument("--region-mask", type=lambda s: int(s, 0), default=0xFFFF)
     p.add_argument("--dwell", type=float, default=0.5,
@@ -88,7 +83,7 @@ def main():
     args = p.parse_args()
 
     record = build_record(args)
-    fragments = [pia_header() + f[PIA_HEADER_SIZE:] for f in message.build_message(record)]
+    fragments = beacon.build_message(record)
     print(f"record {len(record)} bytes, checksum {wc8.record_crc(record):#06x}, "
           f"{len(fragments)} fragments")
 

@@ -837,6 +837,34 @@ The Pokemon itself follows:
 Run against the game's own parser under emulation, a record built to this map reads back with its
 species, four moves, nickname, card id and kind in the header the parser fills.
 
+The rest of the block is laid out by PKHeX's `WC8.cs`, the published map of this record, and a card
+built to it on a retail console produced every field as the map says:
+
+| record offset | size | field | on the console |
+|---|---|---|---|
+| `+0x20` | 2 | trainer id; 0 with the secret id gives the player's own | 12345/54321 showed ID 993401 |
+| `+0x22` | 2 | secret id | |
+| `+0x28` | 4 | encryption constant, 0 rolls one | |
+| `+0x2C` | 4 | PID, 0 rolls one | |
+| `+0x228` | 2 | egg location | |
+| `+0x22A` | 2 | met location | |
+| `+0x22C` | 2 | ball | 1 gave a Master Ball |
+| `+0x22E` | 2 | held item | 236 gave a Light Ball |
+| `+0x238` | 8 | four relearn moves | |
+| `+0x243` | 1 | gender, 0 male, 1 female, 2 random | 1 gave a female |
+| `+0x245` | 1 | egg | |
+| `+0x246` | 1 | nature | 10 gave Timid |
+| `+0x247` | 1 | ability, 0/1/2 slot 1/2/hidden, 3 random of two, 4 random of three | 2 gave Lightning Rod |
+| `+0x248` | 1 | shiny, 0 never, 1 random, 2 star, 3 square, 4 the PID as given | 3 gave a shiny |
+| `+0x24A` | 1 | Dynamax level | 10 showed the maximum |
+| `+0x24B` | 1 | Gigantamax | 1 gave the mark |
+| `+0x24C` | 32 | ribbon indices, `0xFF` ends the list | all `0xFF` gave none |
+| `+0x26C` | 6 | IVs, HP Atk Def Spe SpA SpD | |
+| `+0x272` | 1 | original trainer gender in PKHeX's map | |
+| `+0x273` | 6 | EVs, same order | |
+
+A record with zero ribbon bytes names ribbon 0 thirty-two times; fill the list with `0xFF`.
+
 Every field on this page has now been confirmed on a console: species, form, the four moves, the
 nickname, the original trainer, the gift kind, the region mask, the card id, both checksums, the level
 and the met level.
@@ -912,6 +940,32 @@ built on a template copied from the console's own advertise data, header include
 
 Scene id 0 and application version 4 were accepted. The console's own advertisement on that screen
 carries scene 65535 and application version 7, so neither is filtered on.
+
+## The card's date
+
+The album shows a date for every card. It is the first eight bytes of the record, a little-endian
+u64 bitfield of an absolute calendar time in UTC:
+
+| bits | field |
+|---|---|
+| 0-5 | seconds |
+| 6-11 | minutes |
+| 12-16 | hours |
+| 17-21 | day of the month |
+| 22-25 | month, 1 to 12 |
+| 26-39 | year, absolute |
+
+`0x016cc5e0` converts it to posix time with the days-from-civil algorithm (`146097`, `1461` and the
+divide-by-100 constants are in the routine), and returns posix 0 when the value equals the sentinel
+behind `main+0x2616900`. The album's draw at `0x00ffbaa0` passes that posix time to
+`nn::time::ToCalendarTime` (`0x00ffbaf0`), so the console's own zone is applied, and falls back to
+`ToCalendarTimeInUtc` when the conversion fails. The year is drawn with two digits: a record carrying
+year 8218 was shown as 2018.
+
+Measured on a retail console with three cards: zero bytes show 01/01/2070 01:00; a value packing
+18 October, 16:26 UTC shows 18/10/2018 18:26 in France; and `01 02 03 04 05 06 07 08`, which packs
+month 0 of year 321, shows 01/12/2020 15:53, the algorithm's December of the year before. No
+published map names this field: PKHeX's `WC8.cs` starts at the card id at `+0x08`.
 
 ## The first card the game kept
 
