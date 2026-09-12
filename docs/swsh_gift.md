@@ -989,7 +989,8 @@ bytes.
 A delivered Pokemon is flagged as nicknamed only when the record's name differs from the species
 name: a record carrying `PKCAMP` read back with the flag set, and one carrying `Pikachu` on a
 Pikachu read back with it clear, both through the trade party snapshot
-(`scratchpad/sw84_extract.py`). A record with empty name slots is unmeasured.
+(`scratchpad/sw84_extract.py`). A record with empty name slots delivers a Pokemon carrying the
+species name in its name field with the flag clear, and the card is listed under the species name.
 
 ## The card's date
 
