@@ -829,7 +829,7 @@ The Pokemon itself follows:
 | `+0x242` | 1 | form |
 | `+0x243` | 1 | kept in header `+0x64` |
 | `+0x244` | 1 | level, and zero makes the game roll one |
-| `+0x245` | 1 | kept in header `+0x12`, with no observed effect |
+| `+0x245` | 1 | kept in header `+0x12`; the egg flag in PKHeX's map |
 | `+0x249` | 1 | met level |
 | `+0x25C` | 1 | kept in header `+0x63` |
 | `+0x272` | 1 | language, used when it is 2 or more, otherwise the game's own |
@@ -883,7 +883,7 @@ twice gave level 20 and then level 35. Such a Pokemon is reported as met at leve
 empty `+0x249` showing through. The experience always matches the species' own growth group: a
 cube-curve species arrived with 8000 at level 20, and a slower-curve species with 96 at level 4.
 
-The trainer id is not in the record.
+The trainer id is the word at `+0x20` (trainer id, then secret id); zero gives the player's own.
 
 Move legality is not checked. A record gave a species the four moves of an unrelated one, none of them
 learnable by it, and the game accepted all four.
