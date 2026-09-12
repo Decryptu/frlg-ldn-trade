@@ -266,3 +266,27 @@ def test_local_wireless_station_location_matches_a_real_joiner():
     assert p["size"] == 36 and p["ip"] == "127.0.0.3" and p["port"] == 12345
     assert p["variable_id"] == 0x08386213 and p["nat_flags"] == 0
     assert len(station_location("127.0.0.3", 12345, 1, 2, 3)) == 40
+
+
+def test_clone_announcement_is_mirrored_the_way_a_real_joiner_does():
+    """When the host announces a clone, a joiner takes it over on three clone types and then
+    announces its own copy. The order and the fields are a real joiner's."""
+    from pokeldn.ldn import clone
+    p = clone.Participant(0.0, dest=0x0001, own=0x0002, station=1)
+    p.participated = p.peer_participated_ack = p.announced = True
+    p.mesh_ms = 0xA39F
+    for ctype in (4, 1):
+        assert p.receive(clone.build_command(0xA1, ctype, 0xFD, 1, 5, 2,
+                                             bytes.fromhex("0000a39f0138743b")), 1.0) == []
+    out = p.receive(clone.build_command(clone.COMMAND_ANNOUNCE, 2, 0x00, 1, 6, 2), 1.0)
+    kinds = [(m[1], clone.parse_command(m)["ctype"], clone.parse_command(m)["station"]) for m in out]
+    assert kinds == [(clone.COMMAND_REQUEST, 1, 0xFD), (clone.CLOCK_COMMAND, 4, 0xFD),
+                     (clone.CLOCK_COMMAND, 2, 1), (clone.COMMAND_END_ACK, 4, 0xFD)]
+    assert clone.parse_command(out[1])["payload"] == (0xA39F).to_bytes(4, "big")
+    later = [m for m in p.poll(1.05) if m[1] >= 0x80]
+    kinds = [(m[1], clone.parse_command(m)["ctype"]) for m in later]
+    assert kinds == [(clone.COMMAND_ANNOUNCE, 2), (clone.CLOCK_AND_COUNT, 4),
+                     (clone.CLOCK_AND_COUNT, 1)]
+    # the announcement carries the clock and the content the host's own announcement carried
+    assert clone.parse_command(later[1])["payload"].hex() == "0000a39f0138743b"
+    assert p.receive(clone.build_command(clone.COMMAND_ANNOUNCE, 2, 0x00, 1, 7, 2), 1.1) == []

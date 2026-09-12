@@ -228,6 +228,9 @@ class Participant:
         self.peer_participated = False
         self.announced = False
         self.mesh_ms = None
+        self.contents = {}
+        self.mirrored = {}
+        self.queue = []
         self.log = []
 
     def frame(self, now):
@@ -257,6 +260,15 @@ class Participant:
         if not self.participated and self.answered >= self.participate_after:
             self.participated = True
             out.append(build_participate(self.frame(now), self._next_count(), 0x0003))
+        for item in list(self.queue):
+            when, ctype, station, clone_id, kind, content = item
+            if now < when:
+                continue
+            self.queue.remove(item)
+            payload = content or b""
+            if kind in (CLOCK_COMMAND, CLOCK_AND_COUNT):
+                payload = struct.pack(">I", self.ms(now)) + payload
+            out.append(self._command(kind, ctype, station, clone_id, now, payload))
         if self.participated and self.peer_participated_ack and not self.announced:
             # what a joiner sends 6 ms after the host's 0x33: a ClockAndCount (0xa1) for the
             # type-3 clone id 0, count 1
@@ -266,6 +278,27 @@ class Participant:
         return out
 
     peer_participated_ack = False
+
+    def _mirror_announce(self, c, now):
+        """What a joiner sends when the host announces a clone: take it over on three clone types,
+        then announce our own copy of it a moment later. The order is the one a real joiner used.
+        """
+        cid = c["clone_id"]
+        if now - self.mirrored.get(cid, -1e9) < 1.0:
+            return []
+        self.mirrored[cid] = now
+        clock = struct.pack(">I", self.ms(now))
+        out = [self._command(COMMAND_REQUEST, 1, 0xFD, cid, now),
+               self._command(CLOCK_COMMAND, 4, 0xFD, cid, now, clock),
+               self._command(CLOCK_COMMAND, 2, self.station, cid, now, clock),
+               self._command(COMMAND_END_ACK, 4, 0xFD, cid, now)]
+        at = now + 0.01
+        self.queue.append((at, 2, self.station, cid, COMMAND_ANNOUNCE, None))
+        fallback = self.contents.get((4, 0xFD, cid)) or self.contents.get((1, 0xFD, cid))
+        for ctype in (4, 1):
+            content = self.contents.get((ctype, 0xFD, cid)) or fallback or b"\x01\0\0\0"
+            self.queue.append((at, ctype, 0xFD, cid, CLOCK_AND_COUNT, content))
+        return out
 
     def _command(self, kind, ctype, station, clone_id, now, payload=b""):
         m = build_command(kind, ctype, station, clone_id, self._next_count(), self.dest, payload)
@@ -301,16 +334,33 @@ class Participant:
             r = d["record"]
             if d["type"] & 0xF0 == 0xF0 and r is not None and r["kind"] == RECORD_STATE:
                 # the clone's data: acknowledge it at the clock it was true at
-                return [build_data_message(STATE_ACK, d["ctype"], d["station"], d["clone_id"],
-                                           self.frame(now),
-                                           build_ack_record(r["clone_id"], r["station"],
-                                                            r["clock"]),
-                                           flags=r["station"])]
+                out = [build_data_message(STATE_ACK, d["ctype"], d["station"], d["clone_id"],
+                                          self.frame(now),
+                                          build_ack_record(r["clone_id"], r["station"],
+                                                           r["clock"]),
+                                          flags=r["station"])]
+                if d["ctype"] == 2 and d["station"] != self.station:
+                    # the clone both stations hold: send our own copy of it back
+                    out.append(build_data_message(
+                        STATE_DATA, 2, self.station, d["clone_id"], self.frame(now),
+                        build_state_record(r["clone_id"], self.station, r["participants"],
+                                           self.ms(now), r["data"]),
+                        flags=r["participants"]))
+                return out
             return []
         c = parse_command(payload)
         if c is None:
             return []
         key = (c["ctype"], c["station"], c["clone_id"])
+        if kind == CLOCK_AND_COUNT and len(c["payload"]) >= 8:
+            self.contents[key] = c["payload"][4:8]
+        if kind == COMMAND_ANNOUNCE and c["ctype"] == 2 and c["clone_id"] != 0:
+            return self._mirror_announce(c, now)
+        if kind == COMMAND_REQUEST and c["ctype"] == 1:
+            # the host asks for our copy: answer with the state acknowledgement
+            return [build_data_message(STATE_ACK, 1, 0xFD, c["clone_id"], self.frame(now),
+                                       build_ack_record(c["clone_id"], 0, self.ms(now)),
+                                       flags=0)]
         if key == (3, 0xFD, 0):
             # the measured joiner answers of the type-3 clone: a2 echoes a1's clock with count 1,
             # c1 echoes b1's clock with count 1 and its participant bitmap, 0x84 answers 0x83
