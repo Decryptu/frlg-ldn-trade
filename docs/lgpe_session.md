@@ -264,12 +264,20 @@ The game's own messages ride on protocol 0x7C. Pia 5.11's header is 24 bytes, no
 
 An acknowledgement is the header alone with the stream and the size zero. `pokeldn.ldn.reliable3`.
 
-The payload is framed by the game: a u32 message id counting from 1, the body length as a u32, a
-u32 count, the constant 0x0000FF00, then a u32 that changes per message and the body. The first
-message a joiner sends is 376 bytes and carries the trainer name and the partner Pokemon's name in
-UTF-16, a sixteen-byte value, a 64-byte block that repeats one eight-byte group where the plaintext
-is constant, and 64 bytes that differ every session. A retail console acknowledges a replayed one
-and sends no message of its own, so what the game checks in it is unresolved.
+The payload is framed by the game, little-endian: a u32 message type, the body length as a u32, a
+u32 counting the sender's messages, and the constant 0x0000FF00, then the body.
+
+    type 1, 376 bytes   the trainer name and the partner Pokemon's name in UTF-16, a sixteen-byte
+                        value at +0x90, a 64-byte block at +0xD0 that repeats one eight-byte group
+                        where the plaintext is constant, and 64 bytes at +0x120 that look random.
+                        Everything else is zero
+    type 2, 248 bytes   no zero bytes at all, and two consecutive messages from one station share
+                        nothing after the first six bytes of the body
+
+So the game's traffic is encrypted from the second message on, and the first message is a plaintext
+handshake carrying the two stations' names and, in its two opaque blocks, what the rest is keyed
+with. A retail console acknowledges a type-1 message replayed from another session on the reliable
+window and sends no message of its own.
 
 ## The Clone Protocol (0x73)
 
