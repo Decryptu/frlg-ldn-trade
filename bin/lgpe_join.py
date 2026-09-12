@@ -171,6 +171,8 @@ def build_parser():
     ap.add_argument("--reliable-payload", default=None,
                     help="a file holding the game payload to send on the Reliable Protocol (0x7c) "
                          "once the clone elements are up. Without it nothing is sent there")
+    ap.add_argument("--reliable-interval", type=float, default=4.0,
+                    help="seconds between the payloads of --reliable-payload")
     ap.add_argument("--no-rtt", action="store_true",
                     help="once in the mesh, do not answer the host's RTT requests and send none "
                          "of our own. Default: answer them and send one a second")
@@ -385,10 +387,14 @@ def main(argv=None):
                         and state["clone"].published and state.get("window") is None \
                         and len(our_mac) == 6:
                     state["window"] = reliable3.Window()
-                    body = open(args.reliable_payload, "rb").read()
+                    state["payloads"] = list(args.reliable_payload.split(","))
+                    state["next_payload"] = time.monotonic()
+                if state.get("payloads") and time.monotonic() >= state.get("next_payload", 0):
+                    path = state["payloads"].pop(0)
+                    state["next_payload"] = time.monotonic() + args.reliable_interval
+                    body = open(path, "rb").read()
                     to_host_bitmap(state["window"].send(body), reliable3.PROTOCOL)
-                    print(f"[lg] reliable: sent the game payload, {len(body)} B "
-                          f"({args.reliable_payload})")
+                    print(f"[lg] reliable: sent {len(body)} B from {path}")
                 if args.connect and not args.no_rtt and state["mesh_joined"] \
                         and len(our_mac) == 6 and len(host_mac) == 6 \
                         and time.monotonic() >= state.get("next_rtt", 0):
