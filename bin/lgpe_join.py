@@ -307,14 +307,14 @@ def main(argv=None):
                                                message_flags=pia3.MESSAGE_FLAG_BITMAP))
             def clone_send(payload):
                 to_host_bitmap(payload, clone.PROTOCOL)
-            def send_packet(body):
+            def send_packet(body, **what):
                 out_nonce[0] += 1
                 nonce8 = out_nonce[0].to_bytes(8, "big")
                 iv = packet_iv(keys, our_mac, nonce8, source_id=0)
                 pkt = pia3.build_packet(keys.session_key, iv, body, station=0, nonce8=nonce8)
                 sock.sendto(pkt, (host_ip, PIA_PORT))
                 record(rec="tx", t=round(time.monotonic() - t0, 3), to=host_ip, len=len(pkt),
-                       data=pkt.hex())
+                       data=pkt.hex(), **what)
                 return pkt
             def complete_handshake(inverse_req):
                 """Ack the console's inverse connection request and send our connection response."""
@@ -327,9 +327,7 @@ def main(argv=None):
                     host_var = 0
                 ack = pia3.build_message(station9.build_ack(ack_id), protocol=station9.PROTOCOL,
                                          source=our_const, port=0, destination=host_const)
-                pkt1 = send_packet(ack)
-                record(rec="tx", t=round(time.monotonic() - t0, 3), to=host_ip, len=len(pkt1),
-                       data=pkt1.hex(), kind="ack_inverse", ack_id=ack_id)
+                send_packet(ack, kind="ack_inverse", ack_id=ack_id)
                 net_id = int.from_bytes(keys.network_id_le, "little")
                 resp = station9.build_connection_response(
                     host_const, host_var, ack_id=state["our_ack"][0],
@@ -338,9 +336,7 @@ def main(argv=None):
                 state["our_ack"][0] += 1
                 body = pia3.build_message(resp, protocol=station9.PROTOCOL, source=our_const,
                                           port=0, destination=host_const)
-                pkt2 = send_packet(body)
-                record(rec="tx", t=round(time.monotonic() - t0, 3), to=host_ip, len=len(pkt2),
-                       data=pkt2.hex(), kind="connection_response", host_var=host_var)
+                send_packet(body, kind="connection_response", host_var=host_var)
                 print(f"[lg] connection response {len(resp)} B, player "
                       f"{args.player_name!r}, network id {net_id:#010x}")
                 print(f"[lg] acked inverse (ack id {ack_id:#x}) and sent connection response "
