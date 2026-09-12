@@ -338,19 +338,19 @@ class Participant:
             r = d["record"]
             if d["type"] & 0xF0 == 0xF0 and r is not None and r["kind"] == RECORD_STATE:
                 # the clone's data: acknowledge it at the clock it was true at
-                out = [build_data_message(STATE_ACK, d["ctype"], d["station"], d["clone_id"],
-                                          self.frame(now),
-                                          build_ack_record(r["clone_id"], r["station"],
-                                                           r["clock"]),
-                                          flags=r["station"])]
                 if d["ctype"] == 2 and d["station"] != self.station:
-                    # the clone both stations hold: send our own copy of it back
-                    out.append(build_data_message(
+                    # the clone both stations hold: a real joiner answers with its own copy of the
+                    # data rather than an acknowledgement
+                    return [build_data_message(
                         STATE_DATA, 2, self.station, d["clone_id"], self.frame(now),
                         build_state_record(r["clone_id"], self.station, r["participants"],
                                            self.ms(now), r["data"]),
-                        flags=r["participants"]))
-                return out
+                        flags=r["participants"])]
+                return [build_data_message(STATE_ACK, d["ctype"], d["station"], d["clone_id"],
+                                           self.frame(now),
+                                           build_ack_record(r["clone_id"], r["station"],
+                                                            r["clock"]),
+                                           flags=r["station"])]
             return []
         c = parse_command(payload)
         if c is None:
@@ -360,6 +360,13 @@ class Participant:
             self.contents[key] = c["payload"][4:8]
         if kind == COMMAND_ANNOUNCE and c["ctype"] == 2 and c["clone_id"] != 0:
             return self._mirror_announce(c, now)
+        if kind == CLOCK_AND_COUNT_2 and c["ctype"] == 2 and c["station"] != self.station:
+            # the host acknowledges our copy of the clone: acknowledge its own the same way, and
+            # announce ours once more, which is what a real joiner does 35 ms later
+            self.queue.append((now + 0.035, 2, self.station, c["clone_id"], COMMAND_ANNOUNCE,
+                               None))
+            return [self._command(CLOCK_AND_COUNT_2, 2, self.station, c["clone_id"], now,
+                                  c["payload"])]
         if kind == COMMAND_REQUEST and c["ctype"] == 1:
             # the host asks for our copy: answer with the state acknowledgement
             return [build_data_message(STATE_ACK, 1, 0xFD, c["clone_id"], self.frame(now),
