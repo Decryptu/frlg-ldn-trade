@@ -120,7 +120,8 @@ def inet_address(ip, port):
 
 
 def station_location(ip, port, constant_id, variable_id, service_variable_id,
-                     nat_flags=0x05, nat_location=1, probeinit=0, private_available=1):
+                     nat_flags=0x05, nat_location=1, probeinit=0, private_available=1,
+                     public=True):
     """A Pia 5.11-5.45 station location with IPv4 public and private addresses: 40 bytes.
 
     Read off the console's own deserializer, `nn::pia::transport::StationLocation` vfunc3 at
@@ -134,9 +135,12 @@ def station_location(ip, port, constant_id, variable_id, service_variable_id,
         +0x12  u32be  service variable id  -> this+0x74
         +0x16  u8     nat flags, nat location, probeinit, is-private-available
 
-    40 bytes total, inside the 0x20..0x40 the connection-request parser accepts.
+    40 bytes total, inside the 0x20..0x40 the connection-request parser accepts, or 36 when the
+    public address is empty.
     """
-    public = inet_address(ip, port)
+    # A station with no route off the mesh sends an empty public address, two bytes carrying a
+    # port of zero: what a Let's Go joiner sends on local wireless.
+    public = inet_address(ip, port) if public else struct.pack(">H", 0)
     private = inet_address(ip, port)
     # The size byte includes the port. Writing len-2 here is refused, and the console's
     # parser rejects 4 outright (only 2, 6, 18 pass) - so the location never deserialised, its

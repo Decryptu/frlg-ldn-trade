@@ -161,6 +161,12 @@ def build_parser():
     ap.add_argument("--short-response", action="store_true",
                     help="send the 0x3c-byte connection response instead of the full 0x348-byte "
                          "one, which carries no network id and no player")
+    ap.add_argument("--public-address", action="store_true",
+                    help="put our own address in the station location's public field as well as "
+                         "its private one. A Let's Go joiner leaves the public field empty")
+    ap.add_argument("--nat-location", action="store_true",
+                    help="send nat flags 5 and nat location 1. A Let's Go joiner sends zero for "
+                         "both on local wireless")
     ap.add_argument("--no-rtt", action="store_true",
                     help="once in the mesh, do not answer the host's RTT requests and send none "
                          "of our own. Default: answer them and send one a second")
@@ -279,8 +285,12 @@ def main(argv=None):
                     print("[lg] a MAC is missing; cannot build the request"); return False
                 host_const = ldn_constant_id(host_mac)
                 our_const = ldn_constant_id(our_mac)
+                # what a Let's Go joiner sends on local wireless: no public address, no NAT
                 loc = station_location(our_ip, PIA_PORT, our_const, args.variable_id,
-                                       ldn_service_variable_id(our_mac))
+                                       ldn_service_variable_id(our_mac),
+                                       nat_flags=0 if not args.nat_location else 5,
+                                       nat_location=0 if not args.nat_location else 1,
+                                       public=args.public_address)
                 msg = station9.build_connection_request(host_const, 0, loc, ack_id=0)
                 body = pia3.build_message(msg, protocol=station9.PROTOCOL, source=our_const,
                                           port=0, destination=host_const)

@@ -25,7 +25,7 @@ from pokeldn.ldn.station_protocol import (ACK, CONNECTION_REQUEST, CONNECTION_RE
                                           RELAY_CONNECTION_REQUEST, RESULT_NAMES,
                                           STATION_LOCATION_MAX, STATION_LOCATION_MIN,
                                           inet_address, ldn_constant_id,
-                                          ldn_service_variable_id, station_location)
+                                          ldn_service_variable_id, player_info, station_location)
 
 PROTOCOL = 0x14
 VERSION = 9
@@ -56,15 +56,14 @@ OFF_RESPONSE_VARIABLE_ID = 0xD
 OFF_RESPONSE_GATE = 0x37
 ACCEPTED_RESPONSE_SIZE = 0x38
 
-# A Let's Go station answers with the full body, 0x348 bytes, whose fields are the ones a capture
-# of two Let's Go endpoints shows filled. The console's own response carries the same layout.
+# A Let's Go station answers with the full body, 0x348 bytes. The network id sits at 0x31 and a
+# 195-byte PlayerInfo at 0x37, so the gate byte the parser reads is that structure's first field.
+# Both captured stations and the retail console send this layout.
 OFF_RESPONSE_NETWORK_ID = 0x31      # the network id, big-endian: the advertise data's first u32
-OFF_RESPONSE_FLAGS = 0x35           # 01 01, then the gate byte at 0x37
-OFF_RESPONSE_STATION_NAME = 0x38    # "username" in both captured stations, 0x50 bytes
-OFF_RESPONSE_HAS_PLAYER = 0x88      # 1 when a player name follows
-OFF_RESPONSE_PLAYER_NAME = 0x89     # the Switch profile's nickname, 0x28 bytes
-OFF_RESPONSE_PLAYER_FLAG = 0xB1
+OFF_RESPONSE_FLAGS = 0x35           # 01 01, then the PlayerInfo at 0x37
+OFF_RESPONSE_PLAYER_INFO = 0x37
 FULL_RESPONSE_SIZE = 0x344          # the ack id follows, so the message is 0x348
+STATION_NAME = "username"           # the name field of every captured station's PlayerInfo
 
 __all__ = ["PROTOCOL", "VERSION", "HEADER_SIZE", "PLATFORM_SWITCH", "CONNECTION_REQUEST",
            "CONNECTION_RESPONSE", "RELAY_CONNECTION_REQUEST", "ACK", "RESULT_NAMES",
@@ -110,7 +109,7 @@ def parse_connection_request(data):
 
 def build_connection_response(target_constant_id, target_variable_id, result=0, ack_id=1,
                               gate=1, platform=PLATFORM_SWITCH, network_id=None, player_name=None,
-                              station_name=b"username"):
+                              station_name=STATION_NAME):
     """A version-9 connection response. `target_constant_id` and `target_variable_id` are the
     RECEIVER's own ids (the host's), which its parser compares against itself; `gate` is the byte at
     0x37 the result-0 path reads and drops when 5 or more. A trailing u32 ack id follows the body.
@@ -132,13 +131,10 @@ def build_connection_response(target_constant_id, target_variable_id, result=0, 
     if network_id is not None:
         struct.pack_into(">I", out, OFF_RESPONSE_NETWORK_ID, network_id & 0xFFFFFFFF)
         out[OFF_RESPONSE_FLAGS] = out[OFF_RESPONSE_FLAGS + 1] = 1
-        name = bytes(station_name or b"")[:0x4F]
-        out[OFF_RESPONSE_STATION_NAME:OFF_RESPONSE_STATION_NAME + len(name)] = name
-        if player_name:
-            player = bytes(player_name)[:0x27]
-            out[OFF_RESPONSE_HAS_PLAYER] = 1
-            out[OFF_RESPONSE_PLAYER_NAME:OFF_RESPONSE_PLAYER_NAME + len(player)] = player
-        out[OFF_RESPONSE_PLAYER_FLAG] = 1
+        if isinstance(player_name, bytes):
+            player_name = player_name.decode("utf-8", "replace")
+        info = player_info(name=station_name, account=player_name or "")
+        out[OFF_RESPONSE_PLAYER_INFO:OFF_RESPONSE_PLAYER_INFO + len(info)] = info
     return bytes(out) + struct.pack(">I", ack_id & 0xFFFFFFFF)
 
 

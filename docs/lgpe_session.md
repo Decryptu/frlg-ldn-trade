@@ -191,14 +191,16 @@ needs to be accepted. The body carries the network the station joined and who is
     0x0D  4  the receiver's variable id, big-endian
     0x31  4  the network id, big-endian: the advertise data's first u32, read little-endian
     0x35  2  01 01
-    0x37  1  the gate byte, dropped when 5 or more
-    0x38  0x50  the station name, "username" on both captured stations
-    0x88  1  1 when a player name follows
-    0x89  0x28  the Switch profile's nickname, what the console shows as the partner
-    0xB1  1  1
+    0x37  0xC3  a PlayerInfo: the station name "username", then the Switch profile's nickname,
+             then the language. Its first byte is the gate the parser drops when 5 or more
     0x344 4  the ack id
 
-A retail Let's Go Pikachu sends the same layout with its own profile name.
+A retail Let's Go Pikachu sends the same layout with its own profile name. The PlayerInfo is the
+same 195-byte structure `station_protocol.player_info` builds.
+
+A Let's Go joiner's station location, in the connection request, leaves the public address empty
+(two bytes, a port of zero) and sends zero for the NAT flags and the NAT location, which makes it
+36 bytes rather than 40. `station_location(..., public=False, nat_flags=0, nat_location=0)`.
 `station9.build_connection_response(..., network_id=N, player_name=B)` builds it, and
 `bin/lgpe_join.py --player-name NAME` sends it (`--short-response` sends the 0x3C body instead).
 

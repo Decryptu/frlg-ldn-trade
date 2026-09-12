@@ -251,3 +251,18 @@ def test_rtt_version_3_carries_the_kind_as_a_u32():
     assert rtt.build_v3(rtt.REQUEST, 0x41270099).hex() == \
         "00000000000000000000000041270099"
     assert rtt.response_for_v3(rtt.response_for_v3(req)) is None
+
+
+def test_local_wireless_station_location_matches_a_real_joiner():
+    """A Let's Go joiner's location has an empty public address and no NAT fields: 36 bytes, the
+    bytes the capture's joiner sent."""
+    from pokeldn.ldn import station4
+    from pokeldn.ldn.station_protocol import station_location
+    loc = station_location("127.0.0.3", 12345, 0x7F00030000020000, 0x08386213, 0x565FE1D8,
+                           nat_flags=0, nat_location=0, public=False)
+    assert loc.hex() == ("020600007f00000330390000000000007f0003000002000008386213"
+                         "565fe1d800000001")
+    p = station4.parse_station_location(loc)
+    assert p["size"] == 36 and p["ip"] == "127.0.0.3" and p["port"] == 12345
+    assert p["variable_id"] == 0x08386213 and p["nat_flags"] == 0
+    assert len(station_location("127.0.0.3", 12345, 1, 2, 3)) == 40
