@@ -33,7 +33,10 @@ if os.path.isdir(BUNDLED_LDN):
 
 import trio
 import ldn
-from pokeldn.ldn import pia3, pia4
+from pokeldn.ldn import pia3, pia4, station9, station4
+from pokeldn.ldn import mesh_protocol as mp
+from pokeldn.ldn import local_protocol as lp
+from pokeldn.ldn.station_protocol import ldn_constant_id, ldn_service_variable_id, station_location
 from pokeldn.ldn.transport import find_ap_phy
 from pokeldn.host_support import resolve_keys
 from pokeldn.lgpe import (COMM_ID_PIKACHU, PASSPHRASE, PIA_PORT, PIA_VERSION, packet_iv,
@@ -143,6 +146,13 @@ def build_parser():
     ap.add_argument("--facts", default="scratchpad/lgpe_net_facts.json")
     ap.add_argument("--capture", default=None,
                     help="jsonl of every datagram seen while seated, hex, with its verdict")
+    ap.add_argument("--connect", action="store_true",
+                    help="send a version-9 station connection request to the host and classify the "
+                         "reply, retransmitting every 0.5 s the way Pia does. Without it, listen only")
+    ap.add_argument("--variable-id", type=lambda s: int(s, 0), default=0x0B0B0B0B,
+                    help="our own variable id, any nonzero value (the console's is random)")
+    ap.add_argument("--connect-seconds", type=float, default=20.0,
+                    help="how long to retransmit the connection request and listen for its reply")
     return ap
 
 
@@ -232,13 +242,100 @@ def main(argv=None):
                       f"mac={bytes(getattr(p, 'mac_address', b'')).hex()} "
                       f"name={name!r} connected={getattr(p, 'connected', '?')}")
             record(rec="seat", macs=[m.hex() for m in macs])
+            host = parts[0] if parts else None
+            host_ip = str(getattr(host, "ip_address", "") or "169.254.105.1")
+            host_mac = bytes(getattr(host, "mac_address", b"") or b"")
+            ours = parts[1] if len(parts) > 1 else None
+            our_ip = str(getattr(ours, "ip_address", "") or host_ip.rsplit(".", 1)[0] + ".2")
+            our_mac = macs[1] if len(macs) > 1 else (macs[0] if macs else bytes(6))
             sock = make_socket(args.ifname)
             t0 = time.monotonic()
             n_rx = n_ok = n_v3 = 0
             versions = {}
-            print(f"[lg] listening on :{PIA_PORT} for {args.hold:.0f}s")
-            while time.monotonic() - t0 < args.hold:
-                r, _, _ = select.select([sock], [], [], 0.2)
+
+            out_nonce = [0]
+            def send_connection_request():
+                if len(host_mac) != 6 or len(our_mac) != 6:
+                    print("[lg] a MAC is missing; cannot build the request"); return False
+                host_const = ldn_constant_id(host_mac)
+                our_const = ldn_constant_id(our_mac)
+                loc = station_location(our_ip, PIA_PORT, our_const, args.variable_id,
+                                       ldn_service_variable_id(our_mac))
+                msg = station9.build_connection_request(host_const, 0, loc, ack_id=0)
+                body = pia3.build_message(msg, protocol=station9.PROTOCOL, source=our_const,
+                                          port=0, destination=host_const)
+                out_nonce[0] += 1
+                nonce8 = out_nonce[0].to_bytes(8, "big")
+                iv = packet_iv(keys, our_mac, nonce8, source_id=0)
+                pkt = pia3.build_packet(keys.session_key, iv, body, station=0, nonce8=nonce8)
+                sock.sendto(pkt, (host_ip, PIA_PORT))
+                record(rec="tx", t=round(time.monotonic() - t0, 3), to=host_ip, len=len(pkt),
+                       data=pkt.hex(), kind="station9_connection_request")
+                return True
+
+            state = {"acked_inverse": False, "sent_response": False, "host_accepted": False,
+                     "our_ack": [1], "acked_response": False, "mesh_joined": False,
+                     "mesh_join_sent": False}
+            def send_packet(body):
+                out_nonce[0] += 1
+                nonce8 = out_nonce[0].to_bytes(8, "big")
+                iv = packet_iv(keys, our_mac, nonce8, source_id=0)
+                pkt = pia3.build_packet(keys.session_key, iv, body, station=0, nonce8=nonce8)
+                sock.sendto(pkt, (host_ip, PIA_PORT))
+                return pkt
+            def complete_handshake(inverse_req):
+                """Ack the console's inverse connection request and send our connection response."""
+                host_const = ldn_constant_id(host_mac); our_const = ldn_constant_id(our_mac)
+                ack_id = station9.ack_id_of(inverse_req)
+                loc = inverse_req[station9.OFF_LOCATION:-4]
+                try:
+                    host_var = station4.parse_station_location(loc)["variable_id"]
+                except Exception:
+                    host_var = 0
+                ack = pia3.build_message(station9.build_ack(ack_id), protocol=station9.PROTOCOL,
+                                         source=our_const, port=0, destination=host_const)
+                pkt1 = send_packet(ack)
+                record(rec="tx", t=round(time.monotonic() - t0, 3), to=host_ip, len=len(pkt1),
+                       data=pkt1.hex(), kind="ack_inverse", ack_id=ack_id)
+                resp = station9.build_connection_response(host_const, host_var,
+                                                          ack_id=state["our_ack"][0])
+                state["our_ack"][0] += 1
+                body = pia3.build_message(resp, protocol=station9.PROTOCOL, source=our_const,
+                                          port=0, destination=host_const)
+                pkt2 = send_packet(body)
+                record(rec="tx", t=round(time.monotonic() - t0, 3), to=host_ip, len=len(pkt2),
+                       data=pkt2.hex(), kind="connection_response", host_var=host_var)
+                print(f"[lg] acked inverse (ack id {ack_id:#x}) and sent connection response "
+                      f"(host var {host_var:#x})")
+
+            if args.connect:
+                host_const = ldn_constant_id(host_mac) if len(host_mac) == 6 else 0
+                print(f"[lg] --connect: sending v9 connection request to host {host_ip} "
+                      f"(constant {host_const:#018x}), our constant "
+                      f"{ldn_constant_id(our_mac) if len(our_mac)==6 else 0:#018x}, "
+                      f"variable id {args.variable_id:#x}")
+                deadline = args.connect_seconds
+                next_tx = 0.0
+            else:
+                deadline = args.hold
+                print(f"[lg] listening on :{PIA_PORT} for {deadline:.0f}s")
+            while time.monotonic() - t0 < deadline:
+                if args.connect and not state["host_accepted"] and time.monotonic() - t0 >= next_tx:
+                    if not send_connection_request():
+                        break
+                    next_tx += 0.5
+                if args.connect and state["host_accepted"] and not state["mesh_joined"] \
+                        and time.monotonic() - t0 >= next_tx:
+                    jr = pia3.build_message(mp.build_join_request(state["our_ack"][0]),
+                        protocol=mp.PROTOCOL, source=ldn_constant_id(our_mac), port=0,
+                        destination=ldn_constant_id(host_mac))
+                    send_packet(jr)
+                    if not state["mesh_join_sent"]:
+                        print("[lg] host accepted; sending mesh join request on 0x18")
+                    state["mesh_join_sent"] = True
+                    state["our_ack"][0] += 1
+                    next_tx += 0.5
+                r, _, _ = select.select([sock], [], [], 0.1)
                 if not r:
                     await trio.sleep(0)
                     continue
@@ -260,6 +357,47 @@ def main(argv=None):
                                      messages=[{"protocol": m["protocol"], "port": m["port"],
                                                 "flags": m["flags"], "version": m["version"],
                                                 "size": m["size"]} for m in msgs])
+                        our_const = ldn_constant_id(our_mac) if len(our_mac) == 6 else 0
+                        host_const = ldn_constant_id(host_mac) if len(host_mac) == 6 else 0
+                        def to_host(body, proto):
+                            send_packet(pia3.build_message(body, protocol=proto, source=our_const,
+                                                           port=0, destination=host_const))
+                        for m in msgs:
+                            pl = m["payload"]
+                            if m["protocol"] == station9.PROTOCOL:
+                                kind, result = station9.parse_reply(pl)
+                                is_inverse = kind == 1 and len(pl) > 3 and pl[3] == 1
+                                if args.connect and is_inverse and not state["sent_response"]:
+                                    complete_handshake(pl)
+                                    state["acked_inverse"] = state["sent_response"] = True
+                                if kind == station9.CONNECTION_RESPONSE and result == 0:
+                                    to_host(station9.build_ack(station9.ack_id_of(pl)),
+                                            station9.PROTOCOL)
+                                    if not state["host_accepted"]:
+                                        print("[lg] *** HOST ACCEPTED (connection response, "
+                                              f"result 0, {len(pl)}B) *** acked "
+                                              f"{station9.ack_id_of(pl):#x}")
+                                    state["host_accepted"] = state["acked_response"] = True
+                                print(f"[lg] station reply type={kind} result={result} "
+                                      f"inverse={is_inverse} {len(pl)}B pl[:24]={pl[:24].hex()}")
+                            elif m["protocol"] == mp.PROTOCOL:
+                                acked = mp.ack_for(pl)
+                                if acked:
+                                    to_host(acked[1], acked[0])
+                                if pl and pl[0] == mp.JOIN_RESPONSE and not state["mesh_joined"]:
+                                    state["mesh_joined"] = True
+                                    print("[lg] *** MESH JOIN RESPONSE - station index in the "
+                                          "mesh, acked on 0x14 ***")
+                                print(f"[lg] mesh 0x18 type={pl[0]:#x} {len(pl)}B "
+                                      f"pl[:24]={pl[:24].hex()}")
+                            elif m["protocol"] == lp.PROTOCOL and pl and pl[1:2] == b"\x11":
+                                # Local Protocol update-session: ack it (type 0x21) so the host
+                                # knows the seat is alive. RTT (0x58) never drops a silent station.
+                                try:
+                                    seq = lp.parse_update_session(pl).sequence_id
+                                    to_host(lp.build_ack(seq), lp.PROTOCOL)
+                                except Exception:
+                                    pass
                         if n_ok <= 8:
                             print(f"[rx] v{hdr.version} st={hdr.station} sid={hdr.session_id:#x} "
                                   f"{len(data)}B from {addr[0]} AUTH mac={mac.hex()} "

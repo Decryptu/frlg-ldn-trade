@@ -39,9 +39,27 @@ OFF_VARIABLE_ID = 0xC
 OFF_INVERSE_ID = 0x10
 OFF_LOCATION = 0x11
 
-__all__ = ["PROTOCOL", "VERSION", "HEADER_SIZE", "CONNECTION_REQUEST", "CONNECTION_RESPONSE",
-           "RELAY_CONNECTION_REQUEST", "ACK", "RESULT_NAMES", "build_connection_request",
-           "parse_connection_request", "build_ack", "ack_id_of", "parse_reply",
+PLATFORM_SWITCH = 4
+
+# The response fields the console's parser at 0x5b9270 reads, confirmed against Let's Go Pikachu:
+#   [1]     result byte; 2 (version too low) takes a separate path
+#   [5..C]  target constant id, big-endian, compared against the receiver's own (its +0x68)
+#   [0xD..10] target variable id, big-endian, compared against the receiver's own (+0x70)
+#   [0x37]  one byte, result-0 only, dropped when >= 5 (like Sword's gate)
+# Nothing else is required to accept the response; the player-info body is what the HOST sends back.
+OFF_RESPONSE_RESULT = 1
+OFF_RESPONSE_VERSION = 2
+OFF_RESPONSE_PLATFORM = 3
+OFF_RESPONSE_FRAGMENT = 4
+OFF_RESPONSE_CONSTANT_ID = 5
+OFF_RESPONSE_VARIABLE_ID = 0xD
+OFF_RESPONSE_GATE = 0x37
+ACCEPTED_RESPONSE_SIZE = 0x38
+
+__all__ = ["PROTOCOL", "VERSION", "HEADER_SIZE", "PLATFORM_SWITCH", "CONNECTION_REQUEST",
+           "CONNECTION_RESPONSE", "RELAY_CONNECTION_REQUEST", "ACK", "RESULT_NAMES",
+           "ACCEPTED_RESPONSE_SIZE", "build_connection_request", "parse_connection_request",
+           "build_connection_response", "build_ack", "ack_id_of", "parse_reply",
            "station_location", "inet_address", "ldn_constant_id", "ldn_service_variable_id"]
 
 
@@ -78,6 +96,23 @@ def parse_connection_request(data):
             "variable_id": struct.unpack_from(">I", data, OFF_VARIABLE_ID)[0],
             "inverse_connection_id": data[OFF_INVERSE_ID],
             "location": data[OFF_LOCATION:-4], "ack_id": struct.unpack_from(">I", data, len(data) - 4)[0]}
+
+
+def build_connection_response(target_constant_id, target_variable_id, result=0, ack_id=1,
+                              gate=1, platform=PLATFORM_SWITCH):
+    """A version-9 connection response, padded to the size that answers the gate from inside the
+    message. `target_constant_id` and `target_variable_id` are the RECEIVER's own ids (the host's),
+    which its parser compares against itself; `gate` is the byte at 0x37 the result-0 path reads and
+    drops when 5 or more. A trailing u32 ack id follows the padded body."""
+    out = bytearray(ACCEPTED_RESPONSE_SIZE)
+    out[0] = CONNECTION_RESPONSE
+    out[OFF_RESPONSE_RESULT] = result & 0xFF
+    out[OFF_RESPONSE_VERSION] = VERSION
+    out[OFF_RESPONSE_PLATFORM] = platform & 0xFF
+    struct.pack_into(">Q", out, OFF_RESPONSE_CONSTANT_ID, target_constant_id & ((1 << 64) - 1))
+    struct.pack_into(">I", out, OFF_RESPONSE_VARIABLE_ID, target_variable_id & 0xFFFFFFFF)
+    out[OFF_RESPONSE_GATE] = gate & 0xFF
+    return bytes(out) + struct.pack(">I", ack_id & 0xFFFFFFFF)
 
 
 def build_ack(ack_id):

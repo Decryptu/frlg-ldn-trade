@@ -90,3 +90,16 @@ def test_station9_connection_request_round_trips():
     assert got["connection_id"] == 0x2A and got["location"] == loc
     assert station9.build_ack(7) == bytes.fromhex("0500000000000007")
     assert station9.ack_id_of(req) == 7
+
+
+def test_station9_connection_response_is_read_where_the_handler_looks():
+    from pokeldn.ldn import station9
+    host_const, host_var = 0xEB9B2220F1480000, 0xC30760A9
+    resp = station9.build_connection_response(host_const, host_var, ack_id=3)
+    assert len(resp) == station9.ACCEPTED_RESPONSE_SIZE + 4
+    assert resp[0] == station9.CONNECTION_RESPONSE and resp[1] == 0
+    assert resp[station9.OFF_RESPONSE_CONSTANT_ID:station9.OFF_RESPONSE_CONSTANT_ID + 8] == \
+        host_const.to_bytes(8, "big")
+    assert resp[station9.OFF_RESPONSE_VARIABLE_ID:station9.OFF_RESPONSE_VARIABLE_ID + 4] == \
+        host_var.to_bytes(4, "big")
+    assert resp[station9.OFF_RESPONSE_GATE] == 1 and resp[-4:] == (3).to_bytes(4, "big")

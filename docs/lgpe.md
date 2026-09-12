@@ -25,16 +25,19 @@ fixed set. The sessions here use Pikachu, Pikachu, Pikachu.
 
 ## What works
 
-The session layer is confirmed on a retail Let's Go Pikachu: association with the 64-byte
-passphrase, the session key derived from the advertisement, the version-3 Pia header, the 22-byte
-message framing, and the console's Local Protocol update-session broadcast decoded through the
-existing `pokeldn.ldn` modules. `docs/lgpe_session.md`.
+Confirmed on a retail Let's Go Pikachu, end to end up to the mesh: association with the 64-byte
+passphrase, the session key, the version-3 Pia header, the 22-byte message framing, the full
+version-9 station connection handshake, and a mesh join that makes the joiner station index 1 in
+the host's mesh. The console then drives the Local Protocol, RTT, and a protocol 0x73 game layer.
+`docs/lgpe_session.md`.
 
 ## Unresolved
 
 - How the three-Pokemon link code becomes the password. Its CRC32 at application-data +4 was 0 on a
   session hosted with the code Pikachu, Pikachu, Pikachu, so the code does not reach the Pia
   password field. Where the game checks it is unread.
-- Joining the mesh: a version-9 connection request on protocol 0x14, then a join on 0x18. The
-  request layout is read; it has not been sent.
-- The game's own message layer above Pia (gflnet3 protobuf).
+- The protocol 0x73 game layer above the mesh. The console streams it once the mesh forms; it is
+  unread. A mesh that answers nothing on 0x73 ends with the game showing the partner-interrupted
+  message.
+- Holding the mesh open: the join response is now acked and the session updates answered, but
+  whether that alone keeps the seat until the game layer starts is not yet measured.

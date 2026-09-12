@@ -158,5 +158,36 @@ station-protocol version number 9:
 This is neither Sword's version-4 request (a platform byte at [2], a shift flag at [3]) nor the
 repo's 5.29-5.45 module (a protocol list at [1]). It is the classic station protocol with a version
 byte, so a version-4 or a 5.29 request sent here lands every field in the wrong place. The target
-constant id must be the console's own, derived from its MAC; the joiner's own location carries the
+constant id is the console's own, derived from its MAC; the joiner's own location carries the
 joiner's constant id, variable id and service variable id.
+
+The handshake, measured on a retail Let's Go Pikachu, completes the full version-9 sequence (the
+inverse connection request the 5.27 simplification later removed):
+
+    ->  our connection request (type 1, is_inverse 0, target the host constant id, our location)
+    <-  the host's type-5 ack, then its inverse connection request (type 1, is_inverse 1),
+        addressed to our constant id and the variable id we sent, carrying its own location and a
+        trailing ack id
+    ->  our type-5 ack of that ack id, then our connection response (type 2, result 0, the host's
+        constant id at [5] and variable id at [0xD], gate byte 1 at [0x37], padded to 0x38)
+    <-  the host's connection response (type 2, result 0, 840 bytes, platform 4, carrying our ids,
+        a network id and one player info), which it repeats until we ack it
+    ->  our type-5 ack of that response
+
+The connection-response parser at `0x5b9270` reads `[1]` the result, `[5]` a big-endian u64 against
+its own constant id, `[0xD]` a big-endian u32 against its own variable id, and `[0x37]` a gate byte
+the result-0 path drops when 5 or more. `station9.build_connection_response` writes exactly those.
+
+## Joining the mesh
+
+With the station connected, a mesh join request on protocol 0x18 (`mesh_protocol.build_join_request`,
+type 1, local station index 253, a trailing ack id) draws the host's join response: type 2, 148
+bytes, two stations, host index 0, joining index 1, one fragment, two station infos, max active 2,
+max total 8, carrying both stations' locations. The host then broadcasts an update mesh (type 0x20,
+524 bytes, update counter 1). The join response is acknowledged with a type-5 ack on protocol 0x14,
+not with a mesh message (`mesh_protocol.ack_for`). The joiner is then station index 1 in the mesh.
+
+Once in the mesh the host streams, per second, its Local Protocol update-session (0x24, acked with a
+0x21), RTT requests (0x58; a silent station is not dropped, only left without a timing sample), and
+a protocol 0x73 above the mesh that is the game's own layer and is unread. A mesh with no traffic on
+0x73 ends with the console showing "la connexion avec votre partenaire a ete interrompue".
