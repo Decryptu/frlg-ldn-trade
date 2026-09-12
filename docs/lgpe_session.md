@@ -222,5 +222,11 @@ agreed, and clone elements are retransmitted on that clock. The handlers to read
     0x51b010  the reply/ack state machine, a jump table at 0xf76674 on (type - 0x21)
     0x51b1d0  the clock-driven element retransmit scheduler (the 0x11 request side)
 
-`pokeldn.ldn.clone` builds the clock reply and the participate message; the participate field values
-and the clock-reply semantics are the next reads. The CloneProtocol receive vtable is `0x158aa98`.
+`pokeldn.ldn.clone` builds the clock reply and the participate message. Sending the clock reply
+(echoing the request's clock), a participate (type 0x31), and both framings (directed constant-id
+and the console's own bitmap to the host station bit) all leave the console sending only clock
+requests and dropping the partner; none converges the clone clock. The wall is the clock-agreement
+math, the host's offset computation on a reply, in the Clock class (`nn::pia::clone::Clock` /
+`RtcClock`), and/or the game-level clone element sync. The CloneProtocol receive vtable is
+`0x158aa98`; the clock reply's [0xA] extra u32, unread, is the likely carrier of the replier's own
+clock.

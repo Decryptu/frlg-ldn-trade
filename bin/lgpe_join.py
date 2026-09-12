@@ -281,6 +281,13 @@ def main(argv=None):
             state = {"acked_inverse": False, "sent_response": False, "host_accepted": False,
                      "our_ack": [1], "acked_response": False, "mesh_joined": False,
                      "mesh_join_sent": False}
+            HOST_STATION_BIT = 0x0001
+            def clone_send(payload):
+                our_const = ldn_constant_id(our_mac) if len(our_mac) == 6 else 0
+                body = pia3.build_message(payload, protocol=clone.PROTOCOL, source=our_const,
+                                          port=0, destination=HOST_STATION_BIT,
+                                          message_flags=pia3.MESSAGE_FLAG_BITMAP)
+                send_packet(body)
             def send_packet(body):
                 out_nonce[0] += 1
                 nonce8 = out_nonce[0].to_bytes(8, "big")
@@ -332,9 +339,7 @@ def main(argv=None):
                 if args.connect and args.participate and state["mesh_joined"] \
                         and not state.get("participated") and len(our_mac) == 6 \
                         and len(host_mac) == 6:
-                    send_packet(pia3.build_message(clone.build_participate(participant=0x0002),
-                        protocol=clone.PROTOCOL, source=ldn_constant_id(our_mac), port=0,
-                        destination=ldn_constant_id(host_mac)))
+                    clone_send(clone.build_participate(participant=0x0002))
                     state["participated"] = True
                     print("[lg] sent clone participate (type 0x31, participant 0x0002)")
                 if args.connect and state["host_accepted"] and not state["mesh_joined"] \
@@ -406,7 +411,7 @@ def main(argv=None):
                             elif m["protocol"] == clone.PROTOCOL:
                                 rep = clone.reply_to(pl) if args.connect else None
                                 if rep is not None:
-                                    to_host(rep, clone.PROTOCOL)
+                                    clone_send(rep)
                                     state["clock_replies"] = state.get("clock_replies", 0) + 1
                                     if state["clock_replies"] == 1:
                                         print("[lg] answering clone clock requests (type 0x21)")
