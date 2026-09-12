@@ -167,6 +167,10 @@ class Session:
         self.window = reliable3.Window()
         self.payloads = []
         self.clone = None
+        self.clone_0_acked = False
+        self.clone_0_data = bytes(8)
+        self.next_clone_0 = 0.0
+        self.clone_1_announced = False
         self.update_counter = 0
         self.session_sequence = 1
         self.local_network_id = random.getrandbits(32)
@@ -257,6 +261,39 @@ class Session:
         if self.clone is not None:
             for out in self.clone.poll(now):
                 self.send(out, clone.PROTOCOL)
+            # the host owns clone 0 and publishes its data; the console asks for it with an empty
+            # record every half second until it arrives, and acknowledges it with an 0xe3
+            if (self.clone.participated and self.clone.peer_participated
+                    and not self.clone_0_acked and now >= self.next_clone_0):
+                self.next_clone_0 = now + 0.5
+                record = clone.build_state_record(0, HOST_INDEX, 3, self.clone.ms(now),
+                                                  bytes(self.clone_0_data))
+                self.send(clone.build_data_message(clone.STATE_DATA, 3, 0xFD, 0,
+                                                   self.clone.frame(now), record, flags=3),
+                          clone.PROTOCOL)
+            if self.clone_0_acked and not self.clone_1_announced:
+                self.clone_1_announced = True
+                self.announce_clone_1(now)
+
+    def announce_clone_1(self, now):
+        """The second clone, the one both stations hold. A host announces it on clone type 2 and
+        on types 4 and 1, then publishes its data; the joiner mirrors it and answers with an 0xa2
+        on clone type 2, which is the only message that puts a station in a clone's acknowledged
+        set (docs/lgpe_session.md)."""
+        c = self.clone
+        content = b"\x01\x28\x08\xab"
+        # the announcement is addressed to every station, where the rest go to the peer alone
+        announce = clone.build_command(clone.COMMAND_ANNOUNCE, 2, HOST_INDEX, 1,
+                                       c._next_count(), HOST_BIT | JOINER_BIT)
+        self.send(announce[:2] + struct.pack(">H", c.frame(now)) + announce[4:], clone.PROTOCOL)
+        clk = struct.pack(">I", c.ms(now))
+        for ctype in (4, 1):
+            self.send(c._command(clone.CLOCK_AND_COUNT, ctype, 0xFD, 1, now, clk + content),
+                      clone.PROTOCOL)
+        record = clone.build_state_record(1, HOST_INDEX, 3, c.ms(now), bytes(32))
+        self.send(clone.build_data_message(clone.STATE_DATA, 4, 0xFD, 1, c.frame(now), record,
+                                           flags=3), clone.PROTOCOL)
+        print("[lgh] clone: announced clone 1 on clone types 2, 4 and 1")
 
     def broadcast_session(self):
         nodes = [(self.host.our_ip, PIA_PORT, 0)]
@@ -303,6 +340,11 @@ class Session:
             if self.clone is None:
                 self.clone = clone.Participant(time.monotonic(), dest=JOINER_BIT, own=HOST_BIT,
                                                station=HOST_INDEX)
+            d = clone.parse_data_message(pl)
+            if d and d["type"] == clone.STATE_ACK and d["clone_id"] == 0 \
+                    and not self.clone_0_acked:
+                self.clone_0_acked = True
+                print("[lgh] clone: the console acknowledged our clone 0")
             for out in self.clone.receive(pl, time.monotonic()):
                 self.send(out, clone.PROTOCOL)
         elif protocol == reliable3.PROTOCOL:

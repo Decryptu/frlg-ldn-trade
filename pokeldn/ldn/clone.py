@@ -54,6 +54,9 @@ RECORD_TAG = 0x20
 # The data a Let's Go station publishes for the clone both stations hold when the trade screen
 # opens: twenty bytes with a single 1 at offset 12, the same from both stations in a real session.
 SHARED_CLONE_DATA = bytes(12) + b"\x01" + bytes(7)
+# The three bytes a clone acknowledgement carries after its flag, the same in every session a
+# retail console has answered in.
+CLONE_ACK_TAIL = b"\x00\xd8\x58"
 RECORD_EMPTY = 0x01                 # a clone that has no data yet: six bytes, no clock
 RECORD_STATE = 0x03
 RECORD_ACK = 0x05
@@ -400,6 +403,13 @@ class Participant:
                                None))
             return [self._command(CLOCK_AND_COUNT_2, 2, self.station, c["clone_id"], now,
                                   c["payload"])]
+        if kind == CLOCK_COMMAND and c["clone_id"] != 0:
+            # the peer has taken our clone over on this clone type: acknowledge it. The clone
+            # type 2 answer carries our own station, where clone type 4 keeps 0xFD.
+            station = self.station if c["ctype"] == 2 else c["station"]
+            flag = b"\x01" if c["ctype"] == 4 else b"\x00"
+            return [self._command(CLOCK_AND_COUNT_2, c["ctype"], station, c["clone_id"], now,
+                                  struct.pack(">I", self.ms(now)) + flag + CLONE_ACK_TAIL)]
         if kind == COMMAND_REQUEST and c["ctype"] == 1:
             # the host asks for our copy: answer with the state acknowledgement
             return [build_data_message(STATE_ACK, 1, 0xFD, c["clone_id"], self.frame(now),
