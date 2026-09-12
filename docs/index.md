@@ -36,6 +36,7 @@ above it. Both have completed a trade with a retail console.
 | [FireRed and LeafGreen](frlg.md) | The GBA link, Mystery Gift, code execution on the console, the RNG, the two cartridges. |
 | [Brilliant Diamond and Shining Pearl](bdsp.md) | Pia 5.27-5.45, the Union Room, and the trade flow. |
 | [Sword and Shield](swsh.md) | Pia 4, the sync framework, trading, and the Mystery Gift local branch. |
+| [Let's Go Pikachu and Eevee](lgpe.md) | Pia 3, the link code, and the trade flow. |
 | [Hardware and setup](hardware.md) | Adapters, Raspberry Pi deployment, Switch keys. |
 
 ## Credits
