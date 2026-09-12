@@ -366,6 +366,12 @@ every captured stream is reproduced byte for byte by `clone.pack_record`. The 0x
 bytes at [0xC] carry the record's participant bitmap and the 0xeN header's one byte the station
 it acknowledges.
 
+A host announces the clone it owns with an 0xa1 and an 0xb1 carrying the participant bitmap, and
+the other station answers with an 0xa2 and an 0xc1 before the data is published. An 0xa2 carries
+the mesh clock, a flag byte (1 on clone type 4, 0 on clone type 2), a zero, and the element's own
+clock: two milliseconds into an emulator's clone session it is 2, and on a console fifty-five
+seconds into one it is 0xd858.
+
 A station announces a clone with 0xa1 and the other answers 0x91; the owner then sends its data in
 an 0xf3 and the other acknowledges with an 0xe3 carrying the same clock. 0x83 releases a clone and
 0x84 acknowledges the release. Type 0x32 asks the other station to leave the clone session and
@@ -394,7 +400,15 @@ The only gate is state 4, `0x11b080`, which asks whether the Pia channel is read
 - a SharingClone at +0x1258 reports ready the same way (`0x522610`);
 - every station's entry at +0x250, one per 0x118 bytes, has 1 in its first word and a non-zero
   byte at +0xD8;
-- the byte at +0x1430 is 0xFD.
+- the byte at +0x1430 is not 0xFD. It is a station index and 0xFD is this build's "none"; every
+  path where it is 0xFD returns 0.
+
+The SendClone's check is `(element+0x3C & ~clone+0xA8) == 0` and the SharingClone's is
+`((clone+0x114 | ~clone+0xA8) & element+0x3C) == 0`, so the second also needs the element's
+participants clear of `+0x114`. Both clones share one element. Measured on a session that works,
+the fields that move from refusing to ready are only three: the SendClone's acknowledged set fills,
+the SharingClone's `+0x114` drains, and every station's `+0xD8` becomes 1. The participating set is
+already full while the gate still refuses, so participate messages are not what is missing.
 
 A station's bit reaches `clone+0xA8` in one place: receiving an 0xa2 on **clone type 2** from that
 station (`0x51c52c`'s jump table `0xf76c38`, entry for 0xa2, into `0x522350`). No other clone type
@@ -403,6 +417,16 @@ and no other message sets it.
 The receiving side stores each arriving message at `this + node * 0x1C8 + 0xC0` and counts them at
 `this+0x470`; at two it advances and goes quiet. The barrier is two because the sender delivers its
 own message to itself, so a partner that never sends leaves the count at one.
+
+### Where a retail console stops when we host
+
+The console joins, seats in the mesh, participates, answers the clone-0 announcement pair, announces
+its own copy, acknowledges the data, and performs the take-over burst on a clone the host announces:
+an 0x82 on clone type 1, a 0x91 on clone type 4, a 0x91 on clone type 2 carrying its own station,
+and an 0x84 on clone type 4. A joiner in a session that works sends three more messages in the same
+burst, an 0x81 on clone type 2 with its own station and an 0xa1 on clone types 4 and 1, and then an
+0xa2 on clone type 2. What makes it send those is unresolved, and it is the message that fills the
+other station's acknowledged set.
 
 ### What a host does with a joiner that holds no clone data
 

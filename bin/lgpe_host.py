@@ -167,6 +167,7 @@ class Session:
         self.window = reliable3.Window()
         self.payloads = []
         self.clone = None
+        self.clone_0_announced = False
         self.clone_0_acked = False
         self.clone_0_data = bytes(8)
         self.next_clone_0 = 0.0
@@ -264,7 +265,12 @@ class Session:
             # the host owns clone 0 and publishes its data; the console asks for it with an empty
             # record every half second until it arrives, and acknowledges it with an 0xe3
             if (self.clone.participated and self.clone.peer_participated
-                    and not self.clone_0_acked and now >= self.next_clone_0):
+                    and not self.clone_0_announced):
+                self.clone_0_announced = True
+                self.announce_clone_0(now)
+            if (self.clone.participated and self.clone.peer_participated
+                    and self.clone_0_announced and not self.clone_0_acked
+                    and now >= self.next_clone_0):
                 self.next_clone_0 = now + 0.5
                 record = clone.build_state_record(0, HOST_INDEX, 3, self.clone.ms(now),
                                                   bytes(self.clone_0_data))
@@ -274,6 +280,19 @@ class Session:
             if self.clone_0_acked and not self.clone_1_announced:
                 self.clone_1_announced = True
                 self.announce_clone_1(now)
+
+    def announce_clone_0(self, now):
+        """The clone the host owns from the start. A host announces it with the clock-and-count
+        and the clock-and-participant messages and only then publishes its data; the joiner
+        answers the pair with an 0xa2 and an 0xc1."""
+        c = self.clone
+        ms = c.ms(now)
+        self.send(c._command(clone.CLOCK_AND_COUNT, 3, 0xFD, 0, now,
+                             struct.pack(">IBBH", ms, 1, 0, c.element_ms(now) & 0xFFFF)),
+                  clone.PROTOCOL)
+        self.send(c._command(clone.CLOCK_AND_PARTICIPANT, 3, 0xFD, 0, now,
+                             struct.pack(">II", ms, HOST_BIT | JOINER_BIT)), clone.PROTOCOL)
+        print("[lgh] clone: announced clone 0")
 
     def announce_clone_1(self, now):
         """The second clone, the one both stations hold. A host announces it on clone type 2 and
