@@ -891,6 +891,28 @@ The receive job is rebuilt whenever the search screen is re-entered: both `manag
 object the sink is bound to move. Anything holding those addresses across a screen exit is reading a
 dead object.
 
+## A card delivered to a retail console
+
+`bin/swsh_gift_host.py` delivered a card to a retail Sword over real LDN: the Mystery Gift local
+search listed the gift, the player received it, and a level 25 Pikachu with the record's strings
+stood in the party. Three things separate a distributor a retail console lists from one it ignores,
+each measured by a run that changed it alone:
+
+| what the host advertised | listed |
+|---|---|
+| LDN protocol 3 (the GBA app's), advertise data opening with 24 zero bytes | no |
+| LDN protocol 1, the console's own, 24 zero bytes | no |
+| LDN protocol 1, the Pia header at the front of the advertise data | yes |
+
+The Pia header is the one the console's own gift advertisement opens with
+([Sword sessions](swsh_session.md)): a random network id, a zero password CRC, system communication
+version 5, header size 0x18, a random session parameter and eight zero bytes. The emulator runs never
+exercised either variable: ldn_mitm carries no 802.11 advertisement, and every beacon sent there was
+built on a template copied from the console's own advertise data, header included.
+
+Scene id 0 and application version 4 were accepted. The console's own advertisement on that screen
+carries scene 65535 and application version 7, so neither is filtered on.
+
 ## The first card the game kept
 
 A sealed record of kind 3 was accepted, shown in the gift list, confirmed, and written to the save.

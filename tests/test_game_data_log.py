@@ -16,7 +16,7 @@ from pokeldn.frlg.text import charmap, easychat
 
 
 def _game_data(*, flag_id=0, questionnaire=(), profile=(), battles_won=0, battles_lost=0,
-               trades=0, name="GURVAN", trainer_id=57189, stamps=(), version_code=1):
+               trades=0, name="PLAYER", trainer_id=57189, stamps=(), version_code=1):
     raw = bytearray(mg_script.GAME_DATA_SIZE)
     raw[0:4] = mg.GAME_DATA_VALID_VAR.to_bytes(4, "little")
     raw[4] = raw[8] = raw[0x0C] = 1
@@ -47,7 +47,7 @@ def test_the_record_carries_the_console_identity_and_the_card_counters():
         _game_data(flag_id=1009, battles_won=3, battles_lost=1, trades=2), tag="mev25")
 
     assert entry["tag"] == "mev25"
-    assert entry["player_name"] == "GURVAN"
+    assert entry["player_name"] == "PLAYER"
     assert entry["trainer_id"] == 57189
     assert entry["version"] == "FireRed" and entry["game_code"] == "BPRF"
     assert (entry["flag_id"], entry["battles_won"], entry["battles_lost"], entry["num_trades"]) \
@@ -57,9 +57,9 @@ def test_the_record_carries_the_console_identity_and_the_card_counters():
 def test_a_seven_character_name_reports_no_trainer_id_rather_than_a_wrong_one():
     """The name field has no terminator slot, so a full name's 0xFF lands on playerTrainerId[0]
     [decomp:src/mystery_gift.c:364]. A wrong TID here would be indistinguishable from a real one."""
-    entry = game_data_log.record(_game_data(name="GURVANO"))
+    entry = game_data_log.record(_game_data(name="PLAYERO"))
     assert entry["trainer_id"] is None
-    assert game_data_log.record(_game_data(name="GURVAN"))["trainer_id"] == 57189
+    assert game_data_log.record(_game_data(name="PLAYER"))["trainer_id"] == 57189
 
 
 def test_the_raw_bytes_survive_so_a_later_question_costs_no_run():
@@ -154,7 +154,7 @@ def test_the_summary_separates_the_two_cartridges(tmp_path):
     lines = game_data_log.summary(game_data_log.read(path)
                                   + (game_data_log.record(leafgreen, tag="lg180"),))
 
-    assert any("'GURVAN'" in line and "2 session(s)" in line for line in lines)
+    assert any("'PLAYER'" in line and "2 session(s)" in line for line in lines)
     assert any("'ARWEN'" in line and "LeafGreen" in line and "1 session(s)" in line
                for line in lines)
     assert any("battles won 1 -> 4" in line for line in lines)
@@ -180,7 +180,7 @@ def test_the_reader_prints_the_summary_and_one_session_in_full(tmp_path, capsys)
 
     assert game_data_read.main([str(path), "--session", "2"]) == 0
     out = capsys.readouterr().out
-    assert "'GURVAN'" in out and "holding card flagId 1009" in out
+    assert "'PLAYER'" in out and "holding card flagId 1009" in out
 
     assert game_data_read.main([str(path), "--json"]) == 0
     dumped = [json.loads(line) for line in capsys.readouterr().out.splitlines()]

@@ -154,7 +154,7 @@ def test_the_approach_reproduces_the_console_s_own_talk_reserve_bytes():
 
 # the console's own NetDataTradeTranerData, sent when its player entered the trade
 TRADE_TRANER_SP82 = bytes.fromhex(
-    "470075007200760061006e000000000018a4010014a401000000b2adf00f3103")
+    "50006c0061007900650072000000000018a4010014a401000000b2adf00f3103")
 
 
 def test_the_trade_trainer_record_reads_and_agrees_with_the_pokemon_it_came_with():
@@ -165,7 +165,7 @@ def test_the_trade_trainer_record_reads_and_agrees_with_the_pokemon_it_came_with
     encrypted PB8 of the same trade: the console's Zubat, TID 44466 SID 4080.
     """
     r = room.parse_trade_traner(TRADE_TRANER_SP82)
-    assert r["name"] == "Gurvan"
+    assert r["name"] == "Player"
     assert r["trainer_id"] == 44466
     assert r["secret_id"] == 4080
     assert len(TRADE_TRANER_SP82) == room.TRADE_TRANER_SIZE == 32

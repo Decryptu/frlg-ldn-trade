@@ -11,7 +11,7 @@ import pytest
 from pokeldn.bdsp import netdata, pokemon, room
 
 
-def a_body(ec=0xCDBEB642, species=41, nickname="Nosferapti", ot="Gurvan", tid=44466, sid=4080):
+def a_body(ec=0xCDBEB642, species=41, nickname="Nosferapti", ot="Player", tid=44466, sid=4080):
     """A plain, unshuffled 328-byte body with the named fields set and the rest patterned.
 
     The filler is deliberately NOT zero: a block permutation and an off-by-one offset both survive
@@ -66,7 +66,7 @@ def test_a_block_order_that_is_not_its_own_inverse_still_round_trips():
     for ec in range(0, 1 << 20, 0x2000):                      # every one of the 32 sv values
         raw = pokemon.encrypt(a_body(ec=ec))
         r = pokemon.read(raw)
-        assert (r["nickname"], r["ot_name"]) == ("Nosferapti", "Gurvan"), \
+        assert (r["nickname"], r["ot_name"]) == ("Nosferapti", "Player"), \
             f"sv={sv_of(ec)} put the names in the wrong blocks"
         assert r["species"] == 41
 
@@ -92,7 +92,7 @@ def test_reading_back_what_was_written():
     r = pokemon.read(pokemon.encrypt(a_body()))
     assert r["species"] == 41
     assert r["nickname"] == "Nosferapti"
-    assert r["ot_name"] == "Gurvan"
+    assert r["ot_name"] == "Player"
     assert r["trainer_id"] == 44466
     assert r["secret_id"] == 4080
 
@@ -164,15 +164,15 @@ def test_the_trade_messages_wrap_the_payloads_the_console_wraps_them_in():
     assert msg[3:] == raw
     with pytest.raises(ValueError, match="328-byte"):
         room.build_trade_poke(raw[:-1])
-    rec = room.build_trade_traner("Gurvan", 44466, 4080)
+    rec = room.build_trade_traner("Player", 44466, 4080)
     assert room.parse_trade_traner(rec[3:])["trainer_id"] == 44466
 
 
 # the two trainer records this project has seen. They differ at 0x18.
 TRADE_TRANER_SP82 = bytes.fromhex(
-    "470075007200760061006e000000000018a4010014a401000000b2adf00f3103")
+    "50006c0061007900650072000000000018a4010014a401000000b2adf00f3103")
 TRADE_TRANER_SP83 = bytes.fromhex(
-    "470075007200760061006e000000000018a4010014a401006e3db2adf00f3103")
+    "50006c0061007900650072000000000018a4010014a401006e3db2adf00f3103")
 
 
 def test_the_trainer_record_is_parsed_from_the_game_message_not_the_reliable_frame():
@@ -186,7 +186,7 @@ def test_the_trainer_record_is_parsed_from_the_game_message_not_the_reliable_fra
     assert room.parse(message)["data_id"] == room.TRADE_TRANER
     body = message[room.HEADER_SIZE:]
     assert len(body) == room.TRADE_TRANER_SIZE
-    assert room.parse_trade_traner(body)["name"] == "Gurvan"
+    assert room.parse_trade_traner(body)["name"] == "Player"
     # a reliable header left on the front is a length error, not a silent misparse
     with pytest.raises(ValueError, match="expected 32"):
         room.parse_trade_traner(b"\x00" * 9 + body)
@@ -201,7 +201,7 @@ def test_the_bytes_behind_the_name_vary_between_sessions_and_no_field_is_read_ou
     sp82 = room.parse_trade_traner(TRADE_TRANER_SP82)
     sp83 = room.parse_trade_traner(TRADE_TRANER_SP83)
     assert sp82["slack"] != sp83["slack"]
-    assert sp82["name"] == sp83["name"] == "Gurvan"
+    assert sp82["name"] == sp83["name"] == "Player"
     assert sp82["trainer_id"] == sp83["trainer_id"] == 44466
     assert sp82["secret_id"] == sp83["secret_id"] == 4080
     assert sp82["casset_version"] == sp83["casset_version"] == 0x31
@@ -210,9 +210,9 @@ def test_the_bytes_behind_the_name_vary_between_sessions_and_no_field_is_read_ou
 
 def test_the_trainer_record_we_build_is_the_console_s_own_bytes():
     """Byte-identical to the console's own: the layout is readable and reproducible."""
-    assert room.build_trade_traner("Gurvan", 44466, 4080)[3:] == TRADE_TRANER_SP82
+    assert room.build_trade_traner("Player", 44466, 4080)[3:] == TRADE_TRANER_SP82
     parsed = room.parse(room.build(room.TRADE_TRANER, TRADE_TRANER_SP83))
-    assert parsed["traner"]["name"] == "Gurvan"
+    assert parsed["traner"]["name"] == "Player"
 
 
 def test_the_measured_layouts_are_no_longer_reported_opaque():
@@ -248,12 +248,12 @@ def test_the_ball_capsule_and_the_record_read_off_the_wire():
     assert deco["seals"][19] == {"x": 0, "y": 0, "z": 0, "seal_id": 0}
     body = bytearray(694)
     body[0x78:0x78 + 16] = "Ape Gang".encode("utf-16-le")
-    body[0x98:0x98 + 12] = "Gurvan".encode("utf-16-le")
+    body[0x98:0x98 + 12] = "Player".encode("utf-16-le")
     struct.pack_into("<I", body, 0xf8, 0x0ff0adb2)
     struct.pack_into("<I", body, 0x280, 0x0ff0adb2)
     body[0x2b0] = 0x31
     rec = room.parse(room.build(room.RECODE, bytes(body)))["recode"]
-    assert rec["group_name"] == "Ape Gang" and rec["name"] == "Gurvan"
+    assert rec["group_name"] == "Ape Gang" and rec["name"] == "Player"
     assert rec["user_id"] == rec["unique_id"] == 0x0ff0adb2 and rec["version"] == 0x31
 
 
@@ -286,10 +286,10 @@ def test_the_handler_block_is_readable_and_settable():
     template = pokemon.build_from(template, ht_name="")
     assert pokemon.read(template)["is_untraded"] is True
 
-    traded = pokemon.build_from(template, ht_name="Gurvan", ht_language=3,
+    traded = pokemon.build_from(template, ht_name="Player", ht_language=3,
                                 current_handler=1, ht_friendship=50)
     r = pokemon.read(traded)
     assert (r["ht_name"], r["ht_language"], r["current_handler"], r["ht_friendship"]) \
-        == ("Gurvan", 3, 1, 50)
+        == ("Player", 3, 1, 50)
     assert r["is_untraded"] is False
-    assert r["ot_name"] == "Gurvan", "the OT is not the handler and must not move"
+    assert r["ot_name"] == "Player", "the OT is not the handler and must not move"

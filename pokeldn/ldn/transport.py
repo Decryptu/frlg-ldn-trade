@@ -720,9 +720,13 @@ class HostTransport:
                  local_comm_id=None, scene_id=None, app_version=None, max_participants=2,
                  phyname="phy0", ifname="ldn-tap", ap_ifname="ldn", mon_ifname="ldn-mon",
                  channel=None, skip_encryption=False, accept_decrypted_ccmp=False,
-                 tracer=None, log=print):
+                 tracer=None, log=print, protocol=3):
         self.info = getattr(log, "info", log)
         self.tracer = tracer
+        # The LDN protocol version the advertisement is encrypted for: 3 (AES-GCM, master_key_12) is
+        # what the GBA app hosts; Sword's Mystery Gift screen hosts and scans protocol 1 (AES-CTR,
+        # master_key_00). A title sees only advertisements of its own protocol. docs/ldn.md.
+        self.protocol = protocol
         self.app_data = bytes(app_data or b"")
         self.password = password if password else GBA_APP_PASSPHRASE
         self.nickname = nickname
@@ -820,7 +824,7 @@ class HostTransport:
         async def main():
             keys = ldn.load_keys(self.keys_path)
             param = ldn.CreateNetworkParam()
-            param.protocol = 3
+            param.protocol = self.protocol
             param.keys = keys
             param.local_communication_id = self.LOCAL_COMMUNICATION_ID
             param.scene_id = self.SCENE_ID

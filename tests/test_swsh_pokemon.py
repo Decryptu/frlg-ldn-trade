@@ -13,7 +13,7 @@ from pokeldn import gen8
 from pokeldn.swsh import pokemon
 
 
-def a_record(ec=0x39C5F2CC, species=94, nickname="Ectoplasma", ot="Gurvan", level=100,
+def a_record(ec=0x39C5F2CC, species=94, nickname="Ectoplasma", ot="Player", level=100,
              size=gen8.SIZE_PARTY):
     """A plain, unshuffled record with the named fields set and the rest patterned.
 
@@ -39,7 +39,7 @@ def test_a_party_record_round_trips_with_its_stats():
     assert len(raw) == gen8.SIZE_PARTY == 0x158
     assert pokemon.decrypt(raw)[8:] == a_record()[8:]
     r = pokemon.read(raw)
-    assert (r["species"], r["nickname"], r["ot_name"]) == (94, "Ectoplasma", "Gurvan")
+    assert (r["species"], r["nickname"], r["ot_name"]) == (94, "Ectoplasma", "Player")
     assert r["level"] == 100
     assert r["stats"]["hp"] == 261 and r["stats"]["special_attack"] == 359
 
@@ -113,7 +113,7 @@ def test_every_block_order_puts_the_fields_back_where_they_belong():
         sv = (ec >> 13) & 31
         assert r["species"] == 94, f"sv={sv} put the species in the wrong block"
         assert r["nickname"] == "Ectoplasma", f"sv={sv} put the nickname in the wrong block"
-        assert r["ot_name"] == "Gurvan", f"sv={sv} put the trainer name in the wrong block"
+        assert r["ot_name"] == "Player", f"sv={sv} put the trainer name in the wrong block"
         assert r["level"] == 100, f"sv={sv} disturbed the party stats, which are not shuffled"
 
 

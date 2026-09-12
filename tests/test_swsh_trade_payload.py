@@ -14,7 +14,7 @@ from pokeldn import gen8
 from pokeldn.swsh import pokemon, trade_payload
 
 
-def a_payload(count=2, tid=56909, sid=48474, name="Gurvan", started=(2019, 11, 15)):
+def a_payload(count=2, tid=56909, sid=48474, name="Player", started=(2019, 11, 15)):
     """A whole 3456-byte snapshot: `count` party records, then the two trainer blocks."""
     out = bytearray(PATTERN * (trade_payload.PAYLOAD_LENGTH // len(PATTERN) + 1))
     out = out[:trade_payload.PAYLOAD_LENGTH]
@@ -95,7 +95,7 @@ def test_the_trainer_blocks_and_the_party_name_one_trainer():
     fields = trade_payload.read(a_payload(count=3))
     assert fields["party_count"] == 3
     assert [p is not None for p in fields["party"]] == [True, True, True, False, False, False]
-    assert fields["trainer_name"] == fields["card_name"] == "Gurvan"
+    assert fields["trainer_name"] == fields["card_name"] == "Player"
     assert (fields["trainer_id"], fields["secret_id"]) == (56909, 48474)
     assert fields["game"] == 44 and fields["card_language"] == 3
     assert fields["started"] == (2019, 11, 15)
@@ -164,13 +164,13 @@ def test_a_short_session_58_payload_is_repaired_and_anything_else_is_refused():
 # A run's payload carries the trainer name a FOURTH time, at 0xB14, between two copies of an
 # eight-byte account token - the shape of a player record - inside the 660-byte tail this project
 # had never read. Every snapshot sent before session 60 therefore said PkCamp in MyStatus, the
-# trainer card and all six Pokemon, and Gurvan in the tail. `party_matches_trainer` cannot see it:
+# trainer card and all six Pokemon, and Player in the tail. `party_matches_trainer` cannot see it:
 # it only compares the party against MyStatus.
 
 TAIL_NAME_AT = 0xB14                  # where it lands in one run's payload; searched for, not assumed
 
 
-def a_payload_with_a_tail_name(name="Gurvan", **kw):
+def a_payload_with_a_tail_name(name="Player", **kw):
     out = bytearray(a_payload(name=name, **kw))
     planted = name.encode("utf-16-le") + b"\x00\x00"
     out[TAIL_NAME_AT:TAIL_NAME_AT + len(planted)] = planted
@@ -192,8 +192,8 @@ def test_the_tail_carries_a_fourth_copy_of_the_trainer_name():
 
 def test_the_tail_copy_is_written_in_place_and_takes_no_extra_bytes():
     payload = a_payload_with_a_tail_name()
-    out = trade_payload.rewrite(payload, old_name="Gurvan", trainer_name="PkCam")
-    # "Gurvan\0" is 14 bytes and "PkCam\0" is 12, so the two spare bytes are zeroed rather than
+    out = trade_payload.rewrite(payload, old_name="Player", trainer_name="PkCam")
+    # "Player\0" is 14 bytes and "PkCam\0" is 12, so the two spare bytes are zeroed rather than
     # left holding the tail of the old name.
     assert out[TAIL_NAME_AT:TAIL_NAME_AT + 14] == "PkCam".encode("utf-16-le") + b"\x00" * 4
     assert out[TAIL_NAME_AT + 14:TAIL_NAME_AT + 22] == payload[TAIL_NAME_AT + 14:TAIL_NAME_AT + 22]
@@ -202,16 +202,16 @@ def test_the_tail_copy_is_written_in_place_and_takes_no_extra_bytes():
 def test_the_tail_is_left_alone_without_an_old_name():
     payload = a_payload_with_a_tail_name()
     out = trade_payload.rewrite(payload, trainer_name="PkCamp")
-    assert out.find("Gurvan".encode("utf-16-le"), trade_payload.TAIL_OFFSET) == TAIL_NAME_AT
+    assert out.find("Player".encode("utf-16-le"), trade_payload.TAIL_OFFSET) == TAIL_NAME_AT
 
 
 def test_a_longer_name_cannot_overwrite_the_tail_record():
     payload = a_payload_with_a_tail_name()
     with pytest.raises(ValueError):
-        trade_payload.rewrite(payload, old_name="Gurvan", trainer_name="Gurvanne")
+        trade_payload.rewrite(payload, old_name="Player", trainer_name="Playerne")
 
 
-def a_payload_with_a_player_record(name="Gurvan", account=bytes.fromhex("e04355a2d47b0410")):
+def a_payload_with_a_player_record(name="Player", account=bytes.fromhex("e04355a2d47b0410")):
     """The tail record the LDN beacon frames: UID, id, UID, name, id - at TAIL_OFFSET + 0x00.
 
     The beacon carries the same record as the snapshot's tail (90 bytes agree), starting at a

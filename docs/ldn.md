@@ -38,6 +38,17 @@ key material, so any title's session can be seen with nothing known about the ga
 `local_communication_id`, `scene_id`, version, channel, accept policy, participant count and
 application data. `tools/ldn/ldn_scan.py` does this.
 
+An advertisement is encrypted for one LDN protocol version, and a title sees only advertisements of
+the protocol its own session runs. Protocol 1 is AES-CTR under `master_key_00`; protocol 3 is
+AES-GCM under `master_key_12`. Which one a title uses is read off its own advertisement
+(`scratchpad/air_ldn_adv.py` over an air capture); a host meant for that title advertises the same
+protocol (`HostTransport(protocol=...)`).
+
+| title | protocol | advertisement format |
+|---|---|---|
+| the GBA app (FireRed, LeafGreen), comm id `0x01006fa0233f8000` | 3 | 3, AES-GCM |
+| Sword Mystery Gift screen, comm id `0x0100abf008968000` | 1 | 2, AES-CTR |
+
 Association is the first step that needs a title secret. The passphrase is used verbatim, neither
 padded nor hashed. `nn::pia::local::LdnBackgroundProcessJob` validates the length as 16-64 before
 use.
