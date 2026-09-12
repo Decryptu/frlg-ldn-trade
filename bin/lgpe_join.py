@@ -37,6 +37,7 @@ from pokeldn.ldn import pia3, pia4, station9, station4
 from pokeldn.ldn import mesh_protocol as mp
 from pokeldn.ldn import clone, sync_clock
 from pokeldn.ldn import rtt_protocol as rtt
+from pokeldn.ldn import reliable3
 from pokeldn.ldn import local_protocol as lp
 from pokeldn.ldn.station_protocol import ldn_constant_id, ldn_service_variable_id, station_location
 from pokeldn.ldn.transport import find_ap_phy
@@ -167,6 +168,9 @@ def build_parser():
     ap.add_argument("--nat-location", action="store_true",
                     help="send nat flags 5 and nat location 1. A Let's Go joiner sends zero for "
                          "both on local wireless")
+    ap.add_argument("--reliable-payload", default=None,
+                    help="a file holding the game payload to send on the Reliable Protocol (0x7c) "
+                         "once the clone elements are up. Without it nothing is sent there")
     ap.add_argument("--no-rtt", action="store_true",
                     help="once in the mesh, do not answer the host's RTT requests and send none "
                          "of our own. Default: answer them and send one a second")
@@ -376,6 +380,15 @@ def main(argv=None):
                         print("[lg] sync clock: a request every 2 s (protocol 0x1c)")
                     for out in state["sync"].poll(now):
                         to_host_bitmap(out, sync_clock.PROTOCOL)
+                if args.connect and args.reliable_payload and state["mesh_joined"] \
+                        and state.get("clone") is not None \
+                        and state["clone"].published and state.get("window") is None \
+                        and len(our_mac) == 6:
+                    state["window"] = reliable3.Window()
+                    body = open(args.reliable_payload, "rb").read()
+                    to_host_bitmap(state["window"].send(body), reliable3.PROTOCOL)
+                    print(f"[lg] reliable: sent the game payload, {len(body)} B "
+                          f"({args.reliable_payload})")
                 if args.connect and not args.no_rtt and state["mesh_joined"] \
                         and len(our_mac) == 6 and len(host_mac) == 6 \
                         and time.monotonic() >= state.get("next_rtt", 0):
@@ -473,6 +486,22 @@ def main(argv=None):
                                           "on 0x14 ***")
                                 print(f"[lg] mesh 0x18 type={pl[0]:#x} {len(pl)}B "
                                       f"pl[:24]={pl[:24].hex()}")
+                            elif m["protocol"] == reliable3.PROTOCOL:
+                                w = state.get("window")
+                                r = reliable3.parse(pl)
+                                if w is not None and r is not None:
+                                    for out in w.receive(pl):
+                                        to_host_bitmap(out, reliable3.PROTOCOL)
+                                    if r["size"]:
+                                        print(f"[lg] reliable: *** GAME PAYLOAD *** "
+                                              f"{r['size']}B seq={r['sequence']:#x} "
+                                              f"{r['payload'][:32].hex()}")
+                                        n = len(w.received)
+                                        open(f"{args.capture or 'scratchpad/lgpe'}"
+                                             f".payload{n}.bin", "wb").write(r["payload"])
+                                    else:
+                                        print(f"[lg] reliable: acked, expects "
+                                              f"{r['expected']:#x}")
                             elif m["protocol"] == rtt.PROTOCOL:
                                 ans = rtt.response_for_v3(pl) if args.connect else None
                                 if ans is not None and not args.no_rtt:

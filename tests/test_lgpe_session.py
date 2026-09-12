@@ -307,3 +307,18 @@ def test_mirrored_announcement_takes_the_content_that_arrives_after_it():
     assert len(later) == 2
     for m in later:
         assert clone.parse_command(m)["payload"].hex() == "000385650138743b"
+
+
+def test_reliable_window_matches_the_captured_exchange():
+    """Pia 5.11's reliable header is 24 bytes with 32-bit sequence ids starting at 0xFFFFF82F,
+    and an acknowledgement is the header alone carrying the next id expected."""
+    from pokeldn.ldn import reliable3
+    w = reliable3.Window()
+    m = w.send(b"\x01\x02\x03")
+    assert m[:24].hex() == "000300030000000" + "0fffff82ffffff82f" + "0000000000000000"
+    assert reliable3.parse(m)["payload"] == b"\x01\x02\x03"
+    assert w.sequence == reliable3.FIRST_SEQUENCE + 1
+    host = reliable3.build(b"\xaa" * 4, reliable3.FIRST_SEQUENCE, reliable3.FIRST_SEQUENCE + 1)
+    ack, = w.receive(host)
+    assert ack.hex() == "000000000000000000000000fffff8300000000000000000"
+    assert w.received == [b"\xaa" * 4] and w.receive(ack) == []
