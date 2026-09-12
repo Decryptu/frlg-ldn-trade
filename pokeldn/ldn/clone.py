@@ -27,6 +27,7 @@ A joiner that only answers the host's requests, echoing the request's fields wit
 is never accepted; `Participant` runs the measured exchange.
 """
 import struct
+import zlib
 
 PROTOCOL = 0x73
 VERSION = 3
@@ -37,6 +38,7 @@ PARTICIPATE = 0x31
 EXIT_ACK = 0x41
 CLOCK_REPLY_SYNCED = 0x22
 PARTICIPATE_ACK = 0x33
+EXIT_REQUEST = 0x32
 COMMAND_ANNOUNCE = 0x81
 COMMAND_REQUEST = 0x82
 COMMAND_END = 0x83
@@ -46,6 +48,11 @@ CLOCK_AND_COUNT = 0xA1
 CLOCK_AND_COUNT_2 = 0xA2
 CLOCK_AND_PARTICIPANT = 0xB1
 CLOCK_COUNT_PARTICIPANT = 0xC1
+STATE_ACK = 0xE3
+STATE_DATA = 0xF3
+RECORD_TAG = 0x20
+RECORD_STATE = 0x03
+RECORD_ACK = 0x05
 TICK_HZ = 19_200_000
 FRAME_HZ = 60
 
@@ -115,6 +122,74 @@ def build_participate(field_a=0, value=0, participant=0, kind=PARTICIPATE):
             value & 0xFFFFFFFF, participant & 0xFFFF))
 
 
+def pack_record(record, level=5):
+    """A clone record as the game deflates it: one compress, a sync flush, then the final block.
+    Reproduces every captured stream byte for byte."""
+    co = zlib.compressobj(level, zlib.DEFLATED, 15)
+    return co.compress(record) + co.flush(zlib.Z_SYNC_FLUSH) + co.flush(zlib.Z_FINISH)
+
+
+def build_state_record(clone_id, station, participants, clock, data=b""):
+    """The record an 0xfN carries: the clone's data with the clock it is true at."""
+    body = struct.pack(">HBBHHI", clone_id & 0xFFFF, RECORD_STATE, station & 0xFF, 0,
+                       participants & 0xFFFF, clock & 0xFFFFFFFF) + data
+    return bytes([RECORD_TAG, len(body) + 2]) + body
+
+
+def build_ack_record(clone_id, station, clock):
+    """The ten-byte record an 0xeN carries: the clone and station being acknowledged, and at
+    what clock."""
+    return bytes([RECORD_TAG, 10]) + struct.pack(">HBBI", clone_id & 0xFFFF, RECORD_ACK,
+                                                 station & 0xFF, clock & 0xFFFFFFFF)
+
+
+def parse_record(record):
+    """-> dict of a clone record's fields, or None. `kind` 3 is a state, 5 an acknowledgement."""
+    if len(record) < 8 or record[0] != RECORD_TAG or record[1] != len(record):
+        return None
+    clone_id, kind, station = struct.unpack_from(">HBB", record, 2)
+    if kind == RECORD_ACK:
+        return {"clone_id": clone_id, "kind": kind, "station": station,
+                "clock": struct.unpack_from(">I", record, 6)[0], "data": b""}
+    participants, clock = struct.unpack_from(">HI", record, 8)
+    return {"clone_id": clone_id, "kind": kind, "station": station,
+            "participants": participants, "clock": clock, "data": record[14:]}
+
+
+def build_data_message(kind, ctype, station, clone_id, frame, record, flags=None):
+    """An 0xeN (13-byte header) or 0xfN (14-byte header) carrying a deflated record."""
+    head = (bytes([VERSION, kind]) + struct.pack(">HBBHI", frame & 0xFFFF, ctype & 0xFF,
+            station & 0xFF, 0, clone_id & 0xFFFFFFFF))
+    if (kind & 0xF0) == 0xF0:
+        head += struct.pack(">H", flags if flags is not None else 0)
+    else:
+        head += bytes([flags if flags is not None else 0])
+    return head + pack_record(record)
+
+
+def parse_data_message(payload):
+    """-> dict of an 0xdN/0xeN/0xfN message with its record inflated, or None."""
+    if len(payload) < 14 or payload[0] != VERSION or payload[1] < 0xD0:
+        return None
+    ctype, station = payload[4], payload[5]
+    clone_id = struct.unpack_from(">I", payload, 8)[0]
+    off = 14 if (payload[1] & 0xF0) == 0xF0 else 13
+    try:
+        record = zlib.decompress(payload[off:])
+    except zlib.error:
+        return None
+    return {"type": payload[1], "frame": struct.unpack_from(">H", payload, 2)[0], "ctype": ctype,
+            "station": station, "clone_id": clone_id, "flags": payload[12:off],
+            "record": parse_record(record), "raw": record}
+
+
+def build_exit_ack(frame, count, dest, stations):
+    """The 14-byte exit ack (type 0x41): the answer to an exit request (0x32). `stations` is the
+    sender's own station bitmap."""
+    return (bytes([VERSION, EXIT_ACK]) + struct.pack(">HIHI", frame & 0xFFFF, count & 0xFFFFFFFF,
+            dest & 0xFFFF, stations & 0xFFFFFFFF))
+
+
 def build_command(kind, ctype, station, clone_id, count, dest, payload=b""):
     """A clone command message (types 0x81 and up), header per CloneCommandMessage::Serialize
     (0x51f820) with `payload` after the 18-byte header."""
@@ -137,9 +212,13 @@ class Participant:
     bitmap (0x0001 for a host at index 0). Feed every 0x73 payload to `receive`; call `poll` a
     few times a second; send what both return."""
 
-    def __init__(self, now, dest=0x0001, request_interval=0.2, requests_before_participate=10):
+    def __init__(self, now, dest=0x0001, own=0x0002, station=1, request_interval=0.2,
+                 requests_before_participate=10):
         self.t0 = now
         self.dest = dest
+        self.own = own
+        self.station = station
+        self.exited = False
         self.count = 0
         self.next_request = now + 0.06
         self.request_interval = request_interval
@@ -214,6 +293,20 @@ class Participant:
         if kind == PARTICIPATE_ACK:
             self.peer_participated_ack = True
             return []
+        if kind == EXIT_REQUEST:
+            self.exited = True
+            return [build_exit_ack(self.frame(now), self._next_count(), self.dest, self.own)]
+        d = parse_data_message(payload)
+        if d is not None:
+            r = d["record"]
+            if d["type"] & 0xF0 == 0xF0 and r is not None and r["kind"] == RECORD_STATE:
+                # the clone's data: acknowledge it at the clock it was true at
+                return [build_data_message(STATE_ACK, d["ctype"], d["station"], d["clone_id"],
+                                           self.frame(now),
+                                           build_ack_record(r["clone_id"], r["station"],
+                                                            r["clock"]),
+                                           flags=r["station"])]
+            return []
         c = parse_command(payload)
         if c is None:
             return []
@@ -221,10 +314,9 @@ class Participant:
         if key == (3, 0xFD, 0):
             # the measured joiner answers of the type-3 clone: a2 echoes a1's clock with count 1,
             # c1 echoes b1's clock with count 1 and its participant bitmap, 0x84 answers 0x83
-            if kind == CLOCK_AND_COUNT and len(c["payload"]) >= 4:
-                clk = c["payload"][:4]
-                return [self._command(CLOCK_AND_COUNT_2, 3, 0xFD, 0, now,
-                                      clk + b"\x01\0\0\0")]
+            if kind == CLOCK_AND_COUNT and len(c["payload"]) >= 8:
+                # echo the clock and the count and checksum bytes the announcement carried
+                return [self._command(CLOCK_AND_COUNT_2, 3, 0xFD, 0, now, c["payload"][:8])]
             if kind == CLOCK_AND_PARTICIPANT and len(c["payload"]) >= 8:
                 clk, part = c["payload"][:4], c["payload"][4:8]
                 return [self._command(CLOCK_COUNT_PARTICIPANT, 3, 0xFD, 0, now,

@@ -359,8 +359,9 @@ def main(argv=None):
                         and len(our_mac) == 6 and len(host_mac) == 6:
                     now = time.monotonic()
                     if state.get("clone") is None:
+                        our_index = state.get("station_index", 1)
                         state["clone"] = clone.Participant(
-                            now, dest=HOST_STATION_BIT,
+                            now, dest=HOST_STATION_BIT, own=1 << our_index, station=our_index,
                             requests_before_participate=args.clone_requests)
                         print("[lg] clone: sending clock requests every 0.2 s")
                     sc = state.get("sync")
@@ -433,8 +434,15 @@ def main(argv=None):
                                     to_host(acked[1], acked[0])
                                 if pl and pl[0] == mp.JOIN_RESPONSE and not state["mesh_joined"]:
                                     state["mesh_joined"] = True
-                                    print("[lg] *** MESH JOIN RESPONSE - station index in the "
-                                          "mesh, acked on 0x14 ***")
+                                    try:
+                                        jr = mp.parse_join_response(pl)
+                                        if not jr.get("refused"):
+                                            state["station_index"] = jr["our_index"]
+                                    except Exception:
+                                        pass
+                                    print("[lg] *** MESH JOIN RESPONSE - station index "
+                                          f"{state.get('station_index', 1)} in the mesh, acked "
+                                          "on 0x14 ***")
                                 print(f"[lg] mesh 0x18 type={pl[0]:#x} {len(pl)}B "
                                       f"pl[:24]={pl[:24].hex()}")
                             elif m["protocol"] == sync_clock.PROTOCOL:
@@ -463,6 +471,13 @@ def main(argv=None):
                                     if kind == clone.PARTICIPATE:
                                         print("[lg] clone: *** HOST PARTICIPATE (0x31) *** "
                                               "acked with 0x33")
+                                    elif kind == clone.EXIT_REQUEST:
+                                        print("[lg] clone: the host asked us to leave the clone "
+                                              "session (0x32); acked with 0x41")
+                                    elif kind == clone.STATE_DATA:
+                                        d = clone.parse_data_message(pl)
+                                        r = d and d["record"]
+                                        print(f"[lg] clone: *** CLONE DATA *** {r}")
                                     elif kind >= 0x80 and seen[kind] == 1:
                                         print("[lg] clone: *** ELEMENT MESSAGE from the host: "
                                               "the clock is agreed ***")

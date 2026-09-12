@@ -186,3 +186,39 @@ def test_sync_clock_matches_the_wiki_layout():
     assert s.clock_ms == 6244 + 20            # half the 40 ms round trip
     assert s.now_ms(101.040) == s.clock_ms + 1000
     assert s.poll(102.0) and s.replies == 1
+
+
+def test_clone_data_messages_match_the_captured_bytes():
+    """The clone state and its acknowledgement, against the two-endpoint capture: the game's
+    deflate is one compress, a sync flush and a final block, and it round-trips byte for byte."""
+    from pokeldn.ldn import clone
+    state = ("03f316e303fd0000000000000003"
+             "785e5210636060666000133cff18a000000000ffff03000e670147")
+    d = clone.parse_data_message(bytes.fromhex(state))
+    assert d["type"] == clone.STATE_DATA and d["ctype"] == 3 and d["station"] == 0xFD
+    assert d["clone_id"] == 0 and d["flags"] == b"\x00\x03"
+    r = d["record"]
+    assert r["kind"] == clone.RECORD_STATE and r["station"] == 0 and r["participants"] == 3
+    assert r["clock"] == 0x0CFE and r["data"] == b"\0" * 8
+    assert clone.build_data_message(clone.STATE_DATA, 3, 0xFD, 0, 0x16E3,
+                                    clone.build_state_record(0, 0, 3, 0x0CFE, b"\0" * 8),
+                                    flags=3).hex() == state
+    # the joiner's own acknowledgement of that message, as captured
+    ack = ("03e300e203fd00000000000000"
+           "785e52e0626060656060e0f907000000ffff030002d8013a")
+    p = clone.Participant(0.0, dest=0x0001)
+    out, = p.receive(bytes.fromhex(state), 1.0)
+    assert out.hex()[8:] == ack[8:]                 # everything but the frame counter
+    a = clone.parse_data_message(out)["record"]
+    assert a["kind"] == clone.RECORD_ACK and a["clock"] == 0x0CFE and a["station"] == 0
+    assert clone.parse_data_message(bytes.fromhex(ack))["record"]["clone_id"] == 0
+
+
+def test_clone_exit_request_is_acknowledged():
+    """An exit request (0x32) draws the 14-byte exit ack carrying our own station bitmap; the
+    host repeats 0x32 until it gets one."""
+    from pokeldn.ldn import clone
+    p = clone.Participant(0.0, dest=0x0001, own=0x0002)
+    out, = p.receive(bytes.fromhex("0332b7f0000000330003"), 1.0)
+    assert len(out) == 14 and out[1] == clone.EXIT_ACK and p.exited
+    assert out[8:10] == b"\x00\x01" and out[10:14] == (2).to_bytes(4, "big")

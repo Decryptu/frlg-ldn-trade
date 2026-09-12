@@ -290,11 +290,22 @@ The zlib streams inflate to a record that starts with the tag 0x20 and its own l
               u16 participant bitmap  u32 clock  then the clone's data
     0x20 0x0A u16 clone id  0x05  u8 the station being acknowledged   u32 clock
 
+The deflate is one compress, a sync flush and a final empty block, at a level between 2 and 5:
+every captured stream is reproduced byte for byte by `clone.pack_record`. The 0xfN header's two
+bytes at [0xC] carry the record's participant bitmap and the 0xeN header's one byte the station
+it acknowledges.
+
 A station announces a clone with 0xa1 and the other answers 0x91; the owner then sends its data in
 an 0xf3 and the other acknowledges with an 0xe3 carrying the same clock. 0x83 releases a clone and
 0x84 acknowledges the release. Type 0x32 asks the other station to leave the clone session and
-0x41 is its 14-byte acknowledgement; a host whose 0x32 is never answered repeats it until the
-game gives up.
+0x41 is its 14-byte acknowledgement, carrying the answering station's own bitmap at [0xA]; a host
+whose 0x32 is never answered repeats it until the game gives up.
+
+What the 0xaN messages carry after the clock is a u8 count and a three-byte value. For a clone
+both stations hold, both sides send the same value (`01 2808ab` for clone type 4 id 1) and an
+answering 0xa2 carries `01 000002`. For clone type 3 id 0 the two stations send different values
+and neither matches its own announcement, so what the three bytes are computed from is
+unresolved.
 
 The full decode of a real session is `scratchpad/037_clone_parsed.txt`, its data messages
 `scratchpad/lgpe_clone_data.py`. The decoders: `scratchpad/lgpe_pcap_decode.py` for an ldn_mitm
