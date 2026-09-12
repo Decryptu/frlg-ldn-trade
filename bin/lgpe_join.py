@@ -36,6 +36,7 @@ import ldn
 from pokeldn.ldn import pia3, pia4, station9, station4
 from pokeldn.ldn import mesh_protocol as mp
 from pokeldn.ldn import clone, sync_clock
+from pokeldn.ldn import rtt_protocol as rtt
 from pokeldn.ldn import local_protocol as lp
 from pokeldn.ldn.station_protocol import ldn_constant_id, ldn_service_variable_id, station_location
 from pokeldn.ldn.transport import find_ap_phy
@@ -160,6 +161,9 @@ def build_parser():
     ap.add_argument("--short-response", action="store_true",
                     help="send the 0x3c-byte connection response instead of the full 0x348-byte "
                          "one, which carries no network id and no player")
+    ap.add_argument("--no-rtt", action="store_true",
+                    help="once in the mesh, do not answer the host's RTT requests and send none "
+                         "of our own. Default: answer them and send one a second")
     ap.add_argument("--no-sync-clock", action="store_true",
                     help="once in the mesh, do not run the Sync Clock Protocol (0x1c): a request "
                          "every 2 s, the host's reply carrying the mesh clock in ms. Default: run it")
@@ -366,6 +370,13 @@ def main(argv=None):
                         print("[lg] sync clock: a request every 2 s (protocol 0x1c)")
                     for out in state["sync"].poll(now):
                         to_host_bitmap(out, sync_clock.PROTOCOL)
+                if args.connect and not args.no_rtt and state["mesh_joined"] \
+                        and len(our_mac) == 6 and len(host_mac) == 6 \
+                        and time.monotonic() >= state.get("next_rtt", 0):
+                    now = time.monotonic()
+                    state["next_rtt"] = now + 1.0
+                    to_host_bitmap(rtt.build_v3(rtt.REQUEST, int(now * rtt.TICK_HZ_V3)),
+                                   rtt.PROTOCOL)
                 if args.connect and not args.no_clone and state["mesh_joined"] \
                         and len(our_mac) == 6 and len(host_mac) == 6:
                     now = time.monotonic()
@@ -456,6 +467,13 @@ def main(argv=None):
                                           "on 0x14 ***")
                                 print(f"[lg] mesh 0x18 type={pl[0]:#x} {len(pl)}B "
                                       f"pl[:24]={pl[:24].hex()}")
+                            elif m["protocol"] == rtt.PROTOCOL:
+                                ans = rtt.response_for_v3(pl) if args.connect else None
+                                if ans is not None and not args.no_rtt:
+                                    to_host_bitmap(ans, rtt.PROTOCOL)
+                                    state["rtt_answered"] = state.get("rtt_answered", 0) + 1
+                                    if state["rtt_answered"] == 1:
+                                        print("[lg] RTT: answering the host's requests (0x58)")
                             elif m["protocol"] == sync_clock.PROTOCOL:
                                 sc = state.get("sync")
                                 if sc is not None:

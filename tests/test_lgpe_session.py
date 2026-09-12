@@ -238,3 +238,16 @@ def test_full_connection_response_matches_a_real_station():
     assert set(r[0x11:0x31]) == {0} and set(r[0xB2:0x344]) == {0}
     short = station9.build_connection_response(1, 2)
     assert len(short) == station9.ACCEPTED_RESPONSE_SIZE + 4
+
+
+def test_rtt_version_3_carries_the_kind_as_a_u32():
+    """Let's Go's RTT message is sixteen bytes with the kind as a big-endian u32, not Sword's
+    byte: bytes from both directions of the two-endpoint capture."""
+    from pokeldn.ldn import rtt_protocol as rtt
+    req = bytes.fromhex("00000000000000000000000049845557")
+    assert rtt.parse_v3(req)["kind"] == rtt.REQUEST
+    assert rtt.parse_v3(req)["timestamp"] == 0x49845557
+    assert rtt.response_for_v3(req).hex() == "00000001000000000000000049845557"
+    assert rtt.build_v3(rtt.REQUEST, 0x41270099).hex() == \
+        "00000000000000000000000041270099"
+    assert rtt.response_for_v3(rtt.response_for_v3(req)) is None

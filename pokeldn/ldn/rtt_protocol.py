@@ -118,3 +118,38 @@ def response_for(data, target=ANY_TARGET):
     if len(data) < SIZE or data[0] != REQUEST:
         return None
     return build(RESPONSE, struct.unpack_from(">Q", data, 1)[0], target)
+
+
+# --- Version 3 (Let's Go Pikachu / Eevee, Pia 5.11) ----------------------------------------------
+#
+# Sixteen bytes as version 4, but the kind is a big-endian u32 at [0], not a byte: a response to
+# `00000000 00000000 0000000049845557` is `00000001 00000000 0000000049845557`, measured in both
+# directions between two Let's Go endpoints. The timestamp is the sender's own system tick at
+# 19.2 MHz, and a response copies it unchanged. Each station sends its own requests about once a
+# second and answers the other's.
+SIZE_V3 = 0x10
+TIMESTAMP_OFF_V3 = 8
+TICK_HZ_V3 = 19_200_000
+
+
+def build_v3(kind, timestamp):
+    """The sixteen bytes: the kind as a big-endian u32, four zero bytes, the timestamp u64."""
+    return struct.pack(">IIQ", kind & 0xFFFFFFFF, 0, timestamp & ((1 << 64) - 1))
+
+
+def parse_v3(data):
+    """-> dict of a version-3 RTT message's fields."""
+    if len(data) < SIZE_V3:
+        raise ValueError(f"a version-3 RTT message is {SIZE_V3} bytes, got {len(data)}: "
+                         f"{data.hex()}")
+    kind = struct.unpack_from(">I", data, 0)[0]
+    return {"kind": kind, "name": KIND_NAMES.get(kind, f"unknown {kind:#x}"),
+            "timestamp": struct.unpack_from(">Q", data, TIMESTAMP_OFF_V3)[0]}
+
+
+def response_for_v3(data):
+    """-> the answer to a version-3 request, or None if this is not one: its own bytes with the
+    kind set to 1."""
+    if len(data) < SIZE_V3 or struct.unpack_from(">I", data, 0)[0] != REQUEST:
+        return None
+    return struct.pack(">I", RESPONSE) + bytes(data[4:SIZE_V3])

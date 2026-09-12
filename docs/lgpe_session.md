@@ -211,9 +211,23 @@ max total 8, carrying both stations' locations. The host then broadcasts an upda
 524 bytes, update counter 1). The join response is acknowledged with a type-5 ack on protocol 0x14,
 not with a mesh message (`mesh_protocol.ack_for`). The joiner is then station index 1 in the mesh.
 
-Once in the mesh the host streams, per second, its Local Protocol update-session (0x24, acked with a
-0x21), RTT requests (0x58; a silent station is not dropped, only left without a timing sample), and
-the Pia Clone Protocol on 0x73.
+Once in the mesh the host streams its Local Protocol update-session (0x24, acked with a 0x21), RTT
+requests (0x58), the Sync Clock Protocol (0x1C) and the Pia Clone Protocol (0x73). A real joiner
+answers every one of them and sends its own RTT and sync clock requests from the moment it is
+seated.
+
+## The RTT Protocol (0x58), version 3
+
+Sixteen bytes, as Sword's, but the kind is a big-endian u32 at [0] rather than a byte, and the
+timestamp is the sender's own system tick at 19.2 MHz in a u64 at [8]. A response copies the
+timestamp and sets the kind to 1. Each station sends its own requests about once a second and
+answers the other's.
+
+    00000000 00000000 0000000049845557     request
+    00000001 00000000 0000000049845557     the answer to it
+
+`rtt_protocol.build_v3` and `response_for_v3`; `bin/lgpe_join.py --connect` runs both directions
+(`--no-rtt` turns them off).
 
 ## The Sync Clock Protocol (0x1C)
 
