@@ -354,3 +354,56 @@ def test_host_mesh_and_session_messages_rebuild_a_console_s_own():
     back = lp.parse_update_session(us)
     assert back.sequence_id == 2 and back.host_variable_id == 0xCF897AE9
     assert [n.ip for n in back.occupied] == ["169.254.19.1", "169.254.19.2"]
+
+
+def test_the_host_answers_a_connection_request_and_a_join_request():
+    """bin/lgpe_host.py's session, driven offline: the console's connection request draws the
+    inverse request, the ack and the 0x348-byte response, and its join request draws the 148-byte
+    join response followed by the session and the mesh."""
+    import importlib.util
+    import pathlib
+    root = pathlib.Path(__file__).resolve().parent.parent
+    spec = importlib.util.spec_from_file_location("lgpe_host", root / "bin" / "lgpe_host.py")
+    lgpe_host = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lgpe_host)
+    from pokeldn.ldn import mesh_protocol as mp, pia3, pia4, station9
+    from pokeldn.lgpe import packet_iv
+
+    class FakeHost:
+        our_ip, our_mac = "169.254.19.1", bytes.fromhex("48f1eb209b22")
+        ssid = b"\1" + bytes(15)
+
+        def __init__(self):
+            self.participants = [(1, "169.254.19.2", bytes.fromhex("48f1eb209b23"), b"C\0")]
+            self.sent = []
+
+        def send(self, datagram, dst_ip):
+            self.sent.append(datagram)
+
+        def recv(self):
+            return []
+
+    adv = lgpe_host.Advertisement(0x11223344, 0x55667788)
+    args = lgpe_host.build_parser().parse_args([])
+    host = FakeHost()
+    s = lgpe_host.Session(host, adv, args, lambda **kw: None)
+    s.poll()
+    assert s.peer_ip == "169.254.19.2"
+    loc = station9.station_location("169.254.19.2", 12345, station9.ldn_constant_id(s.peer_mac),
+                                    0x0B0B0B0B, station9.ldn_service_variable_id(s.peer_mac),
+                                    nat_flags=0, nat_location=0, public=False)
+    s.handle(station9.PROTOCOL, station9.build_connection_request(s.our_const, 0, loc, ack_id=7))
+    s.handle(mp.PROTOCOL, mp.build_join_request(9))
+    out = []
+    for pkt in host.sent:
+        hdr = pia4.PiaHeader4.parse(pkt)
+        pt = pia4.decrypt_payload(adv.keys.session_key,
+                                  packet_iv(adv.keys, host.our_mac, hdr.nonce8, source_id=0),
+                                  pia4.ciphertext(pkt), hdr.tag)
+        assert pt is not None                      # our own packets authenticate
+        out += [(m["protocol"], m["payload"][0], m["size"]) for m in pia3.parse_packet(pt)]
+    assert (station9.PROTOCOL, station9.CONNECTION_REQUEST, 57) in out
+    assert (station9.PROTOCOL, station9.CONNECTION_RESPONSE, 0x348) in out
+    assert (mp.PROTOCOL, mp.JOIN_RESPONSE, 148) in out
+    assert (mp.PROTOCOL, mp.UPDATE_MESH, 524) in out
+    assert s.peer_variable_id == 0x0B0B0B0B and s.joined
