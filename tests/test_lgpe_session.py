@@ -290,3 +290,20 @@ def test_clone_announcement_is_mirrored_the_way_a_real_joiner_does():
     # the announcement carries the clock and the content the host's own announcement carried
     assert clone.parse_command(later[1])["payload"].hex() == "0000a39f0138743b"
     assert p.receive(clone.build_command(clone.COMMAND_ANNOUNCE, 2, 0x00, 1, 7, 2), 1.1) == []
+
+
+def test_mirrored_announcement_takes_the_content_that_arrives_after_it():
+    """The host's announce and its own announcements arrive in one packet, the announce first, so
+    the content is resolved when our copy is sent and not when it is queued."""
+    from pokeldn.ldn import clone
+    p = clone.Participant(0.0, dest=0x0001, own=0x0002, station=1)
+    p.participated = p.peer_participated_ack = p.announced = True
+    p.mesh_ms = 0x38565
+    p.receive(clone.build_command(clone.COMMAND_ANNOUNCE, 2, 0x00, 1, 6, 2), 1.0)
+    for ctype in (4, 1):
+        p.receive(clone.build_command(0xA1, ctype, 0xFD, 1, 7, 2,
+                                      bytes.fromhex("000385650138743b")), 1.0)
+    later = [m for m in p.poll(1.05) if m[1] == clone.CLOCK_AND_COUNT]
+    assert len(later) == 2
+    for m in later:
+        assert clone.parse_command(m)["payload"].hex() == "000385650138743b"

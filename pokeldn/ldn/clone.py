@@ -266,6 +266,12 @@ class Participant:
                 continue
             self.queue.remove(item)
             payload = content or b""
+            if kind == CLOCK_AND_COUNT:
+                # the content the host's own announcement carried, as late as possible: its
+                # announcements arrive in the same packet as the one that queued this
+                payload = (self.contents.get((ctype, station, clone_id))
+                           or self.contents.get((4, 0xFD, clone_id))
+                           or self.contents.get((1, 0xFD, clone_id)) or b"\x01\0\0\0")
             if kind in (CLOCK_COMMAND, CLOCK_AND_COUNT):
                 payload = struct.pack(">I", self.ms(now)) + payload
             out.append(self._command(kind, ctype, station, clone_id, now, payload))
@@ -294,10 +300,8 @@ class Participant:
                self._command(COMMAND_END_ACK, 4, 0xFD, cid, now)]
         at = now + 0.01
         self.queue.append((at, 2, self.station, cid, COMMAND_ANNOUNCE, None))
-        fallback = self.contents.get((4, 0xFD, cid)) or self.contents.get((1, 0xFD, cid))
         for ctype in (4, 1):
-            content = self.contents.get((ctype, 0xFD, cid)) or fallback or b"\x01\0\0\0"
-            self.queue.append((at, ctype, 0xFD, cid, CLOCK_AND_COUNT, content))
+            self.queue.append((at, ctype, 0xFD, cid, CLOCK_AND_COUNT, None))
         return out
 
     def _command(self, kind, ctype, station, clone_id, now, payload=b""):
