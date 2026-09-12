@@ -178,6 +178,30 @@ The connection-response parser at `0x5b9270` reads `[1]` the result, `[5]` a big
 its own constant id, `[0xD]` a big-endian u32 against its own variable id, and `[0x37]` a gate byte
 the result-0 path drops when 5 or more. `station9.build_connection_response` writes exactly those.
 
+### The connection response a station sends
+
+A Let's Go station answers a connection request with 0x348 bytes, not the 0x3C the station protocol
+needs to be accepted. The body carries the network the station joined and who is playing:
+
+    0x00  1  message type 2
+    0x01  1  result
+    0x02  1  version 9
+    0x03  1  platform 4
+    0x05  8  the receiver's constant id, big-endian
+    0x0D  4  the receiver's variable id, big-endian
+    0x31  4  the network id, big-endian: the advertise data's first u32, read little-endian
+    0x35  2  01 01
+    0x37  1  the gate byte, dropped when 5 or more
+    0x38  0x50  the station name, "username" on both captured stations
+    0x88  1  1 when a player name follows
+    0x89  0x28  the Switch profile's nickname, what the console shows as the partner
+    0xB1  1  1
+    0x344 4  the ack id
+
+A retail Let's Go Pikachu sends the same layout with its own profile name.
+`station9.build_connection_response(..., network_id=N, player_name=B)` builds it, and
+`bin/lgpe_join.py --player-name NAME` sends it (`--short-response` sends the 0x3C body instead).
+
 ## Joining the mesh
 
 With the station connected, a mesh join request on protocol 0x18 (`mesh_protocol.build_join_request`,
@@ -313,11 +337,11 @@ pcap, `scratchpad/lgpe_jsonl_clone.py` for a `--capture` log.
 
 ### What a host does with a joiner that holds no clone data
 
-Measured against the retail Let's Go Pikachu. With the clock exchange and the sync clock both
-running, the console answers the announcement of a clone, announces its own, and then releases it
-about five seconds after the mesh join and sends 0x32. It sends no 0xb1 and no clone data. A real
-joiner reaches the same point 1.1 seconds after its own participate and the host then sends the
-clone's data; what a joiner must hold for the host to send it is unresolved.
+Measured against the retail Let's Go Pikachu, with a 0x3C-byte connection response that carries no
+network id and no player. With the clock exchange and the sync clock both running, the console
+answers the announcement of a clone, announces its own, and then releases it about five seconds
+after the mesh join and sends 0x32. It sends no 0xb1 and no clone data. A real joiner reaches the
+same point 1.1 seconds after its own participate and the host then sends the clone's data.
 
 The handlers in `main`: `0x51ab20` CloneProtocol::vfunc9, the per-element receive; `0x51c100` the
 protocol's receive dispatch, whose jump table `0xf7673c` on (type - 0x11) separates the clock

@@ -222,3 +222,19 @@ def test_clone_exit_request_is_acknowledged():
     out, = p.receive(bytes.fromhex("0332b7f0000000330003"), 1.0)
     assert len(out) == 14 and out[1] == clone.EXIT_ACK and p.exited
     assert out[8:10] == b"\x00\x01" and out[10:14] == (2).to_bytes(4, "big")
+
+
+def test_full_connection_response_matches_a_real_station():
+    """With a network id the response is the 0x348-byte body a Let's Go station sends, byte for
+    byte what the capture's joiner sent."""
+    from pokeldn.ldn import station9
+    r = station9.build_connection_response(0x7F00020000020000, 0x5E8E66C4, ack_id=0x4110DDD9,
+                                           network_id=0x64CB9EF7, player_name=b"RyuPlayer")
+    assert len(r) == 0x348
+    assert r[:0x11].hex() == "02000904007f000200000200005e8e66c4"
+    assert r[0x31:0x40] == bytes.fromhex("64cb9ef7010101") + b"username"
+    assert r[0x88:0x92] == b"\x01RyuPlayer" and r[0xB1] == 1
+    assert r[0x344:] == (0x4110DDD9).to_bytes(4, "big")
+    assert set(r[0x11:0x31]) == {0} and set(r[0xB2:0x344]) == {0}
+    short = station9.build_connection_response(1, 2)
+    assert len(short) == station9.ACCEPTED_RESPONSE_SIZE + 4

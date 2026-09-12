@@ -56,9 +56,19 @@ OFF_RESPONSE_VARIABLE_ID = 0xD
 OFF_RESPONSE_GATE = 0x37
 ACCEPTED_RESPONSE_SIZE = 0x38
 
+# A Let's Go station answers with the full body, 0x348 bytes, whose fields are the ones a capture
+# of two Let's Go endpoints shows filled. The console's own response carries the same layout.
+OFF_RESPONSE_NETWORK_ID = 0x31      # the network id, big-endian: the advertise data's first u32
+OFF_RESPONSE_FLAGS = 0x35           # 01 01, then the gate byte at 0x37
+OFF_RESPONSE_STATION_NAME = 0x38    # "username" in both captured stations, 0x50 bytes
+OFF_RESPONSE_HAS_PLAYER = 0x88      # 1 when a player name follows
+OFF_RESPONSE_PLAYER_NAME = 0x89     # the Switch profile's nickname, 0x28 bytes
+OFF_RESPONSE_PLAYER_FLAG = 0xB1
+FULL_RESPONSE_SIZE = 0x344          # the ack id follows, so the message is 0x348
+
 __all__ = ["PROTOCOL", "VERSION", "HEADER_SIZE", "PLATFORM_SWITCH", "CONNECTION_REQUEST",
            "CONNECTION_RESPONSE", "RELAY_CONNECTION_REQUEST", "ACK", "RESULT_NAMES",
-           "ACCEPTED_RESPONSE_SIZE", "build_connection_request", "parse_connection_request",
+           "ACCEPTED_RESPONSE_SIZE", "FULL_RESPONSE_SIZE", "build_connection_request", "parse_connection_request",
            "build_connection_response", "build_ack", "ack_id_of", "parse_reply",
            "station_location", "inet_address", "ldn_constant_id", "ldn_service_variable_id"]
 
@@ -99,12 +109,19 @@ def parse_connection_request(data):
 
 
 def build_connection_response(target_constant_id, target_variable_id, result=0, ack_id=1,
-                              gate=1, platform=PLATFORM_SWITCH):
-    """A version-9 connection response, padded to the size that answers the gate from inside the
-    message. `target_constant_id` and `target_variable_id` are the RECEIVER's own ids (the host's),
-    which its parser compares against itself; `gate` is the byte at 0x37 the result-0 path reads and
-    drops when 5 or more. A trailing u32 ack id follows the padded body."""
-    out = bytearray(ACCEPTED_RESPONSE_SIZE)
+                              gate=1, platform=PLATFORM_SWITCH, network_id=None, player_name=None,
+                              station_name=b"username"):
+    """A version-9 connection response. `target_constant_id` and `target_variable_id` are the
+    RECEIVER's own ids (the host's), which its parser compares against itself; `gate` is the byte at
+    0x37 the result-0 path reads and drops when 5 or more. A trailing u32 ack id follows the body.
+
+    With `network_id` the full 0x348-byte body a Let's Go station sends is built: the network id
+    big-endian at 0x31, the station name, and the player's nickname. Without it the body stops at
+    the gate, which the station protocol accepts but which carries no player."""
+    if network_id is not None:
+        out = bytearray(FULL_RESPONSE_SIZE)
+    else:
+        out = bytearray(ACCEPTED_RESPONSE_SIZE)
     out[0] = CONNECTION_RESPONSE
     out[OFF_RESPONSE_RESULT] = result & 0xFF
     out[OFF_RESPONSE_VERSION] = VERSION
@@ -112,6 +129,16 @@ def build_connection_response(target_constant_id, target_variable_id, result=0, 
     struct.pack_into(">Q", out, OFF_RESPONSE_CONSTANT_ID, target_constant_id & ((1 << 64) - 1))
     struct.pack_into(">I", out, OFF_RESPONSE_VARIABLE_ID, target_variable_id & 0xFFFFFFFF)
     out[OFF_RESPONSE_GATE] = gate & 0xFF
+    if network_id is not None:
+        struct.pack_into(">I", out, OFF_RESPONSE_NETWORK_ID, network_id & 0xFFFFFFFF)
+        out[OFF_RESPONSE_FLAGS] = out[OFF_RESPONSE_FLAGS + 1] = 1
+        name = bytes(station_name or b"")[:0x4F]
+        out[OFF_RESPONSE_STATION_NAME:OFF_RESPONSE_STATION_NAME + len(name)] = name
+        if player_name:
+            player = bytes(player_name)[:0x27]
+            out[OFF_RESPONSE_HAS_PLAYER] = 1
+            out[OFF_RESPONSE_PLAYER_NAME:OFF_RESPONSE_PLAYER_NAME + len(player)] = player
+        out[OFF_RESPONSE_PLAYER_FLAG] = 1
     return bytes(out) + struct.pack(">I", ack_id & 0xFFFFFFFF)
 
 

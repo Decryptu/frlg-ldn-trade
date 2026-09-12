@@ -154,6 +154,12 @@ def build_parser():
                     help="our own variable id, any nonzero value (the console's is random)")
     ap.add_argument("--connect-seconds", type=float, default=20.0,
                     help="how long to retransmit the connection request and listen for its reply")
+    ap.add_argument("--player-name", default="PkCamp",
+                    help="the nickname the connection response carries, what the console shows as "
+                         "the partner (a real station sends its Switch profile's)")
+    ap.add_argument("--short-response", action="store_true",
+                    help="send the 0x3c-byte connection response instead of the full 0x348-byte "
+                         "one, which carries no network id and no player")
     ap.add_argument("--no-sync-clock", action="store_true",
                     help="once in the mesh, do not run the Sync Clock Protocol (0x1c): a request "
                          "every 2 s, the host's reply carrying the mesh clock in ms. Default: run it")
@@ -320,14 +326,19 @@ def main(argv=None):
                 pkt1 = send_packet(ack)
                 record(rec="tx", t=round(time.monotonic() - t0, 3), to=host_ip, len=len(pkt1),
                        data=pkt1.hex(), kind="ack_inverse", ack_id=ack_id)
-                resp = station9.build_connection_response(host_const, host_var,
-                                                          ack_id=state["our_ack"][0])
+                net_id = int.from_bytes(keys.network_id_le, "little")
+                resp = station9.build_connection_response(
+                    host_const, host_var, ack_id=state["our_ack"][0],
+                    network_id=None if args.short_response else net_id,
+                    player_name=args.player_name.encode("utf-8"))
                 state["our_ack"][0] += 1
                 body = pia3.build_message(resp, protocol=station9.PROTOCOL, source=our_const,
                                           port=0, destination=host_const)
                 pkt2 = send_packet(body)
                 record(rec="tx", t=round(time.monotonic() - t0, 3), to=host_ip, len=len(pkt2),
                        data=pkt2.hex(), kind="connection_response", host_var=host_var)
+                print(f"[lg] connection response {len(resp)} B, player "
+                      f"{args.player_name!r}, network id {net_id:#010x}")
                 print(f"[lg] acked inverse (ack id {ack_id:#x}) and sent connection response "
                       f"(host var {host_var:#x})")
 
