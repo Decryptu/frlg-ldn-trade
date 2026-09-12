@@ -986,6 +986,11 @@ a slot whose count is already 999 refuses. One u32 per slot: id in bits 0-14, co
 bit 30 the new-item flag. The save block is registered by `0x0141fae0`, key `0x1177C2C4`, `0x12F8`
 bytes.
 
+A delivered Pokemon is flagged as nicknamed only when the record's name differs from the species
+name: a record carrying `PKCAMP` read back with the flag set, and one carrying `Pikachu` on a
+Pikachu read back with it clear, both through the trade party snapshot
+(`scratchpad/sw84_extract.py`). A record with empty name slots is unmeasured.
+
 ## The card's date
 
 The album shows a date for every card. It is the first eight bytes of the record, a little-endian

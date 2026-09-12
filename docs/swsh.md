@@ -50,9 +50,6 @@ covered by any of them, and none of them handles Pia host migration.
   by 19 in that byte, consistent with a minute counter, on one data point.
 - Where a materialised Wonder Card is kept. The importer builds a `0x3A8` card object and the album
   re-encodes it, since neither the 720-byte record nor any string in it appears in the save.
-- Whether a Mystery Gift whose record name equals the species name, or carries no name, is
-  flagged as nicknamed. A gift named PKCAMP read back with the flag set
-  ([Mystery Gift](swsh_gift.md)).
 - How a partner's command reaches a sub-element's body word. The receive handler `0x010dbc90` does
   not write it. That an arriving command lets the shared value move is inferred from a per-station
   flag and from every run so far.
