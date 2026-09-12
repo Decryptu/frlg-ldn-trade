@@ -54,6 +54,7 @@ RECORD_TAG = 0x20
 # The data a Let's Go station publishes for the clone both stations hold when the trade screen
 # opens: twenty bytes with a single 1 at offset 12, the same from both stations in a real session.
 SHARED_CLONE_DATA = bytes(12) + b"\x01" + bytes(7)
+RECORD_EMPTY = 0x01                 # a clone that has no data yet: six bytes, no clock
 RECORD_STATE = 0x03
 RECORD_ACK = 0x05
 TICK_HZ = 19_200_000
@@ -72,7 +73,8 @@ FRAME_HZ = 60
 __all__ = ["PROTOCOL", "VERSION", "CLOCK_REQUEST", "CLOCK_REPLY", "CLOCK_REPLY_SYNCED",
            "PARTICIPATE", "PARTICIPATE_ACK", "EXIT_ACK", "parse_clock_request", "parse_clock_reply",
            "build_clock_request", "build_clock_reply", "reply_to", "build_participate",
-           "build_command", "parse_command", "Participant"]
+           "build_command", "parse_command", "RECORD_EMPTY", "RECORD_STATE", "RECORD_ACK",
+           "Participant"]
 
 
 def parse_clock_request(payload):
@@ -147,10 +149,16 @@ def build_ack_record(clone_id, station, clock):
 
 
 def parse_record(record):
-    """-> dict of a clone record's fields, or None. `kind` 3 is a state, 5 an acknowledgement."""
-    if len(record) < 8 or record[0] != RECORD_TAG or record[1] != len(record):
+    """-> dict of a clone record's fields, or None. `kind` 1 is a clone with no data yet, 3 a
+    state and 5 an acknowledgement."""
+    if len(record) < 6 or record[0] != RECORD_TAG or record[1] != len(record):
         return None
     clone_id, kind, station = struct.unpack_from(">HBB", record, 2)
+    if kind == RECORD_EMPTY:
+        return {"clone_id": clone_id, "kind": kind, "station": station, "clock": None,
+                "data": b""}
+    if len(record) < 8:
+        return None
     if kind == RECORD_ACK:
         return {"clone_id": clone_id, "kind": kind, "station": station,
                 "clock": struct.unpack_from(">I", record, 6)[0], "data": b""}
@@ -352,6 +360,13 @@ class Participant:
         d = parse_data_message(payload)
         if d is not None:
             r = d["record"]
+            if d["type"] & 0xF0 == 0xF0 and r is not None and r["kind"] == RECORD_EMPTY:
+                # a clone the peer holds with no data yet: acknowledge it at our own clock
+                return [build_data_message(STATE_ACK, d["ctype"], d["station"], d["clone_id"],
+                                           self.frame(now),
+                                           build_ack_record(r["clone_id"], r["station"],
+                                                            self.ms(now)),
+                                           flags=r["station"])]
             if d["type"] & 0xF0 == 0xF0 and r is not None and r["kind"] == RECORD_STATE:
                 # the clone's data: acknowledge it at the clock it was true at
                 if d["ctype"] == 2 and d["station"] != self.station:

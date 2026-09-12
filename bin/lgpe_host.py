@@ -33,7 +33,7 @@ from pokeldn.ldn.station_protocol import ldn_constant_id, ldn_service_variable_i
 from pokeldn.ldn.transport import HostTransport, find_ap_phy
 from pokeldn.host_support import resolve_keys
 from pokeldn.lgpe import (APPLICATION_VERSION, COMM_ID_PIKACHU, MAX_PARTICIPANTS, PASSPHRASE,
-                          PIA_PORT, SCENE_ID, build_advertise_data, packet_iv, session_keys)
+                          PIA_PORT, SCENE_ID, SSID, build_advertise_data, packet_iv, session_keys)
 from pokeldn.lgpe import local_host, mesh_host
 
 HOST_INDEX = 0
@@ -69,10 +69,22 @@ def build_parser():
     ap.add_argument("--ap-ifname", default="ldn")
     ap.add_argument("--mon-ifname", default="ldn-mon")
     ap.add_argument("--channel", type=int, default=6)
-    ap.add_argument("--keys", default=None)
+    ap.add_argument("--no-skip-encryption", action="store_true",
+                    help="let the LDN layer encrypt in software. The Archer T3U wants the "
+                         "hardware path, which is the default here")
+    ap.add_argument("--no-accept-decrypted-ccmp", action="store_true",
+                    help="do not accept the frames rtw88 has already decrypted. With this the "
+                         "host reads nothing on that adapter")
+    ap.add_argument("--keys", default="~/.switch/prod.keys")
     ap.add_argument("--capture", default=None, help="every datagram, one JSON line each")
     ap.add_argument("--variable-id", type=lambda s: int(s, 0), default=0x0C0C0C0C,
                     help="our own variable id, any nonzero value")
+    ap.add_argument("--protocol", type=int, default=1,
+                    help="the LDN advertisement protocol. A title sees only its own: Let's Go "
+                         "advertises and scans on 1, measured off the console's own beacon")
+    ap.add_argument("--random-ssid", action="store_true",
+                    help="let the LDN layer pick the session id. A Let's Go network's is the "
+                         "fixed value every console advertises, which is the default here")
     ap.add_argument("--network-id", type=lambda s: int(s, 0), default=None)
     ap.add_argument("--session-param", type=lambda s: int(s, 0), default=None)
     return ap
@@ -104,7 +116,10 @@ def main(argv=None):
                          keys_path=keys_path, local_comm_id=COMM_ID_PIKACHU, scene_id=SCENE_ID,
                          app_version=APPLICATION_VERSION, max_participants=MAX_PARTICIPANTS,
                          phyname=phy, ifname=args.ifname, ap_ifname=args.ap_ifname,
-                         mon_ifname=args.mon_ifname, channel=args.channel)
+                         mon_ifname=args.mon_ifname, channel=args.channel,
+                         skip_encryption=not args.no_skip_encryption,
+                         accept_decrypted_ccmp=not args.no_accept_decrypted_ccmp,
+                         ssid=None if args.random_ssid else SSID, protocol=args.protocol)
     if not host.start():
         print("[lgh] the AP did not come up"); return 3
     print(f"[lgh] hosting: ssid={host.ssid.hex()} us={host.our_ip}/{host.our_mac.hex()}")
@@ -227,11 +242,15 @@ class Session:
 
     def tick(self):
         now = time.monotonic()
-        if self.peer_ip is None or not self.joined:
+        if self.peer_ip is None:
             return
+        # A host speaks first: a console that associates and hears nothing leaves again. The
+        # update session goes out from the moment a station is seated, the mesh once it has joined.
         if now >= self.next_update:
             self.next_update = now + 2.0
             self.broadcast_session()
+        if not self.joined:
+            return
         if now >= self.next_rtt:
             self.next_rtt = now + 1.0
             self.send(rtt.build_v3(rtt.REQUEST, int(now * rtt.TICK_HZ_V3)), rtt.PROTOCOL)
@@ -249,10 +268,12 @@ class Session:
         self.session_sequence += 1
         self.send(body, lp.PROTOCOL, destination=0,
                   flags=pia3.MESSAGE_FLAG_BITMAP | pia3.MESSAGE_FLAG_UNBUNDLED)
+        if not self.joined:
+            return
         self.update_counter += 1
-        entries = [(self.our_location, HOST_INDEX << 1)]
+        entries = [(self.our_location, HOST_INDEX)]
         if self.peer_location:
-            entries.append((self.peer_location, JOINER_INDEX << 1))
+            entries.append((self.peer_location, JOINER_INDEX))
         self.send(mesh_host.build_update_mesh(entries, self.update_counter), mp.PROTOCOL)
 
     def handle(self, protocol, pl):
@@ -282,7 +303,6 @@ class Session:
             if self.clone is None:
                 self.clone = clone.Participant(time.monotonic(), dest=JOINER_BIT, own=HOST_BIT,
                                                station=HOST_INDEX)
-                print("[lgh] clone: joining the clone session")
             for out in self.clone.receive(pl, time.monotonic()):
                 self.send(out, clone.PROTOCOL)
         elif protocol == reliable3.PROTOCOL:
@@ -307,9 +327,12 @@ class Session:
             except Exception:
                 self.peer_variable_id = 0
             # what a console does in this order: its own inverse request, the ack, its response
+            # the inverse request carries the connection id the peer chose for its own request;
+            # the console checks it against the record it keeps for us and drops a zero
             inverse = station9.build_connection_request(
                 ldn_constant_id(self.peer_mac) if self.peer_mac else 0, self.peer_variable_id,
-                self.our_location, ack_id=self.ack_id, connection_id=0xEC, is_inverse=True)
+                self.our_location, ack_id=self.ack_id, connection_id=0xEC,
+                inverse_connection_id=pl[station9.OFF_CONNECTION_ID], is_inverse=True)
             self.ack_id += 1
             self.send(inverse, station9.PROTOCOL, destination=0, kind="inverse_request")
             self.send(station9.build_ack(ack), station9.PROTOCOL, destination=0)
@@ -328,13 +351,18 @@ class Session:
     def mesh(self, pl):
         if pl[0] == mp.JOIN_REQUEST:
             ack = mp.read_ack_id(pl)
-            entries = [(self.our_location, HOST_INDEX << 1)]
+            entries = [(self.our_location, HOST_INDEX)]
             if self.peer_location:
-                entries.append((self.peer_location, JOINER_INDEX << 1))
+                entries.append((self.peer_location, JOINER_INDEX))
             self.send(mesh_host.build_join_response(entries, ack), mp.PROTOCOL,
                       destination=0, kind="join_response")
             self.joined = True
-            print("[lgh] *** THE CONSOLE JOINED THE MESH *** answered its join request")
+            # the host starts the clone protocol: in a real session its first clock request goes
+            # out about 40 ms after the join response
+            self.clone = clone.Participant(time.monotonic(), dest=JOINER_BIT, own=HOST_BIT,
+                                           station=HOST_INDEX)
+            print("[lgh] *** THE CONSOLE JOINED THE MESH *** answered its join request; "
+                  "starting the clone protocol")
             self.broadcast_session()
 
 
