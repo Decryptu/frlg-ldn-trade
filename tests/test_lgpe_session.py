@@ -125,3 +125,64 @@ def test_clone_participate_is_ten_bytes():
     assert len(p) == 10 and p[0] == 3 and p[1] == clone.PARTICIPATE
     assert p[2:4] == b"\xc2\x35" and p[4:8] == (1).to_bytes(4, "big")
     assert p[8:10] == (2).to_bytes(2, "big")
+
+
+def test_clone_participant_reproduces_the_two_endpoint_exchange():
+    """The measured exchange (docs/lgpe_session.md "The Clone Protocol"): a reply carries the
+    replier's own count, the requester's bitmap, the replier's ms clock and the request's tick; the
+    participate goes out after ten answered requests; the peer's participate is acked with 0x33."""
+    from pokeldn.ldn import clone
+    p = clone.Participant(100.0, dest=0x0001)
+    # the host's first request, as captured
+    req = bytes.fromhex("0311161b0000000100020000000000013483")
+    rep, = p.receive(req, 100.275)
+    r = clone.parse_clock_reply(rep)
+    assert rep[1] == clone.CLOCK_REPLY and r["count"] == 1 and r["participant"] == 0x0001
+    assert r["ms"] == 275 and r["clock"] == 0x13483
+    # our own requests, one per interval, count continuing
+    out = p.poll(100.3)
+    assert len(out) == 1 and out[0][1] == clone.CLOCK_REQUEST and len(out[0]) == 18
+    assert clone.parse_clock_request(out[0])["count"] == 2
+    assert p.poll(100.31) == []
+    # ten answers bring the participate, count continuing, bitmap 0x0003
+    for i in range(10):
+        p.poll(101 + i)
+        assert p.receive(clone.build_clock_reply(0, 0, 1, 0, kind=clone.CLOCK_REPLY), 101 + i) == []
+    out = p.poll(111.0)
+    assert out[-1][1] == clone.PARTICIPATE and out[-1][8:10] == b"\x00\x03"
+    assert clone.parse_clock_request(out[0])["count"] + 1 == int.from_bytes(out[-1][4:8], "big")
+    # after that our replies are 0x22, and the host's participate draws a 0x33 to its bit
+    rep, = p.receive(req, 112.0)
+    assert rep[1] == clone.CLOCK_REPLY_SYNCED
+    ack, = p.receive(bytes.fromhex("033116dd000000240003"), 112.1)
+    assert ack[1] == clone.PARTICIPATE_ACK and ack[8:10] == b"\x00\x01" and len(ack) == 10
+    # two participants against each other both participate
+    a, b = clone.Participant(0.0, dest=0x0002), clone.Participant(0.0, dest=0x0001)
+    t = 0.0
+    while t < 5 and not (a.participated and b.participated):
+        for src, dst in ((a, b), (b, a)):
+            for m in src.poll(t):
+                for back in dst.receive(m, t):
+                    src.receive(back, t)
+        t += 0.05
+    assert a.participated and b.participated
+
+
+def test_sync_clock_matches_the_wiki_layout():
+    """A request carries the sender's tick and eight zero bytes; the reply copies the tick and
+    adds the mesh clock in ms. Bytes from the two-endpoint capture."""
+    from pokeldn.ldn import sync_clock
+    req = bytes.fromhex("00000000412702000000000000000000")
+    rep = bytes.fromhex("00000000412702000000000000001864")
+    assert sync_clock.parse_message(req) == (0x41270200, 0)
+    assert sync_clock.parse_message(rep) == (0x41270200, 0x1864)
+    assert sync_clock.build_request(0x41270200) == req
+    s = sync_clock.SyncClock(100.0)
+    out, = s.poll(100.0)
+    assert len(out) == 16 and out[8:] == b"\0" * 8 and s.poll(100.5) == []
+    tick = sync_clock.parse_message(out)[0]
+    assert tick == int(100.0 * sync_clock.TICK_HZ)
+    assert s.receive(struct.pack(">QQ", tick, 6244), 100.040) == []
+    assert s.clock_ms == 6244 + 20            # half the 40 ms round trip
+    assert s.now_ms(101.040) == s.clock_ms + 1000
+    assert s.poll(102.0) and s.replies == 1

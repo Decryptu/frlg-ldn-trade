@@ -191,52 +191,129 @@ Once in the mesh the host streams, per second, its Local Protocol update-session
 0x21), RTT requests (0x58; a silent station is not dropped, only left without a timing sample), and
 the Pia Clone Protocol on 0x73.
 
+## The Sync Clock Protocol (0x1C)
+
+The mesh carries a monotonic clock the host controls, and every station keeps its own estimate of
+it (wiki Sync-Clock-Protocol). A station sends a request every two seconds and the host replies;
+the station halves the round trip and adds it to the value it was given.
+
+    request, 16 bytes   [0] u64 the sender's system tick (19.2 MHz), [8] u64 zero
+    reply,   16 bytes   [0] u64 the tick copied back, [8] u64 the mesh clock in milliseconds
+
+A joiner sends its first request 46 ms after the mesh join response; 436 of these carried a
+seven-minute session between two Let's Go endpoints. The clocks in the Clone Protocol's messages
+are this clock, not a station's own uptime: a Let's Go host that receives clone messages timed
+against something else releases the clone and leaves. `pokeldn.ldn.sync_clock`, and
+`bin/lgpe_join.py --connect` runs it from the mesh join (`--no-sync-clock` turns it off).
+
+The keep-alive protocol is 0x08, a message with no body; each side answers one in kind.
+
 ## The Clone Protocol (0x73)
 
-Protocol 0x73 is `nn::pia::clone::CloneProtocol` (GetProtocolId at `0x158aab8` returns 0x73). The
-game's partner sync runs on it. The message type byte is `0xAB`: the high nibble the structure, the
-low nibble a variant. The host streams clock requests (type 0x11) addressed to the joiner's station
-bitmap and expects clock replies (type 0x21); until the clock syncs the game drops the partner with
-"la connexion avec votre partenaire a ete interrompue".
+Protocol 0x73 is `nn::pia::clone::CloneProtocol` (GetProtocolId at `0x158aab8` returns 0x73; the
+SDK string in `main` is `PiaCommon-5_11_4`). The game's partner sync runs on it. The message type
+byte is `0xAB`: the high nibble the structure, the low nibble a variant. Every message starts with
+the version byte 3, the type byte, and the sender's frame counter as a big-endian u16 (about 60 per
+second, starting when the sender's Pia session started).
 
-Read off the console's serializers. ClockRequestMessage (`0x51f9b0`), 18 bytes:
+The exchange below is measured between two Let's Go Pikachu 1.0.2 endpoints (a Ryujinx host and a
+Ryujinx joiner over ldn_mitm, link code Pikachu x3, one trade completed). Both sides run the same
+state machine; nothing is host-only.
 
-    [0]   1  version 3
-    [1]   1  type 0x11
-    [2]   2  field A, big-endian        increments ~0xD per request
-    [4]   4  count, big-endian          +1 per request
-    [8]   2  participant bitmap, big-endian
-    [0xA] 8  clock, big-endian          a rising tick value
+### Clock sync, the first two seconds
 
-ClockReplyMessage (`0x51fab0`), 22 bytes, the same fields plus an extra u32 at [0xA] before the
-clock. `pokeldn.ldn.clone` builds it. A reply that echoes the request's field A, count, participant
-and clock with the extra u32 zeroed is sent and reaches the console (the same send path the station
-handshake and mesh join used), but the console keeps sending clock requests and the session drops:
-echoing the host's clock is not what the reply must carry.
+Both sides send clock requests (type 0x11, 18 bytes) at about 5 per second, and each side answers
+the other's with a clock reply (type 0x21, 22 bytes). Serializers `0x51f9b0` and `0x51fab0`.
 
-The clone protocol is a synchronized-object system, not a request/reply pair. A participant
-announces itself with a participate message (type 0x31, 10 bytes, serializer `0x51fbd0`), a clock is
-agreed, and clone elements are retransmitted on that clock. The handlers to read:
+    clock request                              clock reply
+    [0]   1  version 3                         [0]   1  version 3
+    [1]   1  type 0x11                         [1]   1  type 0x21
+    [2]   2  sender frame counter              [2]   2  sender frame counter
+    [4]   4  sender message count              [4]   4  sender message count
+    [8]   2  destination station bitmap       [8]   2  destination station bitmap
+    [0xA] 8  sender system tick                [0xA] 4  sender clone clock, ms
+                                               [0xE] 8  the request's system tick, echoed
 
-    0x51ab20  CloneProtocol::vfunc9, the receive dispatch (splits the 0xAB type byte)
-    0x51b010  the reply/ack state machine, a jump table at 0xf76674 on (type - 0x21)
-    0x51b1d0  the clock-driven element retransmit scheduler (the 0x11 request side)
+- The message count is one counter per sender over its clock requests, replies and participate
+  messages, starting at 1. Requests and replies alternate, so it runs 1, 2, 3 on each side.
+- The station bitmap is the destination, `1 << station index`: the host (index 0) sends 0x0002 to
+  the joiner (index 1), the joiner sends 0x0001 back. A reply is addressed to the requester.
+- The system tick is `os::GetSystemTick`, 19.2 MHz, the sender's own. The reply echoes the
+  request's tick unchanged; nothing else in the request is echoed.
+- The clone clock is milliseconds since the sender's clone protocol started (element +0x14 in the
+  reply serializer), about 60 ms before its first request.
 
-`pokeldn.ldn.clone` builds the clock reply and the participate message. Sending the clock reply
-(echoing the request's clock), a participate (type 0x31), and both framings (directed constant-id
-and the console's own bitmap to the host station bit) all leave the console sending only clock
-requests and dropping the partner; none converges the clone clock.
+A reply that copies the request's counter, count and bitmap, with the clock field zero, is what
+the retail console received from this project; it is not what a peer sends, and the retail console
+kept requesting.
 
-The clock is a per-element state machine, not a request/reply pair. `CloneProtocol::vfunc9`
-(`0x51ab20`) runs each clone element on every receive: it reads the element's station at +0x34 and
-computes the current clock into +0x50 as `now / ticks_per_ms`, then steps the element state at
-+0x40 through a jump table at `0xf76674` indexed by `state - 0x21`. State 0x21 (`0x51b04c`) gates on
-a counter in [2,4] and advances to 0x22; state 0x22 (`0x51b074`) measures elapsed time since a
-send-time stored at element+0x7a0 and writes the result at +0x32c. The element lifecycle advances on
-its own clock, so a participant must hold a clone element in the matching state, not merely answer a
-message. The clock reply's extra u32 at wire [0xA] (element+0x14, absent from the request) is the
-field a real joiner fills with its own clock. The wall is the clock-agreement
-math, the host's offset computation on a reply, in the Clock class (`nn::pia::clone::Clock` /
-`RtcClock`), and/or the game-level clone element sync. The CloneProtocol receive vtable is
-`0x158aa98`; the clock reply's [0xA] extra u32, unread, is the likely carrier of the replier's own
-clock.
+### Participate
+
+After ten of its own requests were answered (2.1 s), the joiner sent a participate (type 0x31,
+10 bytes, serializer `0x51fbd0`): header, its message count, then the destination bitmap 0x0003,
+every station. The host answered within 30 ms with type 0x33, same layout, bitmap 0x0002. The host
+sent its own participate 1.1 s later (bitmap 0x0003) and the joiner acknowledged with 0x33 carrying
+0x0001.
+From the first participate onward each side's clock replies are type 0x22 instead of 0x21, same
+layout.
+
+### Clone elements
+
+A clone is keyed by three fields every command message carries: a clone type (1 to 4), the owning
+station (0xFD for one no single station owns) and a 32-bit clone id. Both stations publish their
+own copy of a clone; the host creates ids 1, 2, 3 for the trade as the screens advance, and clone
+type 3 id 0 exists from the moment both sides have participated.
+
+    every command message   [0] version 3, [1] type, [2] u16 the sender's frame counter,
+                            [4] u8 clone type, [5] u8 owning station, [6] u16 0,
+                            [8] u32 clone id
+    types 0x81 to 0xc4      [0xC] u32 the sender's message count, [0x10] u16 destination bitmap,
+                            then the structure's own fields
+    types 0xd1 to 0xf4      [0xC] the data, with no message count and no bitmap
+
+The structure is the type's high nibble and the command the low nibble, in the order the command
+tokens report themselves (`SendClone::AnnounceCommandToken::vfunc0` at `0x522480` returns 0,
+`ReceiveClone::RequestCommandToken` 1 at `0x520df0`, `SendClone::EndCommandToken` 2 at `0x522490`,
+`AtomicSharingClone::LockCommandToken` 3 at `0x517820`): command = the low nibble minus one.
+
+    0x81 announce   0x82 request   0x83 end   0x84 lock
+    0x9N  + a u32 clock in ms at [0x12]                       ClockCloneCommandMessage, 22 bytes
+    0xaN  + the clock, a u8 count at [0x16], a u8 and a u16   ClockAndCount, 26 bytes
+    0xbN  + the clock and a u32 participant bitmap at [0x16]  ClockAndParticipant, 26 bytes
+    0xcN  + the clock, the count and the bitmap at [0x1A]     ClockAndCountAndParticipant, 30
+    0xeN  + a zlib stream at [0xD]                            the clone's state, acknowledging
+    0xfN  + one byte at [0xD] and a zlib stream at [0xE]      the clone's state, with its data
+
+The zlib streams inflate to a record that starts with the tag 0x20 and its own length:
+
+    0x20 len  u16 clone id  0x03  u8 the station the data belongs to  u16 0
+              u16 participant bitmap  u32 clock  then the clone's data
+    0x20 0x0A u16 clone id  0x05  u8 the station being acknowledged   u32 clock
+
+A station announces a clone with 0xa1 and the other answers 0x91; the owner then sends its data in
+an 0xf3 and the other acknowledges with an 0xe3 carrying the same clock. 0x83 releases a clone and
+0x84 acknowledges the release. Type 0x32 asks the other station to leave the clone session and
+0x41 is its 14-byte acknowledgement; a host whose 0x32 is never answered repeats it until the
+game gives up.
+
+The full decode of a real session is `scratchpad/037_clone_parsed.txt`, its data messages
+`scratchpad/lgpe_clone_data.py`. The decoders: `scratchpad/lgpe_pcap_decode.py` for an ldn_mitm
+pcap, `scratchpad/lgpe_jsonl_clone.py` for a `--capture` log.
+
+### What a host does with a joiner that holds no clone data
+
+Measured against the retail Let's Go Pikachu. With the clock exchange and the sync clock both
+running, the console answers the announcement of a clone, announces its own, and then releases it
+about five seconds after the mesh join and sends 0x32. It sends no 0xb1 and no clone data. A real
+joiner reaches the same point 1.1 seconds after its own participate and the host then sends the
+clone's data; what a joiner must hold for the host to send it is unresolved.
+
+The handlers in `main`: `0x51ab20` CloneProtocol::vfunc9, the per-element receive; `0x51c100` the
+protocol's receive dispatch, whose jump table `0xf7673c` on (type - 0x11) separates the clock
+messages from the command messages and whose second table `0xf76800` on (type - 0x84) reaches the
+command path; `0xf769c4` indexes the structure by the high nibble and `0xf769e4` the clone type.
+`0x51b010` is the reply state machine, jump table `0xf76674` on (type - 0x21), and `0x51b1d0` the
+clock-driven retransmit scheduler. The serializers are `0x51f9b0` clock request, `0x51fab0` clock
+reply, `0x51fbd0` participate, `0x51f820` the command header, `0x51f4c0` ClockAndCount. A message
+whose count at [0xC] does not exceed the last from that station is dropped (`0x51c1e0`). Element
+offsets: +0x34 station, +0x40 state, +0x50 clock, +0x7a0 send time, +0x32c result.

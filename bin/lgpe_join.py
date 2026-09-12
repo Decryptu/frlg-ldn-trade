@@ -35,7 +35,7 @@ import trio
 import ldn
 from pokeldn.ldn import pia3, pia4, station9, station4
 from pokeldn.ldn import mesh_protocol as mp
-from pokeldn.ldn import clone
+from pokeldn.ldn import clone, sync_clock
 from pokeldn.ldn import local_protocol as lp
 from pokeldn.ldn.station_protocol import ldn_constant_id, ldn_service_variable_id, station_location
 from pokeldn.ldn.transport import find_ap_phy
@@ -154,10 +154,15 @@ def build_parser():
                     help="our own variable id, any nonzero value (the console's is random)")
     ap.add_argument("--connect-seconds", type=float, default=20.0,
                     help="how long to retransmit the connection request and listen for its reply")
-    ap.add_argument("--participate", action="store_true",
-                    help="once in the mesh, send a clone participate message (type 0x31) before "
-                         "answering clock requests - the experiment that tests the clock-sync "
-                         "prerequisite")
+    ap.add_argument("--no-sync-clock", action="store_true",
+                    help="once in the mesh, do not run the Sync Clock Protocol (0x1c): a request "
+                         "every 2 s, the host's reply carrying the mesh clock in ms. Default: run it")
+    ap.add_argument("--no-clone", action="store_true",
+                    help="once in the mesh, do not run the clone clock exchange (requests every "
+                         "0.2 s, replies with our ms clock, participate after ten answers: "
+                         "docs/lgpe_session.md). Default: run it")
+    ap.add_argument("--clone-requests", type=int, default=10,
+                    help="answered clock requests of our own before the participate (measured 10)")
     return ap
 
 
@@ -282,18 +287,24 @@ def main(argv=None):
                      "our_ack": [1], "acked_response": False, "mesh_joined": False,
                      "mesh_join_sent": False}
             HOST_STATION_BIT = 0x0001
-            def clone_send(payload):
+            KEEPALIVE_PROTOCOL = 0x08
+            def to_host_bitmap(payload, protocol):
+                """The framing every post-join protocol uses: our constant id as the source, the
+                host's station bit as a bitmap destination."""
                 our_const = ldn_constant_id(our_mac) if len(our_mac) == 6 else 0
-                body = pia3.build_message(payload, protocol=clone.PROTOCOL, source=our_const,
-                                          port=0, destination=HOST_STATION_BIT,
-                                          message_flags=pia3.MESSAGE_FLAG_BITMAP)
-                send_packet(body)
+                send_packet(pia3.build_message(payload, protocol=protocol, source=our_const,
+                                               port=0, destination=HOST_STATION_BIT,
+                                               message_flags=pia3.MESSAGE_FLAG_BITMAP))
+            def clone_send(payload):
+                to_host_bitmap(payload, clone.PROTOCOL)
             def send_packet(body):
                 out_nonce[0] += 1
                 nonce8 = out_nonce[0].to_bytes(8, "big")
                 iv = packet_iv(keys, our_mac, nonce8, source_id=0)
                 pkt = pia3.build_packet(keys.session_key, iv, body, station=0, nonce8=nonce8)
                 sock.sendto(pkt, (host_ip, PIA_PORT))
+                record(rec="tx", t=round(time.monotonic() - t0, 3), to=host_ip, len=len(pkt),
+                       data=pkt.hex())
                 return pkt
             def complete_handshake(inverse_req):
                 """Ack the console's inverse connection request and send our connection response."""
@@ -336,12 +347,30 @@ def main(argv=None):
                     if not send_connection_request():
                         break
                     next_tx += 0.5
-                if args.connect and args.participate and state["mesh_joined"] \
-                        and not state.get("participated") and len(our_mac) == 6 \
-                        and len(host_mac) == 6:
-                    clone_send(clone.build_participate(participant=0x0002))
-                    state["participated"] = True
-                    print("[lg] sent clone participate (type 0x31, participant 0x0002)")
+                if args.connect and not args.no_sync_clock and state["mesh_joined"] \
+                        and len(our_mac) == 6 and len(host_mac) == 6:
+                    now = time.monotonic()
+                    if state.get("sync") is None:
+                        state["sync"] = sync_clock.SyncClock(now)
+                        print("[lg] sync clock: a request every 2 s (protocol 0x1c)")
+                    for out in state["sync"].poll(now):
+                        to_host_bitmap(out, sync_clock.PROTOCOL)
+                if args.connect and not args.no_clone and state["mesh_joined"] \
+                        and len(our_mac) == 6 and len(host_mac) == 6:
+                    now = time.monotonic()
+                    if state.get("clone") is None:
+                        state["clone"] = clone.Participant(
+                            now, dest=HOST_STATION_BIT,
+                            requests_before_participate=args.clone_requests)
+                        print("[lg] clone: sending clock requests every 0.2 s")
+                    sc = state.get("sync")
+                    if sc is not None and sc.now_ms(now) is not None:
+                        state["clone"].mesh_ms = sc.now_ms(now)
+                    for out in state["clone"].poll(now):
+                        clone_send(out)
+                        if out[1] == clone.PARTICIPATE:
+                            print(f"[lg] clone: *** PARTICIPATE sent after "
+                                  f"{state['clone'].answered} answered requests ***")
                 if args.connect and state["host_accepted"] and not state["mesh_joined"] \
                         and time.monotonic() - t0 >= next_tx:
                     jr = pia3.build_message(mp.build_join_request(state["our_ack"][0]),
@@ -408,13 +437,35 @@ def main(argv=None):
                                           "mesh, acked on 0x14 ***")
                                 print(f"[lg] mesh 0x18 type={pl[0]:#x} {len(pl)}B "
                                       f"pl[:24]={pl[:24].hex()}")
+                            elif m["protocol"] == sync_clock.PROTOCOL:
+                                sc = state.get("sync")
+                                if sc is not None:
+                                    sc.receive(pl, time.monotonic())
+                                    if sc.replies == 1:
+                                        print(f"[lg] sync clock: *** MESH CLOCK {sc.clock_ms} ms "
+                                              f"*** (the host answered our request)")
+                            elif m["protocol"] == KEEPALIVE_PROTOCOL:
+                                to_host_bitmap(b"", KEEPALIVE_PROTOCOL)
+                                state["keepalives"] = state.get("keepalives", 0) + 1
+                                if state["keepalives"] == 1:
+                                    print("[lg] keep-alive (0x08): answering in kind")
                             elif m["protocol"] == clone.PROTOCOL:
-                                rep = clone.reply_to(pl) if args.connect else None
-                                if rep is not None:
-                                    clone_send(rep)
-                                    state["clock_replies"] = state.get("clock_replies", 0) + 1
-                                    if state["clock_replies"] == 1:
-                                        print("[lg] answering clone clock requests (type 0x21)")
+                                part = state.get("clone")
+                                kind = pl[1] if len(pl) > 1 else -1
+                                if part is not None:
+                                    for out in part.receive(pl, time.monotonic()):
+                                        clone_send(out)
+                                    seen = state.setdefault("clone_types", {})
+                                    seen[kind] = seen.get(kind, 0) + 1
+                                    if seen[kind] == 1:
+                                        print(f"[lg] clone: first type {kind:#04x} "
+                                              f"({len(pl)}B) {pl.hex()}")
+                                    if kind == clone.PARTICIPATE:
+                                        print("[lg] clone: *** HOST PARTICIPATE (0x31) *** "
+                                              "acked with 0x33")
+                                    elif kind >= 0x80 and seen[kind] == 1:
+                                        print("[lg] clone: *** ELEMENT MESSAGE from the host: "
+                                              "the clock is agreed ***")
                             elif m["protocol"] == lp.PROTOCOL and pl and pl[1:2] == b"\x11":
                                 # Local Protocol update-session: ack it (type 0x21) so the host
                                 # knows the seat is alive. RTT (0x58) never drops a silent station.
