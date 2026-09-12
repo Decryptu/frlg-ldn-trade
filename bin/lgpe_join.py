@@ -154,6 +154,10 @@ def build_parser():
                     help="our own variable id, any nonzero value (the console's is random)")
     ap.add_argument("--connect-seconds", type=float, default=20.0,
                     help="how long to retransmit the connection request and listen for its reply")
+    ap.add_argument("--participate", action="store_true",
+                    help="once in the mesh, send a clone participate message (type 0x31) before "
+                         "answering clock requests - the experiment that tests the clock-sync "
+                         "prerequisite")
     return ap
 
 
@@ -325,6 +329,14 @@ def main(argv=None):
                     if not send_connection_request():
                         break
                     next_tx += 0.5
+                if args.connect and args.participate and state["mesh_joined"] \
+                        and not state.get("participated") and len(our_mac) == 6 \
+                        and len(host_mac) == 6:
+                    send_packet(pia3.build_message(clone.build_participate(participant=0x0002),
+                        protocol=clone.PROTOCOL, source=ldn_constant_id(our_mac), port=0,
+                        destination=ldn_constant_id(host_mac)))
+                    state["participated"] = True
+                    print("[lg] sent clone participate (type 0x31, participant 0x0002)")
                 if args.connect and state["host_accepted"] and not state["mesh_joined"] \
                         and time.monotonic() - t0 >= next_tx:
                     jr = pia3.build_message(mp.build_join_request(state["our_ack"][0]),
