@@ -51,6 +51,9 @@ CLOCK_COUNT_PARTICIPANT = 0xC1
 STATE_ACK = 0xE3
 STATE_DATA = 0xF3
 RECORD_TAG = 0x20
+# The data a Let's Go station publishes for the clone both stations hold when the trade screen
+# opens: twenty bytes with a single 1 at offset 12, the same from both stations in a real session.
+SHARED_CLONE_DATA = bytes(12) + b"\x01" + bytes(7)
 RECORD_STATE = 0x03
 RECORD_ACK = 0x05
 TICK_HZ = 19_200_000
@@ -229,6 +232,8 @@ class Participant:
         self.announced = False
         self.mesh_ms = None
         self.contents = {}
+        self.shared = {}
+        self.published = set()
         self.mirrored = {}
         self.queue = []
         self.log = []
@@ -265,6 +270,16 @@ class Participant:
             if now < when:
                 continue
             self.queue.remove(item)
+            if kind == STATE_DATA:
+                if clone_id in self.published:
+                    continue
+                self.published.add(clone_id)
+                out.append(build_data_message(
+                    STATE_DATA, ctype, station, clone_id, self.frame(now),
+                    build_state_record(clone_id, station, 3, self.ms(now),
+                                       self.shared.get(clone_id, SHARED_CLONE_DATA)),
+                    flags=3))
+                continue
             payload = content or b""
             if kind == CLOCK_AND_COUNT:
                 # the content the host's own announcement carried, as late as possible: its
@@ -302,6 +317,7 @@ class Participant:
         self.queue.append((at, 2, self.station, cid, COMMAND_ANNOUNCE, None))
         for ctype in (4, 1):
             self.queue.append((at, ctype, 0xFD, cid, CLOCK_AND_COUNT, None))
+        self.queue.append((now + 0.09, 2, self.station, cid, STATE_DATA, None))
         return out
 
     def _command(self, kind, ctype, station, clone_id, now, payload=b""):
@@ -341,6 +357,8 @@ class Participant:
                 if d["ctype"] == 2 and d["station"] != self.station:
                     # the clone both stations hold: a real joiner answers with its own copy of the
                     # data rather than an acknowledgement
+                    self.shared[d["clone_id"]] = r["data"]
+                    self.published.add(d["clone_id"])
                     return [build_data_message(
                         STATE_DATA, 2, self.station, d["clone_id"], self.frame(now),
                         build_state_record(r["clone_id"], self.station, r["participants"],
