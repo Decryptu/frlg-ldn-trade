@@ -225,7 +225,17 @@ agreed, and clone elements are retransmitted on that clock. The handlers to read
 `pokeldn.ldn.clone` builds the clock reply and the participate message. Sending the clock reply
 (echoing the request's clock), a participate (type 0x31), and both framings (directed constant-id
 and the console's own bitmap to the host station bit) all leave the console sending only clock
-requests and dropping the partner; none converges the clone clock. The wall is the clock-agreement
+requests and dropping the partner; none converges the clone clock.
+
+The clock is a per-element state machine, not a request/reply pair. `CloneProtocol::vfunc9`
+(`0x51ab20`) runs each clone element on every receive: it reads the element's station at +0x34 and
+computes the current clock into +0x50 as `now / ticks_per_ms`, then steps the element state at
++0x40 through a jump table at `0xf76674` indexed by `state - 0x21`. State 0x21 (`0x51b04c`) gates on
+a counter in [2,4] and advances to 0x22; state 0x22 (`0x51b074`) measures elapsed time since a
+send-time stored at element+0x7a0 and writes the result at +0x32c. The element lifecycle advances on
+its own clock, so a participant must hold a clone element in the matching state, not merely answer a
+message. The clock reply's extra u32 at wire [0xA] (element+0x14, absent from the request) is the
+field a real joiner fills with its own clock. The wall is the clock-agreement
 math, the host's offset computation on a reply, in the Clock class (`nn::pia::clone::Clock` /
 `RtcClock`), and/or the game-level clone element sync. The CloneProtocol receive vtable is
 `0x158aa98`; the clock reply's [0xA] extra u32, unread, is the likely carrier of the replier's own
